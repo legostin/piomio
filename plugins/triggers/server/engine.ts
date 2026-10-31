@@ -4,7 +4,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { PluginContext, PluginHttpRequest, PluginHttpResponse } from "@piomio/plugin-sdk";
 import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
 import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
-import { computeNextRun, localDate, validTimezone, zonedParts } from "./schedule.ts";
+import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
 import type { RunReason, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
 import { extractValue, fetchPage, hashValue, lineDiff } from "./watch.ts";
@@ -98,6 +98,16 @@ export class TriggerEngine {
       const t = value as Trigger | null;
       if (t?.id && t.kind) this.triggers.set(t.id, { ...t, state: t.state ?? {} });
     }
+    // Triggers saved before reports existed get the default once (a daily brief reports, an hourly check does not).
+    const nowReports: Trigger[] = [];
+    for (const t of this.triggers.values()) {
+      if (t.report !== undefined) continue;
+      t.report = defaultReport(t, this.tz, new Date(this.now()));
+      await this.save(t);
+      // What still runs is news: a paused schedule or a reminder that already fired sends nothing either way.
+      if (t.report && t.enabled && !t.state.done) nowReports.push(t);
+    }
+    if (nowReports.length) await this.tellNowReports(nowReports);
     if (!(await this.ctx.storage.get("initialized"))) {
       if (![...this.triggers.values()].some((t) => t.kind === "heartbeat")) await this.createDefaultHeartbeat();
       await this.ctx.storage.set("initialized", true);
@@ -378,6 +388,7 @@ export class TriggerEngine {
             title: t.name,
             background: true,
             triggerId: t.id,
+            ...(t.report ? { report: true } : {}),
             ...(t.machine ? { machine: t.machine } : {}),
             ...(t.skill ? { skill: t.skill } : {}),
           });
@@ -412,6 +423,23 @@ export class TriggerEngine {
     if (!m) return { detail: `The computer "${name}" is no longer paired with the hub`, code: "machineGone", params: { machine: name } };
     if (m.status !== "online") return { detail: `The computer "${name}" is offline`, code: "machineOffline", params: { machine: name } };
     return undefined;
+  }
+
+  /**
+   * Schedules saved before reports existed that became reports on this start: the person hears it once (they are saved with
+   * their report now, so no later start counts them), with how to turn one back into a quiet check in the chat.
+   */
+  private async tellNowReports(list: Trigger[]): Promise<void> {
+    const names = list.map((t) => this.ctx.i18n.t("notify.nowReports.name", { name: t.name }));
+    try {
+      await this.ctx.core.call("notify", {
+        level: "notify",
+        title: this.ctx.i18n.t("notify.nowReports.title", { n: list.length }),
+        body: this.ctx.i18n.t("notify.nowReports.body", { n: list.length, names: names.join(", "), example: list[0].name }),
+      });
+    } catch (e: any) {
+      this.ctx.log.warn(`notify failed: ${e?.message ?? e}`);
+    }
   }
 
   /** A run its computer could not take: the user hears of it, or it would just not happen. */

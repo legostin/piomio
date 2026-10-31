@@ -163,6 +163,9 @@ describe("taught skills on the hub", () => {
     hub.approvals.resolve((await card()).id, "approve", { via: "web", remember: true });
     const r = await asked;
     expect(textOf(r)).toMatch(/^Saved the skill "order-water"/);
+    // It is Desk's: the agent who learned it, not the whole team.
+    expect(textOf(r)).toContain("It is yours: only you have it");
+    expect(hub.skills.holders!.get("order-water")).toEqual(["desk"]);
     expect(hub.rules.list().some((x) => x.tool === "hub_skill_save")).toBe(false);
     expect(readdirSync(skillDir("order-water")).sort()).toEqual(["SKILL.md", "crop-1.jpg", "teach-1-2.md", "teach-1.json", "teach-1.md"]);
     expect(readFileSync(join(skillDir("order-water"), "teach-1-2.md"), "utf8")).toBe("# Another");
@@ -196,8 +199,10 @@ describe("taught skills on the hub", () => {
     const asked = save({ ...WATER, description: "Orders water, now from the new menu", files: ["downloads/teach-1.md"], allow: [{ site: "5vodi.kz", label: "Заказать", maxAmount: 5000, currency: "KZT" }], replaces: "order-water" });
     const a = await card();
     expect(a.summary).toMatch(/^Update the skill «order-water»: Orders water, now from the new menu · Without asking: «Заказать» on 5vodi\.kz, up to/);
+    hub.skills.holders!.set("order-water", ["desk", "assistant"]);
     hub.approvals.resolve(a.id, "approve", { via: "web" });
-    expect(textOf(await asked)).toMatch(/^Saved the skill "order-water"/);
+    expect(textOf(await asked)).toMatch(/^Saved the skill "order-water".*Who has it stays the same\./);
+    expect(hub.skills.holders!.get("order-water")).toEqual(["desk", "assistant"]);
     expect(readdirSync(skillDir("order-water")).sort()).toEqual(["SKILL.md", "teach-1.md"]);
     const after = parseFrontmatter(readFileSync(join(skillDir("order-water"), "SKILL.md"), "utf8")).data;
     expect(after.created).toBe(before.created);
@@ -267,6 +272,7 @@ describe("taught skills on the hub", () => {
     expect(textOf(r)).toMatch(/Deleted the skill "order-water" and its 1 pre-approved click/);
     expect(existsSync(skillDir("order-water"))).toBe(false);
     expect(hub.skills.get("order-water")).toBeUndefined();
+    expect(hub.skills.holders!.all().has("order-water")).toBe(false);
     expect(skillRules()).toHaveLength(0);
   });
 });

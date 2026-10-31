@@ -119,6 +119,8 @@ export function BrainLoginCard({ brainRef, bare, compact, install }: { brainRef:
       </div>
     );
   }
+  // Bare and signed in: "Sign in again" is a quiet button at the end of the status line, not a line of its own.
+  const inRow = bare && signedIn;
   return (
     <div className={cx("flex flex-col gap-2.5", !bare && "my-2 rounded-xl border px-3 py-2.5", !bare && (running ? "border-accent/35 bg-accent-soft/40" : "border-border bg-surface-2/50"))}>
       {/* Bare: the surrounding card already names the brain. */}
@@ -126,9 +128,15 @@ export function BrainLoginCard({ brainRef, bare, compact, install }: { brainRef:
         {!bare && <LogIn className={cx("size-4", running ? "text-accent-text" : "text-muted")} />}
         {!bare && <span className="text-sm font-semibold">{t("brainLogin.title", { name: view.label })}</span>}
         {badge}
+        {inRow && startButton && (
+          <>
+            <span className="flex-1" />
+            {startButton}
+          </>
+        )}
       </div>
       {body}
-      {startButton && <div>{startButton}</div>}
+      {startButton && !inRow && <div>{startButton}</div>}
     </div>
   );
 }

@@ -34,6 +34,32 @@ export function cronNext(expr: string, tz: string, after: Date): Date | null {
   }
 }
 
+/** Runs in a week above which counting stops: 3 a day × 7 days. */
+const WEEKLY_RUNS_CAP = 3 * 7;
+
+/**
+ * How many times a day a 5-field cron fires, on average over the next week. The result is capped:
+ * counting stops once a week passes WEEKLY_RUNS_CAP runs, so above the cap it only means "more than 3 a day".
+ */
+export function cronRunsPerDay(expr: string, tz: string, from: Date): number {
+  try {
+    const c = cron(expr, tz);
+    const end = from.getTime() + 7 * 86_400_000;
+    let n = 0;
+    for (let d = c.nextRun(from); d && d.getTime() < end && n <= WEEKLY_RUNS_CAP; d = c.nextRun(d)) n++;
+    return n / 7;
+  } catch {
+    return Infinity;
+  }
+}
+
+/** Left unset, a one-time run is a report, and so is a schedule running at most 3 times a day; other kinds are checks. */
+export function defaultReport(t: Pick<Trigger, "kind" | "cron">, tz: string, now: Date): boolean {
+  if (t.kind === "once") return true;
+  if (t.kind !== "schedule" || !t.cron) return false;
+  return cronRunsPerDay(t.cron, tz, now) <= 3;
+}
+
 export function timeError(t: unknown): TriggerError | undefined {
   if (typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t)) return undefined;
   return new TriggerError("timeFormat", `Time "${String(t)}" must be in HH:MM format, e.g. "09:30"`, { value: String(t) });

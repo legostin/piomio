@@ -25,7 +25,8 @@ export interface PromptContext {
   group?: { title: string; members: Array<{ id: string; name: string }> };
   /** The agent's own dialog: who can take tasks (and where their brains run) and the computers tasks can run on. */
   dispatch?: {
-    team: Array<{ id: string; name: string; description: string; where: string[]; brains?: string[] }>;
+    /** `skills`: the ones given to that teammate itself (the whole team's are everyone's). */
+    team: Array<{ id: string; name: string; description: string; where: string[]; brains?: string[]; skills?: string[] }>;
     computers: Array<{ id: string; name: string; online: boolean }>;
     /** The brains the team can think with (by id), for `brain` in task_delegate. */
     brains?: Array<{ id: string; label: string; models: string[]; ready: boolean }>;
@@ -76,15 +77,16 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     "- In this dialog your own tools only look (read files, search the web): running commands and changing files is a task's work.",
     "- Anything with steps or deep thought (coding, analysis, checking, research, browsing, running commands, writing or changing code or files, long reading, careful writing) goes to a task with `task_delegate` (`goal`: complete instructions; `title`; `depth`; `about`) at once, one task per independent request: two requests in one message are two tasks. Then say in one short line what you started and end your turn; do not wait for tasks.",
     "- Say how hard each task is and what it is about (`depth`, `about` in task_delegate): `deep` for hard problems, `balanced` for everyday work, `fast` for simple errands; the hub then picks the brain and model that fit (a coding model for code, the most capable one for deep thought, a cheap quick one for errands) and moves on by itself when one is busy or over its limit. Name a `brain` only when it must be that one.",
-    "- Choose who does it: yourself, or the teammate whose role fits better. Choose where: the computer whose files, apps or hardware the work needs (`machine`). If the right agent or computer is unclear and the choice matters, ask the user one short question first; otherwise choose, and name your choice in a few words.",
+    "- Choose who does it: yourself, or the teammate whose role or skills fit better (the skills in the team list are that teammate's own: work that needs one goes to them). Choose where: the computer whose files, apps or hardware the work needs (`machine`). If the right agent or computer is unclear and the choice matters, ask the user one short question first; otherwise choose, and name your choice in a few words.",
     "- The user may write again while tasks run. A new request is a new task; a detail or a correction for work in progress goes to that task with `task_message`; \"stop that\" is `task_cancel`. The `[Open tasks you started]` lines before a message show what is still going.",
     "- A task may ask you something (a `[System]` note). Answer with `task_message` when you know (this dialog, memory); otherwise ask the user in one short message, then pass their answer on.",
     "- When a task finishes, its result comes to you: tell the user the outcome in a few lines, in your own words.",
   ];
   const team = c.dispatch.team.map((a) => {
+    const skills = a.skills?.length ? `skills: ${a.skills.join(", ")}` : "";
     const brains = a.brains?.length ? `brains: ${a.brains.join(", ")}` : "";
     const where = a.where.length ? `on: ${a.where.join(", ")}` : "";
-    const about = [brains, where].filter(Boolean).join("; ");
+    const about = [skills, brains, where].filter(Boolean).join("; ");
     return `- ${a.id}: ${a.name}${a.id === c.agent.id ? " (you)" : ""} — ${a.description || "no description"}${about ? ` (${about})` : ""}`;
   });
   if (team.length) lines.push("", "Your team (`to` in team_message, `agent` in task_delegate):", ...team);
@@ -185,20 +187,29 @@ export function buildSystemPrompt(c: PromptContext): string {
       "- What you make for the user (pictures, pages, documents, code) goes in your folder; in a task, in the task's own folder. Never put it on the Desktop, in Documents or anywhere else in the user's home unless they named that place: show it in the chat instead (`show_images` for pictures; the dialog that started a task can show the task's pictures too).",
     );
   }
+  // A trigger's run of a skill the person taught: it follows the skill, whichever way its result reaches them.
+  const taught = c.background && c.task?.skill ? c.skills.find((s) => s.name === c.task!.skill && s.taught) : undefined;
   if (c.background && c.task?.feedId) {
     lines.push("- This is a BACKGROUND run of one of the user's channels: the posts you publish with `feed_post` are what they see. Do not call `notify`.");
+  } else if (c.background && c.task?.deliver === "report") {
+    lines.push(
+      "- This is a scheduled REPORT the user asked for: your final reply is delivered to them as your message at its time (their chat and Telegram). Write it for them, complete, in their language. Do not call `notify`.",
+    );
+  } else if (c.background && c.task?.deliver === "digest") {
+    lines.push("- You are writing the user's digest: your final reply is the digest message itself. Do not call `notify`.");
   } else if (c.background) {
     lines.push(
       "- This is a BACKGROUND run: the user is not watching. When done, call `notify` exactly once with a level:",
       "  silent = nothing worth saying; digest = useful but not urgent; notify = worth interrupting now; ask = needs the user's decision.",
-      "  Be conservative: interrupt only when it really matters. Keep title short and body concise.",
+      "  Be conservative: interrupt only when it really matters. Write for the person, in their language: the title is the news itself, the body what happened, why it matters and what you suggest; leave out how you worked.",
     );
-    const taught = c.task?.skill ? c.skills.find((s) => s.name === c.task!.skill && s.taught) : undefined;
-    if (taught) {
-      lines.push(
-        `- This run follows the skill \`${taught.name}\` the person taught you: do the task as it says. You may click and type; an action with consequences (browser_submit) runs only if the person pre-approved it in the skill, otherwise it waits for their yes on a card. When the site changed and you found another way, say so in your notify: they can update the skill.`,
-      );
-    } else if (c.agent.initiative < 2) lines.push("- Your initiative level only allows reading and suggesting in background runs: propose actions instead of taking them.");
+    if (!taught && c.agent.initiative < 2) lines.push("- Your initiative level only allows reading and suggesting in background runs: propose actions instead of taking them.");
+  }
+  if (taught) {
+    const where = c.task?.deliver ? "your reply" : "your notify";
+    lines.push(
+      `- This run follows the skill \`${taught.name}\` the person taught you: do the task as it says. You may click and type; an action with consequences (browser_submit) runs only if the person pre-approved it in the skill, otherwise it waits for their yes on a card. When the site changed and you found another way, say so in ${where}: they can update the skill.`,
+    );
   }
   if (c.dispatch && !c.task && !c.group && !c.background) lines.push("", ...howYouWork({ ...c, dispatch: c.dispatch }));
   if (c.setup?.trim()) lines.push("", c.setup.trim());
@@ -208,4 +219,13 @@ export function buildSystemPrompt(c: PromptContext): string {
   }
   for (const a of c.appended) if (a?.trim()) lines.push("", a.trim());
   return lines.filter((l) => l !== undefined).join("\n");
+}
+
+/** The last line of a task's first prompt: how its result reaches the person. */
+export function taskEnding(task: Pick<Task, "background" | "feedId" | "deliver">): string {
+  if (!task.background) return "When you are done, briefly describe the result — it will be passed to whoever created the task.";
+  if (task.feedId) return "When you are done, briefly say what you posted.";
+  if (task.deliver === "report") return "Your final reply is the report the user receives: write it for them, complete.";
+  if (task.deliver === "digest") return "Your final reply is the digest the user receives.";
+  return "When you are done, call notify (once) with a short summary of the outcome.";
 }

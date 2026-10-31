@@ -183,7 +183,8 @@ export function TeamList({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Tabs value={tab} unread={unread} />
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" role="tabpanel">
+      {/* A short window cuts the list: its last rows fade out instead of ending on a sliced line. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 [mask-image:linear-gradient(to_bottom,#000_calc(100%_-_22px),transparent)]" role="tabpanel">
         {tab === "agents" && (
           <>
             {!agentList && (

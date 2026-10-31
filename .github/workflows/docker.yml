@@ -1,0 +1,139 @@
+# The server image (docker/Dockerfile) on GitHub's registry, ghcr.io/<owner>/piomio, for linux/amd64 and linux/arm64.
+# Each architecture is built on a runner of its own and started once (a fresh hub answers and waits for its setup)
+# before anything is published under a tag:
+#   main                  every push to main, and every Monday (the week's fresh system packages, CLIs and Chromium)
+#   X.Y.Z, X.Y, latest    a release: release.yml calls this on the version tag
+# docker-compose.yml runs ghcr.io/legostin/piomio:${PIOMIO_IMAGE_TAG:-latest}. A pull request that changes the image's
+# own files builds and checks it without publishing.
+name: docker image
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "README.md", "README.ru.md", "packages/site/**", "packages/desktop/**", "packaging/**"]
+  pull_request:
+    paths: ["docker/**", ".dockerignore", ".github/workflows/docker.yml"]
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+  # release.yml publishes the version's image with this workflow.
+  workflow_call:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  # A newer push to main makes an unfinished build of an older one pointless.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, platform: linux/amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      # The Dockerfile's REFRESH: a new week fetches the system packages, CLIs and Chromium anew instead of reusing the cache.
+      - name: This week
+        id: week
+        run: echo "refresh=$(date -u +%G-W%V)" >>"$GITHUB_OUTPUT"
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          pull: true
+          build-args: REFRESH=${{ steps.week.outputs.refresh }}
+          load: true
+          tags: piomio:check
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      # The setup code is logged once the hub listens and leads (core/src/app.ts).
+      - name: A fresh hub starts and waits for its setup
+        run: |
+          docker run -d --name piomio piomio:check
+          for i in $(seq 120); do
+            if docker logs piomio 2>&1 | grep -A1 "Piomio:"; then
+              docker exec piomio curl -fsS http://127.0.0.1:8080/api/auth/state | grep -q '"hasPassword":false'
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs piomio
+          exit 1
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The same build again, from the builder's cache: only the push is new. The tags come once both architectures are in.
+      - name: Publish by digest
+        id: push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: REFRESH=${{ steps.week.outputs.refresh }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+      - name: Keep the digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: image-digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - name: One tag for both architectures
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$DOCKER_METADATA_OUTPUT_VERSION"

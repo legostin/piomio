@@ -19,6 +19,9 @@ COPY packages/tailnet/*.go ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/piomio-tailnet .
 
 FROM node:24-bookworm-slim AS runtime-base
+# CI passes the week (.github/workflows/docker.yml): a new value fetches everything below anew instead of
+# taking it from the build cache, so the system packages, CLIs and Chromium stay current.
+ARG REFRESH=
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git sudo ca-certificates curl tini xvfb iptables procps ripgrep jq less openssh-client \
@@ -42,6 +45,10 @@ COPY docker/sudoers /etc/sudoers.d/piomio
 RUN chmod 0440 /etc/sudoers.d/piomio && visudo -c
 
 FROM runtime-base
+# Links the published image (ghcr.io) to the repository.
+LABEL org.opencontainers.image.source="https://github.com/legostin/piomio" \
+      org.opencontainers.image.description="Piomio: a self-hosted team of personal agents" \
+      org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build --chown=root:root /app /app
 COPY --from=tailnet /out/piomio-tailnet /usr/local/bin/piomio-tailnet
 WORKDIR /app

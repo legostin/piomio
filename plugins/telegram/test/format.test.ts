@@ -25,6 +25,14 @@ describe("telegram formatting", () => {
     expect(isPublicHttpUrl("https://localhost/x")).toBe(false);
   });
 
+  it("keeps escaped brackets and backslashes as text, so a name cannot make a link of its own", () => {
+    expect(markdownToHtml("From: [Evil\\](https://evil.example) \\[x](https://hub.example.com/channels/f1)")).toBe(
+      'From: <a href="https://hub.example.com/channels/f1">Evil](https://evil.example) [x</a>',
+    );
+    expect(markdownToHtml("C:\\\\ and \\[note\\] stay, C:\\Users too")).toBe("C:\\ and [note] stay, C:\\Users too");
+    expect(markdownToHtml("`a\\[b`")).toBe("<code>a\\[b</code>");
+  });
+
   it("turns tables into aligned monospace blocks, task lists into boxes, images into links", () => {
     const html = markdownToHtml("| City | Temp |\n|---|---:|\n| **Berlin** | 12 |\n| Rome | 21 |\n\nafter");
     expect(html).toBe("<pre>City    Temp\n──────  ────\nBerlin  12\nRome    21</pre>\n\nafter");

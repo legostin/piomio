@@ -2,10 +2,10 @@
 // (chat.toolResult); overrides run inside an error boundary that falls back to the core rendering.
 
 import { memo, useState } from "react";
-import { Bell, Check, CircleAlert, CornerUpLeft, FilePen, FileText, Mic, Play, ShieldAlert, SquareTerminal, X } from "lucide-react";
+import { Check, CircleAlert, CornerUpLeft, FilePen, FileText, Mic, Play, ShieldAlert, SquareTerminal, X } from "lucide-react";
 import type { AgentDef, ApprovalStatus, Message, MessagePart } from "@piomio/shared";
 import { groupParts } from "../../lib/parts";
-import { fileSize, formatDuration, formatTime, notifyLevel } from "../../lib/format";
+import { fileSize, formatDuration, formatTime } from "../../lib/format";
 import { useStore } from "../../lib/store";
 import { api, errorText } from "../../lib/api";
 import { showDetails } from "../../state/prefs";
@@ -26,6 +26,7 @@ import { BrainLoginCard } from "../../components/BrainLoginCard";
 import { BrainSetupCard } from "../../components/BrainSetupCard";
 import { IntegrationChatCard } from "../../components/IntegrationCard";
 import { ImagesCard } from "./ImagesCard";
+import { NotificationCard } from "./NotificationCard";
 import { MapCard } from "./MapCard";
 import { NewsCard } from "./NewsCard";
 import { Choices, FeedCard } from "./ChatButtons";
@@ -154,23 +155,6 @@ function ApprovalCard({ part }: { part: Extract<MessagePart, { type: "approval" 
         </button>
       )}
       {pending && <ApprovalActions approvalId={part.approvalId} />}
-    </div>
-  );
-}
-
-function NotificationCard({ part }: { part: Extract<MessagePart, { type: "notification" }> }) {
-  const lvl = notifyLevel(part.level);
-  return (
-    <div className="w-full max-w-md rounded-2xl border border-hairline bg-surface p-3.5 shadow-card">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <span className="flex size-7 items-center justify-center rounded-full bg-accent-soft text-accent-text">
-          <Bell className="size-4" />
-        </span>
-        <span className="min-w-0 flex-1 text-sm font-semibold">{part.title}</span>
-        <Badge tone={lvl.tone}>{lvl.label}</Badge>
-      </div>
-      {/* The hub's own lines (a digest's items, a calendar section) keep their breaks. */}
-      {part.body && <Markdown text={part.body} className="mt-1.5 text-sm" user />}
     </div>
   );
 }
@@ -343,7 +327,7 @@ function Parts({ message }: { message: Message }) {
           case "approval":
             return <ApprovalCard key={it.key} part={p} />;
           case "notification":
-            return <NotificationCard key={it.key} part={p} />;
+            return <NotificationCard key={it.key} part={p} taskId={message.taskId} />;
           case "error":
             return <ErrorPart key={it.key} message={p.message} />;
           case "attachment":

@@ -1,6 +1,8 @@
 // Text formatting for the Telegram Bot API (parse_mode HTML): escaping, a small markdown → HTML converter,
 // message splitting under the 4096-character limit, and entities → HTML for editing received messages.
 
+import { isPublicHttpUrl } from "@piomio/shared";
+
 export const TELEGRAM_LIMIT = 4096;
 
 export function escapeHtml(s: string): string {
@@ -11,29 +13,22 @@ export function escapeAttr(s: string): string {
   return escapeHtml(s).replace(/"/g, "&quot;");
 }
 
-/** Telegram rejects text links and URL buttons it cannot open (localhost, bare hosts). */
-export function isPublicHttpUrl(url: string, opts: { httpsOnly?: boolean } = {}): boolean {
-  let u: URL;
-  try {
-    u = new URL(url);
-  } catch {
-    return false;
-  }
-  if (u.protocol !== "https:" && (opts.httpsOnly || u.protocol !== "http:")) return false;
-  const host = u.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || !host.includes(".")) return false;
-  return true;
-}
+// Telegram rejects text links and URL buttons it cannot open: the hub's rule for a link that opens from anywhere.
+export { isPublicHttpUrl };
 
 const PH = "\u0000";
 
 /** Convert inline markdown (bold, italic, strike, inline code, links) of one line/paragraph to Telegram HTML. */
 function inlineToHtml(text: string): string {
   const slots: string[] = [];
-  const hold = (html: string) => `${PH}${slots.push(html) - 1}${PH}`;
+  const held = new RegExp(`${PH}(\\d+)${PH}`, "g");
+  // What is held may hold more (an escaped bracket in a link's label): it is filled in when it is held.
+  const hold = (html: string) => `${PH}${slots.push(html.replace(held, (_, i: string) => slots[Number(i)])) - 1}${PH}`;
 
   // Inline code first: its content is literal.
   let s = text.replace(/`([^`\n]+)`/g, (_, code: string) => hold(`<code>${escapeHtml(code)}</code>`));
+  // Escaped brackets and backslashes are text: "\[" never opens a link, "\]" never closes its label.
+  s = s.replace(/\\([\\[\]])/g, (_, c: string) => hold(c));
   // Images ![alt](url): Telegram has no inline images, so a link with a picture sign.
   s = s.replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, (_, alt: string, url: string) => {
     const label = `🖼 ${escapeHtml(alt || url)}`;
@@ -46,7 +41,7 @@ function inlineToHtml(text: string): string {
   // Bare URLs: Telegram links them itself; just protect them from emphasis.
   s = s.replace(/\bhttps?:\/\/[^\s<>()\u0000]+/g, (url) => hold(escapeHtml(url)));
   s = emphasis(escapeHtml(s));
-  return s.replace(new RegExp(`${PH}(\\d+)${PH}`, "g"), (_, i: string) => slots[Number(i)]);
+  return s.replace(held, (_, i: string) => slots[Number(i)]);
 }
 
 function emphasis(s: string): string {

@@ -18,7 +18,7 @@ import { AVATAR_COLORS, AVATAR_SHAPES, defaultAvatar, formatBrainRef, KEY_PROVID
 import { normalizeSettings, SetupError } from "../machine-setup.ts";
 import { siteDomain } from "../secrets.ts";
 import type { Hub } from "../app.ts";
-import { agentFromMarkdown, localizedAgent, patchAgent } from "../agents.ts";
+import { agentFromMarkdown, agentName, localizedAgent, patchAgent } from "../agents.ts";
 import { draftPatch } from "../agent-drafts.ts";
 import { hubLocale, t, tFor } from "../i18n.ts";
 import { listIntegrations } from "../integrations.ts";
@@ -28,6 +28,7 @@ import { inviteUrl, machineHubUrl } from "../pairing.ts";
 import { isSetupStep, SETUP_STEPS } from "../setup.ts";
 import { sanitizeToolName } from "./registry.ts";
 import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, skillSaveSummary } from "../taught-skills.ts";
+import { hasSkill } from "../skills.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
@@ -42,7 +43,7 @@ const CARDS = new Set(["secret_request", "plugin_setup", "agent_draft", "brain_l
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
 const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save"]);
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
-export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete"];
+export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign"];
 
 /** The person said "always" (or "don't ask") in their own words. */
 const ALWAYS_WORDS = /\balways\b|\bwithout asking\b|\bdon'?t ask\b|\u0432\u0441\u0435\u0433\u0434\u0430|\u043d\u0435 \u0441\u043f\u0440\u0430\u0448\u0438\u0432|\u0431\u0435\u0437 (?:\u0441\u043f\u0440\u043e\u0441\u0430|\u0432\u043e\u043f\u0440\u043e\u0441|\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434)/iu;
@@ -178,7 +179,8 @@ export function registerHubTools(hub: Hub): void {
     {
       name: "agents_list",
       effect: "read",
-      description: "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative and which one is the default.",
+      description:
+        "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative, the skills given to them (not counting the whole team's) and which one is the default.",
       inputSchema: obj({}),
     },
     () => {
@@ -194,6 +196,7 @@ export function registerHubTools(hub: Hub): void {
           model: a.model,
           thinking: a.thinking,
           initiative: a.initiative,
+          skills: hub.skills.ownOf(a.id),
           source: a.source,
           default: a.id === def,
         })),
@@ -926,7 +929,16 @@ export function registerHubTools(hub: Hub): void {
       const check = () => checkSkillSave(skill, { skills: hub.skills, skillsDir, ...(local ? { workspace: hub.runner.workspacePath(s) } : {}) });
       check();
       const save = (via: string): ToolResult => {
+        const holders = hub.skills.holders!;
+        const had = skill.replaces ? holders.get(skill.replaces) : [];
         const saved = saveTaughtSkill(skill, check(), { skills: hub.skills, rules: hub.rules, skillsDir, agentId: ctx.agentId });
+        // A new skill is the one who learned it; an update keeps whoever had it (under its new name, when renamed).
+        if (!skill.replaces) holders.set(skill.name, [ctx.agentId]);
+        else if (skill.replaces !== skill.name) {
+          holders.set(skill.replaces, []);
+          holders.set(skill.name, had);
+        }
+        hub.bus.emit("skills.updated", {});
         hub.audit.append(`agent:${ctx.agentId}`, skill.replaces ? "skill.update" : "skill.save", skill.name, {
           via,
           ...(skill.replaces ? { replaces: skill.replaces } : {}),
@@ -935,9 +947,12 @@ export function registerHubTools(hub: Hub): void {
           rules: saved.rules.map((r) => r.id),
         });
         const allowed = saved.rules.length ? ` ${saved.rules.length} pre-approved click(s) now run without a card.` : "";
+        const whose = skill.replaces
+          ? "Who has it stays the same."
+          : `It is yours: only you have it (skill_load ${skill.name}); hub_skill_assign gives it to teammates too when the person wants.`;
         return text(
           `Saved the skill "${skill.name}" (${saved.dir}${saved.files.length ? `, with ${saved.files.join(", ")}` : ""}).${allowed} ` +
-            `Every agent of the team can use it (skill_load ${skill.name}); a trigger can run it on a schedule (trigger_create with skill "${skill.name}"). ` +
+            `${whose} A trigger can run it on a schedule (trigger_create with skill "${skill.name}"). ` +
             "Tell the person in a sentence.",
         );
       };
@@ -989,10 +1004,74 @@ export function registerHubTools(hub: Hub): void {
     (i, ctx) => {
       const name = String(i.name ?? "").trim();
       const r = deleteTaughtSkill(name, { skills: hub.skills, rules: hub.rules });
+      hub.skills.holders!.set(name, []);
+      hub.bus.emit("skills.updated", {});
       hub.audit.append(`agent:${ctx.agentId}`, "skill.delete", name, { rules: r.rules });
       return text(`Deleted the skill "${name}"${r.rules ? ` and its ${r.rules} pre-approved click(s)` : ""}. Tell the person in a sentence.`);
     },
     (i) => t("skills.delete", { name: String(i?.name ?? "") }),
+  );
+
+  // ---------- who on the team has which skill ----------
+
+  reg(
+    {
+      name: "skills_list",
+      effect: "read",
+      description:
+        'List the team\'s skills: name, description, where it comes from, whether the person taught it, and who has it ("team" = every agent, or the ids of the agents it was given to).',
+      inputSchema: obj({}),
+    },
+    () => {
+      const held = hub.skills.holders!.all();
+      return json(hub.skills.list().map((s) => ({ name: s.name, description: s.description, source: s.source, taught: s.taught, has: held.get(s.name) ?? "team" })));
+    },
+  );
+
+  const holdersText = (ids: string[]) =>
+    ids
+      .map((id) => {
+        const a = hub.agents.get(id);
+        return a ? agentName(a, hubLocale()) : id;
+      })
+      .join(", ");
+  reg(
+    {
+      name: "skill_assign",
+      effect: "local-write",
+      description:
+        'Set who on the team has a skill, when the person says so ("give the posting skill to SMM", "only the researcher", "let everyone use it"). ' +
+        "`agents` is the whole new list of agent ids that have it; [] gives it back to the whole team. To add or take away one agent, start from who has it now (hub_skills_list). " +
+        "An agent without a skill does not see it, and work that needs it goes to an agent who has it. " +
+        'When it is unclear whom the person means, ask in one short question with show_choices (the teammates and "everyone").',
+      inputSchema: obj(
+        {
+          name: { type: "string", description: "The skill's name (hub_skills_list)" },
+          agents: { type: "array", items: { type: "string" }, description: "Agent ids that have it; [] = the whole team" },
+        },
+        ["name", "agents"],
+      ),
+    },
+    (i, ctx) => {
+      const name = String(i.name ?? "").trim();
+      if (!hub.skills.get(name)) return text(`No skill "${name}". Skills: ${hub.skills.list().map((s) => s.name).join(", ") || "none"}.`, true);
+      if (!Array.isArray(i.agents)) return text("agents must be a list of agent ids ([] = the whole team).", true);
+      const ids = [...new Set(i.agents.map((x: unknown) => String(x).trim().toLowerCase()).filter(Boolean))] as string[];
+      const unknown = ids.filter((id) => !hub.agents.get(id));
+      if (unknown.length) return text(`No agent ${unknown.join(", ")}. The team: ${hub.agents.list().map((a) => `${a.id} (${a.name})`).join(", ")}.`, true);
+      hub.skills.holders!.set(name, ids);
+      hub.audit.append(`agent:${ctx.agentId}`, "skill.assign", name, { agents: ids });
+      hub.bus.emit("skills.updated", {});
+      // An agent whose own skill patterns leave the skill out still does not get it.
+      const left = ids.filter((id) => !hasSkill(hub.agents.get(id)!, name, ids));
+      const note = left.length ? ` Their skill patterns leave it out for ${left.join(", ")}: the person can change them in that agent's settings.` : "";
+      return text(`${ids.length ? `Only ${holdersText(ids)} now ${ids.length === 1 ? "has" : "have"} the skill "${name}".` : `The skill "${name}" is the whole team's now.`}${note} Tell the person in a sentence.`);
+    },
+    (i) => {
+      const name = String(i?.name ?? "");
+      const ids = Array.isArray(i?.agents) ? i.agents.map(String) : [];
+      return ids.length ? t("skills.assign", { name, agents: holdersText(ids) }) : t("skills.assignTeam", { name });
+    },
   );
 
   reg(

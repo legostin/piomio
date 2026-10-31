@@ -16,10 +16,11 @@ interface Fake {
   messages: Array<{ conversationId: string; role: string; text: string; taskId?: string }>;
   heard: Array<{ file: string; mimeType?: string; bytes: string }>;
   created: any[];
+  notified: any[];
 }
 
 function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: string) => Promise<string>; wake?: "steered" | "started" | "cancelled" } = {}): Fake {
-  const f: Fake = { told: [], woken: [], messages: [], heard: [], created: [], hub: undefined as unknown as Hub };
+  const f: Fake = { told: [], woken: [], messages: [], heard: [], created: [], notified: [], hub: undefined as unknown as Hub };
   const convs = new Map<string, Conversation>([
     ["c_dialog", { id: "c_dialog", kind: "agent", agentId: "assistant" } as Conversation],
     ["c_other", { id: "c_other", kind: "agent", agentId: "coder" } as Conversation],
@@ -47,6 +48,12 @@ function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: s
       createTask: (t: any) => {
         f.created.push(t);
         return { id: "t_new", ...t };
+      },
+    },
+    notifier: {
+      notify: async (n: any) => {
+        f.notified.push(n);
+        return { id: "n_1", effectiveLevel: n.level };
       },
     },
     transcriber: {
@@ -126,6 +133,16 @@ describe("core methods for plugins", () => {
     expect(f.created[1].skill).toBeUndefined();
     expect(f.created[1].goal).toBe("No skill");
     await expect(call("triggers", "tasks.create", { agentId: "assistant", goal: "x", skill: "nope" })).rejects.toThrow(/No skill "nope"/);
+  });
+
+  it("notify records a valid call and tells the plugin what is wrong with an invalid one", async () => {
+    const f = fakeHub();
+    const call = createCoreCall(f.hub);
+    expect(await call("triggers", "notify", { title: "Ботсад закрыт", body: "Весь день", agentId: "assistant" })).toEqual({ id: "n_1", level: "notify" });
+    expect(f.notified).toEqual([{ level: "notify", title: "Ботсад закрыт", body: "Весь день", triggerId: undefined, agentId: "assistant", taskId: undefined }]);
+    await expect(call("triggers", "notify", { level: "normal", title: "x" })).rejects.toThrow(/level must be one of silent, digest, notify, ask/);
+    await expect(call("triggers", "notify", { level: "digest" })).rejects.toThrow(/title is required/);
+    expect(f.notified).toHaveLength(1);
   });
 });
 

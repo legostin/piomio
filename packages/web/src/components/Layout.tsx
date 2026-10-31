@@ -5,7 +5,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { ListChecks, Menu, PanelRight, Settings, X } from "lucide-react";
+import { Inbox, ListChecks, Menu, PanelRight, Settings, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { ACTIVE_STATUSES } from "../lib/format";
 import { agentForPath, chatForPath } from "../lib/team";
@@ -59,6 +59,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   // The plugins' live views (the agents' browser): opened from here at any time, not only when an agent works there.
   const { liveViews } = usePluginRegistry();
   const live = useStore(liveWindow);
+  const inboxOpen = p.open && p.section === "notifications";
   const item = (on: boolean) =>
     cx(
       "press flex w-full items-center gap-2.5 rounded-xl px-3 py-[7px] text-left text-[13.5px] font-medium",
@@ -94,6 +95,20 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <button
           type="button"
           onClick={() => {
+            if (inboxOpen) togglePanel();
+            else openPanel("notifications");
+            onNavigate?.();
+          }}
+          aria-pressed={inboxOpen}
+          className={item(inboxOpen)}
+        >
+          <Inbox className="size-[17px]" />
+          <span className="min-w-0 flex-1 truncate">{t("nav.notifications")}</span>
+          {!!s?.inboxUnread && <span className="rounded-full bg-accent px-1.5 text-[11px] leading-[18px] font-semibold text-white tabular-nums">{s.inboxUnread}</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
             if (tasksOpen) togglePanel();
             else openPanel("tasks");
             onNavigate?.();
@@ -113,12 +128,12 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <button
           type="button"
           onClick={() => {
-            if (p.open && !tasksOpen) togglePanel();
+            if (p.open && !tasksOpen && !inboxOpen) togglePanel();
             else openPanel("home");
             onNavigate?.();
           }}
-          aria-pressed={p.open && !tasksOpen}
-          className={item(p.open && !tasksOpen)}
+          aria-pressed={p.open && !tasksOpen && !inboxOpen}
+          className={item(p.open && !tasksOpen && !inboxOpen)}
         >
           <Settings className="size-[17px]" />
           {t("nav.settings")}

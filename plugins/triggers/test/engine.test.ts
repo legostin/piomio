@@ -79,6 +79,61 @@ describe("trigger engine", () => {
     e3.stop();
   });
 
+  it("gives triggers saved before reports existed their default once, and keeps it", async () => {
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    kv.set("trigger:t_daily", base({ id: "t_daily", cron: "0 8 * * *" }));
+    kv.set("trigger:t_hourly", base({ id: "t_hourly", cron: "0 * * * *" }));
+    kv.set("trigger:t_choice", base({ id: "t_choice", cron: "0 * * * *", report: true }));
+    const f = fakeCtx(kv);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    expect([e.get("t_daily")!.report, e.get("t_hourly")!.report, e.get("t_choice")!.report]).toEqual([true, false, true]);
+    expect([(kv.get("trigger:t_daily") as Trigger).report, (kv.get("trigger:t_hourly") as Trigger).report]).toEqual([true, false]);
+    e.stop();
+  });
+
+  it("tells the person once which schedules now send their report as a message, and how to undo it in the chat", async () => {
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    kv.set("trigger:t_daily", base({ id: "t_daily", name: "Morning brief", cron: "0 8 * * *" }));
+    kv.set("trigger:t_evening", base({ id: "t_evening", name: "Evening summary", cron: "0 19 * * *" }));
+    // Stays a quiet check; already saved as a report; paused; a reminder that already fired: none of them is news.
+    kv.set("trigger:t_hourly", base({ id: "t_hourly", name: "Hourly check", cron: "0 * * * *" }));
+    kv.set("trigger:t_saved", base({ id: "t_saved", name: "Saved report", cron: "0 9 * * *", report: true }));
+    kv.set("trigger:t_paused", base({ id: "t_paused", name: "Paused brief", cron: "0 7 * * *", enabled: false }));
+    kv.set("trigger:t_fired", base({ id: "t_fired", kind: "once", name: "Fired reminder", cron: undefined, at: "2026-10-02T09:00:00Z", enabled: false, state: { done: true } }));
+    const f = fakeCtx(kv);
+    (f.ctx.i18n as any).t = (key: string, p?: Record<string, unknown>) => (p ? `${key} ${JSON.stringify(p)}` : key);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    expect([e.get("t_daily")!.report, e.get("t_evening")!.report, e.get("t_paused")!.report, e.get("t_fired")!.report]).toEqual([true, true, true, true]);
+    const told = f.notified();
+    expect(told).toHaveLength(1);
+    expect(told[0].params).toMatchObject({ level: "notify", title: 'notify.nowReports.title {"n":2}' });
+    expect(told[0].params.agentId).toBeUndefined();
+    const body: string = told[0].params.body;
+    expect(body).toMatch(/^notify\.nowReports\.body /);
+    for (const name of ["Morning brief", "Evening summary"]) expect(body).toContain(name);
+    for (const name of ["Hourly check", "Saved report", "Paused brief", "Fired reminder"]) expect(body).not.toContain(name);
+    e.stop();
+
+    // They are saved with their report now: the next start announces nothing.
+    const again = new TriggerEngine(f.ctx);
+    await again.start();
+    expect(f.notified()).toHaveLength(1);
+    again.stop();
+  });
+
+  it("says nothing when no schedule became a report", async () => {
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    kv.set("trigger:t_hourly", base({ id: "t_hourly", cron: "0 * * * *" }));
+    kv.set("trigger:t_saved", base({ id: "t_saved", cron: "0 9 * * *", report: false }));
+    const f = fakeCtx(kv);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    expect(f.notified()).toEqual([]);
+    e.stop();
+  });
+
   it("runs at most one catch-up for missed runs after a restart", async () => {
     const now = Date.now();
     const kv = new Map<string, unknown>([["initialized", true]]);

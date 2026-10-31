@@ -144,6 +144,9 @@ describe("settings panel sections", () => {
     expect(sectionForPath("/devices")).toBe("devices");
     // The integrations catalog became part of the Plugins one.
     expect(sectionForPath("/integrations")).toBe("plugins");
+    // Notifications became the Inbox: its old URL still opens it.
+    expect(sectionForPath("/inbox")).toBe("notifications");
+    expect(sectionForPath("/notifications/")).toBe("notifications");
     expect(sectionForPath("/chat/abc")).toBeUndefined();
     expect(sectionForPath("/tasks/t1")).toBeUndefined();
   });

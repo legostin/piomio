@@ -43,6 +43,8 @@ export interface Trigger {
   /** The computer the runs happen on (a machines.list id, "local" for the hub's own) and its name; unset: the agent's usual brain. */
   machine?: string;
   machineName?: string;
+  /** schedule, once: each run's final reply is a report delivered to the user as is (no notify levels). */
+  report?: boolean;
   /** A skill every run follows (one the person taught by showing): its tasks carry it (Task.skill). */
   skill?: string;
   /** schedule: 5-field cron in the user's timezone. */
@@ -87,6 +89,8 @@ export interface TriggerInput {
   machine?: string | null;
   /** A skill's name; null or "" clears it. */
   skill?: string | null;
+  /** schedule, once: true when each run's final reply is a report delivered as is; unset takes the default. */
+  report?: boolean;
   cron?: string;
   at?: string;
   url?: string;

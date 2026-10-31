@@ -75,11 +75,11 @@ That’s it. From here the assistant leads the setup in the chat, one step at a 
 
 ```bash
 git clone https://github.com/legostin/piomio.git && cd piomio
-docker compose up -d --build
+docker compose up -d
 docker compose logs piomio | grep -A1 "Piomio:"
 ```
 
-Open http://localhost:8080, enter the setup code from the logs and pick a password.
+Open http://localhost:8080, enter the setup code from the logs and pick a password. On a remote server, connect from your computer first with `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server`, or open the hub on the server's address: see [On a server](#on-a-server).
 
 **On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub by a QR code, and approvals need Face ID.
 
@@ -167,19 +167,28 @@ The desktop version runs the hub, plugins and CLI brains as your own user: the D
 
 The app is not signed yet. Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. If macOS refuses to open it, choose **Open Anyway** in **System Settings → Privacy & Security** (on macOS 13 and 14, Control-clicking the app and choosing **Open** works too).
 
+<a id="on-a-server"></a>
 #### On a server (Docker)
 
 ```bash
-git clone <repo> piomio && cd piomio
-docker compose up -d --build
+git clone https://github.com/legostin/piomio.git && cd piomio
+docker compose up -d
 docker compose logs piomio | grep -A1 "Piomio:"
 ```
 
-1. Open http://localhost:8080, enter the **setup code** from the logs and choose a password. Your browser's language becomes the hub language (see [Languages](#languages)).
+`docker compose` takes the ready image from GitHub (`ghcr.io/legostin/piomio`, amd64 and arm64): `latest` is the last release, `main` follows every change to main (`PIOMIO_IMAGE_TAG`). `docker compose up -d --build` builds it from the folder instead. To update: `git pull && docker compose pull && docker compose up -d`.
+
+**Opening it.** The chat (`8080`) and the security console (`8081`) open on the server itself (`127.0.0.1`), so nothing faces the internet. From your computer:
+
+- **Through SSH**, nothing to set up: run `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server` and keep it running. http://localhost:8080 in your browser is now the hub, passkeys included.
+- **On the server's address**: put `PIOMIO_BIND=0.0.0.0` and `PIOMIO_PUBLIC_URL=http://<address>:8080` in `.env`, then `docker compose up -d`. Without `PIOMIO_PUBLIC_URL` the hub refuses every address but `localhost`. This is plain HTTP: on the open internet put HTTPS in front ([your own Tailscale or proxy](#your-own-proxy)). Note that Docker opens published ports past `ufw`.
+- After the setup, [access from anywhere](#access-from-anywhere) gives the hub an HTTPS link of its own: one button in the chat.
+
+1. Open http://localhost:8080 (or your address), enter the **setup code** from the logs and choose a password. Your browser's language becomes the hub language (see [Languages](#languages)).
 2. Until a brain works, the chat shows a setup card: sign Claude Code or Codex in with your subscription (on a desktop install the hub can install a missing CLI first), or give an API key (see below). Whatever you write meanwhile is answered as soon as a brain is connected.
 3. Then the assistant leads the rest of the setup in the chat, one step at a time and only when you agree: Telegram, a backup brain, other computers, and getting to know you. Say "not now" to skip a step, "let's continue the setup" to come back to it. When something needs a key or a token, the assistant shows a secure field in the chat: the value goes straight into the encrypted vault and the model only ever sees `vault://id`. You can also just paste a token into a message: the hub recognises known formats, takes it out of the message and stores it.
 
-Everything is stored in the `piomio-data` volume (`/data`): the database, the vault, workspaces, CLI logins and plugins.
+Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example) lists each one with an example, [Environment variables](#environment-variables) has the defaults. Everything is stored in the `piomio-data` volume (`/data`): the database, the vault, workspaces, CLI logins and plugins.
 
 </details>
 
@@ -305,9 +314,10 @@ Through the link come the web UI (sign in with your Piomio password: passkeys be
 
 The desktop app and the Docker image include the node. When you run from source, build it with `npm run build:tailnet` (needs Go); without it the card says it is unavailable.
 
+<a id="your-own-proxy"></a>
 #### Your own Tailscale or proxy
 
-Don't publish the ports to the internet directly. To reach the security console from elsewhere too, install [Tailscale](https://tailscale.com) on the host and let `tailscale serve` put HTTPS in front of both ports (HTTPS certificates must be enabled for your tailnet):
+Don't open the ports to the internet over plain HTTP. To reach the security console from elsewhere too, install [Tailscale](https://tailscale.com) on the host and let `tailscale serve` put HTTPS in front of both ports (HTTPS certificates must be enabled for your tailnet):
 
 ```bash
 tailscale serve --bg --https=8080 http://127.0.0.1:8080
@@ -358,11 +368,16 @@ docker exec piomio piomio-entrypoint audit-verify
 </details>
 
 
+<a id="environment-variables"></a>
 <details>
 <summary><b>Environment variables</b></summary>
 
+On a server they go in `.env` next to `docker-compose.yml` ([.env.example](.env.example) has them with examples). The first two are read by `docker-compose.yml` itself.
+
 | Variable | Default | |
 |---|---|---|
+| `PIOMIO_IMAGE_TAG` | `latest` | the image `docker-compose.yml` runs: `latest` (the last release), `main` (every change to main) or a version |
+| `PIOMIO_BIND` | `127.0.0.1` | where `docker-compose.yml` opens ports 8080 and 8081 on the server: `0.0.0.0` opens them on every address (set `PIOMIO_PUBLIC_URL` too) |
 | `PIOMIO_PUBLIC_URL` | `http://localhost:8080` | address of the chat UI, used for links and the Origin check |
 | `PIOMIO_CONSOLE_URL` | same host, port 8081 | address of the security console |
 | `PIOMIO_ALLOWED_HOSTS` | — | extra host names, comma-separated |
@@ -381,6 +396,9 @@ docker exec piomio piomio-entrypoint audit-verify
 | `PIOMIO_GOOGLE_CLIENT_ID`, `PIOMIO_GOOGLE_CLIENT_SECRET` | Piomio's client | your own Google OAuth client (type Desktop app) for Google integrations |
 | `PIOMIO_TAILNET_BIN` | `packages/tailnet/bin/<platform>-<arch>/piomio-tailnet` | the hub's Tailscale node for access from anywhere |
 | `PIOMIO_TAILNET_HOSTNAME` | `piomio` | the node's name in your tailnet: the link's first label |
+| `PIOMIO_REPLICA_NAME` | the host name | what this machine is called among the hub's replicas |
+| `PIOMIO_NODE_URLS` | the machine's address | where machines reach this hub, comma-separated |
+| `PIOMIO_ROUTER_URL` | `https://routing.openstreetmap.de` | the OSRM server for routes on maps |
 | `TZ` | system time zone (`UTC` in the image) | default time zone for reminders, quiet hours and the digest |
 
 Most behaviour is configured in **Settings** in the web UI: language, time zone, quiet hours, digest times, `channelApprovalDetails` (full action details in Telegram) and `brainEgressAllow` (extra hosts brains may reach). One hub setting has no field on that page yet: `egressPrivateAllow`, the local-network hosts plugins and brains may reach (for example `searxng` or `nas.local`); set it through `PATCH /api/settings`.

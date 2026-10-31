@@ -2,13 +2,13 @@
 
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { ImageItem, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ToolDescriptor, ToolResult } from "@piomio/shared";
-import { brainsFor, isThinkingPreset, MAP_ICONS, sameBrain } from "@piomio/shared";
+import type { BehindEntry, ImageItem, InboxEntry, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ToolDescriptor, ToolResult } from "@piomio/shared";
+import { brainsFor, isThinkingPreset, MAP_ICONS, sameBrain, truncate } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
 import type { SkillIndex } from "../skills.ts";
 import type { VaultService } from "../vault/service.ts";
 import type { Store } from "../store.ts";
-import type { Notifier } from "../notifier.ts";
+import { notifyInputError, notifyRefusal, type Notifier } from "../notifier.ts";
 import type { AgentRegistry } from "../agents.ts";
 import { imageTypeOf, MAX_IMAGE_BYTES, parseImageUrl } from "../media.ts";
 import { mimeOf } from "../attachments.ts";
@@ -121,6 +121,56 @@ function workspaceImage(path: string, workspace: string, root: string, more: str
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
+/** How many Inbox entries and behind-the-scenes rows inbox_view reads to the agent: the newest. */
+const INBOX_VIEW_ROWS = 20;
+
+/** The Inbox as the agent reads it (English, for the model): unread questions, the next digest, what came in, what stayed behind the scenes and why. */
+function inboxViewText(n: Notifier): string {
+  const tz = n.settings.get().timezone;
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const when = (iso: string) => {
+    const p = Object.fromEntries(fmt.formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+  };
+  // Titles are other runs' words: one quoted line each.
+  const quoted = (s: string) => JSON.stringify(truncate(s.replace(/\s+/g, " ").trim(), 120));
+  const head = (e: Pick<InboxEntry, "title" | "agentId" | "createdAt">) => `${quoted(e.title)}${e.agentId ? ` from ${n.agentName(e.agentId)}` : ""}, ${when(e.createdAt)}`;
+  const why = (b: BehindEntry): string => {
+    const reason = b.reason ? ` (${b.reason})` : "";
+    if (b.supersededBy) return "replaced by a newer one";
+    if (b.kind === "approval") return `an approval push; the approval itself is in the chat${reason}`;
+    if (b.digest) return `went into the digest ${quoted(b.digest.title)} (${when(b.digest.createdAt)})${reason}`;
+    if (b.waiting) return `waits for the next digest${reason}`;
+    if (b.level === "digest") return `went into an earlier digest${reason}`;
+    return b.reason ? `silent (${b.reason})` : "silent, just for the record";
+  };
+
+  const view = n.inbox({ limit: INBOX_VIEW_ROWS });
+  const behind = n.behind({ limit: INBOX_VIEW_ROWS }).slice(0, INBOX_VIEW_ROWS);
+  const entries = view.entries.slice(0, INBOX_VIEW_ROWS);
+  const lines = [`The user's Inbox (times are ${tz}).`];
+  const questions = view.questions.slice(0, INBOX_VIEW_ROWS);
+  if (questions.length) lines.push(`Unread questions (${view.questions.length}):`, ...questions.map((q) => `- ${head(q)}`));
+  else lines.push("Unread questions: none.");
+  const next = view.next;
+  lines.push(
+    !next
+      ? "Next digest: nothing waits for it."
+      : next.time
+        ? `Next digest: at ${next.time}, ${next.count} item(s) waiting.`
+        : `Next digest: ${next.count} item(s) waiting; no digest times are set, so it goes out only when asked (digest_now).`,
+  );
+  if (entries.length) {
+    lines.push("Recent entries (newest first):", ...entries.map((e) => `- ${e.kind} ${head(e)}, ${e.unread ? "unread" : "read"}`));
+    if (view.hasMore || view.entries.length > entries.length) lines.push("Older entries are not shown.");
+  } else lines.push("Recent entries: none.");
+  if (behind.length) {
+    const more = view.behindCount > behind.length ? `; ${view.behindCount} in all, older ones not shown` : "";
+    lines.push(`Behind the scenes (newest first; these did not reach the user${more}):`, ...behind.map((b) => `- ${b.kind} ${head(b)}: ${why(b)}`));
+  } else lines.push("Behind the scenes: nothing.");
+  return lines.join("\n");
+}
+
 /** What a task is about (task_delegate `about`) as the model skill the hub looks for. */
 const ABOUT: Record<string, ModelSkill | undefined> = { code: "code", analysis: "reasoning", research: "reasoning", writing: "writing" };
 
@@ -138,7 +188,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
     {
       name: "notify",
       description:
-        "Tell the user something proactively. level: silent (log only), digest (goes into the next summary), notify (deliver now — interrupts the user), ask (needs the user's decision). Use sparingly.",
+        "Tell the user something proactively. level: silent (log only), digest (goes into the next digest the assistant writes), notify (deliver now: interrupts the user), ask (needs the user's decision). Use sparingly. Write for the person, in their language: the title is the news itself (\"The botanical garden is closed on 2 November\"), not your process (\"Check finished\"); the body says what happened, why it matters and what you suggest. Leave out how you worked (failed sources, HTTP errors, feeds, tool names) unless it changes what they should do.",
       effect: "local-write",
       inputSchema: {
         type: "object",
@@ -152,9 +202,13 @@ export function registerCoreTools(d: CoreToolDeps): void {
     },
     async (i, ctx) => {
       const task = ctx.taskId ? d.store.getTask(ctx.taskId) : undefined;
+      const refused = notifyRefusal(task);
+      if (refused) return text(refused);
+      const invalid = notifyInputError(i.level, i.title);
+      if (invalid) return text(`Nothing was sent: ${invalid}`, true);
       const n = await d.notifier.notify({
         level: i.level,
-        title: String(i.title ?? "").slice(0, 200),
+        title: String(i.title).trim().slice(0, 200),
         body: String(i.body ?? ""),
         agentId: ctx.agentId,
         taskId: ctx.taskId,
@@ -163,6 +217,31 @@ export function registerCoreTools(d: CoreToolDeps): void {
       });
       return text(`Notification recorded (level: ${n.effectiveLevel}${n.reason ? `, ${n.reason}` : ""}).`);
     },
+  );
+
+  reg(
+    {
+      name: "digest_now",
+      description:
+        "Send the user's digest now instead of waiting for the next digest time: the hub gathers what waits and the default agent writes it. Says how many items went in, or that there was nothing.",
+      effect: "local-write",
+      inputSchema: { type: "object", properties: {} },
+    },
+    async () => {
+      const n = await d.notifier.flushDigest();
+      return text(n ? `The digest is being written from ${n} item(s); it lands in the user's chat in a minute.` : "Nothing waits for a digest: nothing was sent.");
+    },
+  );
+
+  reg(
+    {
+      name: "inbox_view",
+      description:
+        "Read the user's Inbox: unread questions waiting for their answer, when the next digest goes out and how many items wait for it, the newest entries (reports, digests, alerts, questions) with read state, and what stayed behind the scenes and why (waits for the digest, went into which digest, silent and why, replaced). Read-only.",
+      effect: "read",
+      inputSchema: { type: "object", properties: {} },
+    },
+    () => text(inboxViewText(d.notifier)),
   );
 
   reg(
@@ -350,9 +429,21 @@ export function registerCoreTools(d: CoreToolDeps): void {
       effect: "read",
       inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
     },
-    (i) => {
-      const s = d.skills.load(String(i.name));
-      return s ? text(s) : text(`Skill ${i.name} not found`, true);
+    (i, ctx) => {
+      const name = String(i.name);
+      // A skill given to teammates is theirs: the work goes to them. A task following a skill (a trigger's run) has it.
+      const agent = d.agents.get(ctx.agentId);
+      const follows = ctx.taskId ? d.store.getTask(ctx.taskId)?.skill : undefined;
+      if (agent && d.skills.get(name) && !d.skills.has(agent, name, follows)) {
+        const who = (d.skills.holders?.get(name) ?? []).map((id) => `${id} (${d.agents.get(id)?.name ?? id})`);
+        return text(
+          `${name} is not one of your skills${who.length ? `: ${who.join(", ")} ${who.length === 1 ? "has" : "have"} it` : ""}. ` +
+            "Ask them with team_message or hand them the work with task_delegate.",
+          true,
+        );
+      }
+      const s = d.skills.load(name);
+      return s ? text(s) : text(`Skill ${name} not found`, true);
     },
   );
 

@@ -47,7 +47,7 @@ export default {
   // navigation and header
   "nav.chat": "Чат",
   "nav.tasks": "Задачи",
-  "nav.notifications": "Уведомления",
+  "nav.notifications": "Входящие",
   "nav.agents": "Агенты",
   "nav.brains": "Интеллект",
   "nav.plugins": "Плагины",
@@ -174,12 +174,6 @@ export default {
   "threadStatus.failed": "не удалось ответить",
   "threadStatus.interrupted": "прервано",
   "threadStatus.cancelled": "отменено",
-
-  // notification levels
-  "notifyLevel.silent": "тихо",
-  "notifyLevel.digest": "в сводку",
-  "notifyLevel.notify": "уведомление",
-  "notifyLevel.ask": "вопрос",
 
   // sign-in and first run
   "auth.tagline": "Ваш личный агент — на вашем железе",
@@ -513,27 +507,39 @@ export default {
   "thread.hint": "Переписка агентов: ответ сам вернётся тому, кто написал. Можно вмешаться — просто напишите сюда.",
 
   // notifications
-  "notifications.subtitle": "Что агенты сочли достойным вашего внимания. Оценки помогают им понять, что важно.",
-  "notifications.flush": "Отправить сводку сейчас",
-  "notifications.digestSent": "Сводка отправлена: {n, plural, one {# пункт} few {# пункта} many {# пунктов} other {# пункта}}",
   "notifications.digestEmpty": "Для сводки пока ничего нет",
-  "notifications.filter.all": "Все",
-  "notifications.filter.notify": "Важные",
-  "notifications.filter.digest": "В сводку",
-  "notifications.filter.silent": "Тихие",
-  "notifications.empty": "Уведомлений нет",
-  "notifications.emptyHint": "Когда фоновые задачи найдут что-то интересное, оно появится здесь.",
   "notifications.feedback.useful": "полезно",
-  "notifications.feedback.usefulTitle": "Полезно — продолжай в том же духе",
   "notifications.feedback.less": "реже",
-  "notifications.feedback.lessTitle": "Присылай такое реже",
   "notifications.feedback.off": "выключить",
-  "notifications.feedback.offTitle": "Больше не присылай такое",
   "notifications.thanks.useful": "Спасибо! Учту",
   "notifications.thanks.less": "Буду присылать реже",
   "notifications.thanks.off": "Больше не буду присылать такое",
   "notifications.toTask": "задача →",
-  "notifications.toChat": "в чат →",
+  "notifications.sources": "Из чего:",
+  "notifications.showAll": "Показать полностью",
+  "notifications.showLess": "Свернуть",
+  "notifications.feedback.menu": "Оценить",
+
+  // inbox
+  "inbox.next": "Сводка в {time} · {n, plural, one {# пункт} few {# пункта} many {# пунктов} other {# пункта}}",
+  "inbox.nextNoTime": "{n, plural, one {# пункт ждёт} few {# пункта ждут} many {# пунктов ждут} other {# пункта ждут}} сводки",
+  "inbox.collect": "Собрать сейчас",
+  "inbox.collecting": "Ассистент пишет сводку",
+  "inbox.waiting": "Ждут вас",
+  "inbox.approvals": "{n, plural, one {# подтверждение ждёт} few {# подтверждения ждут} many {# подтверждений ждут} other {# подтверждения ждут}}",
+  "inbox.today": "Сегодня",
+  "inbox.yesterday": "Вчера",
+  "inbox.openChat": "Открыть в чате",
+  "inbox.more": "Показать раньше",
+  "inbox.empty": "Пока ничего не пришло",
+  "inbox.emptyHint": "Сюда приходят отчёты, сводки и новости от агентов.",
+  "inbox.behind": "За кадром · {n}",
+  "inbox.why.superseded": "Заменено более новым",
+  "inbox.why.inDigest": "Вошло в «{title}»",
+  "inbox.why.inEarlierDigest": "Вошло в одну из прошлых сводок",
+  "inbox.why.approval": "Само подтверждение — в чате",
+  "inbox.why.waiting": "Ждёт следующей сводки",
+  "inbox.why.silent": "Тихо: просто для журнала",
 
   // agents
   "agents.subtitle": "Агент — это роль: характер, интеллект, инструменты и уровень инициативы.",
@@ -541,6 +547,7 @@ export default {
   "agents.empty": "Агентов нет",
   "agents.noDescription": "Без описания",
   "agents.initiativeBadge": "инициатива {level}",
+  "agents.ownSkills": "Свои скиллы",
   "agents.source.builtin": "встроенный",
   "agents.source.user": "ваш",
   "agents.deleteTitle": "Удалить агента?",
@@ -798,7 +805,7 @@ export default {
   "mcp.error.secret": "{field}: храните секреты в vault и указывайте ссылку vault://<id>",
 
   // skills
-  "skills.subtitle": "Скиллы — инструкции, которые агент подгружает по необходимости. Команды — шаблоны «/имя» для чата.",
+  "skills.subtitle": "Скиллы — инструкции, которые агент подгружает по необходимости: у всей команды или только у тех, кому их дали. Команды — шаблоны «/имя» для чата.",
   "skills.tab.skills": "Скиллы",
   "skills.tab.commands": "Команды",
   "skills.tab.tools": "Инструменты",
@@ -810,6 +817,9 @@ export default {
   "skills.effect.localWrite": "локальная запись",
   "skills.effect.external": "внешнее действие",
   "skills.externalContent": "внешний контент",
+  "skills.wholeTeam": "Вся команда",
+  "skills.holdersHint": "У кого есть: поменять в чате",
+  "skills.askHolders": "Хочу решить, у кого будет скилл «{name}»",
 
   // settings
   "settings.general": "Общие",
@@ -887,7 +897,7 @@ export default {
   "panel.hint.agents": "Кто отвечает и как",
   "panel.hint.skills": "Готовые инструкции и /команды",
   "panel.hint.tasks": "Фоновая и поручённая работа",
-  "panel.hint.notifications": "Что агенты сочли важным",
+  "panel.hint.notifications": "Что пришло для вас",
   "panel.hint.brains": "Claude Code, Codex, API-ключи",
   "panel.hint.plugins": "Всё, что умеет ассистент: погода, календарь, Telegram, память и другое",
   "panel.hint.machines": "Ваши другие компьютеры",

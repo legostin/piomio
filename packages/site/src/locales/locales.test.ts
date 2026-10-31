@@ -23,7 +23,7 @@ describe("site catalogs", () => {
   });
 
   it("tell every chapter of the demo", () => {
-    for (const id of CHAPTERS) for (const part of ["chip", "time", "title", "text", "under"]) expect(en, `${id}.${part}`).toHaveProperty(`chapter.${id}.${part}`);
+    for (const id of CHAPTERS) for (const part of ["chip", "time", "title", "text"]) expect(en, `${id}.${part}`).toHaveProperty(`chapter.${id}.${part}`);
   });
 });
 

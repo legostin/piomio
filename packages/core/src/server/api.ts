@@ -53,6 +53,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       // A new hub: the app shows only the setup card until a brain works, then the assistant opens the intro.
       firstRun: hub.setup.firstRun(),
       pendingApprovals: hub.approvals.pendingCount(),
+      inboxUnread: hub.notifier.unreadCount(),
       uiPlugins: hub.plugins.uiPlugins(requestLocale(req)),
       channels: hub.channels.list(),
     };
@@ -105,7 +106,10 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const id = (req.params as any).id as string;
     if (!hub.store.getConversation(id)) throw new HttpError(404, "conversation.notFound");
     const at = (req.body as { at?: unknown } | undefined)?.at;
+    const unread = hub.notifier.unreadCount();
     hub.team.markRead(id, typeof at === "string" ? at : undefined);
+    // Reading the chat reads what the Inbox holds from it: the badges follow when the count moved.
+    hub.notifier.inboxChanged(unread);
     return { ok: true };
   });
   api.get("/api/conversations/:id/messages", async (req) => {
@@ -439,7 +443,11 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
 
   // ----- tools, skills, commands, channels -----
   api.get("/api/tools", async () => hub.tools.list().map((t) => ({ name: t.name, description: t.description, effect: t.effect, owner: t.owner, source: !!t.source })));
-  api.get("/api/skills", async () => hub.skills.list());
+  // `agents`: who has it; empty: the whole team.
+  api.get("/api/skills", async () => {
+    const held = hub.skills.holders?.all() ?? new Map<string, string[]>();
+    return hub.skills.list().map((s) => ({ ...s, agents: held.get(s.name) ?? [] }));
+  });
   api.get("/api/commands", async () => hub.skills.listCommands().map((c) => ({ name: c.name, description: c.description, source: c.source })));
   api.get("/api/channels", async () => Promise.all(hub.channels.list().map(async (c) => ({ ...c, ...(await hub.channels.status(c.id)) }))));
 
@@ -632,6 +640,19 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   api.get("/api/notifications", async (req) => hub.notifier.list(Math.min(Number((req.query as any).limit ?? 100), 500)));
   api.post("/api/notifications/:id/feedback", async (req) => hub.notifier.feedback((req.params as any).id, (req.body as any)?.value));
   api.post("/api/digest/flush", async () => ({ sent: await hub.notifier.flushDigest() }));
+  /** `?before=` (an entry's createdAt) and `?limit=` of an Inbox page; what is not a single value counts as not given. */
+  const inboxPage = (req: { query: unknown }) => {
+    const q = req.query as { before?: unknown; limit?: unknown };
+    return { before: typeof q.before === "string" && q.before ? q.before : undefined, limit: typeof q.limit === "string" && q.limit ? Number(q.limit) : undefined };
+  };
+  api.get("/api/inbox", async (req) => hub.notifier.inbox(inboxPage(req)));
+  api.get("/api/inbox/behind", async (req) => hub.notifier.behind(inboxPage(req)));
+  api.post("/api/inbox/read", async (req) => {
+    const ids = (req.body as { ids?: unknown } | undefined)?.ids;
+    if (!Array.isArray(ids)) throw new HttpError(400, "inbox.badIds");
+    hub.notifier.markInboxRead(ids.filter((x): x is string => typeof x === "string"));
+    return { ok: true, unread: hub.notifier.unreadCount() };
+  });
   api.get("/api/approvals/pending-count", async () => ({ count: hub.approvals.pendingCount() }));
 
   // ----- workspace files (artifacts) -----

@@ -1,6 +1,6 @@
 // Formatting helpers: status labels, relative times and dates in the interface language.
 
-import type { NotifyLevel, TaskStatus } from "@piomio/shared";
+import type { TaskStatus } from "@piomio/shared";
 import { formatDate, formatRelative, locale, t, type MessageKey } from "../i18n";
 import { sizeParts } from "./attachments";
 
@@ -42,18 +42,6 @@ export function taskStatus(s: string): { label: string; tone: Tone } {
 }
 
 export const ACTIVE_STATUSES: TaskStatus[] = ["queued", "running", "waiting_approval", "waiting_input", "interrupted", "paused"];
-
-const NOTIFY_LEVEL: Record<NotifyLevel, { key: MessageKey; tone: Tone }> = {
-  silent: { key: "notifyLevel.silent", tone: "neutral" },
-  digest: { key: "notifyLevel.digest", tone: "info" },
-  notify: { key: "notifyLevel.notify", tone: "success" },
-  ask: { key: "notifyLevel.ask", tone: "warning" },
-};
-
-export function notifyLevel(level: string): { label: string; tone: Tone } {
-  const l = NOTIFY_LEVEL[level as NotifyLevel];
-  return l ? { label: t(l.key), tone: l.tone } : { label: level, tone: "neutral" };
-}
 
 /** "just now", "5 minutes ago", "in 2 hours", or a date for older values. */
 export function relativeTime(iso: string | undefined, now = Date.now()): string {

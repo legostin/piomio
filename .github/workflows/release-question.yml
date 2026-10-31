@@ -1,0 +1,115 @@
+# After every push to main, GitHub asks whether to release a new version: the run waits on the "release" environment
+# and its required reviewers get the question (the run's "Review deployments"; GitHub's mail and app tell them).
+#   Approve        the patch version goes up (the root package.json and package-lock.json's two root versions), the
+#                  commit "Piomio X.Y.Z" lands on main with the tag vX.Y.Z, and release.yml publishes the installers
+#                  and the server image.
+#   Reject or no answer   nothing happens; a newer push replaces the question.
+# A push that raised the version itself (a release made by hand) is not asked about. Run this workflow by hand to
+# release a minor or major version.
+#
+# Once, in the repository's Settings → Environments: an environment named "release" with Required reviewers. Until it
+# has them nothing is asked (an environment without reviewers would let every push release).
+name: release?
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version goes up
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+jobs:
+  check:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ask: ${{ steps.check.outputs.ask }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Is there anything to ask?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ask() { echo "ask=$1" >>"$GITHUB_OUTPUT"; }
+          reviewers=$(gh api "repos/$GITHUB_REPOSITORY/environments/release" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null) || reviewers=0
+          case "$reviewers" in
+            [1-9]*) ;;
+            *)
+              echo "::warning::No question: the \"release\" environment has no required reviewers (Settings → Environments)."
+              ask false; exit 0
+              ;;
+          esac
+          v=$(node -p "require('./package.json').version")
+          # The commits the tag v<version> names (lightweight, or annotated and peeled).
+          tagged=$(git ls-remote --tags origin | awk -v t="refs/tags/v$v" '$2 == t || $2 == t "^{}" { print $1 }')
+          if [ -z "$tagged" ] || echo "$tagged" | grep -qx "$GITHUB_SHA"; then
+            echo "v$v is this push's own release"
+            ask false; exit 0
+          fi
+          ask true
+
+  ask:
+    needs: check
+    if: needs.check.outputs.ask == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    # Only the newest push to main waits for an answer.
+    concurrency:
+      group: release-question
+      cancel-in-progress: true
+    steps:
+      - run: echo "Releasing main"
+
+  release:
+    needs: [check, ask]
+    # By hand, or once the question is answered with yes.
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.ask.result == 'success') }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Raise the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+        run: |
+          v=$(node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const [major, minor, patch] = JSON.parse(readFileSync("package.json", "utf8")).version.split(".").map(Number);
+            const v = { major: `${major + 1}.0.0`, minor: `${major}.${minor + 1}.0`, patch: `${major}.${minor}.${patch + 1}` }[process.env.BUMP];
+            for (const file of ["package.json", "package-lock.json"]) {
+              const json = JSON.parse(readFileSync(file, "utf8"));
+              json.version = v;
+              if (json.packages?.[""]) json.packages[""].version = v;
+              writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+            }
+            console.log(v);
+          ')
+          git diff
+          echo "version=$v" >>"$GITHUB_OUTPUT"
+      - name: Commit, tag and start the release
+        env:
+          V: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Piomio $V"
+          git tag "v$V"
+          git push --atomic origin HEAD:main "v$V"
+          # A tag pushed with the workflow token starts no workflow by itself.
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "v$V"

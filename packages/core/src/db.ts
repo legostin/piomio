@@ -111,6 +111,24 @@ const MIGRATIONS: string[] = [
   `alter table secret_requests add column login text;`,
   // The skill a task follows (Task.skill): a trigger's run of a skill the person taught.
   `alter table tasks add column skill text;`,
+  // Notifications as an Inbox (docs/superpowers/specs/2026-10-31-notifications-inbox-design.md): what each one is for
+  // the person, why it was held back, its chat message, when it was read, the digest it went into and the newer one
+  // that replaced it; and how a task's result reaches the person (Task.deliver). What came before counts as read.
+  `
+  alter table notifications add column kind text not null default 'item';
+  alter table notifications add column reason text;
+  alter table notifications add column message_id text;
+  alter table notifications add column read_at text;
+  alter table notifications add column digest_id text;
+  alter table notifications add column superseded_by text;
+  update notifications set level = 'silent' where level not in ('silent', 'digest', 'notify', 'ask');
+  update notifications set kind = case level when 'notify' then 'alert' when 'ask' then 'question' else 'item' end;
+  update notifications set read_at = coalesce(delivered_at, created_at);
+  create index notifications_kind on notifications(kind, created_at);
+  alter table tasks add column deliver text;
+  `,
+  // Who has a skill (skills.ts SkillHolders): JSON list of agent ids; no row = the whole team.
+  `create table skill_agents(skill text primary key, agents text not null);`,
 ];
 
 /**

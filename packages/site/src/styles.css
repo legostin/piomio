@@ -322,21 +322,6 @@ body {
   }
 }
 
-/*
- * Wide screens: one live window for the first screen and the story, sticking on the right across both rows while the
- * chapters scroll on the left. Phones and tablets: no sticky window (it left too little room to scroll and took the
- * swipes); each chapter is a card with its own window instead, and the day plays full screen as stories.
- */
-.stage {
-  display: flex;
-  flex-direction: column;
-}
-.stage-window {
-  display: none;
-}
-.stage-window-inner {
-  height: 100%;
-}
 /* The full-screen story: the bar of the chapter on screen fills while it plays. */
 .story-progress {
   width: 0;
@@ -353,30 +338,4 @@ body {
     width: 50%;
   }
 }
-@media (min-width: 1024px) {
-  .stage {
-    display: grid;
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.22fr);
-    column-gap: clamp(32px, 4vw, 64px);
-  }
-  .stage-hero {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .stage-story {
-    grid-column: 1;
-    grid-row: 2;
-  }
-  .stage-window {
-    display: block;
-    position: sticky;
-    z-index: 20;
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    align-self: start;
-    top: 80px;
-    height: calc(100svh - 100px);
-    max-height: 900px;
-    margin: 16px 0 0;
-  }
-}
+

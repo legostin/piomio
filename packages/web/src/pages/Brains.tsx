@@ -140,30 +140,33 @@ export function BrainsPage() {
       )}
 
       <h2 className="mb-3 text-lg font-semibold">{t("brains.howTo")}</h2>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <Card title="Claude Code">
-          <BrainLoginCard brainRef="claude-code@local" bare />
-          <details className="group mt-3">
-            <summary className="flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-accent-text">
-              {t("brainLogin.claudeToken")} <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="mt-2">
-              <VaultGate>
-                <PluginSetupCard pluginId="brain-claude-code" bare />
-              </VaultGate>
-            </div>
-          </details>
-          <p className="mt-3 text-xs text-muted">{t("brains.claudeMachines")}</p>
-        </Card>
-        <Card title="Codex">
-          <BrainLoginCard brainRef="codex@local" bare />
-          <p className="mt-3 text-xs text-muted">{tRich("brains.codexKey", { id: <Code>openai_api_key</Code> })}</p>
-        </Card>
-        <Card title={t("brains.apiKeys")}>
-          <VaultGate>
-            <PluginSetupCard pluginId="brain-api" bare />
-          </VaultGate>
-        </Card>
+      {/* By the room the page has, not the window's: in the settings panel the cards stand one under another. */}
+      <div className="@container">
+        <div className="grid gap-3 @3xl:grid-cols-2">
+          <Card title="Claude Code">
+            <BrainLoginCard brainRef="claude-code@local" bare />
+            <details className="group mt-3">
+              <summary className="flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-accent-text">
+                {t("brainLogin.claudeToken")} <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-2">
+                <VaultGate>
+                  <PluginSetupCard pluginId="brain-claude-code" bare />
+                </VaultGate>
+              </div>
+            </details>
+            <p className="mt-3 text-xs text-muted">{t("brains.claudeMachines")}</p>
+          </Card>
+          <Card title="Codex">
+            <BrainLoginCard brainRef="codex@local" bare />
+            <p className="mt-3 text-xs text-muted">{tRich("brains.codexKey", { id: <Code>openai_api_key</Code> })}</p>
+          </Card>
+          <Card title={t("brains.apiKeys")} className="@3xl:col-span-2">
+            <VaultGate>
+              <PluginSetupCard pluginId="brain-api" bare />
+            </VaultGate>
+          </Card>
+        </div>
       </div>
     </Page>
   );

@@ -428,6 +428,193 @@ describe("hub (integration)", () => {
     expect(((await web.req("GET", `/api/conversations/${scout.conversationId}/messages`)) as any[]).length).toBeGreaterThan(0);
   });
 
+  it("delivers a schedule's report as the agent's own message", async () => {
+    const task = hub.runner.createTask({ agentId: "assistant", goal: "Brief me", title: "Morning brief", background: true, createdBy: "trigger", triggerId: "t_brief", deliver: "report" });
+    const n = await until(() => hub.notifier.list(50).find((x) => x.taskId === task.id && x.kind === "report"), "the report");
+    expect(n.body).toMatch(/fake heard/);
+    const msgs: any[] = await web.req("GET", `/api/conversations/${conv}/messages`);
+    expect(msgs.some((m) => m.parts.some((p: any) => p.type === "notification" && p.kind === "report" && p.notificationId === n.id))).toBe(true);
+  });
+
+  it("has the assistant write the digest", async () => {
+    await hub.notifier.notify({ level: "digest", title: "E2E digest item", body: "something to tell", agentId: "assistant" });
+    expect((await web.req("POST", "/api/digest/flush", {})).sent).toBeGreaterThan(0);
+    const d = await until(() => hub.notifier.list(100).find((x) => x.kind === "digest" && x.deliveredAt), "the digest");
+    expect(d.body).toMatch(/fake heard/);
+    const msgs: any[] = await web.req("GET", `/api/conversations/${conv}/messages`);
+    expect(msgs.some((m) => m.parts.some((p: any) => p.type === "notification" && p.kind === "digest" && p.notificationId === d.id))).toBe(true);
+    // The writer reads other runs' words and channel headlines: its task is marked as reading outside content from the start.
+    expect(hub.store.getTask(d.taskId!)).toMatchObject({ deliver: "digest", tainted: true });
+  });
+
+  it("sends the digest's card when its writer fails", async () => {
+    // A digest waiting for a writer that cannot start: pinned to a brain this hub does not have.
+    const task = hub.runner.createTask({ agentId: "assistant", goal: "Write the digest", title: "Digest", background: true, createdBy: "trigger", deliver: "digest", brainRef: "gone@local" });
+    const material = { partOfDay: "day", date: "2026-10-31", items: [{ id: "n_x", title: "Writer failure item", body: "kept whole", time: "10:00" }], sections: [], channels: [], told: [] };
+    hub.db
+      .prepare("insert into notifications(id, level, kind, title, body, agent_id, task_id, created_at) values ('n_digest_fail', 'digest', 'digest', 'Digest', ?, 'assistant', ?, ?)")
+      .run(JSON.stringify(material), task.id, new Date().toISOString());
+    const d = await until(() => hub.notifier.get("n_digest_fail")?.deliveredAt && hub.notifier.get("n_digest_fail"), "the card");
+    expect(d.body).toContain("**Writer failure item** · 10:00");
+    expect(d.body).toContain("kept whole");
+    expect(hub.store.getTask(task.id)?.status).toBe("failed");
+    // No alert about it: the card is the answer.
+    expect(hub.notifier.list(100).some((x) => x.taskId === task.id && x.kind !== "digest")).toBe(false);
+  });
+
+  /** A digest waiting for `task`: the row the notifier files when it starts a writer, with no timer behind it (so only the runner can send the card). */
+  const fileDigest = (id: string, taskId: string) => {
+    const material = { partOfDay: "day", date: "2026-10-31", items: [{ id: `${id}_item`, title: "Interrupted writer item", body: "kept whole", time: "10:00" }], sections: [], channels: [], told: [] };
+    hub.db
+      .prepare("insert into notifications(id, level, kind, title, body, agent_id, task_id, created_at) values (?, 'digest', 'digest', 'Digest', ?, 'assistant', ?, ?)")
+      .run(id, JSON.stringify(material), taskId, new Date().toISOString());
+  };
+
+  it("sends the digest's card at once when its writer's agent is gone", async () => {
+    const task = hub.runner.createTask({ agentId: "ghost", goal: "Write the digest", title: "Digest", background: true, createdBy: "trigger", deliver: "digest" });
+    fileDigest("n_digest_ghost", task.id);
+    const d = await until(() => hub.notifier.get("n_digest_ghost")?.deliveredAt && hub.notifier.get("n_digest_ghost"), "the card", 5000);
+    expect(d.body).toContain("**Interrupted writer item** · 10:00");
+    expect(hub.store.getTask(task.id)?.status).toBe("failed");
+  });
+
+  it("sends the digest's card at once, with no notice about it, when its writer's budget is used up", async () => {
+    // An agent with no background runs a day: its tasks fail before they start.
+    await web.req("PUT", "/api/agents/frugal", { name: "Frugal", description: "No budget", brains: ["fake@local"], prompt: "Be frugal.", budget: { backgroundRunsPerDay: 0 } });
+    // The notices about this agent's budget that exist already (other tests may leave some): only a new one would be wrong.
+    const budgetNotices = () => hub.notifier.list(500).filter((x) => x.agentId === "frugal" && /daily budget/.test(x.title)).map((x) => x.id);
+    const before = budgetNotices();
+    try {
+      const task = hub.runner.createTask({ agentId: "frugal", goal: "Write the digest", title: "Digest", background: true, createdBy: "trigger", deliver: "digest" });
+      fileDigest("n_digest_budget", task.id);
+      const d = await until(() => hub.notifier.get("n_digest_budget")?.deliveredAt && hub.notifier.get("n_digest_budget"), "the card", 5000);
+      expect(d.body).toContain("**Interrupted writer item** · 10:00");
+      expect(hub.store.getTask(task.id)?.status).toBe("failed");
+      // The card is the answer: no "used up its daily budget" item for the next digest.
+      expect(budgetNotices()).toEqual(before);
+    } finally {
+      await web.req("DELETE", "/api/agents/frugal");
+    }
+  });
+
+  it("still tells the person about a budget used up by an ordinary background task", async () => {
+    await web.req("PUT", "/api/agents/frugal", { name: "Frugal", description: "No budget", brains: ["fake@local"], prompt: "Be frugal.", budget: { backgroundRunsPerDay: 0 } });
+    try {
+      const task = hub.runner.createTask({ agentId: "frugal", goal: "Check things", title: "Check things", background: true, createdBy: "trigger", triggerId: "t_frugal" });
+      await until(() => hub.store.getTask(task.id)?.status === "failed", "the task to fail", 5000);
+      expect(hub.notifier.list(100).some((x) => /Frugal has used up its daily budget/.test(x.title))).toBe(true);
+    } finally {
+      await web.req("DELETE", "/api/agents/frugal");
+    }
+  });
+
+  /** The Inbox tests notify as an agent of their own: the assistant's hourly budget of alerts is not theirs to use up. */
+  const asInboxer = async (run: (dialog: string) => Promise<void>) => {
+    await web.req("PUT", "/api/agents/inboxer", { name: "Inboxer", description: "Writes to the Inbox", brains: ["fake@local"], prompt: "Write." });
+    try {
+      await run(hub.store.agentConversation("inboxer").id);
+    } finally {
+      await web.req("DELETE", "/api/agents/inboxer");
+    }
+  };
+
+  it("serves the Inbox and keeps its unread count", () =>
+    asInboxer(async (dialog) => {
+      const q = await hub.notifier.notify({ level: "ask", title: "Inbox question", body: "", agentId: "inboxer" });
+      const a = await hub.notifier.notify({ level: "notify", title: "Inbox alert", body: "news", agentId: "inboxer", triggerId: "t_inbox" });
+      const view = await web.req("GET", "/api/inbox");
+      expect(Array.isArray(view.entries)).toBe(true);
+      expect(view.questions.map((e: any) => e.id)).toContain(q.id);
+      expect(view.entries.find((e: any) => e.id === a.id)).toMatchObject({ kind: "alert", unread: true, feedbackable: true, agentId: "inboxer", conversationId: dialog });
+      expect(view.unread).toBeGreaterThanOrEqual(2);
+
+      const r = await web.req("POST", "/api/inbox/read", { ids: [a.id, q.id, 7] });
+      expect(r).toEqual({ ok: true, unread: view.unread - 2 });
+      expect((await web.req("GET", "/api/bootstrap")).inboxUnread).toBe(r.unread);
+      const after = await web.req("GET", "/api/inbox");
+      expect(after.questions.map((e: any) => e.id)).not.toContain(q.id);
+      expect(after.entries.find((e: any) => e.id === a.id)).toMatchObject({ unread: false });
+      expect(after.unread).toBe(r.unread);
+
+      expect(Array.isArray(await web.req("GET", "/api/inbox/behind"))).toBe(true);
+      expect((await web.raw("POST", "/api/inbox/read", { ids: "x" })).status).toBe(400);
+      expect((await web.raw("POST", "/api/inbox/read", {})).status).toBe(400);
+    }));
+
+  it("pages the Inbox by ?before and ?limit, and takes a limit that is not a number as not given", () =>
+    asInboxer(async () => {
+      await hub.notifier.notify({ level: "notify", title: "Inbox page one", body: "1", agentId: "inboxer" });
+      await new Promise((r) => setTimeout(r, 5));
+      await hub.notifier.notify({ level: "notify", title: "Inbox page two", body: "2", agentId: "inboxer" });
+      const first = await web.req("GET", "/api/inbox?limit=1");
+      expect(first.entries).toHaveLength(1);
+      expect(first.hasMore).toBe(true);
+      const older = await web.req("GET", `/api/inbox?limit=1&before=${encodeURIComponent(first.entries[0].createdAt)}`);
+      expect(older.questions).toEqual([]);
+      expect(older.entries[0].createdAt < first.entries[0].createdAt).toBe(true);
+      expect(older.entries[0].id).not.toBe(first.entries[0].id);
+      expect((await web.raw("GET", "/api/inbox?limit=lots")).status).toBe(200);
+      expect((await web.raw("GET", "/api/inbox/behind?limit=lots&before=a&before=b")).status).toBe(200);
+    }));
+
+  it("tells the apps the new unread count when a chat is read", () =>
+    asInboxer(async (dialog) => {
+      await hub.notifier.notify({ level: "notify", title: "Inbox badge alert", body: "unread", agentId: "inboxer" });
+      const unread = hub.notifier.unreadCount();
+      // What this chat holds unread (the agent's dialog outlives the agent, with what earlier tests left in it): reading it reads all of that.
+      const view = hub.notifier.inbox({ limit: 200 });
+      const inDialog = [...view.questions, ...view.entries].filter((e) => e.conversationId === dialog && e.unread).length;
+      expect(inDialog).toBeGreaterThan(0);
+      const seen: number[] = [];
+      const off = hub.bus.on("inbox.changed", (e) => seen.push(e.unread));
+      try {
+        await web.req("POST", `/api/conversations/${dialog}/read`, {});
+      } finally {
+        off();
+      }
+      expect(seen).toEqual([unread - inDialog]);
+      expect((await web.req("GET", "/api/bootstrap")).inboxUnread).toBe(unread - inDialog);
+      // Reading it again changes nothing, so the apps are not told again; nor when an Inbox entry is opened a second time.
+      const again: number[] = [];
+      const offAgain = hub.bus.on("inbox.changed", (e) => again.push(e.unread));
+      try {
+        await web.req("POST", `/api/conversations/${dialog}/read`, {});
+        const opened = hub.notifier.inbox({ limit: 200 }).entries.find((e) => e.conversationId === dialog);
+        await web.req("POST", "/api/inbox/read", { ids: [opened!.id] });
+        await web.req("POST", "/api/inbox/read", { ids: [opened!.id] });
+      } finally {
+        offAgain();
+      }
+      expect(again).toEqual([]);
+    }));
+
+  it("tells the person plainly when a schedule's report did not come", async () => {
+    // Pinned to a brain this hub does not have: the run cannot start, and the agent has nothing set up to start it with.
+    const task = hub.runner.createTask({ agentId: "assistant", goal: "Brief me", title: "Morning brief", background: true, createdBy: "trigger", triggerId: "t_brief_failing", deliver: "report", brainRef: "gone@local" });
+    const n = await until(() => hub.notifier.list(50).find((x) => x.taskId === task.id), "the alert");
+    expect(n).toMatchObject({
+      level: "notify",
+      kind: "alert",
+      title: "Didn't work out: “Morning brief”",
+      body: "Тестовый ассистент isn't signed in to any brain yet. Sign in from its chat.",
+      // From the schedule: muting the schedule mutes its failures too.
+      triggerId: "t_brief_failing",
+    });
+    expect(hub.store.getTask(task.id)?.status).toBe("failed");
+    const dialog = hub.store.listMessages(hub.store.agentConversation("assistant").id, { limit: 100 });
+    expect(dialog.some((m) => m.parts.some((p) => p.type === "notification" && p.kind === "alert" && p.notificationId === n.id))).toBe(true);
+    // No report was made out of the failure.
+    expect(hub.notifier.list(50).some((x) => x.taskId === task.id && x.kind === "report")).toBe(false);
+  });
+
+  it("keeps an ordinary failing schedule quiet", async () => {
+    const task = hub.runner.createTask({ agentId: "assistant", goal: "Check things", title: "Quiet check", background: true, createdBy: "trigger", triggerId: "t_check_failing", brainRef: "gone@local" });
+    await until(() => hub.store.getTask(task.id)?.status === "failed", "the task to fail");
+    // The failure path is synchronous after the status change; give any stray notification a moment to land.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(hub.notifier.list(100).filter((x) => x.taskId === task.id)).toEqual([]);
+  });
+
   it("serves tools to brains over MCP with per-session tokens", async () => {
     expect((await web.raw("POST", "/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: "Bearer nope" })).status).toBe(401);
     await web.req("POST", `/api/conversations/${conv}/messages`, { text: 'CALL notify {"level":"silent","title":"from-mcp"}' });

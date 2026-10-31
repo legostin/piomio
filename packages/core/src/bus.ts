@@ -21,6 +21,8 @@ export type BusEvents = {
   "task.updated": any;
   "notification.created": any;
   "notification.feedback": any;
+  /** The Inbox's unread count changed (something came in, or the person read it). */
+  "inbox.changed": { unread: number };
   "approval.created": any;
   /** An action the person asked for in their own words ran without a card (ToolSpec.asked). */
   "approval.asked": any;
@@ -34,6 +36,8 @@ export type BusEvents = {
   "plugins.updated": Record<string, never>;
   "brains.updated": Record<string, never>;
   "agents.updated": Record<string, never>;
+  /** Skills came or went, or who has one changed (skills.ts SkillHolders). */
+  "skills.updated": Record<string, never>;
   /** A new agent's draft in the chat changed (or became the agent). */
   "agent_draft.updated": AgentDraft;
   "settings.updated": Record<string, unknown>;
@@ -112,9 +116,11 @@ export function toUiEvent(name: string, payload: any): UiEvent | null {
     case "page.deleted":
     case "task.updated":
     case "notification.created":
+    case "inbox.changed":
     case "plugins.updated":
     case "brains.updated":
     case "agents.updated":
+    case "skills.updated":
     case "settings.updated":
     case "connections.updated":
     case "machine.updated":

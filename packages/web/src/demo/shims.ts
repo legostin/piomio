@@ -84,12 +84,11 @@ export function installShims(api: ApiPeer, sockets: SocketPeer): void {
   };
 
   // The demo's "microphone": a silent stream, so teach mode shows the mic on without asking the visitor for theirs.
-  // What the person says appears as captions (director/person.ts speak()).
-  if (navigator.mediaDevices)
-    navigator.mediaDevices.getUserMedia = async () => {
-      const ctx = new AudioContext();
-      return ctx.createMediaStreamDestination().stream;
-    };
+  // What the person says appears as captions (director/person.ts speak()). Replaced on the prototype: Safari ignores an
+  // own property set on navigator.mediaDevices and would ask for the real microphone.
+  const silent = async () => new AudioContext().createMediaStreamDestination().stream;
+  if (typeof MediaDevices !== "undefined") Object.defineProperty(MediaDevices.prototype, "getUserMedia", { value: silent, configurable: true, writable: true });
+  if (navigator.mediaDevices) Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: silent, configurable: true, writable: true });
 
   keepScrollInside();
 

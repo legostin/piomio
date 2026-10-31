@@ -3,7 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 import { TriggerError, type ErrorParams } from "./errors.ts";
-import { cronError, parseDateTime, timeError } from "./schedule.ts";
+import { cronError, defaultReport, parseDateTime, timeError } from "./schedule.ts";
 import { TRIGGER_KINDS, type Trigger, type TriggerInput, type TriggerKind } from "./types.ts";
 import { parseJsonPath, selectorError, WatchError } from "./watch.ts";
 
@@ -79,6 +79,13 @@ function checkMaxRuns(v: unknown): number {
   const n = Number(v);
   if (!Number.isInteger(n) || n < 1 || n > 1000) fail("maxRuns", "maxRunsPerDay must be an integer from 1 to 1000");
   return n;
+}
+
+function checkReport(v: unknown, kind: TriggerKind): boolean {
+  if (typeof v !== "boolean") fail("reportBool", "report must be true or false");
+  if (v && kind !== "schedule" && kind !== "once")
+    fail("reportKind", "Only schedule and once triggers can be reports: other kinds speak through notify when something needs attention", { kind });
+  return v as boolean;
 }
 
 function checkAt(v: unknown, tz: string, now: Date): string {
@@ -162,6 +169,7 @@ export function buildTrigger(input: TriggerInput, o: BuildOptions): Trigger {
       t.weekdays = input.weekdays === undefined ? [...DEFAULT_WEEKDAYS] : checkWeekdays(input.weekdays);
       break;
   }
+  t.report = input.report === undefined ? defaultReport(t, o.tz, o.now) : checkReport(input.report, kind);
   return t;
 }
 
@@ -183,6 +191,7 @@ export function applyUpdate(t: Trigger, patch: TriggerInput, o: { now: Date; tz:
     if (typeof patch.enabled !== "boolean") fail("enabledBool", "enabled must be true or false");
     next.enabled = patch.enabled;
   }
+  if (patch.report !== undefined) next.report = checkReport(patch.report, t.kind);
   switch (t.kind) {
     case "schedule":
       if (patch.cron !== undefined) {

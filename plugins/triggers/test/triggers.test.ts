@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { startPlugin, type PluginHarness } from "@piomio/testkit";
+import { defaultReport } from "../server/schedule.ts";
 
 const dir = join(import.meta.dirname, "..");
 
@@ -97,6 +98,47 @@ describe("triggers plugin", () => {
     const list = await h.invokeText("list", { kind: "schedule" });
     expect(list).toContain(id);
     expect(list).toContain("08:30");
+  });
+
+  it("makes a daily schedule a report and an hourly one a check, and passes report on to the task", async () => {
+    const daily = idOf(await h.invokeText("create", { kind: "schedule", name: "Утренняя сводка", prompt: "Brief me.", cron: "0 8 * * *" }));
+    const hourly = idOf(await h.invokeText("create", { kind: "schedule", name: "Mac", prompt: "Check.", cron: "0 * * * *" }));
+    expect((await get(daily)).report).toBe(true);
+    expect((await get(hourly)).report).toBe(false);
+
+    await h.invokeText("run_now", { id: daily });
+    const report = await until(() => createdFor(daily)[0] as any);
+    expect(report.report).toBe(true);
+    expect(report.goal).toContain("your final reply is delivered to them");
+    await h.invokeText("run_now", { id: hourly });
+    const check = await until(() => createdFor(hourly)[0] as any);
+    expect("report" in check).toBe(false);
+    expect(check.goal).toContain("call `notify` exactly once");
+
+    // Only schedules and one-time runs can be reports; the agent can turn a check into one.
+    const r = await h.invoke("create", { kind: "heartbeat", name: "Review", prompt: "Look.", report: true });
+    expect(r.isError).toBe(true);
+    expect((r.content[0] as any).text).toContain("Only schedule and once triggers can be reports");
+    await h.invokeText("update", { id: hourly, report: true });
+    expect((await get(hourly)).report).toBe(true);
+  });
+
+  it("defaults report by kind and frequency, also for triggers saved before it existed", () => {
+    const now = new Date("2026-10-31T00:00:00Z");
+    expect(defaultReport({ kind: "schedule", cron: "0 8 * * *" }, "Asia/Almaty", now)).toBe(true);
+    expect(defaultReport({ kind: "schedule", cron: "0 9,13,18 * * *" }, "Asia/Almaty", now)).toBe(true);
+    expect(defaultReport({ kind: "schedule", cron: "0 * * * *" }, "Asia/Almaty", now)).toBe(false);
+    expect(defaultReport({ kind: "once" }, "Asia/Almaty", now)).toBe(true);
+    expect(defaultReport({ kind: "heartbeat" }, "Asia/Almaty", now)).toBe(false);
+  });
+
+  it("answers a frequent schedule at once, without counting every run", () => {
+    const now = new Date("2026-10-31T00:00:00Z");
+    const started = performance.now();
+    const report = defaultReport({ kind: "schedule", cron: "* * * * *" }, "Asia/Almaty", now);
+    const elapsed = performance.now() - started;
+    expect(report).toBe(false);
+    expect(elapsed).toBeLessThan(100);
   });
 
   it("rejects bad input with clear errors", async () => {

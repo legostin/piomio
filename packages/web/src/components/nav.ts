@@ -2,7 +2,7 @@
 // Old page URLs (/brains, /plugins, …) still work: they open the matching panel section over the chat.
 
 import type { ComponentType } from "react";
-import { Bell, Bot, Brain, Laptop, ListChecks, Puzzle, Server, SlidersHorizontal, Smartphone, Sparkles, type LucideProps } from "lucide-react";
+import { Bot, Brain, Inbox, Laptop, ListChecks, Puzzle, Server, SlidersHorizontal, Smartphone, Sparkles, type LucideProps } from "lucide-react";
 import type { MessageKey } from "../i18n";
 
 export type CoreSection = "settings" | "agents" | "brains" | "plugins" | "machines" | "devices" | "mcp" | "skills" | "tasks" | "notifications";
@@ -23,7 +23,7 @@ export const SECTIONS: SectionDef[] = [
   { id: "agents", path: "/agents", label: "nav.agents", hint: "panel.hint.agents", icon: Bot, group: "assistant" },
   { id: "skills", path: "/skills", label: "nav.skills", hint: "panel.hint.skills", icon: Sparkles, group: "assistant" },
   { id: "tasks", path: "/tasks", label: "nav.tasks", hint: "panel.hint.tasks", icon: ListChecks, group: "activity" },
-  { id: "notifications", path: "/notifications", label: "nav.notifications", hint: "panel.hint.notifications", icon: Bell, group: "activity" },
+  { id: "notifications", path: "/inbox", label: "nav.notifications", hint: "panel.hint.notifications", icon: Inbox, group: "activity" },
   { id: "plugins", path: "/plugins", label: "nav.plugins", hint: "panel.hint.plugins", icon: Puzzle, group: "connections" },
   { id: "brains", path: "/brains", label: "nav.brains", hint: "panel.hint.brains", icon: Brain, group: "connections" },
   { id: "machines", path: "/machines", label: "nav.machines", hint: "panel.hint.machines", icon: Laptop, group: "connections" },
@@ -40,7 +40,7 @@ export const GROUPS: Array<{ id: SectionDef["group"]; label: MessageKey }> = [
 ];
 
 /** Page URLs of sections that became part of another: the integrations catalog is the Plugins catalog now. */
-const MERGED: Record<string, CoreSection> = { "/integrations": "plugins" };
+const MERGED: Record<string, CoreSection> = { "/integrations": "plugins", "/notifications": "notifications" };
 
 /** The panel section a legacy page URL stands for, if any. */
 export function sectionForPath(path: string): CoreSection | undefined {

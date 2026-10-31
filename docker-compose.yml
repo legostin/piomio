@@ -1,26 +1,28 @@
-# docker compose up -d --build   →  http://localhost:8080 (chat) and http://localhost:8081 (security console)
+# Piomio on a server. Its settings go in .env next to this file (.env.example lists every one), then:
+#   docker compose up -d             the ready image from GitHub (ghcr.io/legostin/piomio, amd64 and arm64)
+#   docker compose up -d --build     the image built from this folder instead
+# The chat (:8080) and the security console (:8081) open on this server only. From your computer:
+#   ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server   →   http://localhost:8080
+# or open them on the server's address with PIOMIO_BIND and PIOMIO_PUBLIC_URL in .env.
 services:
   piomio:
+    image: ghcr.io/legostin/piomio:${PIOMIO_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: piomio:latest
     container_name: piomio
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
-      - "127.0.0.1:8081:8081"
+      - "${PIOMIO_BIND:-127.0.0.1}:8080:8080"
+      - "${PIOMIO_BIND:-127.0.0.1}:8081:8081"
+      # The phones' HTTPS port on your network (with PIOMIO_DEVICE_URLS in .env):
+      # - "8082:8082"
     volumes:
       - piomio-data:/data
-    environment:
-      PIOMIO_PUBLIC_URL: http://localhost:8080
-      # PIOMIO_CONSOLE_URL: http://localhost:8081
-      # PIOMIO_ALLOWED_HOSTS: my-box.tailnet.ts.net
-      # Hard egress enforcement for agent/plugin users (needs cap_add NET_ADMIN below):
-      # PIOMIO_EGRESS_ENFORCED: iptables
-      # TZ: Europe/Moscow
-      # Hub language (en or ru); by default it is taken from the first user's browser at setup:
-      # PIOMIO_LANG: ru
+    env_file:
+      - path: .env
+        required: false
+    # Hard egress enforcement for agent/plugin users (with PIOMIO_EGRESS_ENFORCED=iptables in .env):
     # cap_add: [NET_ADMIN]
     shm_size: 1gb
 volumes:

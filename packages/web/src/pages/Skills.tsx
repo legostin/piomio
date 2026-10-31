@@ -1,16 +1,23 @@
-// Skills, commands and tools (read-only).
+// Skills, commands and tools. Who has a skill is changed in the chat: its line opens the assistant's dialog.
 
 import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { useLocation } from "wouter";
+import { ChevronRight, Search } from "lucide-react";
 import { api, errorText } from "../lib/api";
-import { hubEvents } from "../state/app";
+import { useStore } from "../lib/store";
+import { agents, hubEvents, refreshAgents } from "../state/app";
+import { askInChat } from "../state/ask";
+import { closePanel } from "../state/panel";
 import { locale, t, type MessageKey } from "../i18n";
+import { AgentAvatar } from "../components/AgentAvatar";
 import { Badge, EmptyState, ErrorNote, Input, Loading, Page, Segmented } from "../components/ui";
 
 interface Skill {
   name: string;
   description: string;
   source: string;
+  /** Who has it; empty: the whole team. */
+  agents: string[];
 }
 interface Command {
   name: string;
@@ -43,6 +50,12 @@ export function SkillsPage() {
   const [tools, setTools] = useState<Tool[] | null>(null);
   const [error, setError] = useState<string>();
   const [q, setQ] = useState("");
+  const team = useStore(agents);
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (!agents.get()) refreshAgents().catch(() => {});
+  }, []);
 
   useEffect(() => {
     const load = () => {
@@ -58,7 +71,8 @@ export function SkillsPage() {
     };
     load();
     return hubEvents.on((e) => {
-      if (e.type === "plugins.updated") load();
+      if (e.type === "plugins.updated" || e.type === "skills.updated" || e.type === "agents.updated") load();
+      if (e.type === "replica.synced" && e.data.tables.includes("skill_agents")) load();
     });
   }, []);
 
@@ -112,6 +126,32 @@ export function SkillsPage() {
                 )}
               </div>
               {x.description && <div className="mt-1 text-sm text-muted">{x.description}</div>}
+              {"agents" in x && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closePanel();
+                    void askInChat(undefined, t("skills.askHolders", { name: x.name }), navigate);
+                  }}
+                  title={t("skills.holdersHint")}
+                  className="group mt-2 flex max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-left text-xs text-muted hover:text-fg"
+                >
+                  {(x as Skill).agents.length === 0 ? (
+                    <span>{t("skills.wholeTeam")}</span>
+                  ) : (
+                    (x as Skill).agents.map((id) => {
+                      const a = team?.find((m) => m.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1.5">
+                          <AgentAvatar avatar={a?.avatar} id={id} name={a?.name ?? id} size={18} />
+                          {a?.name ?? id}
+                        </span>
+                      );
+                    })
+                  )}
+                  <ChevronRight className="size-3.5 opacity-0 transition group-hover:opacity-100" />
+                </button>
+              )}
             </div>
           ))}
         </div>

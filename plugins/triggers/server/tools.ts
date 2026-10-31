@@ -27,6 +27,11 @@ const FIELDS: Record<string, JsonSchema> = {
     type: "string",
     description: "A skill every run follows, e.g. one the person taught by showing (\"order water every Friday\"); its runs may click and type as the skill says. An empty string clears it.",
   },
+  report: {
+    type: "boolean",
+    description:
+      "schedule/once only: true when each run's product is a message for the user at its time (a morning brief, a weekly summary): your final reply is delivered as is, never held back. false for checks that speak only when something needs attention (notify levels). Default: true for once and for a schedule running on average at most 3 times a day.",
+  },
   cron: { type: "string", description: "schedule: 5-field cron 'minute hour day month weekday' in the user's local timezone, e.g. '0 9 * * 1-5' = weekdays at 09:00." },
   at: { type: "string", description: "once: ISO datetime. Without an offset it is the user's local time, e.g. '2026-10-27T09:00'. Must be in the future." },
   url: { type: "string", description: "watch: http(s) URL to poll." },
@@ -48,6 +53,7 @@ function summary(e: TriggerEngine, t: Trigger) {
     machine: t.machineName ?? null,
     skill: t.skill ?? null,
     when: describeSchedule(t),
+    report: t.report ?? false,
     nextRun: t.state.nextRunAt ? formatLocal(t.state.nextRunAt, e.tz) : null,
     lastRun: t.state.lastRunAt ? formatLocal(t.state.lastRunAt, e.tz) : null,
     lastStatus: t.state.lastStatus ?? null,
@@ -62,6 +68,7 @@ function describeCreated(e: TriggerEngine, t: Trigger, verb: string): string {
   const on = (t.machineName ? `; runs on the computer ${t.machineName}` : "") + (t.skill ? `; follows the skill ${t.skill}` : "");
   const lines = [`${verb} trigger ${t.id} "${t.name}" (${t.kind}: ${describeSchedule(t)}; timezone ${e.tz}; agent ${t.agentId}${on}; ${t.enabled ? "enabled" : "disabled"}).`];
   if (t.state.nextRunAt) lines.push(`Next run: ${formatLocal(t.state.nextRunAt, e.tz)}.`);
+  if (t.report) lines.push("Each run's final reply is delivered to the user as a report.");
   if (t.kind === "watch") lines.push("The first check stores a baseline; the agent runs only when the extracted value changes.");
   if (t.kind === "event") {
     const url = e.webhookUrl(t);
@@ -76,7 +83,7 @@ function describeCreated(e: TriggerEngine, t: Trigger, verb: string): string {
 
 const pick = (input: any): TriggerInput => {
   const out: Record<string, unknown> = {};
-  for (const k of ["kind", "name", "prompt", "agent", "machine", "skill", "enabled", "maxRunsPerDay", "cron", "at", "url", "selector", "jsonPath", "intervalMinutes", "times", "weekdays"]) {
+  for (const k of ["kind", "name", "prompt", "agent", "machine", "skill", "report", "enabled", "maxRunsPerDay", "cron", "at", "url", "selector", "jsonPath", "intervalMinutes", "times", "weekdays"]) {
     if (input?.[k] !== undefined) out[k] = input[k];
   }
   return out as TriggerInput;
@@ -132,7 +139,7 @@ export function registerTools(ctx: PluginContext, e: TriggerEngine): void {
 
   ctx.tools.register({
     name: "update",
-    description: "Change a trigger: name, prompt, agent, machine, skill, enabled, maxRunsPerDay and the kind-specific fields (cron, at, url, selector, jsonPath, intervalMinutes, times, weekdays). The kind cannot change.",
+    description: "Change a trigger: name, prompt, agent, machine, skill, report, enabled, maxRunsPerDay and the kind-specific fields (cron, at, url, selector, jsonPath, intervalMinutes, times, weekdays). The kind cannot change.",
     effect: "local-write",
     // As for create: after outside content the person says yes.
     askWhenTainted: true,

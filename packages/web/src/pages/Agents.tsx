@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import type { AgentAvatar as AgentAvatarValue, AgentDef, Computer } from "@piomio/shared";
 import { AVATAR_COLORS, AVATAR_PALETTE, AVATAR_SHAPES, defaultAvatar } from "@piomio/shared/avatar";
 import { useStore } from "../lib/store";
 import { api, errorText } from "../lib/api";
 import { agentForPath } from "../lib/team";
-import { agents, refreshAgents, session } from "../state/app";
+import { agents, hubEvents, refreshAgents, session } from "../state/app";
 import { activeBrain, brainName, brainReady, brains, brainStatus, ensureBrains, findBrain, normalizeBrainRef } from "../state/brains";
 import { addAgent, clearPanelIntent, panel } from "../state/panel";
 import { toast } from "../state/toast";
@@ -54,12 +54,31 @@ export function AgentsPage() {
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<AgentDef | null>(null);
   const [deleting, setDeleting] = useState<AgentDef | null>(null);
+  // Each agent's own skills: the ones given to it, not the whole team's.
+  const [own, setOwn] = useState<Record<string, string[]>>({});
 
   const load = () => {
     setError(undefined);
     refreshAgents().catch((e) => setError(errorText(e)));
   };
   useEffect(load, []);
+
+  useEffect(() => {
+    const loadSkills = () =>
+      api.get<Array<{ name: string; agents: string[] }>>("/api/skills").then(
+        (list) => {
+          const by: Record<string, string[]> = {};
+          for (const s of list) for (const id of s.agents) (by[id] ??= []).push(s.name);
+          setOwn(by);
+        },
+        () => {},
+      );
+    void loadSkills();
+    return hubEvents.on((e) => {
+      if (e.type === "skills.updated" || e.type === "plugins.updated") void loadSkills();
+      if (e.type === "replica.synced" && e.data.tables.includes("skill_agents")) void loadSkills();
+    });
+  }, []);
 
   // A request from outside the panel: an agent's settings (dialog header).
   useEffect(() => {
@@ -112,6 +131,16 @@ export function AgentsPage() {
                 </Badge>
               )}
             </div>
+            {own[a.id]?.length ? (
+              <div className="mt-2 flex flex-wrap gap-1.5" aria-label={t("agents.ownSkills")}>
+                {own[a.id].map((name) => (
+                  <Badge key={name} tone="info">
+                    <Sparkles className="size-3" />
+                    {name}
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
             <div className="mt-auto flex justify-end gap-1 pt-3">
               {a.source === "user" && (
                 <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleting(a)}>

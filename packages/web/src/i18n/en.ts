@@ -47,7 +47,7 @@ export default {
   // navigation and header
   "nav.chat": "Chat",
   "nav.tasks": "Tasks",
-  "nav.notifications": "Notifications",
+  "nav.notifications": "Inbox",
   "nav.agents": "Agents",
   "nav.brains": "Brains",
   "nav.plugins": "Plugins",
@@ -174,12 +174,6 @@ export default {
   "threadStatus.failed": "couldn't answer",
   "threadStatus.interrupted": "interrupted",
   "threadStatus.cancelled": "cancelled",
-
-  // notification levels
-  "notifyLevel.silent": "silent",
-  "notifyLevel.digest": "for digest",
-  "notifyLevel.notify": "notification",
-  "notifyLevel.ask": "question",
 
   // sign-in and first run
   "auth.tagline": "Your personal agent, on your own hardware",
@@ -513,27 +507,39 @@ export default {
   "thread.hint": "Two agents talking — the reply goes back to the one who wrote on its own. To step in, just write here.",
 
   // notifications
-  "notifications.subtitle": "What agents thought deserved your attention. Your ratings help them learn what matters.",
-  "notifications.flush": "Send digest now",
-  "notifications.digestSent": "Digest sent: {n, plural, one {# item} other {# items}}",
   "notifications.digestEmpty": "Nothing for a digest yet",
-  "notifications.filter.all": "All",
-  "notifications.filter.notify": "Important",
-  "notifications.filter.digest": "For digest",
-  "notifications.filter.silent": "Silent",
-  "notifications.empty": "No notifications",
-  "notifications.emptyHint": "When background tasks find something interesting, it will show up here.",
   "notifications.feedback.useful": "useful",
-  "notifications.feedback.usefulTitle": "Useful, keep it up",
   "notifications.feedback.less": "less often",
-  "notifications.feedback.lessTitle": "Send this kind of thing less often",
   "notifications.feedback.off": "turn off",
-  "notifications.feedback.offTitle": "Stop sending this kind of thing",
   "notifications.thanks.useful": "Thanks! Noted",
   "notifications.thanks.less": "I'll send these less often",
   "notifications.thanks.off": "I won't send this kind of thing anymore",
   "notifications.toTask": "task →",
-  "notifications.toChat": "open chat →",
+  "notifications.sources": "From:",
+  "notifications.showAll": "Show all",
+  "notifications.showLess": "Show less",
+  "notifications.feedback.menu": "Rate this",
+
+  // inbox
+  "inbox.next": "Digest at {time} · {n, plural, one {# item} other {# items}}",
+  "inbox.nextNoTime": "{n, plural, one {# item waits} other {# items wait}} for a digest",
+  "inbox.collect": "Collect now",
+  "inbox.collecting": "The assistant is writing the digest",
+  "inbox.waiting": "Waiting for you",
+  "inbox.approvals": "{n, plural, one {# approval waits} other {# approvals wait}}",
+  "inbox.today": "Today",
+  "inbox.yesterday": "Yesterday",
+  "inbox.openChat": "Open in chat",
+  "inbox.more": "Show earlier",
+  "inbox.empty": "Nothing came in yet",
+  "inbox.emptyHint": "Reports, digests and your agents' news land here.",
+  "inbox.behind": "Behind the scenes · {n}",
+  "inbox.why.superseded": "Replaced by a newer one",
+  "inbox.why.inDigest": "Went into “{title}”",
+  "inbox.why.inEarlierDigest": "Went into an earlier digest",
+  "inbox.why.approval": "The approval itself is in the chat",
+  "inbox.why.waiting": "Waits for the next digest",
+  "inbox.why.silent": "Silent: just for the record",
 
   // agents
   "agents.subtitle": "An agent is a role: a personality, a set of brains, tools and an initiative level.",
@@ -541,6 +547,7 @@ export default {
   "agents.empty": "No agents",
   "agents.noDescription": "No description",
   "agents.initiativeBadge": "initiative {level}",
+  "agents.ownSkills": "Its own skills",
   "agents.source.builtin": "built-in",
   "agents.source.user": "yours",
   "agents.deleteTitle": "Delete the agent?",
@@ -798,7 +805,7 @@ export default {
   "mcp.error.secret": "{field}: keep secrets in the vault and use a vault://<id> reference",
 
   // skills
-  "skills.subtitle": "Skills are instructions an agent loads when it needs them. Commands are “/name” templates for the chat.",
+  "skills.subtitle": "Skills are instructions an agent loads when it needs them: the whole team's, or only the agents they were given to. Commands are “/name” templates for the chat.",
   "skills.tab.skills": "Skills",
   "skills.tab.commands": "Commands",
   "skills.tab.tools": "Tools",
@@ -810,6 +817,9 @@ export default {
   "skills.effect.localWrite": "local write",
   "skills.effect.external": "external action",
   "skills.externalContent": "external content",
+  "skills.wholeTeam": "Whole team",
+  "skills.holdersHint": "Who has it: change it in the chat",
+  "skills.askHolders": "I want to decide who has the skill “{name}”",
 
   // settings
   "settings.general": "General",
@@ -887,7 +897,7 @@ export default {
   "panel.hint.agents": "Who answers and how",
   "panel.hint.skills": "Reusable instructions and /commands",
   "panel.hint.tasks": "Background and delegated work",
-  "panel.hint.notifications": "What agents flagged for you",
+  "panel.hint.notifications": "What came in for you",
   "panel.hint.brains": "Claude Code, Codex, API keys",
   "panel.hint.plugins": "Everything the assistant can do: weather, calendar, Telegram, memory and more",
   "panel.hint.machines": "Your other computers",

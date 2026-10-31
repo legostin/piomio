@@ -186,11 +186,14 @@ describe("integrations and the Google sign-in", () => {
 
   it("puts the plugins' sections into the digest, even with nothing else waiting", async () => {
     expect(await hub.notifier.flushDigest()).toBe(1);
+    // This hub has no brain to write it with: the card goes out once the writer fails.
     const dialog = hub.store.agentConversation(hub.settings.get().defaultAgent);
-    const digest = hub.store.listMessages(dialog.id).find((m) => m.parts.some((p) => p.type === "notification" && p.level === "digest"))!;
-    const part = digest.parts.find((p) => p.type === "notification") as any;
-    expect(part.title).toBe("Digest (1)");
-    expect(part.body).toMatch(/^\*\*Today\*\*\n09:00 Standup\n11:00 Lunch \(\d{4}-\d\d-\d\d UTC\)$/);
+    const part = (await until(
+      () => hub.store.listMessages(dialog.id).flatMap((m) => m.parts).find((p) => p.type === "notification" && p.kind === "digest"),
+      "the digest card",
+    )) as any;
+    expect(part.title).toMatch(/digest · /);
+    expect(part.body).toMatch(/^### Today\n\n09:00 Standup {2}\n11:00 Lunch \(\d{4}-\d\d-\d\d UTC\)$/);
   });
 
   it("disconnects: revokes at Google, forgets the token and the account", async () => {

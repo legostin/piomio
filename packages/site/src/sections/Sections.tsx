@@ -304,7 +304,7 @@ export function Install() {
             {tab === "docker" ? (
               <div className="flex flex-col gap-4">
                 <p className="text-[16px] text-fg-2">{t("install.docker.lead")}</p>
-                <CopyBlock code={`git clone https://github.com/${siteConfig.repo}.git piomio && cd piomio\ndocker compose up -d --build\ndocker compose logs piomio | grep -A1 "Piomio:"`} />
+                <CopyBlock code={`git clone https://github.com/${siteConfig.repo}.git piomio && cd piomio\ndocker compose up -d\ndocker compose logs piomio | grep -A1 "Piomio:"`} />
                 <p className="text-[14px] text-muted">{t("install.docker.note")}</p>
               </div>
             ) : (

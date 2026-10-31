@@ -80,3 +80,43 @@ export function hostOf(url: string): string {
     return "";
   }
 }
+
+/** An IPv4 address on this computer, the home network, a link-local range or a CGNAT overlay such as the tailnet (100.64/10). */
+function privateV4(h: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+}
+
+/**
+ * A link a person can open from anywhere: http(s) (https only with `httpsOnly`) to a named host on the internet. Not this
+ * computer, a bare name, the home network (.local, .lan, private addresses) or the tailnet's own addresses. Telegram
+ * rejects text links and buttons it cannot open, and a digest's "From:" line links only on such a hub.
+ */
+export function isPublicHttpUrl(url: string, opts: { httpsOnly?: boolean } = {}): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:" && (opts.httpsOnly || u.protocol !== "http:")) return false;
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (host.startsWith("[")) {
+    const v6 = host.slice(1, -1);
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v6);
+    if (mapped) return !privateV4(mapped[1]);
+    // The URL parser writes a mapped IPv4 address in hex: ::ffff:c0a8:102.
+    const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6);
+    if (hex) {
+      const hi = parseInt(hex[1], 16);
+      const lo = parseInt(hex[2], 16);
+      return !privateV4(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+    }
+    return !(v6 === "::1" || v6 === "::" || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6));
+  }
+  if (privateV4(host)) return false;
+  if (host === "localhost" || /\.(localhost|local|lan|internal|home\.arpa)$/.test(host)) return false;
+  return host.includes(".");
+}

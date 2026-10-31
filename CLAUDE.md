@@ -18,6 +18,8 @@ Self-hosted personal agent platform. Spec: `docs/superpowers/specs/2026-10-26-pi
   English is the source of truth and the fallback; `packages/core/test/i18n.test.ts` checks every catalog for parity.
 - Text for the model (tool results, tool descriptions, system notes, agent prompts), code and comments is English and not translated.
 - Secrets never go into settings, env files or prompts: store them in the vault and pass `vault://<id>` references.
+- Releases: every push to main asks in Actions whether to release (`.github/workflows/release-question.yml`, environment `release`); a yes raises the patch version, tags it and publishes the installers and the server image `ghcr.io/legostin/piomio` (`docker.yml`, which also publishes `main` on every push). Don't raise the version by hand unless asked.
+- Server settings are environment variables: a new one goes in `.env.example` and both READMEs' tables.
 
 ## Interface (law)
 - Chat first. Everything can be made and set up in the chat with an agent: it asks, the person answers or taps buttons inside its messages (quick replies: `choices` parts; live cards with their actions), and agents have the tools for it. A "New …" or "Settings" entry point opens the right agent's chat with a short request in the person's words.

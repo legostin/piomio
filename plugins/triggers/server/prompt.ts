@@ -93,7 +93,9 @@ export function renderPrompt(t: Trigger, c: FireContext): string {
 
   lines.push(
     "",
-    'When you are done, call `notify` exactly once: level "notify" only if this genuinely deserves the user\'s attention right now, "digest" if it can wait for the next summary, "silent" if nothing needs their attention.',
+    t.report
+      ? "This is a report the user asked for: your final reply is delivered to them as your message at its time. Write it for them, complete, in their language. Do not call `notify`."
+      : 'When you are done, call `notify` exactly once: level "notify" only if this genuinely deserves the user\'s attention right now, "digest" if it can wait for the next summary, "silent" if nothing needs their attention.',
   );
   return lines.join("\n");
 }

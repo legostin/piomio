@@ -59,6 +59,7 @@ export const MAIN_TABLES: ReplTable[] = [
   { name: "feeds", pk: ["id"] },
   { name: "feed_posts", pk: ["id"] },
   { name: "pages", pk: ["id"] },
+  { name: "skill_agents", pk: ["skill"] },
   { name: "meta", pk: ["key"] },
 ];
 

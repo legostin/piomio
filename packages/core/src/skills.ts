@@ -2,7 +2,9 @@
 
 import { readdirSync, readFileSync, existsSync, mkdirSync, cpSync, statSync, rmSync } from "node:fs";
 import { join, basename, relative } from "node:path";
+import type { AgentDef } from "@piomio/shared";
 import { matchesAny, parseFrontmatter } from "@piomio/shared";
+import { json, type Db } from "./db.ts";
 
 export interface Skill {
   name: string;
@@ -34,10 +36,49 @@ export interface Command {
   source: string;
 }
 
+/** The agent has the skill: its name fits the agent's patterns, and it is the whole team's (no holders) or the agent's. */
+export function hasSkill(agent: Pick<AgentDef, "id" | "skills">, skill: string, holders: string[]): boolean {
+  return matchesAny(skill, agent.skills.length ? agent.skills : ["*"]) && (!holders.length || holders.includes(agent.id));
+}
+
+/** Who has each skill (table skill_agents): a skill with no row is the whole team's, one with a row only its agents'. */
+export class SkillHolders {
+  private db: Db;
+
+  constructor(db: Db) {
+    this.db = db;
+  }
+
+  /** The agents the skill was given to; empty: the whole team. */
+  get(skill: string): string[] {
+    const r = this.db.prepare("select agents from skill_agents where skill = ?").get(skill) as { agents: string } | undefined;
+    return json<string[]>(r?.agents, []);
+  }
+
+  all(): Map<string, string[]> {
+    const rows = this.db.prepare("select skill, agents from skill_agents").all() as Array<{ skill: string; agents: string }>;
+    return new Map(rows.map((r) => [r.skill, json<string[]>(r.agents, [])]));
+  }
+
+  /** Give the skill to these agents only; none: back to the whole team. */
+  set(skill: string, agents: string[]): void {
+    const list = [...new Set(agents)];
+    if (!list.length) this.db.prepare("delete from skill_agents where skill = ?").run(skill);
+    else this.db.prepare("insert into skill_agents(skill, agents) values (?, ?) on conflict(skill) do update set agents = excluded.agents").run(skill, JSON.stringify(list));
+  }
+
+  /** An agent left the team: its skills stay with the others, and one only it had goes back to the whole team. */
+  dropAgent(agentId: string): void {
+    for (const [skill, agents] of this.all()) if (agents.includes(agentId)) this.set(skill, agents.filter((a) => a !== agentId));
+  }
+}
+
 export class SkillIndex {
   private skills = new Map<string, Skill>();
   private commands = new Map<string, Command>();
   roots: Array<{ source: string; skillsDir?: string; commandsDir?: string }> = [];
+  /** Who has each skill (the hub sets it); without it every skill is the whole team's. */
+  holders?: SkillHolders;
 
   setRoots(roots: Array<{ source: string; skillsDir?: string; commandsDir?: string }>): void {
     this.roots = roots;
@@ -78,8 +119,22 @@ export class SkillIndex {
     return [...this.skills.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  forAgent(globs: string[]): Skill[] {
-    return this.list().filter((s) => matchesAny(s.name, globs.length ? globs : ["*"]));
+  /** The skills `agent` has; `also` is one its session follows anyway (a trigger's run of a skill). */
+  forAgent(agent: Pick<AgentDef, "id" | "skills">, also?: string): Skill[] {
+    const held = this.holders?.all() ?? new Map<string, string[]>();
+    return this.list().filter((s) => s.name === also || hasSkill(agent, s.name, held.get(s.name) ?? []));
+  }
+
+  has(agent: Pick<AgentDef, "id" | "skills">, name: string, also?: string): boolean {
+    return name === also || hasSkill(agent, name, this.holders?.get(name) ?? []);
+  }
+
+  /** The skills given to the agent itself (not the whole team's ones). */
+  ownOf(agentId: string): string[] {
+    const held = this.holders?.all() ?? new Map<string, string[]>();
+    return this.list()
+      .filter((s) => held.get(s.name)?.includes(agentId))
+      .map((s) => s.name);
   }
 
   get(name: string): Skill | undefined {

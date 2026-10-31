@@ -242,7 +242,22 @@ export type MessagePart =
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
   /** `asked`: the person asked for it in their own words (ToolSpec.asked): a quiet line, not a card. */
   | { type: "approval"; approvalId: string; summary: string; status: ApprovalStatus; ask?: ApprovalAsk; asked?: boolean }
-  | { type: "notification"; level: NotifyLevel; title: string; body: string }
+  /**
+   * Something an agent or the hub tells the person. `kind` says how it reads: a report or a digest is the agent
+   * speaking (with `caption`, and `sources` under a digest), an alert or a question a card (`feedbackable`: a check's,
+   * so the person can rate it). Parts saved before kinds have none and read by `level`.
+   */
+  | {
+      type: "notification";
+      level: NotifyLevel;
+      title: string;
+      body: string;
+      kind?: NotificationKind;
+      notificationId?: string;
+      caption?: string;
+      sources?: NotificationSource[];
+      feedbackable?: boolean;
+    }
   | { type: "error"; message: string }
   /** A file the user sent (or a plugin attached): `path` is relative to the workspaces root, `size` in bytes. */
   | { type: "attachment"; path: string; name: string; mimeType?: string; size?: number; kind?: AttachmentKind; durationSec?: number; transcript?: string }
@@ -494,6 +509,8 @@ export interface Task {
   tainted?: boolean;
   /** A channel's gathering run (Feed): it works in the channel's own folder, and its output is the channel's posts. */
   feedId?: string;
+  /** How the result reaches the person: "report", a schedule's report delivered as the agent's message; "digest", the digest the default agent writes. */
+  deliver?: "report" | "digest";
   /** The brain and depth whoever started it chose for this job (task_delegate), over the agent's choice for tasks. */
   thinking?: ThinkingChoice;
   /** The skill the task follows (a trigger's run of a taught skill): a taught one may click and type in the background. */
@@ -799,9 +816,20 @@ export interface BrainTurn {
 
 export type NotifyLevel = "silent" | "digest" | "notify" | "ask";
 
+/** What a notification is for the person (docs/superpowers/specs/2026-10-31-notifications-inbox-design.md). */
+export type NotificationKind = "report" | "alert" | "question" | "digest" | "item" | "approval";
+
+/** What a digest drew on: a schedule, an agent, a channel or a connected service; `href` is a hub path. */
+export interface NotificationSource {
+  label: string;
+  href?: string;
+  count?: number;
+}
+
 export interface Notification {
   id: string;
   level: NotifyLevel;
+  kind: NotificationKind;
   title: string;
   body: string;
   agentId?: string;
@@ -811,6 +839,65 @@ export interface Notification {
   createdAt: ISODate;
   deliveredAt?: ISODate;
   feedback?: "useful" | "less" | "off";
+  /** Why it did not reach the person now (quiet hours, the rate limit, replaced by a newer one). */
+  reason?: string;
+  /** The chat message that carries it. */
+  messageId?: string;
+  /** Opened in the Inbox. */
+  readAt?: ISODate;
+  /** The digest an item went into. */
+  digestId?: string;
+  supersededBy?: string;
+}
+
+/** One Inbox row: a report, a digest, an alert or a question that reached the person. */
+export interface InboxEntry {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  caption?: string;
+  agentId?: string;
+  taskId?: string;
+  /** The conversation of its chat message (the agent's dialog). */
+  conversationId?: string;
+  messageId?: string;
+  sources?: NotificationSource[];
+  createdAt: ISODate;
+  unread: boolean;
+  /** From a check (a trigger): the person can rate it. */
+  feedbackable: boolean;
+  feedback?: Notification["feedback"];
+}
+
+export interface InboxView {
+  /** Items wait for the next digest: its local time ("19:00", none without digest times) and how many. */
+  next?: { time?: string; count: number };
+  /** Questions the person has not read yet ("Waiting for you"). */
+  questions: InboxEntry[];
+  /** The rest, newest first; more before the last one with `?before=` its createdAt. */
+  entries: InboxEntry[];
+  hasMore: boolean;
+  behindCount: number;
+  unread: number;
+}
+
+/** A row behind the scenes: an item (silent, held for the digest) or an approval push, and why it did not reach the person. */
+export interface BehindEntry {
+  id: string;
+  level: NotifyLevel;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  agentId?: string;
+  taskId?: string;
+  createdAt: ISODate;
+  reason?: string;
+  /** Held for the digest and not out in one yet (level digest, not replaced, and not digested or its digest still being written). */
+  waiting: boolean;
+  /** The digest it went into. */
+  digest?: { id: string; title: string; createdAt: ISODate };
+  supersededBy?: string;
 }
 
 // ---------- Channels ----------
@@ -1137,10 +1224,12 @@ export type UiEvent =
   | { type: "page.deleted"; data: { id: string } }
   | { type: "task.updated"; data: Task }
   | { type: "notification.created"; data: Notification }
+  | { type: "inbox.changed"; data: { unread: number } }
   | { type: "approval.pending"; data: { count: number } }
   | { type: "brains.updated"; data: Record<string, never> }
   | { type: "plugins.updated"; data: Record<string, never> }
   | { type: "agents.updated"; data: Record<string, never> }
+  | { type: "skills.updated"; data: Record<string, never> }
   | { type: "settings.updated"; data: Record<string, unknown> }
   | { type: "connections.updated"; data: { provider: string } }
   | { type: "machine.updated"; data: Machine }

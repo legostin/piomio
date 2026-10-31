@@ -1,12 +1,15 @@
 # A version tag (v0.2.0, the root package.json's version) builds and checks the desktop installers (desktop.yml) and
-# publishes them as that version's release. Hubs of the version hand them out at /download/desktop/<os>
-# (packages/core/src/server/join-page.ts), so the asset names must stay what packaging/desktop/build.mjs makes.
-# Its latest.json is what installed apps check for updates (packages/desktop/src-tauri/src/update.rs).
+# publishes them as that version's release, and publishes the server image under the version (docker.yml).
+# Hubs of the version hand the installers out at /download/desktop/<os> (packages/core/src/server/join-page.ts), so
+# the asset names must stay what packaging/desktop/build.mjs makes. Its latest.json is what installed apps check for
+# updates (packages/desktop/src-tauri/src/update.rs). release-question.yml starts it on the tag it makes, since a tag
+# pushed with the workflow token triggers nothing by itself.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,6 +30,13 @@ jobs:
     # The update signing key (TAURI_SIGNING_PRIVATE_KEY).
     secrets: inherit
 
+  image:
+    needs: version
+    uses: ./.github/workflows/docker.yml
+    permissions:
+      contents: read
+      packages: write
+
   publish:
     needs: installers
     runs-on: ubuntu-latest
@@ -36,9 +46,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # Only the installers: the image's digests are artifacts of this run too.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: "*-installer*"
           merge-multiple: true
       - name: The assets the hubs link to are there
         run: |

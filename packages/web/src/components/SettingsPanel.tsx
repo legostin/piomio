@@ -20,7 +20,7 @@ import { PluginsPage } from "../pages/Plugins";
 import { MachinesPage } from "../pages/Machines";
 import { DevicesPage } from "../pages/Devices";
 import { McpPage } from "../pages/Mcp";
-import { NotificationsPage } from "../pages/Notifications";
+import { InboxPage } from "../pages/Inbox";
 import { SkillsPage } from "../pages/Skills";
 import { SettingsPage } from "../pages/Settings";
 import { TasksPage } from "../pages/Tasks";
@@ -41,7 +41,7 @@ function SectionBody({ section }: { section: PanelSection }) {
     case "mcp":
       return <McpPage />;
     case "notifications":
-      return <NotificationsPage />;
+      return <InboxPage />;
     case "skills":
       return <SkillsPage />;
     case "settings":

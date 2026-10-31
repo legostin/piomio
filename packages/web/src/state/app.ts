@@ -9,6 +9,7 @@ import { HubSocket, type ConnectionState } from "../lib/socket";
 import { applyDelta, mergeFetched, prependOlder, upsertMessage } from "../lib/messages";
 import { desktopTicketFrom } from "../lib/desktop";
 import { mobileMode } from "../lib/mobile";
+import { toastWorthy } from "../lib/notifications";
 import { native } from "../lib/native";
 import { adoptHubLocale, t } from "../i18n";
 import { toast } from "./toast";
@@ -46,6 +47,8 @@ export interface Bootstrap {
   /** A new hub: only the setup card until a brain works, then the assistant opens the intro (FirstRun.tsx). */
   firstRun?: boolean;
   pendingApprovals: number;
+  /** Reports, digests, alerts and questions not read yet (the Inbox's badge); missing on an older hub. */
+  inboxUnread?: number;
   uiPlugins: UiPluginEntry[];
   channels: ChannelEntry[];
 }
@@ -347,11 +350,14 @@ function handleEvent(e: UiEvent): void {
     case "approval.pending":
       session.set((s) => (s ? { ...s, pendingApprovals: e.data.count } : s));
       break;
+    case "inbox.changed":
+      session.set((s) => (s ? { ...s, inboxUnread: e.data.unread } : s));
+      break;
     case "vault.state":
       session.set((s) => (s ? { ...s, vaultState: e.data.state } : s));
       break;
     case "notification.created":
-      if (e.data.level === "notify" || e.data.level === "ask") toast(e.data.title, "info");
+      if (toastWorthy(e.data)) toast(e.data.title, "info");
       break;
     case "plugins.updated":
       void refreshBootstrap();

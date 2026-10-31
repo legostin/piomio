@@ -16,6 +16,8 @@ type Status = "loading" | "ready" | "playing" | "ended" | "failed" | "noworker";
 
 /** The app is laid out at least this wide (its sidebar shows) and scaled down to fit. */
 const DESKTOP_WIDTH = 860;
+/** A frame that has not said "ready" by then is given up on (the still picture stays). */
+const STALL_MS = 15_000;
 /** Narrower than this, the app gets the window's own width (its phone layout). */
 const PHONE_BELOW = 640;
 
@@ -67,7 +69,8 @@ export function DemoWindow({ chapter, className = "", idle = false, passive = fa
   useEffect(() => {
     const take = (d: FromDemo) => {
       if (d.type === "ready" || d.type === "playing") setFirst(false);
-      if (d.type === "ended") ended.current?.();
+      // A chapter that failed counts as over: the story moves on, a card rests on its picture.
+      if (d.type === "ended" || d.type === "failed") ended.current?.();
       setStatus((s) => {
         if (s === "noworker") return s;
         if (d.type === "failed") return d.message === "no service worker" ? "noworker" : "failed";
@@ -119,7 +122,15 @@ export function DemoWindow({ chapter, className = "", idle = false, passive = fa
   const phone = !!size && size.w < PHONE_BELOW;
   const scale = size && !phone ? Math.min(1, size.w / DESKTOP_WIDTH) : 1;
   const frameStyle = size ? { width: size.w / scale, height: size.h / scale, transform: `scale(${scale})`, transformOrigin: "0 0" } : { width: "100%", height: "100%" };
-  const covered = idle || status === "loading" || status === "noworker";
+  // A frame that never came up (a slow or odd browser) rests like a failed one instead of showing a half-made app.
+  useEffect(() => {
+    if (idle || status !== "loading") return;
+    const timer = setTimeout(() => setStatus((s) => (s === "loading" ? "failed" : s)), STALL_MS);
+    return () => clearTimeout(timer);
+  }, [idle, status, src]);
+
+  // Anything not playing well shows the still picture: never an error inside the app.
+  const covered = idle || status === "loading" || status === "noworker" || status === "failed";
 
   return (
     <div className={`flex flex-col overflow-hidden rounded-[18px] bg-canvas shadow-[var(--shadow-window)] ${className}`}>
@@ -154,7 +165,7 @@ export function DemoWindow({ chapter, className = "", idle = false, passive = fa
           />
         )}
         <div className={`pointer-events-none absolute inset-0 transition-opacity duration-500 ${covered ? "opacity-100" : "opacity-0"}`}>
-          {idle || first || status === "noworker" ? <Poster /> : <div className="absolute inset-0 bg-bg" />}
+          {idle || first || status === "noworker" || status === "failed" ? <Poster /> : <div className="absolute inset-0 bg-bg" />}
           {!idle && status === "loading" && (
             <div className="absolute inset-x-0 bottom-6 flex justify-center">
               <span className="rounded-full bg-surface px-3.5 py-1.5 text-[13px] font-medium text-muted shadow-[var(--shadow)]">{t("demo.loading")}</span>
@@ -176,7 +187,7 @@ export function DemoWindow({ chapter, className = "", idle = false, passive = fa
             className="candy absolute bottom-[88px] left-1/2 inline-flex -translate-x-1/2 items-center gap-2 rounded-full px-4 py-2 text-[14px] font-semibold whitespace-nowrap"
           >
             <Replay size={16} />
-            {status === "failed" ? `${t("demo.failed")} ${t("demo.replay")}` : t("demo.replay")}
+            {t("demo.replay")}
           </button>
         )}
       </div>
