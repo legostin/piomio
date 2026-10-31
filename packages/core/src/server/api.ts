@@ -445,6 +445,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
 
   // ----- machines -----
   api.get("/api/machines", async () => hub.machines.list());
+  // What an agent may be bound to (AgentDef.machines): this hub's computer, the machines, the other replicas.
+  api.get("/api/computers", async () => hub.computers());
   // The hub's computer and the paired machines with the turns running there now; "machines.activity" keeps it current.
   api.get("/api/machines/activity", async () => hub.activity.view());
   api.get("/api/machines/setups", async () => hub.machines.list().map((m) => hub.setups.view(m.id)));

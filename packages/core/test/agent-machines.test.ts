@@ -186,7 +186,7 @@ describe("agents bound to computers (integration)", () => {
 
     await say(c, `CALL hub_agents_list {}`);
     await idle(c);
-    expect(await lastAssistant(c)).toContain('"machines":["box"]');
+    expect(await lastAssistant(c)).toMatch(/"machines": \[\s*"box"\s*\]/);
 
     await say(c, `CALL hub_agent_save {"id":"coder","machines":[]}`);
     await idle(c);

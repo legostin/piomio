@@ -175,7 +175,12 @@ export function registerHubTools(hub: Hub): void {
   // ---------- agents ----------
 
   reg(
-    { name: "agents_list", effect: "read", description: "List agents with their avatar, brains (in fallback order), initiative and which one is the default.", inputSchema: obj({}) },
+    {
+      name: "agents_list",
+      effect: "read",
+      description: "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative and which one is the default.",
+      inputSchema: obj({}),
+    },
     () => {
       const def = hub.settings.get().defaultAgent;
       return json(
@@ -185,6 +190,7 @@ export function registerHubTools(hub: Hub): void {
           description: a.description,
           avatar: a.avatar,
           brains: a.brains,
+          ...(a.machines?.length ? { machines: a.machines.map((m) => hub.runner.computerName(m)) } : {}),
           model: a.model,
           thinking: a.thinking,
           initiative: a.initiative,
@@ -203,11 +209,13 @@ export function registerHubTools(hub: Hub): void {
         "Change an agent: pass its id. New agents go through hub_agent_draft, which shows the user a card to confirm; create one here (with at least a name) only when the user asks to skip that. " +
         `avatar = {color, shape}; colors: ${AVATAR_COLORS.join(", ")}; shapes: ${AVATAR_SHAPES.join(", ")}. ` +
         "brains is the ordered fallback list (see hub_brains_list), initiative 0 = only reacts, 1 = suggests, 2 = acts within rules. " +
+        "machines binds the agent to computers (names or ids, see task_agents): it then thinks only with their brains, and while none of them is online its chat shows an error instead of moving elsewhere; [] unbinds. " +
         'thinking: how it thinks per kind of work (chat, task, feed, schedule), each {preset: "fast"|"balanced"|"deep"} or an exact {model, effort, brain}; kinds left out follow chat.',
       inputSchema: obj({
         id: { type: "string", description: "Existing agent id to edit; omit to create (derived from the name)" },
         ...PROFILE_FIELDS,
         brains: { type: "array", items: { type: "string" } },
+        machines: { type: "array", items: { type: "string" }, description: "The only computers the agent thinks on; [] = anywhere" },
         model: { type: "string" },
         thinking: { type: "object", description: "Replaces the agent's choices per kind of work" },
       }),
@@ -220,6 +228,12 @@ export function registerHubTools(hub: Hub): void {
       const patch = profilePatch(i);
       if (typeof patch === "string") return text(patch, true);
       if (Array.isArray(i.brains)) patch.brains = i.brains.map(String).filter(Boolean);
+      if (Array.isArray(i.machines)) {
+        const names: string[] = i.machines.map(String).filter((m: string) => m.trim());
+        const unknown = names.find((m) => !hub.resolveComputer(m));
+        if (unknown) return text(`No computer "${unknown}". Computers: ${hub.computers().map((c) => `${c.name} (${c.id}${c.online ? "" : ", offline"})`).join(", ")}.`, true);
+        patch.machines = names.map((m) => hub.resolveComputer(m)!);
+      }
       if (i.model !== undefined) patch.model = String(i.model) || undefined;
       if (i.thinking !== undefined) patch.thinking = parseThinking(i.thinking);
       const saved = hub.saveAgent({ ...patchAgent(prev ?? agentFromMarkdown(id, "", "user"), patch, hubLocale()), id, source: "user" }, "agent");
