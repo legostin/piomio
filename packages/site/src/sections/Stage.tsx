@@ -1,5 +1,5 @@
-// The first screen: a short headline over the live app in the middle of the screen, and the day's chapters under it
-// to pick from; what Piomio is and how to get it come after. A chapter that ends hands over to the next one, like a showreel. On a phone the window lets touches
+// The first screen: a short headline and the download over the live app in the middle of the screen, and the day's chapters
+// under it to pick from; what Piomio is comes after. A chapter that ends hands over to the next one, like a showreel. On a phone the window lets touches
 // through to the page (it scrolls freely) and a tap opens the day full screen as stories.
 
 import { useEffect, useRef, useState } from "react";
@@ -90,14 +90,20 @@ export function Stage() {
           <h1 className="font-display text-[clamp(1.7rem,3.2vw,2.75rem)] leading-[1.06] font-extrabold tracking-[-0.025em] text-balance">
             {t("hero.titleLead")} <span className="marker whitespace-nowrap">{t("hero.titleMarker")}</span>
           </h1>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+            <DownloadButton />
+            <a href="#install" className="ghost hidden items-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-semibold sm:inline-flex">
+              {t("hero.secondary")}
+            </a>
+          </div>
         </header>
 
-        <div className="relative mx-auto mt-6 max-w-[1140px] sm:mt-8">
+        <div className="relative mx-auto mt-6 max-w-[1140px] sm:mt-7">
           <DemoWindow
             chapter={chapter}
             idle={wide === null || !!story}
             passive={wide === false}
-            className="h-[min(66svh,560px)] min-h-[420px] lg:h-[clamp(480px,calc(100svh_-_285px),720px)]"
+            className="h-[min(66svh,560px)] min-h-[420px] lg:h-[clamp(460px,calc(100svh_-_375px),720px)]"
             onEnded={() => setEnded({ id: chapter, at: Date.now() })}
           />
           {wide === false && <button type="button" onClick={() => setStory(chapter)} aria-label={t("demo.tapToWatch")} className="absolute inset-x-0 top-10 bottom-0 rounded-b-[18px]" />}
@@ -121,12 +127,6 @@ export function Stage() {
             {t("hero.eyebrow")}
           </p>
           <p className="text-[clamp(1.05rem,1.4vw,1.2rem)] leading-relaxed text-fg-2 text-pretty">{t("hero.lead")}</p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-            <DownloadButton />
-            <a href="#install" className="ghost inline-flex items-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-semibold">
-              {t("hero.secondary")}
-            </a>
-          </div>
           <p className="mt-4 text-[13px] text-muted">{t("hero.fineprint")}</p>
         </div>
       </div>
