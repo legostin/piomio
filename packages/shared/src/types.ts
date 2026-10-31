@@ -559,6 +559,11 @@ export interface AgentDef {
   description: string;
   /** Ordered brain refs, e.g. ["claude-code@local", "api:anthropic"]. */
   brains: string[];
+  /**
+   * The computers the agent thinks on (machine ids; the hub's own by its replica id in a cluster, else "local"): only
+   * their brains, and an error when none of them is online. Unset or empty: anywhere.
+   */
+  machines?: string[];
   /** An exact model for every brain (from before `thinking`): used when no choice names one. */
   model?: string;
   /** How the agent thinks for each kind of work: kinds without a choice of their own follow `chat`. */
@@ -859,6 +864,17 @@ export interface Machine {
   info?: MachineInfo;
   lastSeenAt?: ISODate;
   createdAt: ISODate;
+}
+
+/**
+ * A computer an agent may be bound to (AgentDef.machines): the hub's own (`id` its replica id in a cluster, else
+ * "local"), a paired machine, or another replica of the hub (`standby`: it is not leading, so nothing runs there now).
+ */
+export interface Computer {
+  id: string;
+  name: string;
+  online: boolean;
+  standby?: boolean;
 }
 
 /**

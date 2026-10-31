@@ -14,11 +14,13 @@ export function agentFromMarkdown(id: string, text: string, source: string): Age
   const list = (v: unknown, d: string[]): string[] =>
     Array.isArray(v) ? v.map(String) : typeof v === "string" ? v.split(",").map((s) => s.trim()).filter(Boolean) : d;
   const initiative = Number(data.initiative ?? 1);
+  const machines = list(data.machines, []);
   return {
     id,
     name: String(data.name ?? id),
     description: String(data.description ?? ""),
     brains: list(data.brains, DEFAULT_BRAINS),
+    ...(machines.length ? { machines } : {}),
     model: data.model ? String(data.model) : undefined,
     thinking: parseThinking(data.thinking),
     initiative: (initiative === 0 || initiative === 2 ? initiative : 1) as 0 | 1 | 2,
@@ -75,6 +77,7 @@ export function agentToMarkdown(a: AgentDef): string {
     description: a.description,
     ...(parseAvatar(a.avatar) ? { avatar: parseAvatar(a.avatar) } : {}),
     brains: a.brains,
+    ...(a.machines?.length ? { machines: a.machines } : {}),
     ...(a.model ? { model: a.model } : {}),
     ...(parseThinking(a.thinking) ? { thinking: parseThinking(a.thinking) } : {}),
     initiative: a.initiative,

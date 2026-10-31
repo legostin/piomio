@@ -155,6 +155,24 @@ export function expandBrains(refs: readonly string[], listed: readonly string[])
   return out;
 }
 
+/** Whether an agent is bound to computers (AgentDef.machines). */
+export function bound(machines: readonly string[] | undefined): machines is readonly string[] {
+  return !!machines?.length;
+}
+
+/**
+ * The refs on an agent's computers (AgentDef.machines); all of them when it is bound to none. A ref on "local" runs on
+ * the hub's own computer, which a binding names by `here` (its replica id in a cluster) or "local".
+ */
+export function onMachines(refs: readonly string[], machines: readonly string[] | undefined, here: string): string[] {
+  if (!bound(machines)) return [...refs];
+  return refs.filter((r) => {
+    const at = r.lastIndexOf("@");
+    const m = at > 0 ? r.slice(at + 1) : "local";
+    return m === "local" ? machines.includes("local") || machines.includes(here) : machines.includes(m);
+  });
+}
+
 /** How soon a brain answers, for "auto" (lower first): the API at once, a CLI after starting a process; here before elsewhere. */
 export function brainSpeed(ref: string): number {
   const r = ref.includes("@") ? ref : `${ref}@local`;

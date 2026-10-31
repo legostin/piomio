@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDef } from "../src/types.ts";
 import { modelLabel } from "../src/models.ts";
-import { brainsFor, brainSpeed, expandBrains, fitEffort, parseThinking, patchChoice, resolveThinking, taskThinking, thinkingFor, withChoice, workKind } from "../src/thinking.ts";
+import { brainsFor, brainSpeed, expandBrains, fitEffort, onMachines, parseThinking, patchChoice, resolveThinking, taskThinking, thinkingFor, withChoice, workKind } from "../src/thinking.ts";
 
 const presets = { fast: { model: "sonnet", effort: "low" }, balanced: { model: "opus", effort: "medium" }, deep: { model: "opus", effort: "xhigh" } };
 const claude = { presets, efforts: ["low", "medium", "high", "xhigh", "max"] };
@@ -113,5 +113,23 @@ describe("the pool of machines", () => {
 
   it("keeps a machine the agent named where it put it and adds nothing for it", () => {
     expect(expandBrains(["codex@mach_pc", "codex@local"], listed)).toEqual(["codex@mach_pc", "codex@local", "codex@mach_vps"]);
+  });
+});
+
+describe("agents bound to computers", () => {
+  const refs = ["claude-code@local", "api:anthropic@local", "claude-code@mach_vps", "codex@mach_vps", "codex@mach_box"];
+
+  it("keeps every brain when the agent is bound to nothing", () => {
+    expect(onMachines(refs, undefined, "local")).toEqual(refs);
+    expect(onMachines(refs, [], "rep_mac")).toEqual(refs);
+  });
+
+  it("keeps the brains of its computers only, the hub's own by its replica id or local", () => {
+    expect(onMachines(refs, ["mach_vps"], "rep_mac")).toEqual(["claude-code@mach_vps", "codex@mach_vps"]);
+    expect(onMachines(refs, ["rep_mac"], "rep_mac")).toEqual(["claude-code@local", "api:anthropic@local"]);
+    expect(onMachines(refs, ["local", "mach_box"], "rep_vps")).toEqual(["claude-code@local", "api:anthropic@local", "codex@mach_box"]);
+    // Bound to the Mac while the VPS leads: nothing here is the Mac.
+    expect(onMachines(refs, ["rep_mac"], "rep_vps")).toEqual([]);
+    expect(onMachines(["codex"], ["local"], "local")).toEqual(["codex"]);
   });
 });
