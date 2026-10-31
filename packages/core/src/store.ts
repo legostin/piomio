@@ -354,6 +354,11 @@ export class Store {
     return r ? sessionFrom(r) : undefined;
   }
 
+  /** Whether a session in the conversation, open or closed, read outside content. */
+  conversationTainted(conversationId: string): boolean {
+    return !!this.db.prepare("select 1 from sessions where conversation_id = ? and tainted = 1 limit 1").get(conversationId);
+  }
+
   updateSession(id: string, patch: { resumeToken?: string | null; tainted?: boolean; status?: SessionRow["status"]; brainRef?: string }): void {
     if (patch.resumeToken !== undefined) this.db.prepare("update sessions set resume_token = ? where id = ?").run(patch.resumeToken, id);
     if (patch.tainted !== undefined) this.db.prepare("update sessions set tainted = ? where id = ?").run(patch.tainted ? 1 : 0, id);

@@ -5,7 +5,7 @@
 // Brain `fake` takes input into such a turn (steer): the turn then ends with "fake also heard: <its last line>";
 // `fake2` cannot steer, so the hub sends it as the next turn.
 // "TIME?" answers with the turn's "[Now: …]" line (or "none"); a turn with files answers with their paths and the note.
-// "SELF?" answers with the last "[You now]" block the session got (or "none").
+// "SELF?" answers with the last "[You now]" block the session got (or "none"); "INPUT?" with the rest of the turn's input.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginContext } from "@piomio/plugin-sdk";
@@ -91,6 +91,12 @@ export default {
             if (lastLine(turn.text) === "RECAP?") {
               const fresh = /^\[System\] Your session in this conversation was renewed[\s\S]*?\n\n---\n/.exec(turn.text)?.[0];
               yield { type: "text", delta: fresh ? `${id} started from: ${fresh.replace(/\s+/g, " ").trim()}` : `${id} backup: ${turn.recap ? "yes" : "none"}` };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            // The turn's whole input after those two blocks: the notes the hub put before the user's words.
+            if (lastLine(turn.text) === "INPUT?") {
+              yield { type: "text", delta: `${id} input: ${turn.text}` };
               yield { type: "done", resumeToken: `${id}-resume` };
               return;
             }

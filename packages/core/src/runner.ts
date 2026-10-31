@@ -38,7 +38,7 @@ import { attachmentNote, forSession, isSpeech, SPEECH_NOT_SET_UP, type Attachmen
 import { MAX_AUTO_TRANSCRIBE_SEC, type Transcriber } from "./transcribe.ts";
 import { firstSpeakers, groupTurn, groupTurnText, handOff, MAX_HANDOFFS, USER_LABEL } from "./group-chat.ts";
 import { hubName } from "./pairing.ts";
-import { recap } from "./continuity.ts";
+import { cardKind, delivered, deliveredNote, recap, type NotificationPart } from "./continuity.ts";
 
 export interface RunnerDeps {
   config: Config;
@@ -1467,10 +1467,39 @@ export class SessionRunner {
   }
 
   /**
-   * What came before in a conversation, for a fresh session of `agent` there (continuity.ts): undefined when the agent
-   * has not replied there yet.
+   * The cards the hub delivered in a dialog since its agent's last reply (continuity.ts), as the note for its next turn,
+   * and whether one of them came from outside content: then the session is marked before it reads them, as for a
+   * tainted task's result relayed to its starter.
    */
-  private recapOf(conversationId: string, agent: AgentDef): string | undefined {
+  private deliveredSince(conversationId: string): { text: string; outside: boolean } | undefined {
+    const timezone = this.d.settings.get().timezone;
+    const cards = delivered(this.d.store.listMessages(conversationId, { limit: 60 }));
+    const note = deliveredNote(cards, { at: (m) => clockTime(m.createdAt, timezone), outside: (m, p) => this.cardFromOutside(m, p) });
+    return note && { ...note, text: this.d.redactor.text(note.text) };
+  }
+
+  /**
+   * Whether a card the hub delivered came from outside content: the digest (its writer reads the channels' posts and
+   * runs tainted), or one from a task or conversation that read some (a report run that browsed, a check's alert).
+   */
+  private cardFromOutside(m: Message, p: NotificationPart): boolean {
+    if (cardKind(p) === "digest") return true;
+    const n = p.notificationId ? this.d.notifier.get(p.notificationId) : undefined;
+    const taskId = m.taskId ?? n?.taskId;
+    const task = taskId ? this.d.store.getTask(taskId) : undefined;
+    // A task that is gone cannot say it read nothing.
+    if (taskId && !task) return true;
+    if (task?.tainted) return true;
+    const where = task?.conversationId ?? n?.conversationId;
+    return !!where && this.d.store.conversationTainted(where);
+  }
+
+  /**
+   * What came before in a conversation, for a fresh session of `agent` there (continuity.ts): undefined when the agent
+   * has not replied there yet. A card from outside content keeps its text out of the recap of a session that has not
+   * read any (`tainted`): it is only named there.
+   */
+  private recapOf(conversationId: string, agent: AgentDef, tainted = false): string | undefined {
     const msgs = this.d.store.listMessages(conversationId, { limit: 160 });
     // In a group chat every member speaks under its own name.
     const group = this.d.store.getConversation(conversationId)?.kind === "group";
@@ -1483,7 +1512,12 @@ export class SessionRunner {
       return a ? agentName(a, hubLocale()) : group ? m.agentId : "Assistant";
     };
     const first = this.d.store.firstMessage(conversationId);
-    const r = recap(msgs, { speaker, self: agentName(agent, hubLocale()), ...(first && first.id !== msgs[0]?.id ? { first } : {}) });
+    const r = recap(msgs, {
+      speaker,
+      self: agentName(agent, hubLocale()),
+      ...(first && first.id !== msgs[0]?.id ? { first } : {}),
+      ...(tainted ? {} : { cardBody: (m: Message, p: NotificationPart) => !this.cardFromOutside(m, p) }),
+    });
     return r && this.d.redactor.text(r);
   }
 
@@ -1794,16 +1828,18 @@ export class SessionRunner {
         this.d.brains.invalidate(ref);
         continue;
       }
+      // What the hub said in the dialog in the agent's name since its last reply: the person may be answering it.
+      const said = conv.kind === "main" && !task ? this.deliveredSince(conv.id) : undefined;
       // Outside content in this turn's input, or a task started with some: the session is marked before the brain reads it.
-      if (opts.taint || task?.tainted) this.markTainted(row!);
+      if (opts.taint || task?.tainted || said?.outside) this.markTainted(row!);
 
-      let text = prompt;
+      let text = said ? `${said.text}\n\n${prompt}` : prompt;
       // A session that resumes gets the recap too, for the brain to start afresh with if it cannot (BrainTurn.recap).
-      const seed = fresh || row!.resumeToken ? this.recapOf(conv.id, agent) : undefined;
+      const seed = fresh || row!.resumeToken ? this.recapOf(conv.id, agent, row!.tainted) : undefined;
       if (conv.kind === "group") {
         text = this.groupText(conv, agent, prompt, opts, fresh);
       } else if (fresh && seed) {
-        text = `${seed}\n\n---\n${prompt}`;
+        text = `${seed}\n\n---\n${text}`;
       }
       const backup = !fresh && seed ? { recap: seed } : {};
       fresh = false;
