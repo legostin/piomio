@@ -115,7 +115,7 @@ export default {
   "chat.noSuitableBrains": "no suitable brains",
   "chat.allLimited": "All available brains have hit their subscription limits. I'll continue after {time}.",
   "chat.needsBrain": "No brain works yet: sign one in from the card in the chat, and the message will be answered.",
-  "chat.machinesOff": "{agent} works only on {machines}, and {count, plural, one {it is} other {none of them is}} online now. Your message is kept: send it again once {count, plural, one {it is} other {one of them is}} back.",
+  "chat.machinesOff": "{agent} works only on {machines}, and {count, plural, one {it is not} other {none of them is}} online now. Your message is kept: send it again once {count, plural, one {it is} other {one of them is}} back.",
   "chat.noBrainOn": "none of its brains is on {machines}",
   "chat.cannotStart": "Can't start the agent “{agent}”: {reason}. Set up a brain on the Brains page (Claude Code, Codex or an API key).",
   "chat.turnFailed": "the turn could not be completed",

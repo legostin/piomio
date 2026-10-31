@@ -140,7 +140,7 @@ describe("agents bound to computers (integration)", () => {
       await idle(c);
       const all = await messages(c);
       expect(all.some((m) => m.role === "user" && textOf(m) === "are you there")).toBe(true);
-      expect(errorOf(all.at(-1)!)).toMatch(/Coder.+box/);
+      expect(errorOf(all.at(-1)!)).toBe("Coder works only on box, and it is not online now. Your message is kept: send it again once it is back.");
       expect(all.filter((m) => m.role === "assistant").length).toBe(before);
       expect(hub.store.activeSession(c, "coder")!.brainRef).toBe("fake@mach_box");
     } finally {
