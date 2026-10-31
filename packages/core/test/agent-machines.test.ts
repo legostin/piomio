@@ -125,6 +125,12 @@ describe("agents bound to computers (integration)", () => {
     expect(hub.store.activeSession(c, "coder")!.brainRef).toBe("fake@mach_box");
   });
 
+  it("shows only its computers' brains in the header's picker", async () => {
+    const view = (await web.req("GET", "/api/agents/coder/thinking")) as { kinds: Array<{ kind: string; brain?: string }>; brains: Array<{ ref: string }> };
+    expect(view.kinds.find((k) => k.kind === "chat")!.brain).toBe("fake@mach_box");
+    expect(view.brains.map((b) => b.ref)).toEqual(["fake@mach_box"]);
+  });
+
   it("says its computer is off and keeps the message, without moving to another brain", async () => {
     disconnect();
     try {

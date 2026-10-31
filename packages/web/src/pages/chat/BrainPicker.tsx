@@ -46,7 +46,9 @@ export function BrainPicker({ agent }: { agent: AgentDef }) {
   if (!list) return null;
   const view = views[agent.id];
   const chat = view?.kinds.find((k) => k.kind === "chat");
-  const active = (chat?.brain ? findBrain(list, chat.brain) : undefined) ?? activeBrain(agent.brains, list);
+  // A bound agent (AgentDef.machines) thinks only with its computers' brains: none of those, none at all.
+  const bound = !!agent.machines?.length;
+  const active = (chat?.brain ? findBrain(list, chat.brain) : undefined) ?? (bound ? undefined : activeBrain(agent.brains, list));
   const ready = !!active && brainReady(active);
   const option = view?.brains.find((b) => active && normalizeBrainRef(b.ref) === normalizeBrainRef(active.ref));
   const own = chat?.own;
@@ -54,7 +56,10 @@ export function BrainPicker({ agent }: { agent: AgentDef }) {
   const how = chat ? describeThinking(view, chat.brain, chat.model, chat.effort) : undefined;
   // In the button: the brain and the preset (or the exact model) in a word.
   const short = chat?.preset ? t(`thinking.preset.${chat.preset}`) : isExact ? (modelName(view, chat?.brain, own?.model) ?? (own?.effort ? effortName(own.effort) : undefined)) : undefined;
-  const rows = list.slice().sort((a, b) => Number(brainReady(b)) - Number(brainReady(a)));
+  const rows = list
+    .filter((b) => !bound || view?.brains.some((o) => normalizeBrainRef(o.ref) === normalizeBrainRef(b.ref)))
+    .sort((a, b) => Number(brainReady(b)) - Number(brainReady(a)));
+  const none = t(bound ? "brainPicker.machinesOff" : "brainPicker.none");
   const TriggerIcon = ready && chat?.preset && !isExact ? PRESET_ICONS[chat.preset] : Brain;
 
   const run = async (key: string, fn: () => Promise<unknown>) => {
@@ -92,7 +97,7 @@ export function BrainPicker({ agent }: { agent: AgentDef }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={`${t("thinking.label", { agent: agent.name })}: ${active ? [active.label, chat?.preset ? t(`thinking.preset.${chat.preset}`) : undefined, how].filter(Boolean).join(" · ") : t("brainPicker.none")}`}
+        title={`${t("thinking.label", { agent: agent.name })}: ${active ? [active.label, chat?.preset ? t(`thinking.preset.${chat.preset}`) : undefined, how].filter(Boolean).join(" · ") : none}`}
         className={cx(
           "press flex max-w-[12rem] items-center gap-1 rounded-full px-2 py-1 text-xs font-medium transition",
           ready ? "text-muted hover:bg-surface-2 hover:text-fg" : "border border-warning/40 bg-warning-soft/60 text-warning",
@@ -100,7 +105,7 @@ export function BrainPicker({ agent }: { agent: AgentDef }) {
       >
         <TriggerIcon className="size-3.5 shrink-0" />
         {/* Quiet: the preset in a word (the brain only when none answers); a narrow bar keeps the icon. */}
-        <span className="hidden truncate @lg/top:inline">{ready ? (short ?? active?.label) : (active?.label ?? t("brainPicker.none"))}</span>
+        <span className="hidden truncate @lg/top:inline">{ready ? (short ?? active?.label) : (active?.label ?? none)}</span>
         <ChevronDown className={cx("size-3 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
       </button>
       {open && (

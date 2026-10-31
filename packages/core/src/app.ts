@@ -551,7 +551,7 @@ export class Hub {
 
   /** How an agent thinks for each kind of work, on the brains here (thinking.ts). */
   thinkingView(agent: AgentDef): Promise<ThinkingView> {
-    return thinkingView(this.brains, this.db, agent);
+    return thinkingView(this.brains, this.db, agent, this.here());
   }
 
   saveAgent(agent: AgentDef, actor: string): AgentDef {

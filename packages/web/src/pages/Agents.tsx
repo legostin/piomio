@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
-import type { AgentAvatar as AgentAvatarValue, AgentDef } from "@piomio/shared";
+import type { AgentAvatar as AgentAvatarValue, AgentDef, Computer } from "@piomio/shared";
 import { AVATAR_COLORS, AVATAR_PALETTE, AVATAR_SHAPES, defaultAvatar } from "@piomio/shared/avatar";
 import { useStore } from "../lib/store";
 import { api, errorText } from "../lib/api";
@@ -24,10 +24,30 @@ const INITIATIVE: Array<{ value: 0 | 1 | 2; title: MessageKey; text: MessageKey 
 
 const SOURCE: Record<string, MessageKey> = { builtin: "agents.source.builtin", user: "agents.source.user" };
 
+/** The computers an agent may be bound to (GET /api/computers): undefined while loading, [] when the hub has none to say. */
+function useComputers(): Computer[] | undefined {
+  const [list, setList] = useState<Computer[]>();
+  useEffect(() => {
+    let live = true;
+    api
+      .get<Computer[]>("/api/computers")
+      .then((l) => live && setList(l))
+      .catch(() => live && setList([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return list;
+}
+
+/** The names of the computers an agent is bound to, for people. */
+const computerNames = (ids: string[], computers: Computer[] | undefined) => ids.map((id) => computers?.find((c) => c.id === id)?.name ?? id).join(", ");
+
 export function AgentsPage() {
   const list = useStore(agents);
   const brainList = useStore(brains);
   useEffect(() => ensureBrains(), []);
+  const computers = useComputers();
   const p = useStore(panel);
   const s = useStore(session);
   const [loc, navigate] = useLocation();
@@ -84,6 +104,13 @@ export function AgentsPage() {
                 const on = activeBrain(a.brains, brainList);
                 return <Badge tone={on ? "success" : "warning"}>{on ? on.label : t("brainPicker.none")}</Badge>;
               })()}
+              {!!a.machines?.length && (
+                <Badge className="max-w-full min-w-0">
+                  <span className="truncate" title={computerNames(a.machines, computers)}>
+                    {t("agents.onlyOn", { names: computerNames(a.machines, computers) })}
+                  </span>
+                </Badge>
+              )}
             </div>
             <div className="mt-auto flex justify-end gap-1 pt-3">
               {a.source === "user" && (
@@ -217,6 +244,39 @@ function BrainsEditor({ value, onChange }: { value: string[]; onChange: (v: stri
   );
 }
 
+/** The computers an agent thinks on, as toggles (none chosen: anywhere); another replica of the hub shows only when chosen. */
+function ComputersPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const computers = useComputers();
+  if (!computers) return <Loading />;
+  const shown: Computer[] = [
+    ...computers.filter((c) => !c.standby || value.includes(c.id)),
+    ...value.filter((id) => !computers.some((c) => c.id === id)).map((id) => ({ id, name: id, online: false })),
+  ];
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("agents.computers")}>
+      {shown.map((c) => {
+        const on = value.includes(c.id);
+        return (
+          <button
+            key={c.id}
+            type="button"
+            aria-pressed={on}
+            onClick={() => toggle(c.id)}
+            className={cx(
+              "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-sm transition",
+              on ? "border-accent bg-accent-soft text-accent-text" : "border-border text-muted hover:bg-surface-2 hover:text-fg",
+            )}
+          >
+            {c.name}
+            {!c.online && <span className="text-xs text-muted">{t("agents.computerOffline")}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Colour swatches and shape tiles; the big preview (unless the caller shows the avatar itself) wears the agent's face. */
 export function AvatarPicker({
   value,
@@ -295,6 +355,7 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
   const [avatar, setAvatar] = useState<AgentAvatarValue>(() => agent.avatar ?? defaultAvatar(agent.id));
   const [description, setDescription] = useState(agent.description);
   const [brains, setBrains] = useState<string[]>(agent.brains);
+  const [machines, setMachines] = useState<string[]>(agent.machines ?? []);
   const [model, setModel] = useState(agent.model ?? "");
   const [initiative, setInitiative] = useState<0 | 1 | 2>(agent.initiative);
   const [tools, setTools] = useState<string[]>(agent.tools);
@@ -321,6 +382,7 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
         avatar,
         description: description.trim(),
         brains,
+        machines,
         model: model.trim() || undefined,
         initiative,
         tools,
@@ -381,6 +443,9 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
               </Field>
               <Field group label={t("agents.brains")} hint={t("agents.brainsHint")}>
                 <BrainsEditor value={brains} onChange={setBrains} />
+              </Field>
+              <Field group label={t("agents.computers")} hint={t("agents.computersHint")}>
+                <ComputersPicker value={machines} onChange={setMachines} />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label={t("agents.model")} hint={t("agents.modelHint")}>
