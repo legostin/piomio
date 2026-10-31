@@ -12,7 +12,7 @@ export function TopBar() {
     ["#demo", t("nav.demo")],
     ["#features", t("nav.features")],
     ["#security", t("nav.security")],
-    ["#iphone", t("nav.iphone")],
+    ["#faq", t("nav.faq")],
   ];
   return (
     <header className="sticky top-0 z-40 border-b border-hairline bg-[var(--glass)] backdrop-blur-xl backdrop-saturate-150">
