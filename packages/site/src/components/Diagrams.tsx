@@ -178,7 +178,7 @@ export function TeamDiagram() {
   const { t } = useI18n();
   const rows: Array<[MessageKey, MessageKey, MessageKey, boolean]> = [
     ["diagram.team.leo", "diagram.team.task1", "diagram.team.task1Status", true],
-    ["diagram.team.leo", "diagram.team.task2", "diagram.team.task2Status", false],
+    ["diagram.team.pioName", "diagram.team.task2", "diagram.team.task2Status", false],
     ["diagram.team.pioName", "diagram.team.task3", "diagram.team.task3Status", false],
   ];
   return (

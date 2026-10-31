@@ -5,9 +5,9 @@
 <h1 align="center">Piomio</h1>
 
 <p align="center">
-  <b>A team of AI agents that works for you.</b><br>
-  They sort your mail, write letters you approve with one tap, work in a browser and learn by watching you.<br>
-  On your own computers, with the subscriptions you already pay for. Open source.
+  <b>A small team of AI agents that lives on your own computers.</b><br>
+  They go through your email, draft replies you send with one tap, and pick up a chore after you show it to them once.<br>
+  Free and open source, running on the Claude Code or Codex plan you already pay for.
 </p>
 
 <p align="center">
@@ -26,40 +26,42 @@
 </p>
 
 <p align="center">
-  <a href="https://piomio.io"><img src="docs/readme/demo-en.gif" width="880" alt="The real Piomio app: Ada goes through 47 letters and sums them up"></a>
+  <a href="https://piomio.io"><img src="docs/readme/demo-en.gif" width="880" alt="The Piomio app: Ada goes through 47 emails and sums them up"></a>
 </p>
-<p align="center"><sub>Not a mock-up: <a href="https://piomio.io">piomio.io</a> runs the real app in your browser on a demo hub, chapter by chapter.</sub></p>
+<p align="center"><sub>That’s the real app. <a href="https://piomio.io">piomio.io</a> runs it in your browser on a demo hub, one chapter at a time.</sub></p>
 
 ## Meet the team
 
-Piomio is a personal agent platform you run yourself. You get a small team of agents, each with a name, a face, a job and a memory, and you talk to them like to colleagues. They answer at once when they can, hand longer work to each other as tasks and come back when it is done. They think with the subscriptions you already have (Claude Code, Codex) or any API key, run on your Mac, PC or server, and never send, buy or delete anything without your yes. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots that lives with you.
+Piomio is a personal agent platform you run yourself. You get a small team of agents, each with a name, a face, a job and a memory, and you talk to them the way you would to colleagues. Quick things they answer on the spot. Longer work gets passed around as tasks, and they come back to you when it’s done.
+
+They think with the Claude Code or Codex subscription you already have, or with an API key, and they run on your Mac, PC or server. Before they send or buy anything, they ask you. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots, except it lives on your own machine.
 
 ## A day with the team
 
 | | |
 |---|---|
-| ☀️&nbsp;**The morning brief comes by itself** | Meetings, the letters that matter, the weather, what not to forget. Then a nudge: leave for lunch at 12:30? |
-| 📬&nbsp;**47 letters, sorted while you watch** | “Go through my mail.” Three that matter, two draft replies, the invoice turned into a task, the newsletters archived. |
-| ✉️&nbsp;**Nothing leaves without your yes** | Letters, bookings, pushes and payments wait for one tap on a card. “Always allow” makes a rule for that one address. |
-| 🛡️&nbsp;**The letter that asked too much** | A phishing mail tells the agent to forward your invoices. After outside content, a new recipient always asks you. Keys go into a vault the model never sees. |
-| 🔌&nbsp;**A service in one sentence** | “Connect my Notion.” The card comes into the chat; you sign in once. Gmail, Google Calendar, Slack, GitHub, Linear, Notion and many more. |
-| 👥&nbsp;**Three requests, one message** | The assistant splits them up: a teammate compares laptops, a reminder is set, the trains are found, and each answer comes back as a reply. |
-| 💻&nbsp;**Your computers, your subscriptions** | An agent fixes a failing test on your MacBook through Claude Code; when that subscription hits its limit, it carries on with Codex. |
-| 🎓&nbsp;**Show it once, and it’s done for you** | Order water in the agents’ browser while you talk. The agent keeps it as a skill, asks what it may press alone and up to what amount, and orders every Friday. |
-| 🗺️&nbsp;**A page instead of a wall of text** | “Make a page for Saturday’s walk.” A real interactive page arrives in the chat: the route, places with prices, the weather, photos. |
-| 📰&nbsp;**Your own news channel** | “Every morning, collect news about AI and electric cars.” An agent edits a channel: the gist, the numbers and a big picture. |
+| ☀️&nbsp;**The morning brief arrives on its own** | Today’s meetings, the emails worth reading, the weather and the dentist you keep forgetting. Then it offers to remind you to leave for lunch at 12:30. |
+| 📬&nbsp;**47 emails, sorted while you watch** | “Go through my mail.” Three turn out to matter. One reply gets drafted, the invoice becomes a task and the newsletters go to the archive. (Gmail connects through Composio.) |
+| ✉️&nbsp;**It asks before anything goes out** | Emails, bookings, pushes and payments wait for one tap on a card. “Always allow” adds a rule for that one address and nothing else. |
+| 🛡️&nbsp;**The email that asked too much** | A phishing email tells the agent to forward your invoices. Because the agent has just read outside mail, a new recipient has to get your yes. Keys go into a vault the model never sees. |
+| 🔌&nbsp;**A service in one sentence** | “Connect my Notion.” A card shows up in the chat and you sign in once. Notion, Linear and anything with an MCP server connect directly; Gmail, Google Calendar, Slack, GitHub and many more come through Composio, an outside service whose cloud sees that data. |
+| 👥&nbsp;**Three requests, one message** | The assistant splits them up. A teammate compares laptops while the reminder gets set and the trains are found, and each answer comes back as a reply to your message. |
+| 💻&nbsp;**Out of Claude Code, on to Codex** | An agent fixes a failing test on your MacBook through Claude Code. When that subscription hits its limit, it carries on with Codex. |
+| 🎓&nbsp;**Show it a chore once** | Order water in the agents’ browser and talk as you go. The agent saves it as a skill, asks what it may press without you and up to what amount, then orders every Friday. |
+| 🗺️&nbsp;**A page instead of a wall of text** | “Make a page for Saturday’s walk.” You get an interactive page in the chat with the route, places with prices, the weather and photos. |
+| 📰&nbsp;**Your own news channel** | “Every morning, collect news about AI and electric cars.” An agent edits the channel and posts the gist, the numbers and a picture. |
 
 <p align="center">
   <img src="docs/readme/teach-en.gif" width="880" alt="Teach mode: showing an agent how to order water in its browser">
 </p>
-<p align="center"><sub><b>Teach mode.</b> Show a task once in the agents’ browser, with your clicks, your voice and a highlight on what matters, and it becomes a skill the whole team can run.</sub></p>
+<p align="center"><sub><b>Teach mode.</b> Do a task once in the agents’ browser. Click, talk, highlight the bits that matter, and it turns into a skill anyone on the team can run.</sub></p>
 
 <p align="center">
   <img src="packages/site/src/assets/iphone/en-2-team.jpg" width="250" alt="The team in the iPhone app">
   &nbsp;&nbsp;
-  <img src="packages/site/src/assets/iphone/en-1-chat.jpg" width="250" alt="Ada’s chat on the iPhone: a letter waiting for your yes">
+  <img src="packages/site/src/assets/iphone/en-1-chat.jpg" width="250" alt="Ada’s chat on the iPhone: an email waiting for your yes">
 </p>
-<p align="center"><sub><b>The team in your pocket.</b> The iPhone app (soon in TestFlight): every chat and card, approvals with Face ID.</sub></p>
+<p align="center"><sub><b>The iPhone app</b> is coming to TestFlight soon, with every chat and card, and Face ID for approvals.</sub></p>
 
 ## Install
 
@@ -69,7 +71,7 @@ Piomio is a personal agent platform you run yourself. You get a small team of ag
 2. Open it, choose **A new Piomio on this computer** and pick a password.
 3. In the chat, press **Sign in** on Claude Code or Codex (your subscription), or paste an API key.
 
-That’s it. From here the assistant leads the setup in the chat, one step at a time: Telegram, a backup brain, other computers, getting to know you.
+From there the assistant walks you through the rest in the chat, one thing at a time: Telegram, a backup brain, other computers, and getting to know you.
 
 **On a server.** One Docker image:
 
@@ -81,18 +83,18 @@ docker compose logs piomio | grep -A1 "Piomio:"
 
 Open http://localhost:8080, enter the setup code from the logs and pick a password. On a remote server, connect from your computer first with `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server`, or open the hub on the server's address: see [On a server](#on-a-server).
 
-**On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub by a QR code, and approvals need Face ID.
+**On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub through a QR code, and approvals need Face ID.
 
-**On more computers.** Each one joins as a machine with a one-time code: its files, its commands (if its owner allows) and its own Claude Code or Codex. See [Other computers](#other-computers).
+**On more computers.** Each one joins with a one-time code. The agents can then use its files, its own Claude Code or Codex, and its commands if the owner allows. See [Other computers](#other-computers).
 
 ## How to work with it
 
-- **Just talk.** Write to an agent like to a person: several things at once if you like, even while it works. Quick things get answered right away; anything with steps becomes a task on the side, and the answer comes back as a reply to what you asked.
-- **Tap instead of typing.** Agents ask with buttons under their messages. Cards in the chat connect services, take keys and show what an agent wants to do.
-- **Say yes once.** Anything that leaves your computer (a letter, a booking, a push, a payment) waits for your tap. “Always allow” makes a narrow rule: one recipient, one site, up to an amount.
-- **Let it run by itself.** Reminders, schedules, page watchers and news channels work in the background and decide on their own whether to stay quiet, add to the digest, notify you or ask.
-- **Teach it.** Show a browser task once; the agent keeps it as a skill and does it when asked or on a schedule.
-- **Wherever you are.** The desktop app for macOS and Windows, any browser, the iPhone app and Telegram: the same chats everywhere. One private link reaches your hub from anywhere, with no ports to open.
+- **Just talk.** Write to an agent the way you’d write to a person. Several things at once is fine, even while it’s busy. Quick things get answered right away. Anything with steps becomes a task on the side, and the answer comes back as a reply to what you asked.
+- **Tap instead of typing.** Agents often ask with buttons under their messages. Cards in the chat connect services, take keys and show what an agent is about to do.
+- **Say yes once.** Anything an agent sends out (an email, a booking, a push, a payment) waits for your tap. “Always allow” makes a narrow rule for one recipient or one site, up to an amount.
+- **Let it run by itself.** Reminders, schedules, page watchers and news channels work in the background. Each one decides whether to stay quiet, add to the digest, notify you or ask.
+- **Teach it.** Show it a browser task once. It keeps that as a skill and does it when asked, or on a schedule.
+- **Wherever you are.** You get the same chats in the desktop app for macOS and Windows, in any browser and in Telegram, and soon in the iPhone app. One private link reaches your hub from anywhere, and there are no ports to open.
 
 ## How it works
 
@@ -107,21 +109,21 @@ flowchart LR
   hub --- guard["Vault · approvals · sandbox<br/>egress filter · audit"]
 ```
 
-- **The hub** is one Node.js process (the desktop app brings its own): chats, agents, memory, tasks, plugins, the vault and the security console.
-- **Brains** are what agents think with. Claude Code and Codex run on your subscriptions; the Anthropic, OpenAI and OpenRouter APIs or any OpenAI-compatible server are fallbacks. When one hits its limit, the agent moves to the next and comes back once it resets.
-- **Agents** are markdown files: a name, a face, a prompt, the brains and tools they may use. New ones are made in the chat.
+- **The hub** is one Node.js process (the desktop app brings its own Node). It holds the chats, agents, memory, tasks, plugins, the vault and the security console.
+- **Brains** are what agents think with. Claude Code and Codex run on your subscriptions, and the Anthropic, OpenAI and OpenRouter APIs or any OpenAI-compatible server are there as fallbacks. When one hits its limit, the agent moves to the next and comes back once the limit resets.
+- **Agents** are markdown files with a name, a face, a prompt, and the brains and tools they may use. You make new ones in the chat.
 - **Everything else is a plugin,** the interface included: the browser, memory, triggers, Telegram, integrations. See [docs/plugins.md](docs/plugins.md).
 
 ## Security, in short
 
-- **Secrets stay in a vault.** Models only ever see `vault://` references, and secret values are stripped from everything that reaches a model, a channel or a log.
-- **External actions need your yes,** and a separate console holds approvals, the vault and the audit log. After reading outside content (mail, the web), new recipients ask again.
-- **Sandbox.** Brains and plugins run as separate users with their own folders, and all their traffic goes through an egress filter.
-- **Audit.** Every tool call, decision and vault access lands in a hash-chained log you can verify.
+- **Secrets stay in a vault.** Models only ever see `vault://` references, and secret values are stripped from anything headed to a model, a channel or a log.
+- **Actions that reach outside need your yes.** A separate console holds the approvals, the vault and the audit log. After an agent has read outside content (mail, the web), a new recipient needs your yes again.
+- **Sandbox.** In Docker, brains and plugins run as separate users with their own folders, and all their traffic goes through an egress filter. The desktop app runs them as your own user, so Docker is the one to pick for the strongest isolation.
+- **Audit.** Every tool call, decision and vault access goes into a hash-chained log you can verify.
 
 ## Reference
 
-Everything in detail, one click away.
+The details, for when you need them.
 
 
 <details>
@@ -157,7 +159,7 @@ Get the app: `piomio-setup-<version>-x64.exe` for Windows 10 and 11, `piomio-<ve
    - **Connect to my Piomio**: your hub runs elsewhere and this computer becomes one of its machines. Paste the hub's address and the code from its **Machines** page, or click **Connect with the app** there. The window then shows that hub.
 3. Closing the window keeps Piomio running in the background (Telegram, tasks, reminders); its icon in the menu bar or tray has Open, Start at login, Show log, Restart, Set up again…, Reset Piomio… and Quit. It starts by itself when you sign in to your computer.
 
-Claude Code and Codex: if one is already installed on the computer and signed in, Piomio uses it, sign-in included — no need to sign in again. If not, pressing **Sign in** on its card installs it for Piomio (a one-time download of a few hundred MB), then the sign-in starts.
+Claude Code and Codex: if one is already installed and signed in on the computer, Piomio uses it as it is, so you don't sign in twice. If not, pressing **Sign in** on its card installs it for Piomio (a one-time download of a few hundred MB), then the sign-in starts.
 
 To start from scratch, choose **Reset Piomio…** in the icon's menu. The app lists what goes: chats, agents, memory, the vault with your secrets, plugins, settings, this computer's connection to a hub and the start-at-login entry. Once you confirm, it deletes all of it and either offers the first-run setup again or quits. Your Claude Code and Codex sign-ins stay: they belong to those tools, not to Piomio.
 
