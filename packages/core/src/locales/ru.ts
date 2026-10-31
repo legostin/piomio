@@ -114,6 +114,8 @@ export default {
   "chat.noSuitableBrains": "нет подходящего интеллекта",
   "chat.allLimited": "Все доступные интеллекты упёрлись в лимиты подписки. Продолжу после {time}.",
   "chat.needsBrain": "Пока не работает ни один интеллект: подключите его в карточке в чате, и я отвечу на сообщение.",
+  "chat.machinesOff": "{agent} работает только на {machines}, а {count, plural, one {этот компьютер} other {эти компьютеры}} сейчас не в сети. Сообщение сохранено: отправьте его снова, когда {count, plural, one {он вернётся} other {один из них вернётся}}.",
+  "chat.noBrainOn": "на {machines} нет ни одного из его интеллектов",
   "chat.cannotStart": "Не могу запустить агента «{agent}»: {reason}. Настройте интеллект в разделе «Интеллект» (Claude Code, Codex или API-ключ).",
   "chat.turnFailed": "не удалось выполнить ход",
   "chat.tryingOtherBrain": "{ref}: {error} — пробую другой интеллект…",

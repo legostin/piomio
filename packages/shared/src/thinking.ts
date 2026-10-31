@@ -161,15 +161,19 @@ export function bound(machines: readonly string[] | undefined): machines is read
 }
 
 /**
- * The refs on an agent's computers (AgentDef.machines); all of them when it is bound to none. A ref on "local" runs on
- * the hub's own computer, which a binding names by `here` (its replica id in a cluster) or "local".
+ * Whether a computer is one of an agent's (AgentDef.machines; every one when it is bound to none). The hub's own computer
+ * is "local" in brain refs, and a binding names it by `here` (its replica id in a cluster) or "local".
  */
+export function onMachine(machineId: string, machines: readonly string[] | undefined, here: string): boolean {
+  if (!bound(machines)) return true;
+  return machineId === "local" || machineId === here ? machines.includes("local") || machines.includes(here) : machines.includes(machineId);
+}
+
+/** The refs on an agent's computers (onMachine); all of them when it is bound to none. */
 export function onMachines(refs: readonly string[], machines: readonly string[] | undefined, here: string): string[] {
-  if (!bound(machines)) return [...refs];
   return refs.filter((r) => {
     const at = r.lastIndexOf("@");
-    const m = at > 0 ? r.slice(at + 1) : "local";
-    return m === "local" ? machines.includes("local") || machines.includes(here) : machines.includes(m);
+    return onMachine(at > 0 ? r.slice(at + 1) : "local", machines, here);
   });
 }
 

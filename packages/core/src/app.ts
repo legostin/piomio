@@ -2,7 +2,7 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, ThinkingView } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, ThinkingView } from "@piomio/shared";
 import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
@@ -225,8 +225,9 @@ export class Hub {
       approvals: this.approvals,
       egress: this.egress,
       claudePluginDirs: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
-      machineName: (id) => this.machines.name(id),
+      machineName: (id) => this.machines.name(id) ?? this.replicaName(id),
       machines: () => this.machines.list(),
+      here: () => this.here(),
       activity: this.activity,
       locations: this.locations,
       secrets: this.secrets,
@@ -554,15 +555,51 @@ export class Hub {
   }
 
   saveAgent(agent: AgentDef, actor: string): AgentDef {
-    // The order its conversations try brains in: the agent's, and the brain each kind of work prefers.
+    // The order its conversations try brains in: the agent's, the brain each kind of work prefers, and its computers.
     const refs = (a: AgentDef | undefined) =>
-      a && [...a.brains, ...Object.values(a.thinking ?? {}).map((c) => c?.brain ?? "")].map((b) => (b ? formatBrainRef(parseBrainRef(b)) : "")).join("\n");
+      a && [...a.brains, ...Object.values(a.thinking ?? {}).map((c) => c?.brain ?? "")].map((b) => (b ? formatBrainRef(parseBrainRef(b)) : "")).join("\n") + `\n@${(a.machines ?? []).join(",")}`;
     const before = this.agents.get(agent.id);
-    const saved = this.agents.save(agent);
+    // Computers by id: a name, "local" or the hub's name become the id the binding keeps (one it does not know stays as written).
+    const machines = [...new Set((agent.machines ?? []).map((m) => this.resolveComputer(m) ?? m.trim()).filter(Boolean))];
+    const { machines: _, ...rest } = agent;
+    const saved = this.agents.save(machines.length ? { ...rest, machines } : rest);
     if (before && refs(before) !== refs(saved)) this.runner.brainsChanged(saved.id);
     this.audit.append(actor, "agent.save", saved.id);
     this.bus.emit("agents.updated", {});
     return saved;
+  }
+
+  /** The id an agent's binding (AgentDef.machines) names this hub's computer by: its replica id in a cluster, else "local". */
+  here(): string {
+    return this.cluster.identity?.id ?? "local";
+  }
+
+  /** Another replica's name (the replicas table travels to every replica). */
+  private replicaName(id: string): string | undefined {
+    return (this.db.prepare("select name from replicas where id = ? and revoked = 0").get(id) as { name: string } | undefined)?.name;
+  }
+
+  /**
+   * The computers an agent may be bound to: this hub's own first, the paired machines, then the hub's other replicas
+   * (on standby: nothing runs there while this one leads).
+   */
+  computers(): Computer[] {
+    const here = this.here();
+    const replicas = this.db.prepare("select id, name from replicas where revoked = 0 and id != ? order by priority").all(here) as Array<{ id: string; name: string }>;
+    return [
+      { id: here, name: hubName(), online: true },
+      ...this.machines.list().map((m) => ({ id: m.id, name: m.name, online: m.status === "online" })),
+      ...replicas.map((r) => ({ id: r.id, name: r.name, online: false, standby: true })),
+    ];
+  }
+
+  /** A computer by id or name ("local" is this hub's), as an agent's binding keeps it; undefined when there is none. */
+  resolveComputer(idOrName: string): string | undefined {
+    const key = idOrName.trim().toLowerCase();
+    if (!key) return undefined;
+    if (key === "local") return this.here();
+    const list = this.computers();
+    return (list.find((c) => c.id.toLowerCase() === key) ?? list.find((c) => c.name.toLowerCase() === key))?.id;
   }
 
   /** A draft from the chat joins the team under a fresh id derived from its name; it never replaces an existing agent. */
