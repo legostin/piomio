@@ -51,8 +51,19 @@ The user moved from Kazan to Perm in October 2026.
 Folders by kind for new facts: `you/`, `people/`, `places/`, `preferences/`, `projects/`, `timeline/`, `howto/`,
 `notes/`. Existing files keep their paths; their kind comes from the folder (`profile.md` → self, importance 5).
 
-Derived, not stored in files: usage (times recalled, last recalled) lives in `state.db` next to the search index, so
-recall never makes a git commit.
+Derived, not stored in files: usage (times recalled, last recalled), the reflection journal and when memory was last
+tidied live in the hub's plugin storage (`plugin_kv`, one row per fact, entry or setting), so recall never makes a git
+commit. Until 2026-11 this was a `state.db` next to the search index; the plugin takes such files in once and deletes
+them.
+
+On hubs with replicas (cluster spec, "Files") only the facts travel between hubs, file by file; only the leading hub
+runs the plugin. Each hub builds the rest itself: the search index, `MEMORY.md` and the git history (a fact that
+arrives is committed as "memory: sync" by the hub it arrives at). A `.gitignore` in the plugin's data folder keeps
+those out of the file sync, and the plugin storage replicates row by row, so usage and the journal merge. The running
+plugin watches its folder and takes in facts that arrive (after a handover, or when both hubs led for a while). When
+both hubs changed one fact, the sync keeps the newer version in place and the other as a conflict copy; the plugin
+commits the copy, adds its sources to the fact and deletes it. The index is built from the files, so a failure there
+never fails a save: it is built again.
 
 ## Capture
 

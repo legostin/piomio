@@ -1,5 +1,5 @@
 // Builtin plugin "memory": the team's long-term memory about the user. Structured markdown facts (one per file) in
-// <dataDir>/memory, versioned with git when available. Agents save facts as they learn them (memory_remember), the
+// <dataDir>/memory, versioned with git when available (hub replicas share the facts, not the rest: replicas.ts). Agents save facts as they learn them (memory_remember), the
 // facts relevant to each turn are recalled into its input (turn.context), a nightly pass tidies memory and reflects on
 // the day. Agents save, change and forget facts on their own, also after untrusted content: memory keeps every change
 // in its history, and the user sees each one in the chat and on the Memory page, where it can be undone.
@@ -95,6 +95,7 @@ const plugin: PluginModule = {
     let settings = ctx.settings ?? {};
     const mem = new Memory({
       dataDir: ctx.dataDir,
+      storage: ctx.storage,
       git: settings.git !== false,
       promptMaxChars: typeof settings.promptMaxChars === "number" ? settings.promptMaxChars : 4000,
       recallMaxChars: typeof settings.recallMaxChars === "number" ? settings.recallMaxChars : 1500,
@@ -133,7 +134,7 @@ const plugin: PluginModule = {
     /** Ask the default agent to reflect on the user's messages since the last pass (a background task). */
     async function reflect(): Promise<boolean> {
       if (settings.reflect === false) return false;
-      const entries = mem.state.journalEntries();
+      const entries = await mem.state.journalEntries();
       if (entries.length < 3) return false;
       const lines: string[] = [];
       let used = 0;
@@ -158,7 +159,7 @@ const plugin: PluginModule = {
         ctx.log.warn(`memory reflection could not start: ${e?.message ?? e}`);
         return false;
       }
-      mem.state.clearJournal(entries[entries.length - 1].id);
+      await mem.state.clearJournal(entries);
       mem.state.set("lastReflect", new Date().toISOString());
       return true;
     }
@@ -166,7 +167,8 @@ const plugin: PluginModule = {
     /** One pass at a time (the hourly check and the "Tidy up" button may meet). */
     let running: Promise<{ expired: number; merged: number; archived: number; reflection: boolean }> | undefined;
     async function nightly(force = false) {
-      const last = Date.parse(mem.state.get("lastTidy") ?? "") || 0;
+      // Shared by the hubs: whichever leads at night tidies once for all of them.
+      const last = Date.parse((await mem.state.get("lastTidy")) ?? "") || 0;
       if (!force && Date.now() - last < 20 * 3600_000) return undefined;
       running ??= (async () => {
         try {

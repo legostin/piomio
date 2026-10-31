@@ -61,7 +61,9 @@ describe("memory plugin (v1 compatibility)", () => {
     // Forgotten facts wait in .trash/ for Undo, outside git.
     expect(readFileSync(join(root, ".gitignore"), "utf8")).toContain(".trash/");
     expect(existsSync(join(h.dataDir, "index.db"))).toBe(true);
-    expect(existsSync(join(h.dataDir, "state.db"))).toBe(true);
+    // The working state is in the hub's plugin storage; hub replicas leave the index, MEMORY.md and git to each hub.
+    expect(existsSync(join(h.dataDir, "state.db"))).toBe(false);
+    expect(readFileSync(join(h.dataDir, ".gitignore"), "utf8")).toContain("/memory/.git/");
   });
 
   it("write → read → search → list → forget round trip", async () => {

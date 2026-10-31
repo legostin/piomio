@@ -24,12 +24,16 @@ export interface HarnessOptions {
   env?: Record<string, string>;
   /** Hub language the plugin starts with (default "en"). */
   locale?: Locale;
+  /** The plugin's storage (ctx.storage); pass the same map to a restarted plugin to keep it. */
+  storage?: Map<string, unknown>;
 }
 
 export interface PluginHarness {
   peer: RpcPeer;
   child: ChildProcess;
   dataDir: string;
+  /** The plugin's storage (ctx.storage). */
+  storage: Map<string, unknown>;
   tools: Map<string, ToolSpec>;
   brains: Map<string, string>;
   channels: Map<string, string>;
@@ -104,7 +108,7 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
   const channels = new Map<string, string>();
   const hooks = new Set<string>();
   const subscriptions = new Set<string>();
-  const kv = new Map<string, unknown>();
+  const kv = o.storage ?? new Map<string, unknown>();
   const coreCalls: Array<{ method: string; params: any }> = [];
   const brainEvents = new Map<string, BrainEvent[]>();
 
@@ -200,6 +204,7 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     peer,
     child,
     dataDir,
+    storage: kv,
     tools,
     brains,
     channels,

@@ -5,9 +5,10 @@
 // `replaces`) superseded with history, sensitive ones marked. Recall: a core block at session start
 // and the facts relevant to each turn. Consolidation (tidy): expire, merge near-duplicates, archive stale facts.
 
+import { renameSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { GitRepo } from "./git.ts";
-import { openIndex, type SearchHit, type SearchIndex } from "./search.ts";
+import { openIndex, SubstringIndex, type SearchHit, type SearchIndex } from "./search.ts";
 import {
   MemoryStore,
   INDEX_FILE,
@@ -35,10 +36,13 @@ import {
 import { dirOf, MemoryError, normalizePath, NotFoundError, PathError, slugify } from "./paths.ts";
 import { containment, headline, looksSensitive, negated, overlap, sameEntity, secretReason, stem, stems, words } from "./text.ts";
 import { factLine, rank, strongest, within, type Scored } from "./recall.ts";
-import { MemoryState } from "./state.ts";
+import { MemoryState, type Storage } from "./state.ts";
+import { conflictOriginal, keepLocal, removeLocalCopies } from "./replicas.ts";
 
 export interface MemoryOptions {
   dataDir: string;
+  /** The hub's plugin storage (ctx.storage): the working state, shared by hub replicas. */
+  storage: Storage;
   git?: boolean;
   promptMaxChars?: number;
   recallMaxChars?: number;
@@ -169,6 +173,10 @@ export class Memory {
   git: GitRepo;
   o: MemoryOptions;
   private queue: Promise<unknown> = Promise.resolve();
+  private watcher?: FSWatcher;
+  private poll?: NodeJS.Timeout;
+  private soonTimer?: NodeJS.Timeout;
+  private stopped = false;
   /** By session: its turn count and when it last saw each fact (core facts: forever). */
   private sessions = new Map<string, { turn: number; shown: Map<string, number> }>();
 
@@ -179,25 +187,29 @@ export class Memory {
   }
 
   async start(): Promise<void> {
+    keepLocal(this.o.dataDir);
+    const copies = removeLocalCopies(this.o.dataDir);
+    if (copies) this.o.warn(`memory: removed ${copies} conflict copies of files each hub builds itself`);
     this.store.init();
-    this.state = new MemoryState(join(this.o.dataDir, "state.db"));
-    this.index = openIndex(join(this.o.dataDir, "index.db"), {
-      forceSubstring: this.o.forceSubstringSearch,
-      onFallback: (r) => this.o.warn(`FTS5 is unavailable, using substring search: ${r}`),
-    });
+    this.state = await MemoryState.open(this.o.storage, this.o.dataDir, this.o.warn);
+    this.index = this.openIndex();
+    if (this.o.git !== false) await this.git.init();
+    await this.foldConflicts();
     this.reindex();
     this.store.writeIndex();
-    if (this.o.git !== false) {
-      await this.git.init();
-      await this.git.commit("memory: sync");
-    }
+    await this.git.commit("memory: sync");
+    this.watch();
   }
 
   /** Let pending writes (and their git commits) finish, then close the index. */
   async stop(): Promise<void> {
+    this.stopped = true;
+    this.watcher?.close();
+    clearInterval(this.poll);
+    clearTimeout(this.soonTimer);
     await this.queue;
+    await this.state?.flush();
     this.index?.close();
-    this.state?.close();
   }
 
   /** Serialize mutations (tools and HTTP may run concurrently). */
@@ -207,14 +219,136 @@ export class Memory {
     return p;
   }
 
+  private openIndex(): SearchIndex {
+    return openIndex(join(this.o.dataDir, "index.db"), {
+      forceSubstring: this.o.forceSubstringSearch,
+      onFallback: (r) => this.o.warn(`FTS5 is unavailable, using substring search: ${r}`),
+    });
+  }
+
+  private current(): Fact[] {
+    return [...this.store.facts.values()].filter((f) => isCurrent(f));
+  }
+
   private reindex(): void {
-    this.index.rebuild([...this.store.facts.values()].filter((f) => isCurrent(f)));
+    this.indexed((i) => i.rebuild(this.current()));
   }
 
   /** Keep the search index in step with one fact. */
   private sync(f: Fact | undefined, path: string): void {
-    if (f && isCurrent(f)) this.index.upsert(f);
-    else this.index.remove(path);
+    this.indexed((i) => (f && isCurrent(f) ? i.upsert(f) : i.remove(path)));
+  }
+
+  /** The search index is built from the files, so a failure there never fails a save: it is built again instead. */
+  private indexed(fn: (index: SearchIndex) => void): void {
+    try {
+      fn(this.index);
+    } catch (e) {
+      this.reopenIndex(e);
+    }
+  }
+
+  /** A fresh index from the facts (SQLite turns read-only when its file is replaced underneath, say). */
+  private reopenIndex(e: unknown): void {
+    this.o.warn(`memory: the search index failed (${(e as Error)?.message ?? e}); building it again`);
+    this.index.close();
+    this.index = this.openIndex();
+    try {
+      this.index.rebuild(this.current());
+    } catch (again) {
+      this.o.warn(`memory: the search index cannot be built (${(again as Error)?.message ?? again}); searching without it`);
+      this.index.close();
+      this.index = new SubstringIndex();
+      this.index.rebuild(this.current());
+    }
+  }
+
+  // ---------- other hubs ----------
+
+  /**
+   * Facts that change on disk while the plugin runs: another hub's copies arriving (after a handover, or when both
+   * led for a while; replicas.ts), or a hand edit. They are taken in a second later.
+   */
+  private watch(): void {
+    const poll = () => {
+      this.poll ??= setInterval(() => this.soon(), 30_000);
+      this.poll.unref?.();
+    };
+    try {
+      this.watcher = watch(this.store.root, { recursive: true }, (_event, name) => {
+        const rel = name ? String(name).replace(/\\/g, "/") : "";
+        if (rel && (!rel.endsWith(".md") || rel === INDEX_FILE || rel.split("/").some((s) => s.startsWith(".")))) return;
+        this.soon();
+      });
+      this.watcher.on("error", (e) => {
+        this.o.warn(`memory: cannot watch its folder (${e.message}); looking every 30 s`);
+        this.watcher?.close();
+        this.watcher = undefined;
+        poll();
+      });
+      this.watcher.unref();
+    } catch (e) {
+      this.o.warn(`memory: cannot watch its folder (${(e as Error).message}); looking every 30 s`);
+      poll();
+    }
+  }
+
+  private soon(): void {
+    if (this.stopped) return;
+    clearTimeout(this.soonTimer);
+    this.soonTimer = setTimeout(() => void this.refresh().catch((e) => this.o.warn(`memory: could not take in changed facts: ${e?.message ?? e}`)), 1000);
+    this.soonTimer.unref?.();
+  }
+
+  /** Take in facts changed on disk without this plugin; true when there were any. */
+  refresh(): Promise<boolean> {
+    return this.lock(async () => {
+      const before = this.signature();
+      this.store.scan();
+      const folded = await this.foldConflicts();
+      if (!folded && this.signature() === before) return false;
+      this.reindex();
+      await this.commit("sync", "");
+      return true;
+    });
+  }
+
+  /** What the facts say, to tell whether a scan found anything new. */
+  private signature(): string {
+    return [...this.store.facts.values(), ...this.store.review.values()]
+      .map((f) => `${f.path}\n${serializeFact(f)}`)
+      .sort()
+      .join("\n\0");
+  }
+
+  /**
+   * Copies the file sync kept of a fact both hubs changed: the newer version stays in place, the copy's sources join
+   * it, and the copy goes (committed first, so its text stays in the history). A copy of a fact gone here takes its
+   * place; a copy of MEMORY.md just goes. Returns how many were folded.
+   */
+  private async foldConflicts(): Promise<number> {
+    const copies = [...this.store.facts.keys(), ...[...this.store.review.values()].filter((r) => r.inPlace).map((r) => r.path)].flatMap((path) => {
+      const original = conflictOriginal(path);
+      return original ? [{ path, original }] : [];
+    });
+    if (!copies.length) return 0;
+    await this.git.commit("memory: sync");
+    for (const { path, original } of copies) {
+      const copy = this.store.facts.get(path) ?? this.store.review.get(path);
+      const kept = this.store.facts.get(original);
+      if (copy && original !== INDEX_FILE) {
+        if (kept) {
+          const sources = mergeSources(kept.sources, copy.sources);
+          if (sources.length !== kept.sources.length) this.store.put({ ...kept, sources });
+        } else if (!this.store.review.has(original)) {
+          renameSync(this.store.abs(path), this.store.abs(original));
+          continue;
+        }
+      }
+      this.store.removeActive(path);
+    }
+    this.store.scan();
+    return copies.length;
   }
 
   private async commit(action: string, path: string): Promise<void> {
@@ -447,7 +581,7 @@ export class Memory {
       // A v1 .review/ copy has nothing to restore: it is dropped (its file stays in git).
       const dropped = legacyReview && !legacyReview.inPlace ? this.store.removeReview(path) : false;
       if (!trashed && !dropped && !had) throw factNotFound(path);
-      this.index.remove(path);
+      this.indexed((i) => i.remove(path));
       await this.commit("forget", path);
       return { path, title: (trashed ?? had)?.title ?? path };
     });
@@ -485,7 +619,7 @@ export class Memory {
       this.store.trash(path);
       const r = this.store.review.get(path);
       if (r && !r.inPlace) this.store.removeReview(path);
-      this.index.remove(path);
+      this.indexed((i) => i.remove(path));
       await this.commit("undo", path);
       return { path, restored };
     });
@@ -613,7 +747,7 @@ export class Memory {
       for (const f of [...this.store.facts.values()]) {
         if (f.status === "active" && f.validUntil && !isCurrent(f, nowMs)) {
           this.store.put({ ...f, status: "archived" });
-          this.index.remove(f.path);
+          this.indexed((i) => i.remove(f.path));
           expired++;
         }
       }
@@ -644,7 +778,7 @@ export class Memory {
             this.store.put(kept);
             this.sync(kept, kept.path);
             this.store.put({ ...d, status: "archived", supersededBy: keep.path });
-            this.index.remove(drop.path);
+            this.indexed((i) => i.remove(drop.path));
             this.state.moveUsage(drop.path, keep.path);
             gone.add(drop.path);
             merged++;
@@ -658,7 +792,7 @@ export class Memory {
         const used = Date.parse(this.state.usage(f.path)?.lastRecalled ?? "") || 0;
         if (age > 180 * DAY && nowMs - used > 90 * DAY) {
           this.store.put({ ...f, status: "archived" });
-          this.index.remove(f.path);
+          this.indexed((i) => i.remove(f.path));
           archived++;
         }
       }
@@ -675,7 +809,14 @@ export class Memory {
 
   /** v1 full-text search (FTS5) over facts true now. */
   search(query: string, limit = 10): SearchHit[] {
-    return this.index.search(String(query ?? ""), Math.max(1, Math.min(50, Math.floor(limit) || 10)));
+    const q = String(query ?? "");
+    const n = Math.max(1, Math.min(50, Math.floor(limit) || 10));
+    try {
+      return this.index.search(q, n);
+    } catch (e) {
+      this.reopenIndex(e);
+      return this.index.search(q, n);
+    }
   }
 
   /** Hybrid ranking (memory_search, the UI's search). */

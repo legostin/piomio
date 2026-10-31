@@ -69,7 +69,10 @@ export const VAULT_TABLES: ReplTable[] = [
   { name: "vault_meta", pk: ["key"] },
 ];
 
-/** Folders of the data dir every replica shares (plugins-data only for the memory plugin: the others keep live caches). */
+/**
+ * Folders of the data dir every replica shares. plugins-data only for the memory plugin, and of it only the facts (its
+ * own .gitignore keeps out what each hub builds itself): the others keep live caches.
+ */
 export const FILE_ROOTS = ["workspaces", "pages", "agents", "skills", "commands", "devices", "plugins-data/memory"];
 
 const HEARTBEAT_MS = 2_000;

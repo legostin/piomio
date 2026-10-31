@@ -133,8 +133,10 @@ cursor; a path changed only there is downloaded (by hash), changed only here is 
 both sides keeps the newer one in place and the other as `name (conflict <machine> <date>).ext`. Deletions travel the
 same way. SQLite files are sent as a consistent copy (`VACUUM INTO`); `-wal`/`-shm` are never sent.
 
-Roots of a replica: `workspaces`, `pages`, `agents`, `skills`, `commands`, `plugins-data` (except brain session
-folders), `devices`, `mcp.json`. A node syncs its workspaces root with the leader's `workspaces` (the same
+Roots of a replica: `workspaces`, `pages`, `agents`, `skills`, `commands`, `plugins-data/memory` (its facts; each
+hub builds the memory's index, MEMORY.md and git history itself, and its state is in `plugin_kv`: memory spec),
+`devices`, `mcp.json`. A database a running process holds open must not be in a root: the sync replaces a file by
+renaming a new one over it, and SQLite then refuses to write to the one it has open. A node syncs its workspaces root with the leader's `workspaces` (the same
 `<agent>/<task>` layout), so a task finds its folder on whichever machine continues it. Never: node_modules, vendor,
 .venv, venv, target, dist, build, .next, .cache, __pycache__, .DS_Store, what a folder's .gitignore leaves out.
 
