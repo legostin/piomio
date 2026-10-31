@@ -102,6 +102,16 @@ const PAGES: Record<string, string> = {
      <p id="got" style="position:absolute;top:120px">нет</p>
      <script>up.onchange = async () => { const f = up.files[0]; got.textContent = f.name + ":" + (await f.text()); }</script>`,
   ),
+  "/red": page("Красная", `<style>html,body{margin:0;height:100%;background:#f00}</style>`),
+  "/blue": page("Синяя", `<style>html,body{margin:0;height:100%;background:#00f}</style>`),
+  // A page that stops answering: its main thread spins for good half a second after it opened.
+  "/hang": page("Висит", `<style>html,body{margin:0;height:100%;background:#0f0}</style><script>setTimeout(() => { for (;;) {} }, 500)</script>`),
+  "/opener": page(
+    "Ссылки",
+    `<style>html,body{margin:0;height:100%;background:#f00}</style>
+     <a href="/blue" target="_blank" style="position:absolute;left:0;top:0;width:50%;height:100%">в новой вкладке</a>
+     <a href="#" onclick="window.open('/blue', 'w', 'popup,width=600,height=400'); return false" style="position:absolute;right:0;top:0;width:50%;height:100%">в окне</a>`,
+  ),
   "/counter": page(
     "Счётчик",
     `<style>body{margin:0}</style>
@@ -180,6 +190,16 @@ describe("browser plugin (headless Chromium)", () => {
     const r = await call(name, input);
     expect(r.isError, text(r)).toBeFalsy();
     return text(r);
+  };
+  /** Close every tab but the first: the tests after this one work in a single tab. */
+  const closeExtraTabs = async () => {
+    for (let i = 0; i < 20; i++) {
+      const extra = [...(await ok("tabs", { action: "list" })).matchAll(/^(\d+) /gm)].map((m) => Number(m[1])).filter((n) => n > 1);
+      if (!extra.length) return;
+      h.uiMessage({ type: "tab", action: "close", index: Math.max(...extra) });
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    throw new Error("the extra tabs did not close");
   };
 
   beforeAll(async () => {
@@ -602,6 +622,139 @@ describe("browser plugin (headless Chromium)", () => {
     expect(snap).toContain('textbox "Поле" value="abвг"');
     h.uiMessage({ type: "watch", on: false });
   });
+
+  it("shows the tab the person switches to", async () => {
+    const all = () => h.coreCalls.filter((c) => c.method === "ui.emit").map((c) => c.params as { channel: string; payload: any });
+    const lastFrame = (since: number) => all().slice(since).filter((e) => e.channel === "frame").at(-1)?.payload as { data: string; url: string } | undefined;
+    // The colour in the middle of a streamed JPEG frame, read by decoding it in a page.
+    const viewer = await (await chromium.launch()).newPage();
+    const colour = async (data: string) => {
+      const [r, g, b] = await viewer.evaluate(async (src) => {
+        const img = new Image();
+        img.src = src;
+        await img.decode();
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        return [...ctx.getImageData(img.width >> 1, img.height >> 1, 1, 1).data];
+      }, `data:image/jpeg;base64,${data}`);
+      return r > 200 && b < 60 ? "red" : b > 200 && r < 60 ? "blue" : `rgb(${r},${g},${b})`;
+    };
+    try {
+      await ok("open", { url: base + "/red" });
+      const from = all().length;
+      h.uiMessage({ type: "watch", on: true, id: "tabs" });
+      h.uiMessage({ type: "navigate", text: base + "/blue", newTab: true });
+      const state = await until(() => all().slice(from).find((e) => e.channel === "state" && e.payload.url === base + "/blue" && !e.payload.loading));
+      await until(async () => {
+        const f = lastFrame(from);
+        return f?.url === base + "/blue" && (await colour(f.data)) === "blue";
+      });
+      for (const [url, want] of [
+        [base + "/red", "red"],
+        [base + "/blue", "blue"],
+      ]) {
+        const mark = all().length;
+        h.uiMessage({ type: "tab", action: "switch", index: state.payload.tabs.find((t: any) => t.url === url).index });
+        // The picture is the tab switched to, not the one the stream started on.
+        const seen = await until(async () => {
+          const f = lastFrame(mark);
+          return f?.url === url && (await colour(f.data)) === want ? f : undefined;
+        }).catch(async () => {
+          const f = lastFrame(mark);
+          throw new Error(`after switching to ${url}: last frame ${f?.url} is ${f ? await colour(f.data) : "none"}`);
+        });
+        expect(seen.url).toBe(url);
+      }
+
+      // Tabs a site opens itself: a link to a new tab and a popup window, clicked by the person in control.
+      h.uiMessage({ type: "navigate", text: base + "/opener" });
+      await until(async () => {
+        const f = lastFrame(from);
+        return f?.url === base + "/opener" && (await colour(f.data)) === "red";
+      });
+      h.uiMessage({ type: "control", on: true });
+      await until(() => all().find((e) => e.channel === "control" && e.payload.user === true));
+      for (const x of [0.25, 0.75]) {
+        const before = all().length;
+        for (const action of ["down", "up"]) h.uiMessage({ type: "input", event: "mouse", action, x, y: 0.5, button: "left", clickCount: 1 });
+        await until(async () => {
+          const f = lastFrame(before);
+          return f?.url === base + "/blue" && (await colour(f.data)) === "blue";
+        }).catch(async () => {
+          const f = lastFrame(before);
+          throw new Error(`after the click at ${x}: last frame ${f?.url} is ${f ? await colour(f.data) : "none"}`);
+        });
+        const has = (tabs: any[], url: string) => tabs.some((t) => t.url === url);
+        const tabs = (
+          await until(() =>
+            all()
+              .slice(before)
+              .filter((e) => e.channel === "state" && has(e.payload.tabs, base + "/opener") && has(e.payload.tabs, base + "/blue"))
+              .at(-1),
+          )
+        ).payload.tabs;
+        for (const [url, want] of [
+          [base + "/opener", "red"],
+          [base + "/blue", "blue"],
+        ]) {
+          const mark = all().length;
+          const tab = [...tabs].reverse().find((t: any) => t.url === url);
+          h.uiMessage({ type: "tab", action: "switch", index: tab.index });
+          await until(async () => {
+            const f = lastFrame(mark);
+            return f?.url === url && (await colour(f.data)) === want;
+          }).catch(async () => {
+            const f = lastFrame(mark);
+            throw new Error(`a site's tab: after switching to ${url} (tab ${tab.index}): last frame ${f?.url} is ${f ? await colour(f.data) : "none"}`);
+          });
+        }
+        // Back to the page with the links for the next one.
+        h.uiMessage({ type: "tab", action: "switch", index: [...tabs].find((t: any) => t.url === base + "/opener").index });
+        await until(async () => lastFrame(all().length - 1)?.url === base + "/opener" || (await Promise.resolve(false)));
+      }
+      h.uiMessage({ type: "control", on: false });
+    } finally {
+      h.uiMessage({ type: "watch", on: false, id: "tabs" });
+      await viewer.context().browser()?.close();
+      await closeExtraTabs();
+    }
+  });
+
+  it("keeps switching tabs when one of them stops answering", async () => {
+    const all = () => h.coreCalls.filter((c) => c.method === "ui.emit").map((c) => c.params as { channel: string; payload: any });
+    const lastFrame = (since: number) => all().slice(since).filter((e) => e.channel === "frame").at(-1)?.payload as { data: string; url: string } | undefined;
+    await ok("open", { url: base + "/red" });
+    const from = all().length;
+    h.uiMessage({ type: "watch", on: true, id: "hang" });
+    h.uiMessage({ type: "navigate", text: base + "/hang", newTab: true });
+    const tabs = (await until(() => all().slice(from).find((e) => e.channel === "state" && e.payload.tabs.some((t: any) => t.url === base + "/hang") && !e.payload.loading))).payload.tabs;
+    const red = tabs.find((t: any) => t.url === base + "/red").index;
+    const hung = tabs.find((t: any) => t.url === base + "/hang").index;
+    // Now it hangs.
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      for (const [index, url] of [
+        [red, base + "/red"],
+        [hung, base + "/hang"],
+        [red, base + "/red"],
+      ] as const) {
+        const mark = all().length;
+        h.uiMessage({ type: "tab", action: "switch", index });
+        // A frame of a live tab comes; the hung one may show nothing new, but must not hold up the next switch.
+        if (url.endsWith("/red")) {
+          await until(() => lastFrame(mark)?.url === url, 15_000).catch(() => {
+            throw new Error(`after switching to ${url}: last frame is of ${lastFrame(mark)?.url ?? "nothing"}`);
+          });
+        } else await new Promise((r) => setTimeout(r, 1000));
+      }
+    } finally {
+      h.uiMessage({ type: "watch", on: false, id: "hang" });
+      await closeExtraTabs();
+    }
+  }, 60_000);
 
   it("opens a text field's keyboard on a phone: what is under the finger, and where the focus is", async () => {
     await ok("open", { url: base + "/counter" });

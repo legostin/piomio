@@ -41,6 +41,8 @@ export { ToolError };
 export const VIEWPORT = { width: WINDOW.width, height: WINDOW.height - 87 };
 const WATCH_TTL_MS = 30_000;
 const FRAME_INTERVAL_MS = 100;
+/** The longest one screencast step waits for a tab: one that stopped answering must not hold up the next tab. */
+const CAST_STEP_MS = 2000;
 
 /** Which browser to launch: Google Chrome by its path, or Playwright's full Chromium. */
 type Engine = Pick<LaunchOptions, "executablePath" | "channel">;
@@ -345,7 +347,7 @@ export class BrowserManager {
   async pageSize(page: Page): Promise<{ width: number; height: number }> {
     const vp = page.viewportSize();
     if (vp) return vp;
-    return page.evaluate<{ width: number; height: number }>("({ width: innerWidth, height: innerHeight })").catch(() => VIEWPORT);
+    return withTimeout(page.evaluate<{ width: number; height: number }>("({ width: innerWidth, height: innerHeight })"), CAST_STEP_MS).catch(() => VIEWPORT);
   }
 
   async close(): Promise<void> {
@@ -793,8 +795,9 @@ export class BrowserManager {
   async titleOf(p: Page): Promise<string> {
     const t = await withTimeout(p.title(), 1000).catch(() => this.titles.get(p) ?? "");
     this.titles.set(p, t);
-    // Pages name themselves late (single-page apps): the history keeps the latest name.
-    if (t) this.history.setTitle(p.url(), t);
+    // Pages name themselves late (single-page apps): the history keeps the latest name. A tab on its way to another
+    // page is "Loading <its address>" to Chrome while it still shows the old one: that is no page's name.
+    if (t && !/^Loading [a-z][a-z\d+.-]*:/i.test(t)) this.history.setTitle(p.url(), t);
     return t;
   }
 
@@ -1181,7 +1184,7 @@ export class BrowserManager {
     if (!want) return this.stopCastNow();
     if (this.cast?.page !== page) {
       await this.stopCastNow();
-      const cdp = await this.context!.newCDPSession(page!);
+      const cdp = await castStep(this.context!.newCDPSession(page!), (late) => void late.detach().catch(() => {}));
       const vp = await this.pageSize(page!);
       const cast: Cast = { page: page!, cdp, width: vp.width, height: vp.height, lastEmit: 0, pending: null, timer: null };
       this.cast = cast;
@@ -1196,15 +1199,15 @@ export class BrowserManager {
         this.flushFrame(cast);
       });
       // Page domain events (screencastFrame) are only delivered to sessions that enabled the domain.
-      await cdp.send("Page.enable");
+      await castStep(cdp.send("Page.enable"));
       // everyNthFrame 1: with 2, a single repaint (one typed letter) can be skipped and never shown.
-      await cdp.send("Page.startScreencast", { format: "jpeg", quality: 50, maxWidth: 1280, maxHeight: 1280, everyNthFrame: 1 });
+      await castStep(cdp.send("Page.startScreencast", { format: "jpeg", quality: 50, maxWidth: 1280, maxHeight: 1280, everyNthFrame: 1 }));
       refresh = true;
     }
     // Chrome only sends screencast frames on repaint: a static page would show nothing until it changes.
     const cast = this.cast;
     if (refresh && cast) {
-      const shot = await cast.cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 50 }).catch(() => null);
+      const shot = await castStep(cast.cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 50 })).catch(() => null);
       if (shot && this.cast === cast) this.emitFrame(cast, shot.data);
     }
   }
@@ -1214,8 +1217,11 @@ export class BrowserManager {
     this.cast = null;
     if (!c) return;
     if (c.timer) clearTimeout(c.timer);
-    await c.cdp.send("Page.stopScreencast").catch(() => {});
-    await c.cdp.detach().catch(() => {});
+    // A tab that stopped answering (a page stuck loading or spinning) never answers these either: the next tab does not
+    // wait for them, or every switch after it would keep showing this tab's last picture.
+    void castStep(c.cdp.send("Page.stopScreencast"))
+      .catch(() => {})
+      .finally(() => void c.cdp.detach().catch(() => {}));
   }
 
   /**
@@ -1356,6 +1362,16 @@ const FOCUS_SCRIPT = `(() => {
   }
   return editable(el);
 })()`;
+
+/** A screencast step bounded by CAST_STEP_MS; what it brings after that goes to `late` (a session to let go of). */
+function castStep<T>(p: Promise<T>, late?: (value: T) => void): Promise<T> {
+  let gaveUp = false;
+  if (late) void p.then((v) => gaveUp && late(v), () => {});
+  return withTimeout(p, CAST_STEP_MS, "the tab is not answering").catch((e) => {
+    gaveUp = true;
+    throw e;
+  });
+}
 
 function originOf(url: string): string {
   try {
