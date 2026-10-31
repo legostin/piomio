@@ -1,5 +1,6 @@
-// The first screen: a short headline and the download over the live app in the middle of the screen, and the day's chapters
-// under it to pick from; what Piomio is comes after. A chapter that ends hands over to the next one, like a showreel. On a phone the window lets touches
+// The first screen: the headline, what Piomio is in one sentence and the download over the live app in the middle of the
+// screen, and the day's chapters under it to pick from. A chapter that ends hands over to the next one, like a showreel;
+// the rest of the page can ask for a chapter too (demo/watch.ts). On a phone the window lets touches
 // through to the page (it scrolls freely) and a tap opens the day full screen as stories.
 
 import { useEffect, useRef, useState } from "react";
@@ -9,6 +10,7 @@ import { DownloadButton } from "../components/Download";
 import { DemoWindow } from "../demo/DemoWindow";
 import { Story } from "../demo/Story";
 import { CHAPTERS, type ChapterId } from "../demo/protocol";
+import { WATCH_EVENT } from "../demo/watch";
 
 const WIDE = "(min-width: 1024px)";
 /** After a chapter ends, the next one starts this much later. */
@@ -72,6 +74,24 @@ export function Stage() {
   const [chapter, setChapter] = useState<ChapterId>(CHAPTERS[0]);
   const [story, setStory] = useState<ChapterId | null>(null);
   const [ended, setEnded] = useState<{ id: ChapterId; at: number } | null>(null);
+  const [run, setRun] = useState(0);
+  const current = useRef(chapter);
+  current.current = chapter;
+
+  // A chapter asked for from below: on a wide screen the window plays it (again, if it is the one in it) and comes into
+  // view; on a phone the day opens full screen at it.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const id = (e as CustomEvent<ChapterId>).detail;
+      if (!window.matchMedia(WIDE).matches) return setStory(id);
+      setEnded(null);
+      if (current.current === id) setRun((r) => r + 1);
+      else setChapter(id);
+      document.getElementById("demo")?.scrollIntoView({ behavior: "smooth" });
+    };
+    window.addEventListener(WATCH_EVENT, on);
+    return () => window.removeEventListener(WATCH_EVENT, on);
+  }, []);
 
   // The showreel: when a chapter ends, the next one plays, unless the visitor picked another meanwhile.
   useEffect(() => {
@@ -90,6 +110,7 @@ export function Stage() {
           <h1 className="font-display text-[clamp(1.7rem,3.2vw,2.75rem)] leading-[1.06] font-extrabold tracking-[-0.025em] text-balance">
             {t("hero.titleLead")} <span className="marker whitespace-nowrap">{t("hero.titleMarker")}</span>
           </h1>
+          <p className="mt-3 max-w-[66rem] text-[clamp(1rem,1.3vw,1.15rem)] leading-relaxed text-fg-2 text-pretty">{t("hero.lead")}</p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
             <DownloadButton />
             <a href="#install" className="ghost hidden items-center gap-2 rounded-full px-5 py-3.5 text-[15px] font-semibold sm:inline-flex">
@@ -100,10 +121,11 @@ export function Stage() {
 
         <div className="relative mx-auto mt-6 max-w-[1140px] sm:mt-7">
           <DemoWindow
+            key={run}
             chapter={chapter}
             idle={wide === null || !!story}
             passive={wide === false}
-            className="h-[min(66svh,560px)] min-h-[420px] lg:h-[clamp(460px,calc(100svh_-_375px),720px)]"
+            className="h-[min(66svh,560px)] min-h-[420px] lg:h-[clamp(460px,calc(100svh_-_400px),700px)]"
             onEnded={() => setEnded({ id: chapter, at: Date.now() })}
           />
           {wide === false && <button type="button" onClick={() => setStory(chapter)} aria-label={t("demo.tapToWatch")} className="absolute inset-x-0 top-10 bottom-0 rounded-b-[18px]" />}
@@ -119,15 +141,6 @@ export function Stage() {
               {t("demo.fullScreen")}
             </button>
           </div>
-        </div>
-
-        <div className="mx-auto mt-16 flex max-w-[40rem] flex-col items-center border-t border-hairline pt-14 text-center sm:mt-20">
-          <p className="mb-5 inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1 text-[12.5px] font-semibold text-fg-2 shadow-[0_0_0_1px_var(--border)]">
-            <span className="live-dot size-1.5 rounded-full" />
-            {t("hero.eyebrow")}
-          </p>
-          <p className="text-[clamp(1.05rem,1.4vw,1.2rem)] leading-relaxed text-fg-2 text-pretty">{t("hero.lead")}</p>
-          <p className="mt-4 text-[13px] text-muted">{t("hero.fineprint")}</p>
         </div>
       </div>
       {story && (

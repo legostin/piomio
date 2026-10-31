@@ -189,3 +189,55 @@ export const ChevronRight = (p: P) => (
     <path d="M9 6l6 6-6 6" />
   </Stroke>
 );
+
+export const Sun = (p: P) => (
+  <Stroke {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+  </Stroke>
+);
+
+export const Plug = (p: P) => (
+  <Stroke {...p}>
+    <path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" />
+  </Stroke>
+);
+
+export const Layout = (p: P) => (
+  <Stroke {...p}>
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <path d="M3 9h18M9 21V9" />
+  </Stroke>
+);
+
+export const Rss = (p: P) => (
+  <Stroke {...p}>
+    <path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16" />
+    <circle cx="5" cy="19" r="1" />
+  </Stroke>
+);
+
+export const Mail = (p: P) => (
+  <Stroke {...p}>
+    <rect width="20" height="16" x="2" y="4" rx="2" />
+    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+  </Stroke>
+);
+
+export const Share = (p: P) => (
+  <Stroke {...p}>
+    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13" />
+  </Stroke>
+);
+
+export const ChevronDown = (p: P) => (
+  <Stroke {...p}>
+    <path d="m6 9 6 6 6-6" />
+  </Stroke>
+);
+
+export const Pointer = (p: P) => (
+  <Stroke {...p}>
+    <path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
+  </Stroke>
+);

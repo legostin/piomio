@@ -1,11 +1,12 @@
-// Below the story: how it works, security, integrations, the iPhone app, install, footer.
+// Below the feature blocks: how it works, the comparison, security, integrations, the iPhone app, questions, install,
+// footer.
 
 import { useState, type ReactNode } from "react";
 import { siteConfig } from "../../site.config";
 import { data } from "../data";
 import { useI18n, type MessageKey } from "../i18n";
 import { downloadHref } from "../components/Download";
-import { Apple, Bell, Box, Brain, Chain, Check, Copy, Docker, FaceId, Filter, GitHub, Globe, Home, Laptop, Lock, Mic, OwlMark, ThumbUp, Windows } from "../components/icons";
+import { Apple, Bell, Box, Brain, Chain, Check, ChevronDown, Copy, Docker, FaceId, Filter, GitHub, Globe, Home, Laptop, Lock, Mic, OwlMark, ThumbUp, Windows } from "../components/icons";
 import { LOGOS } from "../logos";
 
 function Heading({ eyebrow, title, lead, center }: { eyebrow: string; title: string; lead?: string; center?: boolean }) {
@@ -29,7 +30,7 @@ function Section({ id, children, tone }: { id: string; children: ReactNode; tone
 export function HowItWorks() {
   const { t } = useI18n();
   const cards: Array<[ReactNode, MessageKey, MessageKey, string[]]> = [
-    [<Brain size={22} />, "how.brains.title", "how.brains.text", ["Claude Code", "Codex", "Anthropic API", "OpenAI", "OpenRouter", "Ollama"]],
+    [<Brain size={22} />, "how.brains.title", "how.brains.text", ["Claude Code", "Codex", "DeepSeek", "Kimi", "GLM", "OpenRouter", "Ollama"]],
     [<Laptop size={22} />, "how.hardware.title", "how.hardware.text", ["macOS", "Windows", "Docker", "Linux", "Tailscale"]],
     [<Home size={22} />, "how.home.title", "how.home.text", ["Apache-2.0", "Markdown", "SQLite", "Git"]],
   ];
@@ -66,7 +67,7 @@ export function Security() {
     [<Chain size={20} />, "security.audit.title", "security.audit.text"],
   ];
   return (
-    <Section id="security">
+    <Section id="security" tone="canvas">
       <Heading eyebrow={t("security.eyebrow")} title={t("security.title")} lead={t("security.lead")} />
       {/* The path of one action: from the agent, through the five layers, out into the world. */}
       <div className="reveal mt-12 overflow-hidden rounded-[26px] bg-surface p-4 shadow-[var(--shadow)] sm:p-6">
@@ -104,7 +105,7 @@ export function Security() {
 export function Integrations() {
   const { t } = useI18n();
   return (
-    <Section id="integrations" tone="canvas">
+    <Section id="integrations">
       <Heading eyebrow={t("integrations.eyebrow")} title={t("integrations.title")} lead={t("integrations.lead")} center />
       <div className="reveal mx-auto mt-12 grid max-w-[1040px] grid-cols-3 gap-2.5 sm:grid-cols-5 lg:grid-cols-8">
         {LOGOS.map((l) => (
@@ -198,7 +199,7 @@ export function Iphone() {
     [<Mic size={18} />, "iphone.point3"],
   ];
   return (
-    <Section id="iphone">
+    <Section id="iphone" tone="canvas">
       <div className="grid items-center gap-14 lg:grid-cols-[1.1fr_1fr]">
         <div>
           <div className="reveal">
@@ -238,6 +239,94 @@ export function Iphone() {
     </Section>
   );
 }
+
+/** Piomio next to the two other kinds of personal agents: a table on a wide screen, one card per question on a phone. */
+export function Compare() {
+  const { t } = useI18n();
+  const rows = ["runs", "keys", "cost", "start", "code"] as const;
+  const cols = [
+    ["cloud", t("compare.cloud")],
+    ["diy", t("compare.diy")],
+    ["piomio", "Piomio"],
+  ] as const;
+  return (
+    <Section id="compare">
+      <Heading eyebrow={t("compare.eyebrow")} title={t("compare.title")} lead={t("compare.lead")} center />
+      <div className="reveal mx-auto mt-12 hidden max-w-[1040px] overflow-hidden rounded-[26px] bg-surface shadow-[var(--shadow)] md:block">
+        <table className="w-full table-fixed border-collapse text-left">
+          <thead>
+            <tr>
+              <td className="w-[22%]" />
+              {cols.map(([id, label]) => (
+                <th key={id} scope="col" className={`px-5 py-4 font-display text-[16px] font-bold ${id === "piomio" ? "bg-accent-soft" : "text-fg-2"}`}>
+                  <span className="inline-flex items-center gap-2">
+                    {id === "piomio" && <OwlMark size={22} />}
+                    {label}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r} className="border-t border-hairline">
+                <th scope="row" className="px-5 py-4 text-[14px] font-semibold text-muted">
+                  {t(`compare.${r}`)}
+                </th>
+                {cols.map(([id]) => (
+                  <td key={id} className={`px-5 py-4 text-[15px] leading-snug ${id === "piomio" ? "bg-accent-soft font-semibold" : "text-fg-2"}`}>
+                    {t(`compare.${r}.${id}`)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mx-auto mt-10 flex max-w-[34rem] flex-col gap-3 md:hidden">
+        {rows.map((r) => (
+          <article key={r} className="reveal rounded-[22px] bg-surface p-4 shadow-[var(--shadow)]">
+            <h3 className="px-1 text-[12.5px] font-bold tracking-[0.12em] text-accent-text uppercase">{t(`compare.${r}`)}</h3>
+            <dl className="mt-2.5 flex flex-col gap-1">
+              {cols.map(([id, label]) => (
+                <div key={id} className={`flex items-baseline gap-4 rounded-xl px-3 py-2 text-[14.5px] leading-snug ${id === "piomio" ? "bg-accent-soft font-semibold" : ""}`}>
+                  <dt className="w-[38%] shrink-0 text-[13px] text-muted">{label}</dt>
+                  <dd>{t(`compare.${r}.${id}`)}</dd>
+                </div>
+              ))}
+            </dl>
+          </article>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+/** The questions people ask before installing, each answer folded under its question (the first one open). */
+export function Faq() {
+  const { t } = useI18n();
+  return (
+    <Section id="faq">
+      <div className="grid items-start gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16">
+        <Heading eyebrow={t("faq.eyebrow")} title={t("faq.title")} />
+        <div className="reveal flex flex-col gap-2.5">
+          {FAQ.map((n) => (
+            <details key={n} open={n === 1} className="group rounded-2xl bg-surface shadow-[var(--shadow)]">
+              <summary className="flex cursor-pointer list-none items-center gap-4 px-5 py-4 text-[16.5px] leading-snug font-semibold [&::-webkit-details-marker]:hidden">
+                {t(`faq.q${n}`)}
+                <ChevronDown size={18} className="ml-auto shrink-0 text-muted transition-transform group-open:rotate-180" />
+              </summary>
+              <p className="-mt-1 px-5 pb-5 text-[15.5px] leading-relaxed text-fg-2 text-pretty">{t(`faq.a${n}`)}</p>
+            </details>
+          ))}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+/** The questions, in order (faq.q<n> / faq.a<n>); entry-server.tsx gives them to search engines too. */
+export const FAQ = [1, 2, 3, 4, 5, 6, 7] as const;
 
 function CopyBlock({ code }: { code: string }) {
   const { t } = useI18n();

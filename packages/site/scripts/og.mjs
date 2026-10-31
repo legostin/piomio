@@ -53,18 +53,18 @@ p { font-size: 24px; line-height: 1.45; color: #5d564d; margin: 26px 0 0; width:
 
 const TEXT = {
   en: {
-    lead: "A team of AI agents that works",
-    marker: "for you",
-    sub: "Mail, letters, the browser and your code — on your own computers, with your yes.",
+    lead: "Your own AI team",
+    marker: "on your computer",
+    sub: "Free and open source. It uses the Claude Code or Codex plan you already have, and asks before anything leaves.",
     ask: "Go through my mail",
-    answer: "Done: 47 letters. Three matter, a reply to Anna is drafted.",
+    answer: "Done: 47 emails. Three matter, a reply to Anna is drafted.",
     card: "Send an email to anna@studio-north.example",
     approve: "Allow",
   },
   ru: {
-    lead: "Команда ИИ-агентов, которая работает",
-    marker: "на тебя",
-    sub: "Почта, письма, браузер и твой код — на твоих компьютерах и с твоего «да».",
+    lead: "Своя команда ИИ-агентов",
+    marker: "на твоём компьютере",
+    sub: "Бесплатно и с открытым кодом. Думает на твоей подписке Claude Code или Codex и спрашивает, прежде чем что-то отправить.",
     ask: "Разбери почту",
     answer: "Готово: 47 писем. Важного три, ответ Анне готов.",
     card: "Отправить письмо anna@sever-studio.example",

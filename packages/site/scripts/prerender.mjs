@@ -1,5 +1,6 @@
 // Prerendering: one static page per language from the client build's index.html and the server build's render(), plus
-// the language chooser at the root, a 404 page, sitemap.xml and robots.txt.
+// the language chooser at the root (with the English page's head, so a shared bare link still shows a card), a 404
+// page, sitemap.xml, robots.txt and llms.txt.
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import { pathToFileURL } from "node:url";
  */
 export async function prerender({ dist, ssrEntry, languages, base, origin }) {
   const template = readFileSync(join(dist, "index.html"), "utf8");
-  const { render } = await import(pathToFileURL(ssrEntry).href);
+  const { render, llmsTxt } = await import(pathToFileURL(ssrEntry).href);
   for (const lang of languages) {
     const { html, head } = render(lang);
     const page = template
@@ -22,16 +23,14 @@ export async function prerender({ dist, ssrEntry, languages, base, origin }) {
   }
 
   // The root and unknown addresses: the visitor's language (English by default), plain links without scripts.
-  const chooser = (title) => `<!doctype html>
+  const chooser = (head) => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
-<title>${title}</title>
+${head}
 <link rel="icon" type="image/svg+xml" href="${base}favicon.svg" />
-${languages.map((l) => `<link rel="alternate" hreflang="${l}" href="${origin}${base}${l}/" />`).join("\n")}
-<link rel="alternate" hreflang="x-default" href="${origin}${base}en/" />
 <script>
   var langs = ${JSON.stringify(languages)};
   var want = (navigator.languages || [navigator.language || "en"]).map(function (l) { return String(l).slice(0, 2).toLowerCase(); });
@@ -49,8 +48,10 @@ ${languages.map((l) => `<link rel="alternate" hreflang="${l}" href="${origin}${b
 </body>
 </html>
 `;
-  writeFileSync(join(dist, "index.html"), chooser("Piomio"));
-  writeFileSync(join(dist, "404.html"), chooser("Piomio"));
+  const alternates = [...languages.map((l) => `<link rel="alternate" hreflang="${l}" href="${origin}${base}${l}/" />`), `<link rel="alternate" hreflang="x-default" href="${origin}${base}en/" />`];
+  writeFileSync(join(dist, "index.html"), chooser(render("en").head));
+  writeFileSync(join(dist, "404.html"), chooser(["<title>Piomio</title>", ...alternates].join("\n")));
+  writeFileSync(join(dist, "llms.txt"), llmsTxt());
 
   const today = new Date().toISOString().slice(0, 10);
   writeFileSync(
