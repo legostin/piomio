@@ -10,8 +10,9 @@ import { PKG_ID, distributionXml, installerPage } from "./generate.mjs";
 
 const HERE = import.meta.dirname;
 
-/** Builds `out` from `appBundle`, using `build` as a scratch folder. Returns `out`. */
-export function buildPkg({ appBundle, build, out }) {
+/** Builds `out` from `appBundle`, using `build` as a scratch folder; `sign`, a Developer ID Installer identity, signs
+ * it. Returns `out`. */
+export function buildPkg({ appBundle, build, out, sign = "" }) {
   const root = join(build, "pkg-root");
   mkdirSync(join(root, "Applications"), { recursive: true });
   // A clone on APFS: no extra space.
@@ -44,6 +45,6 @@ export function buildPkg({ appBundle, build, out }) {
   }
   const distribution = join(build, "distribution.xml");
   writeFileSync(distribution, distributionXml({ version: VERSION, componentPkg }));
-  run("productbuild", ["--distribution", distribution, "--resources", resources, "--package-path", build, out]);
+  run("productbuild", ["--distribution", distribution, "--resources", resources, "--package-path", build, ...(sign ? ["--sign", sign, "--timestamp"] : []), out]);
   return out;
 }

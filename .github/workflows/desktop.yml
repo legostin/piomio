@@ -86,7 +86,12 @@ jobs:
 
   macos:
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      # The project's Developer ID (a .p12 in base64 and its password) signs the app for Gatekeeper, and the Apple ID
+      # with an app-specific password notarizes it (packaging/macos/sign.mjs). A fork's PR has neither and builds ad hoc.
+      SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      NOTARIZED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -107,11 +112,72 @@ jobs:
       - run: npm ci
       - run: npm run build:ui -w @piomio/desktop
       - run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
+      # A keychain of the run's own holds the Developer ID; the build finds it by APPLE_SIGNING_IDENTITY, and the team
+      # in its name is the notary's APPLE_TEAM_ID. A "Developer ID Installer" identity in the same .p12 signs the .pkg.
+      - name: The Developer ID, in a keychain of its own
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -eu
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          pw=$(openssl rand -hex 24)
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$kc" -f pkcs12 -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          rm "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          echo "SIGNING_KEYCHAIN=$kc" >> "$GITHUB_ENV"
+          id=$(security find-identity -v -p codesigning "$kc" | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -n 1)
+          if [ -z "$id" ]; then echo "no Developer ID Application identity in APPLE_CERTIFICATE"; exit 1; fi
+          echo "APPLE_SIGNING_IDENTITY=$id" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=$(printf '%s' "$id" | sed -nE 's/.*\(([A-Z0-9]+)\)$/\1/p')" >> "$GITHUB_ENV"
+          installer=$(security find-identity -v "$kc" | sed -nE 's/.*"(Developer ID Installer: [^"]+)".*/\1/p' | head -n 1)
+          if [ -n "$installer" ]; then echo "APPLE_INSTALLER_IDENTITY=$installer" >> "$GITHUB_ENV"; fi
+          echo "signing as $id${installer:+, packages as $installer}"
       # The update files are signed with the project's key; without the secret (a fork's PR) they are left out.
       - run: npm run package:desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      - name: "Developer ID: signed, notarized, stapled"
+        if: env.SIGNED == 'true'
+        run: |
+          set -eu
+          dmg=$(ls dist/desktop/piomio-*.dmg | head -n 1)
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/signed-image "$dmg"
+          app=/tmp/signed-image/Piomio.app
+          codesign --verify --strict --deep "$app"
+          codesign -dv "$app" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID"
+          codesign -dv "$app" 2>&1 | grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime'
+          for arch in arm64 x64; do
+            codesign -dv "$app/Contents/Resources/app/packages/tailnet/bin/darwin-$arch/piomio-tailnet" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID"
+          done
+          codesign -dv "$dmg" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID"
+          if [ "$NOTARIZED" = true ]; then
+            xcrun stapler validate "$dmg"
+            xcrun stapler validate "$app"
+            spctl --assess --type execute -vv "$app"
+            spctl --assess --type open --context context:primary-signature -vv "$dmg"
+            for update in dist/desktop/piomio-*-mac.app.tar.gz; do
+              [ -f "$update" ] || continue
+              mkdir -p "$RUNNER_TEMP/update" && tar -xzf "$update" -C "$RUNNER_TEMP/update"
+              xcrun stapler validate "$RUNNER_TEMP/update/Piomio.app"
+            done
+          fi
+          hdiutil detach /tmp/signed-image
+          if [ -n "${APPLE_INSTALLER_IDENTITY:-}" ]; then
+            pkg=$(ls dist/desktop/piomio-*.pkg | head -n 1)
+            pkgutil --check-signature "$pkg"
+            if [ "$NOTARIZED" = true ]; then xcrun stapler validate "$pkg"; spctl --assess --type install -vv "$pkg"; fi
+          fi
+          echo ok
       - name: "Disk image: drag to Applications, run, quit"
         run: |
           set -eu
@@ -164,6 +230,9 @@ jobs:
           if pkgutil --pkg-info ai.piomio.pkg >/dev/null 2>&1; then echo "the package receipt is still there"; exit 1; fi
           test -f "$data/piomio.db"
           echo ok
+      - name: Drop the signing keychain
+        if: always() && env.SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$SIGNING_KEYCHAIN"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
