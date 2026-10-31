@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hub, loadConfig } from "../src/index.ts";
 import { joinCluster } from "../src/cluster.ts";
+import { agentFromMarkdown } from "../src/agents.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
 
@@ -119,6 +120,11 @@ describe("a hub on two machines", () => {
     await until(() => existsSync(join(vps.dir, "workspaces", "assistant", "shared", "notes.md")), "the workspace file on the standby", 40_000);
     expect(readFileSync(join(vps.dir, "workspaces", "assistant", "shared", "notes.md"), "utf8")).toBe("# from the mac\n");
 
+    // An agent bound to the Mac: the binding names the Mac by its replica id, and its file reaches the other machine.
+    const coder = a.saveAgent({ ...agentFromMarkdown("coder", "", "user"), name: "Coder", brains: ["fake@local"], machines: ["local"] }, "user");
+    expect(coder.machines).toEqual([a.here()]);
+    await until(() => existsSync(join(vps.dir, "agents", "coder.md")), "the bound agent on the standby", 40_000);
+
     // The leader goes away: the standby leads within seconds and takes changes.
     await a.stop();
     mac.hub = undefined;
@@ -127,6 +133,10 @@ describe("a hub on two machines", () => {
     // A machine reaches it while it leads (stands in for a node's connection).
     let dropped = false;
     (b.machines as any).peers.set("mach_while_leading", { closed: false, close: () => (dropped = true) });
+    // The agent bound to the Mac does not think on the VPS meanwhile: its chat says the Mac is off, and keeps the message.
+    const coderChat = b.store.agentConversation("coder");
+    b.store.addMessage({ conversationId: coderChat.id, role: "user", parts: [{ type: "text", text: "are you there?" }], status: "complete" });
+    expect((await b.runner.runTurn(coderChat, "are you there?", {})).error).toMatch(/Coder works only on mac/);
 
     // It comes back: standby first, it catches up, then it gets the lead back.
     const a2 = await boot(mac);
@@ -135,6 +145,13 @@ describe("a hub on two machines", () => {
     await until(() => a2.cluster.leads() && !b.cluster.leads(), "the lead back on the mac", 60_000);
     // Giving the lead back drops that connection: the machine reconnects and lands on the leader.
     expect(dropped).toBe(true);
+    // The Mac has that conversation, the error too, and the agent may think there again (this hub has no brains: the
+    // brain setup card instead of saying the Mac is off).
+    const kept = a2.store.listMessages(coderChat.id);
+    expect(kept.some((m) => m.role === "user" && (m.parts[0] as any).text === "are you there?")).toBe(true);
+    expect(kept.some((m) => m.parts.some((p) => p.type === "error" && /Coder works only on mac/.test(p.message)))).toBe(true);
+    const back = (await a2.runner.runTurn(coderChat, "back", {})).error;
+    expect(back).toMatch(/No brain works yet/);
   });
 });
 
