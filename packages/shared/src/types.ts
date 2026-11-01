@@ -259,6 +259,8 @@ export type MessagePart =
       feedbackable?: boolean;
     }
   | { type: "error"; message: string }
+  /** A line from the hub itself, for the person (a command's answer or hint): quiet, not the agent speaking. */
+  | { type: "note"; text: string }
   /** A file the user sent (or a plugin attached): `path` is relative to the workspaces root, `size` in bytes. */
   | { type: "attachment"; path: string; name: string; mimeType?: string; size?: number; kind?: AttachmentKind; durationSec?: number; transcript?: string }
   /** A secret the user types into the chat card; the value goes straight to the vault and never into the conversation. */
@@ -297,8 +299,13 @@ export type MessagePart =
   | { type: "choices"; options: string[]; chosen?: number }
   /** A channel's live card in the chat: its state and buttons (open, gather now, how often, pause, delete). */
   | { type: "feed"; feedId: string }
-  /** How an agent thinks for each kind of work (AgentDef.thinking): a live card with a preset per kind. */
-  | { type: "thinking"; agentId: string }
+  /**
+   * How an agent thinks for each kind of work (AgentDef.thinking): a live card with a preset per kind. `focus`: only
+   * that part of its chats' choice, as the header picker shows it (the /brain and /effort commands).
+   */
+  | { type: "thinking"; agentId: string; focus?: "brain" | "effort" }
+  /** The /archive command's card: archive the agent (in the default agent's chat, after picking who takes over), then Restore. */
+  | { type: "agent_archive"; agentId: string }
   /** A page the agent made (page_create, page_show): its card, which opens the page full screen. */
   | { type: "page"; pageId: string }
   /**
@@ -501,8 +508,13 @@ export interface Task {
   resumeAt?: ISODate;
   /** A question the task asked whoever started it (task_ask), until it gets an answer. */
   question?: string;
-  /** "message": a thread between two agents of the team (team_message); it reads like a conversation, not a job. */
-  kind?: "message";
+  /**
+   * "message": a thread between two agents of the team (team_message); it reads like a conversation, not a job.
+   * "goal": a long goal (the /goal command): it keeps going round after round until the agent reports it reached.
+   */
+  kind?: "message" | "goal";
+  /** A goal's rounds so far (kind "goal"): it pauses every GOAL_ROUNDS of them. */
+  rounds?: number;
   /** A thread's other side (kind "message"): the teammate who wrote. `agentId` is the one answering. */
   from?: string;
   /** Started or messaged from a session that had read outside content: its sessions are marked the same way. */
@@ -596,6 +608,11 @@ export interface AgentDef {
   source: "builtin" | "user" | string;
   /** Colour + shape picked when the agent was created; the UI derives one from the id when absent. */
   avatar?: AgentAvatar;
+  /**
+   * In the archive, asleep: out of the team list, its schedules and channels do not run, teammates do not see it; its
+   * dialog, memory and settings stay. Set by the hub when it lists agents (agents-state.ts), not stored in the file.
+   */
+  archived?: boolean;
   /** Translated name / description shown in the UI ("i18n: { ru: { name: … } }" in the frontmatter). */
   i18n?: Partial<Record<Locale, { name?: string; description?: string }>>;
 }

@@ -448,7 +448,12 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const held = hub.skills.holders?.all() ?? new Map<string, string[]>();
     return hub.skills.list().map((s) => ({ ...s, agents: held.get(s.name) ?? [] }));
   });
-  api.get("/api/commands", async () => hub.skills.listCommands().map((c) => ({ name: c.name, description: c.description, source: c.source })));
+  // The hub's own commands first, then the skills' (one named like a hub command is the hub's).
+  api.get("/api/commands", async (req) => {
+    const own = hub.commands.list(requestLocale(req));
+    const names = new Set(own.map((c) => c.name));
+    return [...own, ...hub.skills.listCommands().filter((c) => !names.has(c.name)).map((c) => ({ name: c.name, description: c.description, source: c.source }))];
+  });
   api.get("/api/channels", async () => Promise.all(hub.channels.list().map(async (c) => ({ ...c, ...(await hub.channels.status(c.id)) }))));
 
   // ----- machines -----

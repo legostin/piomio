@@ -66,7 +66,8 @@ const taskFrom = (r: any): Task => ({
   error: r.error ?? undefined,
   resumeAt: r.resume_at ?? undefined,
   question: r.question ?? undefined,
-  ...(r.kind === "message" ? { kind: "message" as const } : {}),
+  ...(r.kind === "message" || r.kind === "goal" ? { kind: r.kind as "message" | "goal" } : {}),
+  ...(r.kind === "goal" ? { rounds: r.rounds ?? 0 } : {}),
   ...(r.from_agent ? { from: r.from_agent } : {}),
   ...(r.tainted ? { tainted: true } : {}),
   ...(r.feed_id ? { feedId: r.feed_id } : {}),
@@ -304,8 +305,8 @@ export class Store {
     return this.db.prepare("select * from tasks order by created_at desc limit ?").all(limit).map(taskFrom);
   }
 
-  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted">>): Task | undefined {
-    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question" };
+  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds">>): Task | undefined {
+    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds" };
     for (const [k, col] of Object.entries(cols)) {
       if (k in patch) this.db.prepare(`update tasks set ${col} = ? where id = ?`).run((patch as any)[k] ?? null, id);
     }

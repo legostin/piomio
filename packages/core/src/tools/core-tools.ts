@@ -48,6 +48,8 @@ export type TaskSender = { agentId: string; conversationId: string; taskId?: str
 export interface TaskLine {
   place(agentId: string, machine: string): { brainRef?: string; machineName: string; note?: string } | { error: string };
   ask(taskId: string, question: string): Promise<{ ok: boolean; text: string }>;
+  /** goal_report: a long goal (/goal) is reached, or cannot go on without the person. */
+  goal(taskId: string, status: "achieved" | "blocked", summary: string): Promise<{ ok: boolean; text: string }>;
   /** What each agent is busy with now, one line each. */
   team(): string[];
   message(taskId: string, text: string, from: TaskSender): Promise<{ ok: boolean; text: string }>;
@@ -404,6 +406,29 @@ export function registerCoreTools(d: CoreToolDeps): void {
     async (i, ctx) => {
       if (!ctx.taskId) return text("task_ask works inside a task. In your dialog, ask the user directly.", true);
       const r = await d.tasks.ask(ctx.taskId, String(i.question).slice(0, 2000));
+      return text(r.text, !r.ok);
+    },
+  );
+
+  reg(
+    {
+      name: "goal_report",
+      description:
+        "Inside a long goal the person set (/goal): say it is reached (status achieved: it ends, the summary goes to the person) or that you cannot go on without the person (status blocked: they are asked, and the goal goes on with their answer). Without it the goal gets another round after your reply.",
+      effect: "local-write",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["achieved", "blocked"] },
+          summary: { type: "string", description: "achieved: what was done, for the person; blocked: what you need from them, as one clear question" },
+        },
+        required: ["status", "summary"],
+      },
+    },
+    async (i, ctx) => {
+      if (!ctx.taskId) return text("goal_report works only inside a goal (a task the person started with /goal).", true);
+      const status = i.status === "blocked" ? "blocked" : "achieved";
+      const r = await d.tasks.goal(ctx.taskId, status, String(i.summary ?? "").slice(0, 4000));
       return text(r.text, !r.ok);
     },
   );

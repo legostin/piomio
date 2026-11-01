@@ -4,7 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
-import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
+import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
 import { confinement } from "./native-permissions.ts";
 import { NATIVE_PERMISSION_TOOL } from "./tools/native-permission.ts";
 import type { Config } from "./config.ts";
@@ -25,7 +25,7 @@ import { detailOfTool, stepOfTool, type MachineActivityFeed } from "./activity.t
 import { needOf, route, skillOfGoal, type Route } from "./model-router.ts";
 import type { EgressProxy } from "./egress.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
-import { buildSystemPrompt, taskEnding } from "./prompt.ts";
+import { buildSystemPrompt, goalPrompt, taskEnding } from "./prompt.ts";
 import { humanFailure } from "./notifier.ts";
 import { agentName } from "./agents.ts";
 import { hubLocale, LocalizedError, t } from "./i18n.ts";
@@ -80,6 +80,11 @@ export interface RunnerDeps {
    * next turn reopens it, resuming the same conversation: a CLI brain reads the tool list only when it starts.
    */
   toolNames?: () => string;
+  /**
+   * The hub's own commands (commands.ts, set by the hub): "/task …", "/brain" are answered before the model sees the
+   * message; "done" when nothing more is to happen, else the prompt the turn gets instead of the person's words.
+   */
+  commands?: { run(conv: Conversation, text: string, opts: { channel?: string }): Promise<{ done: true } | { prompt: string } | undefined> };
 }
 
 /** What the web UI passes as the channel of a typed message (not a registered channel). */
@@ -211,6 +216,8 @@ export class SessionRunner {
   private groupEpoch = new Map<string, number>();
   /** Group chats: `${conversationId}|${agentId}` -> user messages up to this moment were shown to the member. */
   private groupSeen = new Map<string, string>();
+  /** Goals whose agent called goal_report "achieved" in the turn running now: the summary, their result. */
+  private reached = new Map<string, string>();
 
   constructor(deps: RunnerDeps) {
     this.d = deps;
@@ -294,7 +301,10 @@ export class SessionRunner {
     // Just the answer to a secret card whose tool call is still waiting: that call carries on, no new turn.
     if (cap.answered?.waited && text.trim() === `vault://${cap.answered.request.vaultId}`) return msg;
     const note = captureNote(cap);
-    const expanded = this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
+    // The hub's own commands ("/brain", "/task …") are answered here; "/schedule …" goes on as a request to the agent.
+    const command = await this.d.commands?.run(conv, hooked.payload.text, { channel: opts.channel });
+    if (command && "done" in command) return msg;
+    const expanded = command?.prompt ?? this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
     const prompt = [opts.context?.trim(), note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
     // From the web UI: the user's words travel with a mirrored reply, so the phone shows the exchange.
     const fromWeb = !opts.channel || opts.channel === WEB_CHANNEL;
@@ -317,7 +327,9 @@ export class SessionRunner {
       })();
       return msg;
     }
-    // Written on a task's page: the task carries on with it (its status, result and report follow).
+    // Written on a task's page: the task carries on with it (its status, result and report follow). A goal waiting for
+    // the person has its answer: it goes on round after round.
+    if (task?.kind === "goal" && task.question) this.d.store.updateTask(task.id, { question: undefined });
     if (task) {
       void (async () => this.wakeTask(task, prompt, { ...reply, fromUser: true, ...(attachments.length ? await this.transcribeParts(msg.id, attachments) : {}) }))();
       return msg;
@@ -761,7 +773,9 @@ export class SessionRunner {
         : [`Message from your teammate ${sender!.name} (agent "${sender!.id}"). Your reply goes back to them automatically.`, "", fresh.goal, ...notes.flatMap((n) => ["", n])].join("\n");
     const prompt = sender
       ? thread()
-      : resumed
+      : fresh.kind === "goal"
+        ? goalPrompt(fresh, !resumed, goalLimit(fresh.rounds ?? 0))
+        : resumed
         ? "Continue working on the task from where you stopped."
         : [
             `Task: ${fresh.title}`,
@@ -778,8 +792,13 @@ export class SessionRunner {
 
   /** Where a task stands after a turn: waiting (a limit, an approval, the answer to its question), failed, or done and reported. */
   private async afterTaskTurn(taskId: string, r: TurnResult): Promise<void> {
-    const cur = this.d.store.getTask(taskId);
-    if (!cur || cur.status === "cancelled") return;
+    let cur = this.d.store.getTask(taskId);
+    if (!cur || cur.status === "cancelled") {
+      this.reached.delete(taskId);
+      return;
+    }
+    // A goal the person paused stays paused, also when the pause cut its turn off.
+    if (cur.kind === "goal" && cur.status === "paused" && !cur.resumeAt) return;
     if (r.limited) {
       this.d.store.updateTask(cur.id, {
         status: "paused",
@@ -788,7 +807,9 @@ export class SessionRunner {
       });
       return;
     }
+    if (cur.kind === "goal") cur = this.d.store.updateTask(cur.id, { rounds: (cur.rounds ?? 0) + 1 }) ?? cur;
     if (r.error && !r.text) {
+      this.reached.delete(cur.id);
       this.d.store.updateTask(cur.id, { status: "failed", error: r.error });
       // A teammate who cannot answer tells the sender, not the user.
       if (cur.kind === "message") {
@@ -817,9 +838,63 @@ export class SessionRunner {
       this.d.store.updateTask(cur.id, { status: "waiting_input", result: r.text || cur.result, error: undefined });
       return;
     }
+    if (cur.kind === "goal") {
+      const summary = this.reached.get(cur.id);
+      this.reached.delete(cur.id);
+      if (summary === undefined) return this.nextGoalRound(cur, r);
+      this.d.store.updateTask(cur.id, { status: "done", result: summary.trim() || r.answer || r.text, error: undefined });
+      await this.reportTaskDone(this.d.store.getTask(cur.id)!);
+      return;
+    }
     // A thread's reply, a report and the digest are what the person reads: the final answer, without the narration.
     this.d.store.updateTask(cur.id, { status: "done", result: cur.kind === "message" || cur.deliver ? r.answer || r.text : r.text, error: undefined });
     await this.reportTaskDone(this.d.store.getTask(cur.id)!);
+  }
+
+  /** A goal not reached yet: its next round, or, every GOAL_ROUNDS of them, a pause the person hears about. */
+  private async nextGoalRound(goal: Task, r: TurnResult): Promise<void> {
+    const rounds = goal.rounds ?? 0;
+    if (rounds % GOAL_ROUNDS !== 0) {
+      this.d.store.updateTask(goal.id, { status: "queued", result: r.answer || r.text || goal.result, error: undefined });
+      setImmediate(() => this.scheduleTasks());
+      return;
+    }
+    this.d.store.updateTask(goal.id, { status: "paused", result: r.answer || r.text || goal.result, error: t("goal.roundsUsed", { n: rounds }) });
+    await this.d.notifier.notify({
+      level: "notify",
+      title: t("notify.goalPausedTitle", { title: goal.title }),
+      body: t("notify.goalPausedBody", { n: rounds, more: GOAL_ROUNDS }),
+      agentId: goal.agentId,
+      taskId: goal.id,
+    });
+  }
+
+  /** goal_report: the goal is reached (it ends, the summary its result) or needs the person (asked as task_ask asks). */
+  async reportGoal(taskId: string, status: "achieved" | "blocked", summary: string): Promise<{ ok: boolean; text: string }> {
+    const task = this.d.store.getTask(taskId);
+    if (task?.kind !== "goal") return { ok: false, text: "goal_report works only inside a goal (a task the person started with /goal). Here, just finish your reply." };
+    if (status === "blocked") return this.askStarter(taskId, summary);
+    this.reached.set(taskId, summary);
+    return { ok: true, text: "Noted: the goal is reached. End your turn now; your summary goes to the person." };
+  }
+
+  /** The person's /goal pause: the goal stops where it is (its turn too) until /goal resume. */
+  pauseGoal(taskId: string): Task | undefined {
+    const g = this.d.store.getTask(taskId);
+    if (g?.kind !== "goal") return undefined;
+    const paused = this.d.store.updateTask(g.id, { status: "paused", resumeAt: undefined });
+    this.interrupt(g.conversationId);
+    return paused;
+  }
+
+  /** /goal resume: the next round; one that paused at its rounds gets GOAL_ROUNDS more. A goal that is going stays as it is. */
+  resumeGoal(taskId: string): Task | undefined {
+    const g = this.d.store.getTask(taskId);
+    if (g?.kind !== "goal") return undefined;
+    if (g.status !== "paused" && g.status !== "interrupted") return g;
+    const r = this.d.store.updateTask(g.id, { status: "queued", resumeAt: undefined, error: undefined });
+    setImmediate(() => this.scheduleTasks());
+    return r;
   }
 
   /**
