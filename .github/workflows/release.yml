@@ -2,7 +2,7 @@
 # publishes them as that version's release, and publishes the server image under the version (docker.yml).
 # Hubs of the version hand the installers out at /download/desktop/<os> (packages/core/src/server/join-page.ts), so
 # the asset names must stay what packaging/desktop/build.mjs makes. Its latest.json is what installed apps check for
-# updates (packages/desktop/src-tauri/src/update.rs). release-question.yml starts it on the tag it makes, since a tag
+# updates (packages/desktop/src-tauri/src/update.rs). release-on-push.yml starts it on the tag it makes, since a tag
 # pushed with the workflow token triggers nothing by itself.
 name: release
 
