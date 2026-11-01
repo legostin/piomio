@@ -434,8 +434,10 @@ export default {
 
   // setup card: the hub's answer while no brain works
   "brainSetup.title": "Чтобы я мог отвечать, подключите интеллект",
-  "brainSetup.intro": "Войдите в Claude Code или Codex по своей подписке прямо здесь или дайте API-ключ. Как только интеллект заработает, я отвечу на ваше сообщение.",
+  "brainSetup.intro": "Войдите в Claude Code, Codex или Kimi Code по своей подписке прямо здесь или дайте API-ключ. Как только интеллект заработает, я отвечу на ваше сообщение.",
+  "brainSetup.introPlans": "Войдите в Claude Code, Codex или Kimi Code по своей подписке прямо здесь. Как только интеллект заработает, я отвечу на ваше сообщение.",
   "brainSetup.introKeys": "Дайте API-ключ или токен, и как только он заработает, я отвечу на ваше сообщение.",
+  "brainSetup.introNone": "На этом компьютере пока не запускается ни один интеллект: установите Claude Code, Codex или Kimi Code и проверьте снова.",
   "brainSetup.installAndSignIn": "Установить и войти",
   "brainSetup.notInstalledBadge": "Не установлен",
   "brainSetup.notInstalled": "Не установлен на этом компьютере.",
@@ -444,7 +446,8 @@ export default {
   "brainSetup.checkAgainHint": "Только что что-то установили? Хаб поищет ещё раз.",
   "brainSetup.connected": "Подключено: {name}",
   "firstRun.title": "Привет! Я ваш ассистент",
-  "firstRun.intro": "Сначала подключите мне интеллект: войдите в Claude Code или Codex по своей подписке или дайте API-ключ. Потом познакомимся.",
+  "firstRun.intro": "Сначала подключите мне интеллект: войдите в Claude Code, Codex или Kimi Code по своей подписке или дайте API-ключ. Потом познакомимся.",
+  "firstRun.introPlans": "Сначала подключите мне интеллект: войдите в Claude Code, Codex или Kimi Code по своей подписке. Потом познакомимся.",
   "brainSetup.ready": "Интеллект подключён.",
 
   // tasks

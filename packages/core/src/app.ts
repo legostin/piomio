@@ -209,7 +209,7 @@ export class Hub {
         owner === "core" ? localizeValue(text, catalogLookup(coreCatalog, hubLocale())) : localizePluginValue(this.plugins.get(owner)?.layout, text, hubLocale()),
     });
     this.invites = new InviteRegistry({ db: this.db, bus: this.bus, audit: this.audit });
-    this.setups = new MachineSetups({ db: this.db, bus: this.bus, audit: this.audit, vault: () => this.vault });
+    this.setups = new MachineSetups({ db: this.db, bus: this.bus, audit: this.audit, vault: () => this.vault, apiKeys: () => this.config.apiKeys });
     this.machines = new MachineHub({ db: this.db, bus: this.bus, brains: this.brains, audit: this.audit, invites: this.invites, setups: this.setups });
     this.cluster = new Cluster(this);
     this.machines.cluster = this.cluster;
@@ -257,6 +257,7 @@ export class Hub {
           .join(","),
     });
     this.setup = new SetupGuide({
+      apiKeys: this.config.apiKeys,
       brains: this.brains,
       agents: this.agents,
       settings: this.settings,

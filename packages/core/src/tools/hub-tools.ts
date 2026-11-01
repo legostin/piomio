@@ -88,7 +88,7 @@ function profilePatch(i: Record<string, unknown>): Partial<AgentDef> | string {
   return patch;
 }
 
-const BRAIN_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
+const BRAIN_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", kimi: "Kimi Code" };
 
 /** The setup card: the machine, each brain with its sign-in or keys and models with prices, and the limit. */
 function describeSetup(machine: string, s: MachineSettings): string {
@@ -109,6 +109,9 @@ function describeSetup(machine: string, s: MachineSettings): string {
 }
 
 export function registerHubTools(hub: Hub): void {
+  // Model access through API keys (the API brain, key mode of machines) exists only on a hub started with
+  // PIOMIO_API_KEYS=1 (Config.apiKeys): without it the tools speak of sign-ins alone.
+  const keys = hub.config.apiKeys;
   /** `describe`: the approval card's text from the call's real input (what exactly changes), instead of the summary template. */
   const reg = (
     spec: Omit<ToolDescriptor, "owner" | "name"> & { name: string },
@@ -402,7 +405,7 @@ export function registerHubTools(hub: Hub): void {
   // ---------- brains ----------
 
   reg(
-    { name: "brains_list", effect: "read", description: "List brains (Claude Code, Codex, API providers on the hub and on machines) with availability, login state and rate limits.", inputSchema: obj({}) },
+    { name: "brains_list", effect: "read", description: `List brains (Claude Code, Codex, Kimi Code${keys ? ", API providers" : ""} on the hub and on machines) with availability, login state and rate limits.`, inputSchema: obj({}) },
     async () => {
       const limits = new Map((hub.db.prepare("select brain_ref, until from brain_limits").all() as any[]).map((r) => [r.brain_ref, r.until]));
       const out = await Promise.all(
@@ -417,7 +420,7 @@ export function registerHubTools(hub: Hub): void {
   );
 
   reg(
-    { name: "brain_check", effect: "read", description: "Re-check one brain now (after the user logged in or added a key).", inputSchema: obj({ ref: { type: "string" } }, ["ref"]) },
+    { name: "brain_check", effect: "read", description: `Re-check one brain now (after the user signed in${keys ? " or added a key" : ""}).`, inputSchema: obj({ ref: { type: "string" } }, ["ref"]) },
     async (i) => {
       const ref = formatBrainRef(parseBrainRef(String(i.ref)));
       if (!hub.brains.has(ref)) return text(`Brain ${ref} is not connected. See hub_brains_list.`, true);
@@ -608,8 +611,10 @@ export function registerHubTools(hub: Hub): void {
       })
       .join("\n");
     const limit = v.settings.limit ? `$${v.settings.limit.usd} per ${v.settings.limit.period}` : "none";
+    const head = `Machine ${name} (${machineId}).\nBrains:\n${brains || "- not set: each CLI uses its own sign-in on that machine, any model"}\n`;
+    if (!keys) return `${head}Each brain works on its own sign-in on that machine (API keys are off on this hub).`;
     return (
-      `Machine ${name} (${machineId}).\nBrains:\n${brains || "- not set: each CLI uses its own sign-in on that machine, any model"}\n` +
+      head +
       `Spend limit: ${limit}; spent since ${v.spent.since}: $${v.spent.usd.toFixed(2)}.\nKeys in the vault: ${v.keys.length ? v.keys.join(", ") : "none"} ` +
       `(providers: ${KEY_PROVIDERS.map((p) => `${p.id} → ${p.wire === "openai" ? "codex" : "claude-code"}, vault ${p.vaultId}`).join("; ")}).`
     );
@@ -619,9 +624,10 @@ export function registerHubTools(hub: Hub): void {
     {
       name: "machine_setup_get",
       effect: "read",
-      description:
-        "What a connected computer's brains may use: subscription or API key from the vault, the allowed models with prices, the spend limit and what it spent. " +
-        "Call it before machine_setup_set.",
+      description: keys
+        ? "What a connected computer's brains may use: subscription or API key from the vault, the allowed models with prices, the spend limit and what it spent. " +
+          "Call it before machine_setup_set."
+        : "What a connected computer's brains may use: each runs on its own sign-in there, with the allowed models. Call it before machine_setup_set.",
       inputSchema: obj({ machine: { type: "string", description: "Machine id or name" } }, ["machine"]),
     },
     (i) => {
@@ -636,8 +642,10 @@ export function registerHubTools(hub: Hub): void {
       name: "machine_setup_set",
       effect: "external",
       approvalSummary: "%machines.setupApproval%",
-      description:
-        "Set what a connected computer's CLI brains may use (replaces its whole setup; read machine_setup_get first and keep what the person did not ask to change). " +
+      description: !keys
+        ? "Set which models a connected computer's CLI brains (claude-code, codex) may use (replaces its whole setup; read machine_setup_get first and keep what the person did not ask to change). " +
+          "Each runs on its own sign-in on that machine: auth \"subscription\" (key mode is off on this hub). Needs the person's approval."
+        : "Set what a connected computer's CLI brains may use (replaces its whole setup; read machine_setup_get first and keep what the person did not ask to change). " +
         "Per brain (claude-code, codex): auth \"subscription\" (the CLI's own sign-in on that machine) or \"key\" (provider keys from the hub's vault reach that machine's memory only, through its gateway, which also enforces the models and the limit). " +
         "Claude Code takes providers anthropic, deepseek, moonshot, zhipu; Codex takes openai. In key mode list the allowed models, each with its provider and price in dollars per million input/output tokens " +
         "(look the price up on the provider's site if you do not know it); a model the CLI asks for off the list becomes the cheapest allowed one. A missing key: ask for it with secret_request under the provider's vault id. " +
@@ -654,7 +662,7 @@ export function registerHubTools(hub: Hub): void {
                 {
                   type: "object",
                   properties: {
-                    auth: { type: "string", enum: ["subscription", "key"] },
+                    auth: { type: "string", enum: keys ? ["subscription", "key"] : ["subscription"] },
                     providers: { type: "array", items: { type: "string" } },
                     models: {
                       type: "array",
@@ -693,7 +701,7 @@ export function registerHubTools(hub: Hub): void {
         .filter((p) => !hub.setups.view(m.id).keys.includes(p));
       return text(`${setupText(m.id)}${missing.length ? `\nNo key yet for: ${missing.join(", ")}. Ask for it with secret_request (vault id ${missing.map((p) => keyProvider(p)?.vaultId).join(", ")}).` : ""}`);
     },
-    (i) => describeSetup(String(i.machine ?? ""), normalizeSettings({ brains: i.brains, limit: i.limit })),
+    (i) => describeSetup(String(i.machine ?? ""), normalizeSettings({ brains: i.brains, limit: i.limit }, keys)),
   );
 
   // ---------- the cluster: hub replicas ----------
@@ -1220,12 +1228,12 @@ export function registerHubTools(hub: Hub): void {
       name: "brain_login",
       effect: "local-write",
       description:
-        "Sign a CLI brain (Claude Code, Codex) in to the user's subscription from this chat: shows a card with the sign-in page, the one-time code and live status, " +
-        "and runs the CLI's own login on the hub. Use it whenever the user wants to connect or re-connect Claude Code or Codex; never give them terminal commands for it. " +
-        "API brains use keys instead (hub_plugin_setup brain-api).",
+        "Sign a CLI brain (Claude Code, Codex, Kimi Code) in to the user's subscription from this chat: shows a card with the sign-in page, the one-time code and live status, " +
+        "and runs the CLI's own login on the hub. Use it whenever the user wants to connect or re-connect Claude Code, Codex or Kimi Code; never give them terminal commands for it." +
+        (keys ? " API brains use keys instead (hub_plugin_setup brain-api)." : ""),
       inputSchema: obj(
         {
-          ref: { type: "string", description: "Brain ref, e.g. codex@local or claude-code@local (see hub_brains_list)" },
+          ref: { type: "string", description: "Brain ref, e.g. codex@local, claude-code@local or kimi@local (see hub_brains_list)" },
           again: { type: "boolean", description: "Sign in again even though the brain is already signed in" },
         },
         ["ref"],
@@ -1234,7 +1242,9 @@ export function registerHubTools(hub: Hub): void {
     async (i, ctx) => {
       const ref = formatBrainRef(parseBrainRef(String(i.ref ?? "")));
       if (!hub.brains.has(ref)) return text(`Brain ${ref} is not connected. See hub_brains_list.`, true);
-      if (!hub.brainLogins.supported(ref)) return text(`${ref} cannot sign in from the chat (brains on the user's computers sign in there; API brains use keys: hub_plugin_setup brain-api).`, true);
+      if (!hub.brainLogins.supported(ref)) {
+        return text(`${ref} cannot sign in from the chat (brains on the user's computers sign in there${keys ? "; API brains use keys: hub_plugin_setup brain-api" : ""}).`, true);
+      }
       hub.brains.invalidate(ref);
       const probe = await hub.brains.probe(ref, 0);
       hub.runner.attachPart(ctx.conversationId, { type: "brain_login", ref });

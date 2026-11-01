@@ -754,6 +754,8 @@ export interface SetupState {
    */
   starting: boolean;
   vault: "absent" | "locked" | "open";
+  /** Model access through API keys is on (PIOMIO_API_KEYS=1): the card may offer keys besides signing in. */
+  apiKeys: boolean;
   telegram: boolean;
   machines: number;
   done: SetupStep[];

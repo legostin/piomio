@@ -1911,7 +1911,7 @@ export class SessionRunner {
         // Still waiting after a few seconds: whoever started it hears that the agent is busy and will get to it.
         if (waits === 1 && task?.createdBy === "agent") void this.tellStarter(task, this.queuedNote(task));
         await this.brainFreed(waits++ ? 30_000 : 3_000);
-        if (task && this.d.store.getTask(task.id)?.status === "cancelled") return { text: "", error: t("chat.cannotStart", { agent: agentName(agent, hubLocale()), reason: reasons.join("; ") }), awaitingApproval: false };
+        if (task && this.d.store.getTask(task.id)?.status === "cancelled") return { text: "", error: t(this.d.config.apiKeys ? "chat.cannotStart" : "chat.cannotStartPlans", { agent: agentName(agent, hubLocale()), reason: reasons.join("; ") }), awaitingApproval: false };
         attempt--;
         continue;
       }
@@ -1937,7 +1937,7 @@ export class SessionRunner {
         const allLimited = earliestReset && usable.length === 0 && hard === 0;
         const message = allLimited
           ? t("chat.allLimited", { time: this.formatTime(earliestReset!) })
-          : t("chat.cannotStart", { agent: agentName(agent, hubLocale()), reason: why });
+          : t(this.d.config.apiKeys ? "chat.cannotStart" : "chat.cannotStartPlans", { agent: agentName(agent, hubLocale()), reason: why });
         this.d.store.addMessage({ conversationId: conv.id, role: "system", parts: [{ type: "error", message }], status: "complete", taskId: task?.id });
         return { text: "", error: message, ...(setupOnly && !allLimited ? { errorCode: "no-brain" as const } : {}), limited: allLimited ? { resetAt: earliestReset } : undefined, awaitingApproval: false };
       }

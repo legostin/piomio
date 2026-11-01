@@ -434,8 +434,10 @@ export default {
 
   // setup card: the hub's answer while no brain works
   "brainSetup.title": "To answer you, I need a brain",
-  "brainSetup.intro": "Sign in to Claude Code or Codex with your subscription right here, or give an API key. Your message will be answered as soon as one works.",
+  "brainSetup.intro": "Sign in to Claude Code, Codex or Kimi Code with your subscription right here, or give an API key. Your message will be answered as soon as one works.",
+  "brainSetup.introPlans": "Sign in to Claude Code, Codex or Kimi Code with your subscription right here. Your message will be answered as soon as one works.",
   "brainSetup.introKeys": "Give an API key or a token, and your message will be answered as soon as it works.",
+  "brainSetup.introNone": "No brain can start on this computer yet: install Claude Code, Codex or Kimi Code, then check again.",
   "brainSetup.installAndSignIn": "Install and sign in",
   "brainSetup.notInstalledBadge": "Not installed",
   "brainSetup.notInstalled": "Not installed on this computer.",
@@ -445,7 +447,8 @@ export default {
   "brainSetup.connected": "Connected: {name}",
   "brainSetup.ready": "A brain is connected.",
   "firstRun.title": "Hi! I'm your assistant",
-  "firstRun.intro": "First, give me a brain: sign in to Claude Code or Codex with your subscription, or give an API key. Then we'll get to know each other.",
+  "firstRun.intro": "First, give me a brain: sign in to Claude Code, Codex or Kimi Code with your subscription, or give an API key. Then we'll get to know each other.",
+  "firstRun.introPlans": "First, give me a brain: sign in to Claude Code, Codex or Kimi Code with your subscription. Then we'll get to know each other.",
 
   // tasks
   "tasks.subtitle": "Everything agents are working on: your requests, delegated work and trigger runs.",

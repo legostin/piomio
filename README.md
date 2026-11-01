@@ -34,7 +34,7 @@
 
 Piomio is a personal agent platform you run yourself. You get a small team of agents, each with a name, a face, a job and a memory, and you talk to them the way you would to colleagues. Quick things they answer on the spot. Longer work gets passed around as tasks, and they come back to you when it’s done.
 
-They think with the Claude Code or Codex subscription you already have, or with an API key, and they run on your Mac, PC or server. Before they send or buy anything, they ask you. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots, except it lives on your own machine.
+They think with the Claude Code, Codex or Kimi Code subscription you already have, and they run on your Mac, PC or server. Before they send or buy anything, they ask you. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots, except it lives on your own machine.
 
 ## A day with the team
 
@@ -69,7 +69,7 @@ They think with the Claude Code or Codex subscription you already have, or with 
 
 1. Download Piomio from the [latest release](https://github.com/legostin/piomio/releases/latest): `piomio-<version>.dmg` for macOS 13.5 or later (Apple silicon and Intel), `piomio-setup-<version>-x64.exe` for Windows 10 and 11.
 2. Open it, choose **A new Piomio on this computer** and pick a password.
-3. In the chat, press **Sign in** on Claude Code or Codex (your subscription), or paste an API key.
+3. In the chat, press **Sign in** on Claude Code, Codex or Kimi Code (your subscription).
 
 From there the assistant walks you through the rest in the chat, one thing at a time: Telegram, a backup brain, other computers, and getting to know you.
 
@@ -102,7 +102,7 @@ Open http://localhost:8080, enter the setup code from the logs and pick a passwo
 flowchart LR
   you(["You"]) --- apps["Desktop app · Web · iPhone · Telegram"]
   apps --- hub["Piomio hub<br/>on your computer or server"]
-  hub --- brains["Brains<br/>Claude Code · Codex · API keys"]
+  hub --- brains["Brains<br/>Claude Code · Codex · Kimi Code"]
   hub --- team["Your agents<br/>a name, a face, a job"]
   hub --- tools["Plugins and MCP<br/>browser · mail · calendar · pages · channels"]
   hub --- machines["Your other computers"]
@@ -187,7 +187,7 @@ docker compose logs piomio | grep -A1 "Piomio:"
 - After the setup, [access from anywhere](#access-from-anywhere) gives the hub an HTTPS link of its own: one button in the chat.
 
 1. Open http://localhost:8080 (or your address), enter the **setup code** from the logs and choose a password. Your browser's language becomes the hub language (see [Languages](#languages)).
-2. Until a brain works, the chat shows a setup card: sign Claude Code or Codex in with your subscription (on a desktop install the hub can install a missing CLI first), or give an API key (see below). Whatever you write meanwhile is answered as soon as a brain is connected.
+2. Until a brain works, the chat shows a setup card: sign Claude Code, Codex or Kimi Code in with your subscription (on a desktop install the hub can install a missing CLI first), or, on a hub started with `PIOMIO_API_KEYS=1`, give an API key (see below). Whatever you write meanwhile is answered as soon as a brain is connected.
 3. Then the assistant leads the rest of the setup in the chat, one step at a time and only when you agree: Telegram, a backup brain, other computers, and getting to know you. Say "not now" to skip a step, "let's continue the setup" to come back to it. When something needs a key or a token, the assistant shows a secure field in the chat: the value goes straight into the encrypted vault and the model only ever sees `vault://id`. You can also just paste a token into a message: the hub recognises known formats, takes it out of the message and stores it.
 
 Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example) lists each one with an example, [Environment variables](#environment-variables) has the defaults. Everything is stored in the `piomio-data` volume (`/data`): the database, the vault, workspaces, CLI logins and plugins.
@@ -208,16 +208,20 @@ Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example)
 <details>
 <summary><b>Connecting brains and API keys</b></summary>
 
-**Claude Code (Claude Pro/Max subscription) and Codex (ChatGPT subscription)** sign in from the chat. Press **Sign in** next to the brain on the setup card, or ask the assistant ("connect Codex"): a card shows the sign-in page to open.
+**Claude Code (Claude Pro/Max subscription), Codex (ChatGPT subscription) and Kimi Code (Kimi membership)** sign in from the chat. Press **Sign in** next to the brain on the setup card, or ask the assistant ("connect Kimi"): a card shows the sign-in page to open.
 
-- **Codex:** enter the one-time code from the card on that page.
+- **Codex** and **Kimi Code:** enter the one-time code from the card on that page.
 - **Claude Code:** sign in, copy the code the page shows and paste it into the card (not into the chat).
 
 The card turns green once the brain is signed in. The login is kept on the server in `/data/home/agent`, so there is nothing to run in a terminal. The **Brains** page has the same buttons.
 
 Claude Code can also use a long-lived token instead: run `claude setup-token` on any computer with Claude Code and paste the token into the chat. It is stored in the vault as **`claude_code_token`** and the Claude Code brain picks it up.
 
-**API keys** (fallback brains, web search): ask the assistant ("connect Brave search") or paste the key into the chat. They are stored in the vault under these ids:
+Each runs as its official CLI (`claude`, `codex`, `kimi` from `@moonshot-ai/kimi-code`), signed in with your own account; Piomio never takes or copies their tokens.
+
+**API keys as brains** (the `api:*` brains, Codex with an OpenAI key, API keys for other machines' brains) are off unless the hub starts with `PIOMIO_API_KEYS=1`. Keys for everything else (web search, Telegram, speech-to-text) work either way.
+
+**API keys** (fallback brains with `PIOMIO_API_KEYS=1`, web search): ask the assistant ("connect Brave search") or paste the key into the chat. They are stored in the vault under these ids:
 
 | id | Used for |
 |---|---|
@@ -394,7 +398,8 @@ On a server they go in `.env` next to `docker-compose.yml` ([.env.example](.env.
 | `PIOMIO_DEVICES` | — | `0` closes the phones' port on the network: phones then reach the hub only through the link |
 | `PIOMIO_DEVICE_URLS` | detected | addresses for the pairing QR, comma-separated, ahead of the detected ones |
 | `PIOMIO_DATA_DIR` | `.data/` (`/data` in the image) | data directory |
-| `PIOMIO_INSTALL_CLIS` | — (`1` in the desktop installers) | `1` lets **Sign in** install a missing Claude Code or Codex into `<data>/tools` |
+| `PIOMIO_INSTALL_CLIS` | — (`1` in the desktop installers) | `1` lets **Sign in** install a missing Claude Code, Codex or Kimi Code into `<data>/tools` |
+| `PIOMIO_API_KEYS` | — | `1` lets agents think through plain API keys: the `api:*` brains, Codex with an OpenAI key, API keys for other machines' brains; set it alike on every replica |
 | `PIOMIO_GOOGLE_CLIENT_ID`, `PIOMIO_GOOGLE_CLIENT_SECRET` | Piomio's client | your own Google OAuth client (type Desktop app) for Google integrations |
 | `PIOMIO_TAILNET_BIN` | `packages/tailnet/bin/<platform>-<arch>/piomio-tailnet` | the hub's Tailscale node for access from anywhere |
 | `PIOMIO_TAILNET_HOSTNAME` | `piomio` | the node's name in your tailnet: the link's first label |

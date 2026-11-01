@@ -44,6 +44,8 @@ export interface Bootstrap {
   language: Locale;
   locales: Locale[];
   vaultState: VaultState;
+  /** Model access through API keys is on (PIOMIO_API_KEYS=1); missing on an older hub, which offered keys. */
+  apiKeys?: boolean;
   /** A new hub: only the setup card until a brain works, then the assistant opens the intro (FirstRun.tsx). */
   firstRun?: boolean;
   pendingApprovals: number;

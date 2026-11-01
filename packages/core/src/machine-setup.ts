@@ -16,8 +16,11 @@ const SAFE_MODEL = /^[A-Za-z0-9][\w.:/@[\]-]{0,199}$/;
 
 export class SetupError extends Error {}
 
-/** Checks and normalizes what an agent or the person asks for; throws SetupError with a reason for the model. */
-export function normalizeSettings(input: unknown): MachineSettings {
+/**
+ * Checks and normalizes what an agent or the person asks for; throws SetupError with a reason for the model. Key mode
+ * exists only on a hub started with PIOMIO_API_KEYS=1 (`apiKeys`).
+ */
+export function normalizeSettings(input: unknown, apiKeys = true): MachineSettings {
   const raw = (input ?? {}) as any;
   const out: MachineSettings = { brains: {} };
   for (const [id, b] of Object.entries((raw.brains ?? {}) as Record<string, any>)) {
@@ -26,6 +29,9 @@ export function normalizeSettings(input: unknown): MachineSettings {
     const brain = id as MachineBrainId;
     const auth = b.auth === "key" ? "key" : b.auth === "subscription" || b.auth === undefined ? "subscription" : undefined;
     if (!auth) throw new SetupError(`${brain}: auth is "subscription" or "key".`);
+    if (auth === "key" && !apiKeys) {
+      throw new SetupError(`${brain}: key mode is off on this hub (it starts without PIOMIO_API_KEYS=1); the machine's ${brain} works on its own sign-in, auth "subscription".`);
+    }
     const wire = brainWire(brain);
     const providers: string[] | undefined = auth === "key" ? [...new Set<string>((b.providers ?? []).map(String))] : undefined;
     for (const p of providers ?? []) {
@@ -57,6 +63,16 @@ export function normalizeSettings(input: unknown): MachineSettings {
   return out;
 }
 
+/** Settings as they apply: without API keys (Config.apiKeys) a brain set to key mode runs on its own sign-in, any model. */
+export function effectiveSettings(s: MachineSettings, apiKeys: boolean): MachineSettings {
+  if (apiKeys) return s;
+  const brains: MachineSettings["brains"] = {};
+  for (const [id, b] of Object.entries(s.brains) as Array<[MachineBrainId, NonNullable<MachineSettings["brains"][MachineBrainId]>]>) {
+    brains[id] = b.auth === "key" ? { auth: "subscription" } : b;
+  }
+  return { ...s, brains };
+}
+
 /** The current period of a limit: its first day and when the next one starts (UTC days). */
 export function periodOf(period: "day" | "month", now = new Date()): { since: string; resetsAt: string } {
   const y = now.getUTCFullYear();
@@ -72,13 +88,15 @@ export class MachineSetups {
   private bus: EventBus;
   private audit: AuditLog;
   private vault: () => VaultService;
+  private apiKeys: () => boolean;
   private now: () => Date;
 
-  constructor(d: { db: Db; bus: EventBus; audit: AuditLog; vault: () => VaultService; now?: () => Date }) {
+  constructor(d: { db: Db; bus: EventBus; audit: AuditLog; vault: () => VaultService; apiKeys: () => boolean; now?: () => Date }) {
     this.db = d.db;
     this.bus = d.bus;
     this.audit = d.audit;
     this.vault = d.vault;
+    this.apiKeys = d.apiKeys;
     this.now = d.now ?? (() => new Date());
   }
 
@@ -88,7 +106,7 @@ export class MachineSetups {
   }
 
   set(machineId: string, input: unknown, actor = "user"): MachineSettings {
-    const s = normalizeSettings(input);
+    const s = normalizeSettings(input, this.apiKeys());
     this.db
       .prepare("insert into machine_settings(machine_id, data, updated_at) values (?,?,?) on conflict(machine_id) do update set data = excluded.data, updated_at = excluded.updated_at")
       .run(machineId, JSON.stringify(s), nowIso());
@@ -106,10 +124,10 @@ export class MachineSetups {
   }
 
   view(machineId: string): MachineSetupView {
-    const settings = this.get(machineId);
+    const settings = effectiveSettings(this.get(machineId), this.apiKeys());
     const period = settings.limit?.period ?? "month";
     const vault = this.vault();
-    const keys = vault.state() === "unlocked" || vault.state() === "sealed" ? KEY_PROVIDERS.filter((p) => !!vault.getMeta(p.vaultId)).map((p) => p.id) : [];
+    const keys = this.apiKeys() && (vault.state() === "unlocked" || vault.state() === "sealed") ? KEY_PROVIDERS.filter((p) => !!vault.getMeta(p.vaultId)).map((p) => p.id) : [];
     return { machineId, settings, spent: { usd: this.spent(machineId, period), period, since: periodOf(period, this.now()).since }, keys };
   }
 
@@ -128,7 +146,7 @@ export class MachineSetups {
 
   /** Over the limit: the machine's key-mode brains rest until the period ends (brain_limits); under it again: they work. */
   checkLimit(machineId: string): boolean {
-    const s = this.get(machineId);
+    const s = effectiveSettings(this.get(machineId), this.apiKeys());
     const keyBrains = MACHINE_BRAINS.filter((b) => s.brains[b]?.auth === "key").map((b) => `${b}@${machineId}`);
     const all = MACHINE_BRAINS.map((b) => `${b}@${machineId}`);
     const over = !!s.limit && this.spent(machineId, s.limit.period) >= s.limit.usd;
@@ -146,7 +164,7 @@ export class MachineSetups {
 
   /** What the machine's daemon gets: its brains, allowed models and, unlocked, the keys of its providers. */
   nodeSetup(machineId: string): NodeSetup {
-    const s = this.get(machineId);
+    const s = effectiveSettings(this.get(machineId), this.apiKeys());
     const vault = this.vault();
     const sealed = vault.state() !== "unlocked";
     const setup: NodeSetup = { brains: {}, ...(sealed ? { sealed: true } : {}) };

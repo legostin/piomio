@@ -43,6 +43,7 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
     language: w().locale,
     locales: ["en", "ru"],
     vaultState: "unlocked",
+    apiKeys: false,
     firstRun: false,
     pendingApprovals: w().approvals.filter((a) => a.status === "pending").length,
     uiPlugins: UI_PLUGINS.map((p) => ({
@@ -62,6 +63,7 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
     firstRun: false,
     starting: false,
     vault: "open",
+    apiKeys: false,
     telegram: true,
     machines: 2,
     done: ["identity", "team", "telegram", "backupBrain", "machines", "profile"],

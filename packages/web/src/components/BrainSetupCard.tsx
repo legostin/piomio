@@ -1,5 +1,5 @@
-// The hub's own answer while no brain works: sign Claude Code or Codex in (installing it first where the hub can), or
-// give a key. It shows where the hub put it after an unanswered message, at the end of a dialog that has none yet, and
+// The hub's own answer while no brain works: sign Claude Code, Codex or Kimi Code in (installing it first where the hub
+// can), or give a key where the hub takes keys (PIOMIO_API_KEYS). It shows where the hub put it after an unanswered message, at the end of a dialog that has none yet, and
 // alone on a new hub's first screen (FirstRun.tsx). Live from /api/setup; once a brain works it shrinks to one line and
 // the agent takes over. On a new hub the empty dialog of the default agent then asks the hub to open the intro.
 
@@ -110,7 +110,7 @@ export function SetupCardView({ state, refresh, bare }: { state: SetupState; ref
       {!bare && (
         <>
           <div className="mb-1 font-semibold">{t("brainSetup.title")}</div>
-          <p className="mb-3 text-sm text-muted">{rows.length ? t("brainSetup.intro") : t("brainSetup.introKeys")}</p>
+          <p className="mb-3 text-sm text-muted">{rows.length ? t(state.apiKeys ? "brainSetup.intro" : "brainSetup.introPlans") : t(state.apiKeys ? "brainSetup.introKeys" : "brainSetup.introNone")}</p>
         </>
       )}
       <div className="flex flex-col gap-3">
@@ -120,16 +120,16 @@ export function SetupCardView({ state, refresh, bare }: { state: SetupState; ref
             {!b.installed && !b.canInstall && <div className="text-xs text-muted">{b.detail ?? t("brainSetup.notInstalled")}</div>}
           </div>
         ))}
-        <details className="group" open={!rows.length}>
+        <details className="group" open={!rows.length && state.apiKeys}>
           <summary className="flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-accent-text">
-            {t("brainSetup.apiKeys")} <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+            {t(state.apiKeys ? "brainSetup.apiKeys" : "brainLogin.claudeToken")} <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
           </summary>
           {/* One gate for both cards, so an absent vault is offered once, not twice. */}
           <div className="mt-2">
             <VaultGate>
               <div className="flex flex-col gap-3">
                 <PluginSetupCard pluginId="brain-claude-code" bare />
-                <PluginSetupCard pluginId="brain-api" bare />
+                {state.apiKeys && <PluginSetupCard pluginId="brain-api" bare />}
               </div>
             </VaultGate>
           </div>

@@ -19,6 +19,30 @@ import { npmEnv, npmInvocation, withPath } from "../cli-tools.ts";
 import { linkUserKeychains } from "./keychains.ts";
 import { compilePluginUi } from "./ui-compile.ts";
 
+/**
+ * What model access through plain API keys means for the builtin plugins (Config.apiKeys): without it the API brain
+ * is not loaded at all (its id stays the hub's), and Codex gets neither the OpenAI key nor the setting that names it.
+ */
+export const HELD_BACK_WITHOUT_KEYS: readonly string[] = ["brain-api"];
+const KEY_PARTS: Record<string, { vault: string[]; settings: string[] }> = { "brain-codex": { vault: ["openai_api_key"], settings: ["apiKeyRef"] } };
+
+/** A builtin layout without its key parts: those vault items out of its permissions, those settings out of its form. */
+function withoutKeys(layout: PluginLayout): PluginLayout {
+  const parts = KEY_PARTS[layout.manifest.id];
+  if (!parts) return layout;
+  const m = layout.manifest;
+  const settings = m.contributes?.settings as { properties?: Record<string, unknown> } | undefined;
+  const properties = settings?.properties ? Object.fromEntries(Object.entries(settings.properties).filter(([k]) => !parts.settings.includes(k))) : undefined;
+  return {
+    ...layout,
+    manifest: {
+      ...m,
+      permissions: { ...m.permissions, vault: m.permissions.vault.filter((v) => !parts.vault.includes(v)) },
+      ...(m.contributes && properties ? { contributes: { ...m.contributes, settings: { ...settings, properties } } } : {}),
+    },
+  };
+}
+
 export type PluginStatus = "stopped" | "starting" | "running" | "crashed" | "disabled" | "no-server" | "error";
 
 export interface PluginRecord {
@@ -154,6 +178,13 @@ export class PluginHost {
         return;
       }
       const id = layout.manifest.id;
+      if (source === "builtin" && !this.d.config.apiKeys) {
+        if (HELD_BACK_WITHOUT_KEYS.includes(id)) {
+          seen.add(id);
+          return;
+        }
+        layout = withoutKeys(layout);
+      }
       if (seen.has(id)) {
         console.error(`[plugins] duplicate plugin id ${id} in ${dir}, skipped`);
         return;
@@ -181,7 +212,7 @@ export class PluginHost {
         source,
         enabled: !!r.enabled,
         granted: json<PluginPermissions>(r.granted, layout.manifest.permissions),
-        extraVault: json<string[]>(r.extra_vault, []),
+        extraVault: json<string[]>(r.extra_vault, []).filter((v) => this.d.config.apiKeys || source !== "builtin" || !KEY_PARTS[id]?.vault.includes(v)),
         commitHash: r.commit_hash ?? undefined,
         settings: json(r.settings, {}),
         layout,
@@ -682,7 +713,9 @@ export class PluginHost {
       cpSync(src, dir, { recursive: true, filter: (p) => !p.includes(`${"node_modules"}`) });
     }
     const layout = readPluginLayout(dir);
-    if (this.records.get(layout.manifest.id)?.source === "builtin") throw new LocalizedError("plugin.builtinCannotReplace", { id: layout.manifest.id });
+    if (this.records.get(layout.manifest.id)?.source === "builtin" || HELD_BACK_WITHOUT_KEYS.includes(layout.manifest.id)) {
+      throw new LocalizedError("plugin.builtinCannotReplace", { id: layout.manifest.id });
+    }
     // A card's source without its build (an integration an agent made): the hub compiles it.
     compilePluginUi(dir, layout.uiEntry);
     this.staging.set(stagingId, { dir, commitHash, layout, source });

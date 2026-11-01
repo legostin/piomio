@@ -30,13 +30,13 @@ export function FirstRunGate({ children }: { children: ReactNode }) {
       </div>
     );
   return (
-    <FirstRunScreen agentId={state.agentId}>
+    <FirstRunScreen agentId={state.agentId} apiKeys={state.apiKeys}>
       <SetupCardView state={state} refresh={refresh} bare />
     </FirstRunScreen>
   );
 }
 
-function FirstRunScreen({ agentId, children }: { agentId: string; children: ReactNode }) {
+function FirstRunScreen({ agentId, apiKeys, children }: { agentId: string; apiKeys: boolean; children: ReactNode }) {
   const agent = useStore(agents)?.find((a) => a.id === agentId);
   useEffect(() => {
     ensureAgents();
@@ -49,7 +49,7 @@ function FirstRunScreen({ agentId, children }: { agentId: string; children: Reac
         </div>
         <div className="text-center">
           <h1 className="font-display text-[26px] leading-tight font-semibold">{t("firstRun.title")}</h1>
-          <p className="mx-auto mt-2 max-w-md text-[15px] leading-relaxed text-muted">{t("firstRun.intro")}</p>
+          <p className="mx-auto mt-2 max-w-md text-[15px] leading-relaxed text-muted">{t(apiKeys ? "firstRun.intro" : "firstRun.introPlans")}</p>
         </div>
         {children}
       </div>

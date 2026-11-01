@@ -50,6 +50,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       language: s.language,
       locales: LOCALES,
       vaultState: hub.vault.state(),
+      // Model access through API keys (PIOMIO_API_KEYS=1): the brain pages may offer keys.
+      apiKeys: cfg.apiKeys,
       // A new hub: the app shows only the setup card until a brain works, then the assistant opens the intro.
       firstRun: hub.setup.firstRun(),
       pendingApprovals: hub.approvals.pendingCount(),
@@ -340,6 +342,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const refs = new Map<string, { ref: string; label: string; host?: string; login?: boolean }>();
     for (const b of listed) refs.set(b.ref, { ref: b.ref, label: b.label, host: b.host, login: b.login });
     for (const a of hub.agents.list()) for (const r of a.brains) {
+      // "api:*" stands for the providers listed above, not for a brain of its own.
+      if (r.includes(":*")) continue;
       const key = formatBrainRef(parseBrainRef(r));
       if (!refs.has(key)) refs.set(key, { ref: key, label: key });
     }

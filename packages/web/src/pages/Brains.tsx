@@ -1,10 +1,12 @@
-// Brains: probe status per brain ref, limits, and signing in (subscriptions sign in right here, keys go to the vault).
+// Brains: probe status per brain ref, limits, and signing in (subscriptions sign in right here; keys go to the vault on
+// a hub that takes them, PIOMIO_API_KEYS).
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Brain, ChevronDown, LogIn, RefreshCw, TimerReset } from "lucide-react";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, relativeTime } from "../lib/format";
 import { hubEvents, session } from "../state/app";
+import { useStore } from "../lib/store";
 import { brainStatus, type BrainRow } from "../state/brains";
 import { toast } from "../state/toast";
 import { t, tRich } from "../i18n";
@@ -21,6 +23,8 @@ function hostLabel(host?: string): string | undefined {
 }
 
 export function BrainsPage() {
+  // An older hub without the flag offered keys.
+  const apiKeys = useStore(session)?.apiKeys ?? true;
   const [signingIn, setSigningIn] = useState<string>();
   const [list, setList] = useState<BrainRow[] | null>(null);
   const [error, setError] = useState<string>();
@@ -159,13 +163,18 @@ export function BrainsPage() {
           </Card>
           <Card title="Codex">
             <BrainLoginCard brainRef="codex@local" bare />
-            <p className="mt-3 text-xs text-muted">{tRich("brains.codexKey", { id: <Code>openai_api_key</Code> })}</p>
+            {apiKeys && <p className="mt-3 text-xs text-muted">{tRich("brains.codexKey", { id: <Code>openai_api_key</Code> })}</p>}
           </Card>
-          <Card title={t("brains.apiKeys")} className="@3xl:col-span-2">
-            <VaultGate>
-              <PluginSetupCard pluginId="brain-api" bare />
-            </VaultGate>
+          <Card title="Kimi Code">
+            <BrainLoginCard brainRef="kimi@local" bare />
           </Card>
+          {apiKeys && (
+            <Card title={t("brains.apiKeys")}>
+              <VaultGate>
+                <PluginSetupCard pluginId="brain-api" bare />
+              </VaultGate>
+            </Card>
+          )}
         </div>
       </div>
     </Page>
