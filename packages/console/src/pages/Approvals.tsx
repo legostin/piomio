@@ -457,9 +457,10 @@ const STATUS_TONE: Record<Exclude<ApprovalStatus, "pending">, "ok" | "danger" | 
   failed: "danger",
   denied: "danger",
   expired: "neutral",
+  blocked: "neutral",
 };
 
-const VIA = new Set(["console", "telegram", "rule", "timeout", "request"]);
+const VIA = new Set(["console", "telegram", "rule", "timeout", "request", "auto"]);
 const viaLabel = (via: string | undefined): string => (via && VIA.has(via) ? t(`approvals.via.${via}` as MessageKey) : (via ?? ""));
 
 function HistoryList({ focusId, now }: { focusId?: string; now: number }) {

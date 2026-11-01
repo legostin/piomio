@@ -222,6 +222,7 @@ export class SessionRunner {
   constructor(deps: RunnerDeps) {
     this.d = deps;
     deps.approvals.onDeferredApproved = (a) => this.onDeferredApproved(a);
+    deps.approvals.onBlockedAllowed = (a) => this.onBlockedAllowed(a);
     deps.approvals.onDeferredDenied = (a) => this.onDeferredDenied(a);
     deps.bus.on("approval.created", (a: Approval) => this.attachApprovalPart(a));
     deps.bus.on("approval.asked", (a: Approval) => this.attachApprovalPart(a));
@@ -1318,6 +1319,29 @@ export class SessionRunner {
     }
   }
 
+  /**
+   * The person allowed an action auto mode had stopped: the agent hears it may run that very call again (it goes
+   * through once, ApprovalService.takeAllowance). A task waits for it no more than for any note.
+   */
+  private async onBlockedAllowed(a: Approval): Promise<void> {
+    const conv = this.d.store.getConversation(a.conversationId);
+    if (!conv) return;
+    const note = `[System] The user allowed the action auto mode stopped: “${a.summary}”. If you still need it, run exactly the same call again: it goes through this once.`;
+    const task = a.taskId ? this.d.store.getTask(a.taskId) : undefined;
+    if (await this.steerInto(conv.id, note)) return;
+    this.d.store.addMessage({ conversationId: conv.id, role: "system", parts: [{ type: "text", text: note }], status: "complete", taskId: a.taskId });
+    if (task?.status === "cancelled") return;
+    if (task && !["running", "queued"].includes(task.status)) {
+      this.d.store.updateTask(task.id, { status: "running" });
+      void this.enqueue(conv.id, async () => {
+        const r = await this.runTurn(conv, note, { task });
+        await this.afterTaskTurn(task.id, r);
+      });
+    } else if (!task) {
+      void this.enqueue(conv.id, () => this.runTurn(conv, note, conv.kind === "group" ? { agentId: a.agentId } : {}));
+    }
+  }
+
   private async onDeferredDenied(a: Approval): Promise<void> {
     const conv = this.d.store.getConversation(a.conversationId);
     if (!conv) return;
@@ -1328,9 +1352,19 @@ export class SessionRunner {
   }
 
   private attachApprovalPart(a: Approval): void {
-    // One the person asked for in their own words is a quiet line of what was done, never a card to answer.
+    // One the person asked for in their own words is a quiet line of what was done, never a card to answer; so is
+    // one auto mode stopped (with its reason and "Allow").
     const asked = a.resolvedVia === "request";
-    const part: MessagePart = { type: "approval", approvalId: a.id, summary: a.summary, status: asked ? a.status : "pending", ...(a.ask ? { ask: a.ask } : {}), ...(asked ? { asked: true } : {}) };
+    const quiet = asked || a.status === "blocked";
+    const part: MessagePart = {
+      type: "approval",
+      approvalId: a.id,
+      summary: a.summary,
+      status: quiet ? a.status : "pending",
+      ...(a.ask ? { ask: a.ask } : {}),
+      ...(asked ? { asked: true } : {}),
+      ...(a.auto ? { auto: a.auto } : {}),
+    };
     const msgId = this.streamingMessage.get(a.conversationId);
     const m = msgId ? this.d.store.getMessage(msgId) : undefined;
     if (m) this.d.store.updateMessage(m.id, { parts: [...m.parts, part] });
@@ -1341,7 +1375,7 @@ export class SessionRunner {
     }
     // A task's question for the person also shows where the person is: in the dialog that started it, under the
     // task's line, so they answer without opening the task. A quiet line has nothing to answer: it stays in the task.
-    const dialog = asked ? undefined : this.starterDialog(a.taskId);
+    const dialog = quiet ? undefined : this.starterDialog(a.taskId);
     if (dialog) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId: a.taskId! }, part], status: "complete" });
   }
 

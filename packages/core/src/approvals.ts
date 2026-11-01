@@ -2,7 +2,7 @@
 // deferred execution when the user answers after the inline wait timed out.
 
 import { createHmac, randomBytes } from "node:crypto";
-import type { Approval, ApprovalAsk, ApprovalStatus, ApprovalVia, Rule, ToolEffect, ToolResult } from "@piomio/shared";
+import type { Approval, ApprovalAsk, ApprovalStatus, ApprovalVia, AutoBlock, Rule, ToolEffect, ToolResult } from "@piomio/shared";
 import { newId, nowIso } from "@piomio/shared";
 import { json, type Db } from "./db.ts";
 import type { EventBus } from "./bus.ts";
@@ -34,6 +34,7 @@ const fromRow = (r: any): Approval => ({
   createdAt: r.created_at,
   resolvedAt: r.resolved_at ?? undefined,
   resolvedVia: r.resolved_via ?? undefined,
+  ...(r.auto ? { auto: json<AutoBlock>(r.auto, { rule: "", reason: "" }) } : {}),
 });
 
 export type Decision = "approve" | "deny";
@@ -59,6 +60,8 @@ export class ApprovalService {
   /** Called when an approval is approved but nobody is waiting inline: the core executes and reports back. */
   onDeferredApproved?: (a: Approval) => Promise<void>;
   onDeferredDenied?: (a: Approval) => Promise<void>;
+  /** The person allowed an action auto mode had stopped: the agent hears it may try again. */
+  onBlockedAllowed?: (a: Approval) => Promise<void>;
 
   constructor(db: Db, bus: EventBus, audit: AuditLog, rules: RuleStore) {
     this.db = db;
@@ -103,6 +106,38 @@ export class ApprovalService {
     const approval = this.get(id)!;
     this.bus.emit("approval.asked", approval);
     return approval;
+  }
+
+  /**
+   * An action auto mode stopped (policy/auto.ts): kept like any card (the console, the audit), shown as a quiet line
+   * with its reason; the person may still allow it once (resolve), and then the same call goes through (takeAllowance).
+   */
+  block(a: { sessionId: string; conversationId: string; taskId?: string; agentId: string; tool: string; input: unknown; summary: string; ask?: ApprovalAsk; effect: ToolEffect; tainted: boolean; auto: AutoBlock }): Approval {
+    const at = nowIso();
+    const id = newId("a");
+    this.db
+      .prepare(
+        "insert into approvals(id, session_id, conversation_id, task_id, agent_id, tool, input, summary, ask, effect, tainted, status, created_at, resolved_at, resolved_via, auto) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run(id, a.sessionId, a.conversationId, a.taskId ?? null, a.agentId, a.tool, JSON.stringify(a.input), a.summary, a.ask ? JSON.stringify(a.ask) : null, a.effect, a.tainted ? 1 : 0, "blocked", at, at, "auto", JSON.stringify(a.auto));
+    this.audit.append(`agent:${a.agentId}`, "approval.blocked", a.tool, { id, summary: a.summary, rule: a.auto.rule, reason: a.auto.reason });
+    const approval = this.get(id)!;
+    this.bus.emit("approval.asked", approval);
+    return approval;
+  }
+
+  /**
+   * The person allowed this very call after auto mode stopped it: true once, for the same session, tool and input
+   * (as stored, redacted), and the allowance is used up.
+   */
+  takeAllowance(sessionId: string, tool: string, input: unknown): boolean {
+    const want = JSON.stringify(input);
+    const rows = this.db.prepare("select id, input from approvals where session_id = ? and tool = ? and status = 'approved' and auto is not null").all(sessionId, tool) as { id: string; input: string }[];
+    const hit = rows.find((r) => r.input === want);
+    if (!hit) return false;
+    this.db.prepare("update approvals set status = 'executed' where id = ?").run(hit.id);
+    this.bus.emit("approval.resolved", this.get(hit.id));
+    return true;
   }
 
   get(id: string): Approval | undefined {
@@ -150,6 +185,7 @@ export class ApprovalService {
   resolve(id: string, decision: Decision, opts: ResolveOptions): Approval {
     const a = this.get(id);
     if (!a) throw new LocalizedError("approval.notFound", undefined, 404);
+    if (a.status === "blocked" && decision === "approve") return this.allowBlocked(a, opts.via);
     if (a.status !== "pending") throw new LocalizedError("approval.alreadyResolved", { status: a.status }, 409);
     const status: ApprovalStatus = decision === "approve" ? "approved" : "denied";
     this.db.prepare("update approvals set status = ?, resolved_at = ?, resolved_via = ? where id = ?").run(status, nowIso(), opts.via, id);
@@ -173,6 +209,16 @@ export class ApprovalService {
     } else {
       void this.onDeferredDenied?.(updated).catch(() => {});
     }
+    return updated;
+  }
+
+  /** "Allow" on a line auto mode left: the agent may run that call once (takeAllowance) and hears so. */
+  private allowBlocked(a: Approval, via: ApprovalVia): Approval {
+    this.db.prepare("update approvals set status = 'approved', resolved_at = ?, resolved_via = ? where id = ?").run(nowIso(), via, a.id);
+    this.audit.append("user", "approval.resolve", a.tool, { id: a.id, decision: "approve", via, blocked: true });
+    const updated = this.get(a.id)!;
+    this.bus.emit("approval.resolved", updated);
+    void this.onBlockedAllowed?.(updated).catch(() => {});
     return updated;
   }
 

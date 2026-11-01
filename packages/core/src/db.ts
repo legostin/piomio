@@ -131,6 +131,8 @@ const MIGRATIONS: string[] = [
   `create table skill_agents(skill text primary key, agents text not null);`,
   // A long goal's rounds so far (the /goal command, Task.kind "goal").
   `alter table tasks add column rounds integer not null default 0;`,
+  // Why auto mode stopped an action (Approval.auto, JSON; docs/superpowers/specs/2026-11-02-auto-mode-design.md).
+  `alter table approvals add column auto text;`,
 ];
 
 /**

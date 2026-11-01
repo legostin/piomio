@@ -420,6 +420,7 @@ export default {
   "approvalStatus.denied": "отклонено",
   "approvalStatus.expired": "истекло",
   "approvalStatus.executed": "выполнено",
+  "approvalStatus.blocked": "остановлено автомодом",
   "approvalStatus.failed": "ошибка выполнения",
   "tool.default": "инструмент",
   "tool.input": "Вход",

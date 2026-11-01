@@ -420,6 +420,7 @@ export default {
   "approvalStatus.denied": "denied",
   "approvalStatus.expired": "expired",
   "approvalStatus.executed": "executed",
+  "approvalStatus.blocked": "stopped by auto mode",
   "approvalStatus.failed": "execution failed",
   "tool.default": "tool",
   "tool.input": "Input",

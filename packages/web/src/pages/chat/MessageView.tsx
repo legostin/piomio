@@ -49,6 +49,7 @@ const APPROVAL: Record<ApprovalStatus, { label: MessageKey; tone: "warning" | "s
   expired: { label: "approvalStatus.expired", tone: "neutral" },
   executed: { label: "approvalStatus.executed", tone: "success" },
   failed: { label: "approvalStatus.failed", tone: "danger" },
+  blocked: { label: "approvalStatus.blocked", tone: "neutral" },
 };
 
 /** The card's words for what the agent asks: a plain headline in the viewer's language and the detail as is. */

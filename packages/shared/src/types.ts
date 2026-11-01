@@ -134,7 +134,8 @@ export interface Rule {
   createdVia: "console" | "telegram" | "approval" | "chat" | "skill";
 }
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "executed" | "failed";
+/** "blocked": auto mode stopped the action (policy/auto.ts); the person may still allow it once. */
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "executed" | "failed" | "blocked";
 
 /**
  * What an approval asks, for the card to say it plainly in the viewer's language: a command, a file to read or
@@ -149,8 +150,17 @@ export interface ApprovalAsk {
   host?: string;
 }
 
-/** "request": the person asked for the action in their own words (ToolSpec.asked), so nobody was asked again. */
-export type ApprovalVia = "console" | "telegram" | "device" | "web" | "rule" | "timeout" | "request";
+/**
+ * "request": the person asked for the action in their own words (ToolSpec.asked), so nobody was asked again.
+ * "auto": auto mode's reviewer decided (policy/auto.ts).
+ */
+export type ApprovalVia = "console" | "telegram" | "device" | "web" | "rule" | "timeout" | "request" | "auto";
+
+/** Why auto mode stopped an action: the rule it broke and one sentence in the person's language. */
+export interface AutoBlock {
+  rule: string;
+  reason: string;
+}
 
 export interface Approval {
   id: string;
@@ -169,6 +179,8 @@ export interface Approval {
   createdAt: ISODate;
   resolvedAt?: ISODate;
   resolvedVia?: ApprovalVia;
+  /** Auto mode stopped it (status "blocked", or "approved" once the person allowed it anyway). */
+  auto?: AutoBlock;
 }
 
 // ---------- Secrets entered in the chat ----------
@@ -240,8 +252,11 @@ export type MessagePart =
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
-  /** `asked`: the person asked for it in their own words (ToolSpec.asked): a quiet line, not a card. */
-  | { type: "approval"; approvalId: string; summary: string; status: ApprovalStatus; ask?: ApprovalAsk; asked?: boolean }
+  /**
+   * `asked`: the person asked for it in their own words (ToolSpec.asked): a quiet line, not a card. `auto`: auto mode
+   * stopped it: a quiet line with its reason and "Allow", not a card.
+   */
+  | { type: "approval"; approvalId: string; summary: string; status: ApprovalStatus; ask?: ApprovalAsk; asked?: boolean; auto?: AutoBlock }
   /**
    * Something an agent or the hub tells the person. `kind` says how it reads: a report or a digest is the agent
    * speaking (with `caption`, and `sources` under a digest), an alert or a question a card (`feedbackable`: a check's,
