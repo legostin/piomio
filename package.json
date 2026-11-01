@@ -1,6 +1,6 @@
 {
   "name": "piomio",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Friendly, proactive, self-hosted personal agent. Your subscriptions, your machines, secure by default.",
   "license": "Apache-2.0",
