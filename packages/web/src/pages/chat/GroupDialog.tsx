@@ -92,8 +92,9 @@ export function GroupDialog({ open, onClose, group }: { open: boolean; onClose: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, group?.id]);
 
-  // Members who left the team are dropped from the picker (and from the group on save).
-  const team = list ?? [];
+  // Members who left the team are dropped from the picker (and from the group on save); archived agents are not
+  // invited, the group's own stay.
+  const team = (list ?? []).filter((a) => !a.archived || group?.members?.includes(a.id));
   const picked = useMemo(() => members.filter((id) => team.some((a) => a.id === id)), [members, team]);
   const names = picked.map((id) => team.find((a) => a.id === id)?.name ?? id);
   const placeholder = names.length ? suggestedTitle(names) : t("group.namePlaceholder");

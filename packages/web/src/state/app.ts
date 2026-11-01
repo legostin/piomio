@@ -459,6 +459,12 @@ function upsertMember(list: TeamMember[], m: TeamMember): TeamMember[] {
 /** When the user last marked each conversation read here (ms): a listing asked for before that is stale on unread. */
 const readHere = new Map<string, number>();
 
+/**
+ * Dialogs the user marked unread here, with the newest message they had then: an open dialog does not read them again
+ * by itself until something newer comes (useReadMarker).
+ */
+const unreadHere = new Map<string, string>();
+
 /** A fetched list without unread counts the user cleared after the request went out. */
 function withoutStaleUnread<T extends { conversationId: string; unread: number }>(list: T[], askedAt: number): T[] {
   return list.map((x) => (x.unread && (readHere.get(x.conversationId) ?? 0) >= askedAt ? { ...x, unread: 0 } : x));
@@ -522,15 +528,39 @@ export async function createGroup(title: string, members: string[]): Promise<Con
   return c;
 }
 
-/** The user has seen the dialog up to the message created at `at`. */
-export async function markRead(conversationId: string, at: string): Promise<void> {
+/** The user has seen the dialog up to the message created at `at` (default: all of it). */
+export async function markRead(conversationId: string, at?: string): Promise<void> {
   readHere.set(conversationId, Date.now());
+  unreadHere.delete(conversationId);
   team.set((list) => (list ? list.map((m) => (m.conversationId === conversationId && m.unread ? { ...m, unread: 0 } : m)) : list));
   groups.set((list) => (list ? list.map((g) => (g.conversationId === conversationId && g.unread ? { ...g, unread: 0 } : g)) : list));
   try {
-    await api.post(`/api/conversations/${encodeURIComponent(conversationId)}/read`, { at });
+    await api.post(`/api/conversations/${encodeURIComponent(conversationId)}/read`, at ? { at } : {});
   } catch {
     /* the next team update corrects the count */
+  }
+}
+
+/** The dialog was marked unread here and nothing newer than `newest` has come since. */
+export function keptUnread(conversationId: string, newest: string): boolean {
+  const mark = unreadHere.get(conversationId);
+  return mark !== undefined && newest <= mark;
+}
+
+/** "Mark unread": the dialog's last message counts as unread again (the badge shows 1) until the dialog is read. */
+export async function markUnread(conversationId: string): Promise<void> {
+  const member = team.get()?.find((m) => m.conversationId === conversationId);
+  const loaded = messages.get()[conversationId]?.messages ?? [];
+  const newest = [member?.lastMessage?.createdAt ?? "", loaded[loaded.length - 1]?.createdAt ?? ""].sort().pop() ?? "";
+  readHere.delete(conversationId);
+  unreadHere.set(conversationId, newest);
+  team.set((list) => (list ? list.map((m) => (m.conversationId === conversationId && !m.unread ? { ...m, unread: 1 } : m)) : list));
+  try {
+    await api.post(`/api/conversations/${encodeURIComponent(conversationId)}/unread`, {});
+  } catch (e) {
+    unreadHere.delete(conversationId);
+    void refreshTeam();
+    throw e;
   }
 }
 
