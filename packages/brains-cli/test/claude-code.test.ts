@@ -413,6 +413,21 @@ describe("confined brains (BrainSessionOptions.confine)", () => {
     await collect((await plain.createSession(opts({ frontDesk: true, env: { FAKE_ARGS_FILE: plainFile } }))).send({ text: "hi" }));
     const pa = JSON.parse(readFileSync(plainFile, "utf8").trim().split("\n")[0]) as string[];
     expect(pa[pa.indexOf("--allowedTools") + 1]).toBe("Read,WebSearch,mcp__piomio");
+  });
+
+  it("the hub's own tools stay allowed, also with a list saved before the rename or one without them", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "owl-cc-state-"));
+    const allowed = async (tools: string[]) => {
+      const claude = createClaudeCodeProvider({ command: () => fake, stateDir, allowedTools: () => tools });
+      const file = join(mkdtempSync(join(tmpdir(), "owl-cc-args-")), "args.jsonl");
+      await collect((await claude.createSession(opts({ env: { FAKE_ARGS_FILE: file } }))).send({ text: "hi" }));
+      const args = JSON.parse(readFileSync(file, "utf8").trim().split("\n")[0]) as string[];
+      return args[args.indexOf("--allowedTools") + 1];
+    };
+    // A node's policy.json from the Owlbot days: don't-ask mode denied every hub tool.
+    expect(await allowed(["Read", "Glob", "mcp__owlbot"])).toBe("Read,Glob,mcp__piomio");
+    expect(await allowed(["Read"])).toBe("Read,mcp__piomio");
+    expect(await allowed(["mcp__piomio", "Read"])).toBe("mcp__piomio,Read");
 
     const codex = createCodexProvider({ command: () => join(import.meta.dirname, "fixtures", "fake-codex.mjs"), stateDir, sandbox: () => "workspace-write" });
     const codexFile = join(mkdtempSync(join(tmpdir(), "owl-cx-args-")), "args.jsonl");

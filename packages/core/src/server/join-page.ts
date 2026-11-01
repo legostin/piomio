@@ -80,7 +80,7 @@ function desktopSection(t: (k: string, p?: Record<string, string | number>) => s
     `<section><h2>${esc(t("join.desktop.title"))}</h2><a class="button" href="${esc(appLink)}">${esc(t("join.desktop.open"))}</a>` +
     `<p class="muted">${esc(t("join.desktop.hint"))}</p>` +
     `<p><strong>${esc(t("join.desktop.noApp"))}</strong></p><p>${downloads}</p>` +
-    `<p class="muted">${esc(t("join.desktop.unsigned"))}</p><p class="muted">${esc(t("join.desktop.again"))}</p></section>`
+    `<p class="muted">${esc(t("join.desktop.signing"))}</p><p class="muted">${esc(t("join.desktop.again"))}</p></section>`
   );
 }
 

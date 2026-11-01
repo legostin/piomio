@@ -262,7 +262,7 @@ export default {
   "join.desktop.hint": "The Piomio app asks once whether to connect this computer. Agents can then use its Claude Code, Codex and the folders you allow.",
   "join.desktop.noApp": "No Piomio app on this computer yet?",
   "join.desktop.download": "Download for {os}",
-  "join.desktop.unsigned": "The app is not signed yet. Windows may warn about an unknown publisher: More info → Run anyway. macOS may refuse it the first time: System Settings → Privacy & Security → Open Anyway.",
+  "join.desktop.signing": "The Mac app is signed and notarized by Apple. The Windows one is not signed yet, so Windows may warn about an unknown publisher: More info → Run anyway.",
   "join.desktop.again": "Once it is installed, come back here and press “Open Piomio” again.",
   "join.phone.title": "iPhone",
   "join.phone.open": "Open in Piomio",
