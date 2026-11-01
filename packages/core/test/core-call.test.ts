@@ -28,7 +28,7 @@ function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: s
   const tasks = new Map((opts.tasks ?? []).map((t) => [t.id, t]));
   f.hub = {
     settings: { get: () => ({ defaultAgent: "assistant" }) },
-    agents: { get: (id: string) => (["assistant", "coder"].includes(id) ? { id } : undefined) },
+    agents: { get: (id: string) => (["assistant", "coder"].includes(id) ? { id } : undefined), isArchived: () => false },
     skills: { get: (name: string) => (name === "order-water" ? { name, taught: true } : name === "make-integration" ? { name, taught: false } : undefined) },
     store: {
       getConversation: (id: string) => convs.get(id),

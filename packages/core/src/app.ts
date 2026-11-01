@@ -17,6 +17,7 @@ import { ToolRegistry } from "./tools/registry.ts";
 import { HookRegistry } from "./hooks.ts";
 import { ToolGateway } from "./tools/gateway.ts";
 import { AgentRegistry, agentFromMarkdown, agentName } from "./agents.ts";
+import { AgentsStateStore } from "./agents-state.ts";
 import { SkillHolders, SkillIndex } from "./skills.ts";
 import { PluginHost } from "./plugins/host.ts";
 import { EgressProxy } from "./egress.ts";
@@ -86,6 +87,8 @@ export class Hub {
   hooks = new HookRegistry();
   gateway: ToolGateway;
   agents: AgentRegistry;
+  /** Pinned, archived and deleted built-in agents (agents-state.ts). */
+  agentsState: AgentsStateStore;
   skills = new SkillIndex();
   egress = new EgressProxy();
   brains = new BrainRegistry();
@@ -162,6 +165,8 @@ export class Hub {
     this.rules = new RuleStore(this.db);
     this.approvals = new ApprovalService(this.db, this.bus, this.audit, this.rules);
     this.agents = new AgentRegistry(config.builtinAgentsDir, join(config.dataDir, "agents"));
+    this.agentsState = new AgentsStateStore(this.settings);
+    this.agents.state = () => this.agentsState.get();
     this.channels = new ChannelRegistry(this.vault.redactor);
     this.notifier = new Notifier({
       db: this.db,
@@ -266,6 +271,7 @@ export class Hub {
     this.team = new Team({
       store: this.store,
       agents: this.agents,
+      pinned: () => this.agentsState.get().pinned,
       bus: this.bus,
       isRunning: (id) => this.runner.isRunning(id),
       floor: (id) => this.runner.floor(id),
@@ -417,6 +423,7 @@ export class Hub {
       p.language = l;
     }
     if ("defaultAgent" in p && !this.agents.get(String(p.defaultAgent))) throw new LocalizedError("agent.notFound", undefined, 400);
+    if ("defaultAgent" in p && this.agents.isArchived(String(p.defaultAgent))) throw new LocalizedError("agent.archivedDefault", undefined, 400);
     if ("transcription" in p) {
       const t = cleanTranscription(p.transcription);
       if (typeof t === "string") throw new LocalizedError("settings.badTranscription", { reason: t }, 400);
@@ -571,7 +578,9 @@ export class Hub {
     const before = this.agents.get(agent.id);
     // Computers by id: a name, "local" or the hub's name become the id the binding keeps (one it does not know stays as written).
     const machines = [...new Set((agent.machines ?? []).map((m) => this.resolveComputer(m) ?? m.trim()).filter(Boolean))];
-    const { machines: _, ...rest } = agent;
+    const { machines: _, archived: __, ...rest } = agent;
+    // Made anew under the id of a deleted built-in one: it is back.
+    if (this.agentsState.get().removed.includes(rest.id)) this.agentsState.set("removed", rest.id, false);
     const saved = this.agents.save(machines.length ? { ...rest, machines } : rest);
     if (before && refs(before) !== refs(saved)) this.runner.brainsChanged(saved.id);
     this.audit.append(actor, "agent.save", saved.id);
@@ -636,17 +645,61 @@ export class Hub {
     return saved;
   }
 
-  /** The agent leaves the team (and the sidebar); its dialog and messages stay in the database. */
-  removeAgent(id: string, actor: string): void {
-    if (id === "assistant" && this.agents.get(id)?.source !== "user") throw new LocalizedError("agent.builtinCannotDelete", undefined, 400);
+  /** Pinned agents sit under the default agent at the top of the list, in the order they were pinned. */
+  pinAgent(id: string, pinned: boolean, actor: string): void {
+    if (!this.agents.get(id)) throw new LocalizedError("agent.notFound", undefined, 404);
+    this.agentsState.set("pinned", id, pinned);
+    this.audit.append(actor, pinned ? "agent.pin" : "agent.unpin", id);
+    this.bus.emit("agents.updated", {});
+  }
+
+  /**
+   * The default agent cannot sleep or leave without someone in its place: `successor`, an agent of the team other than
+   * it, becomes the default first. Returns the default agent after the step.
+   */
+  private handOver(id: string, successor: string | undefined, actor: string): string {
+    const current = this.settings.get().defaultAgent;
+    if (current !== id) return current;
+    const next = successor ? this.agents.get(successor) : undefined;
+    if (!next || next.id === id || this.agents.isArchived(next.id)) throw new LocalizedError("agent.successorNeeded", { name: agentName(this.agents.get(id)!, this.settings.get().language) }, 400);
+    this.updateSettings({ defaultAgent: next.id }, actor);
+    return next.id;
+  }
+
+  /**
+   * The archive: the agent sleeps (agents-state.ts). Out of the team, its turn and tasks stop, its schedules and channel
+   * runs are skipped; its dialog, memory and settings stay, and it comes back as it was.
+   */
+  archiveAgent(id: string, archived: boolean, opts: { successor?: string }, actor: string): { defaultAgent: string } {
+    if (!this.agents.get(id)) throw new LocalizedError("agent.notFound", undefined, 404);
+    const defaultAgent = archived ? this.handOver(id, opts.successor, actor) : this.settings.get().defaultAgent;
+    this.agentsState.set("archived", id, archived);
+    if (archived) this.runner.stopAgent(id);
+    this.audit.append(actor, archived ? "agent.archive" : "agent.restore", id);
+    this.bus.emit("agents.updated", {});
+    return { defaultAgent };
+  }
+
+  /**
+   * The agent leaves for good with its dialog, tasks and schedules (plugins hear "agent.removed"); the channels it edited
+   * pass to the default agent. A built-in or plugin agent is remembered as deleted, since its file ships with the hub.
+   */
+  deleteAgent(id: string, opts: { successor?: string }, actor: string): { defaultAgent: string } {
+    const agent = this.agents.get(id);
+    if (!agent) throw new LocalizedError("agent.notFound", undefined, 404);
+    const defaultAgent = this.handOver(id, opts.successor, actor);
+    this.runner.stopAgent(id);
     this.agents.remove(id);
-    this.audit.append(actor, "agent.remove", id);
-    // Channels and "/" need a default agent that exists; the built-in assistant always does.
-    if (this.settings.get().defaultAgent === id && !this.agents.get(id)) this.updateSettings({ defaultAgent: "assistant" }, "core");
-    // Gone from the team (a built-in one only returns to its defaults): a skill only it had goes back to everyone.
-    if (!this.agents.get(id)) this.skills.holders?.dropAgent(id);
+    this.agentsState.forget(id);
+    if (this.agents.shipped(id)) this.agentsState.set("removed", id, true);
+    this.feeds.handOver(id, defaultAgent);
+    this.store.deleteAgentData(id);
+    this.skills.holders?.dropAgent(id);
+    this.audit.append(actor, "agent.delete", id, { name: agent.name });
+    this.bus.emit("agent.removed", { agentId: id });
     this.bus.emit("agents.updated", {});
     this.bus.emit("skills.updated", {});
+    return { defaultAgent };
   }
 
   /** Skills, commands, agents and MCP servers come from enabled plugin layouts + data dir. */

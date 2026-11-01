@@ -106,6 +106,8 @@ export function createCoreCall(hub: Hub) {
       case "tasks.create": {
         const agentId = p.agentId ?? hub.settings.get().defaultAgent;
         if (!hub.agents.get(agentId)) throw new Error(`unknown agent ${agentId}`);
+        // An agent in the archive sleeps: a schedule's run is skipped, not failed.
+        if (hub.agents.isArchived(agentId)) return { skipped: "agentArchived" };
         let goal = String(p.goal ?? "");
         // skill: the run follows one of the hub's skills (a trigger's run of a skill the person taught).
         const skill = typeof p.skill === "string" && p.skill.trim() ? p.skill.trim() : undefined;

@@ -51,7 +51,7 @@ describe("a channel's time on a replica that slept through it", () => {
       db,
       bus: new EventBus(),
       settings: new Settings(db, "Asia/Almaty"),
-      agents: { get: (id: string) => ({ id }), list: () => [] } as unknown as AgentRegistry,
+      agents: { get: (id: string) => ({ id }), list: () => [], isArchived: () => false } as unknown as AgentRegistry,
       createTask: (t) => {
         created.push(t.feedId);
         return { id: `task_${created.length}`, createdAt: new Date().toISOString() } as Task;
@@ -90,7 +90,7 @@ describe("a channel's time on a replica that slept through it", () => {
       db,
       bus: new EventBus(),
       settings: new Settings(db, "Asia/Almaty"),
-      agents: { get: (id: string) => ({ id }), list: () => [] } as unknown as AgentRegistry,
+      agents: { get: (id: string) => ({ id }), list: () => [], isArchived: () => false } as unknown as AgentRegistry,
       createTask: (t) => {
         created.push(t.feedId);
         return { id: `task_${created.length}`, createdAt: new Date().toISOString() } as Task;

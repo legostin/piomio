@@ -17,6 +17,9 @@ const plugin: PluginModule = {
     ctx.events.on("notification.feedback", (n) => {
       void e.onFeedback(n).catch((err) => ctx.log.error(`feedback failed: ${err?.message ?? err}`));
     });
+    ctx.events.on("agent.removed", (p: { agentId: string }) => {
+      void e.removeAgent(p.agentId).catch((err) => ctx.log.error(`removing ${p.agentId}'s triggers failed: ${err?.message ?? err}`));
+    });
     ctx.onSettingsChange((s) => e.updateSettings(s));
     await e.start();
     // Catch-up runs and timers start after activation so the hub is not kept waiting.
