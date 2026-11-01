@@ -68,7 +68,7 @@ export function llmsTxt(): string {
 
 > ${t("meta.description")}
 
-Piomio is a self-hosted personal agent platform: a team of AI agents with names and jobs that you talk to in a chat. It runs as a desktop app for macOS and Windows or as one Docker image on a server, and several computers form one team. Agents think with the Claude Code and Codex CLIs on the person's own plans, with API keys (Anthropic, OpenAI, OpenRouter, DeepSeek, Kimi, GLM, any OpenAI-compatible server, Ollama) as backups. Anything that reaches outside (emails, bookings, payments) waits for the person's approval in the chat; secrets live in a vault the model never sees. Free and open source under Apache-2.0.
+Piomio is a self-hosted personal agent platform: a team of AI agents with names and jobs that you talk to in a chat. It runs as a desktop app for macOS and Windows or as one Docker image on a server, and several computers form one team. Agents think with the Claude Code, Codex and Kimi Code CLIs on the person's own plans, signed in with their own accounts; a hub on a server can also take API keys (Anthropic, OpenAI, OpenRouter, DeepSeek, GLM, any OpenAI-compatible server, Ollama) when started with PIOMIO_API_KEYS=1. Anything that reaches outside (emails, bookings, payments) waits for the person's approval in the chat; secrets live in a vault the model never sees. Free and open source under Apache-2.0.
 
 ## Docs
 

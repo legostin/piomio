@@ -30,7 +30,7 @@ function Section({ id, children, tone }: { id: string; children: ReactNode; tone
 export function HowItWorks() {
   const { t } = useI18n();
   const cards: Array<[ReactNode, MessageKey, MessageKey, string[]]> = [
-    [<Brain size={22} />, "how.brains.title", "how.brains.text", ["Claude Code", "Codex", "DeepSeek", "Kimi", "GLM", "OpenRouter", "Ollama"]],
+    [<Brain size={22} />, "how.brains.title", "how.brains.text", ["Claude Code", "Codex", "Kimi Code"]],
     [<Laptop size={22} />, "how.hardware.title", "how.hardware.text", ["macOS", "Windows", "Docker", "Linux", "Tailscale"]],
     [<Home size={22} />, "how.home.title", "how.home.text", ["Apache-2.0", "Markdown", "SQLite", "Git"]],
   ];
