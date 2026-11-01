@@ -1,12 +1,13 @@
 // The /archive command's card (an `agent_archive` part): what the archive does to the agent, who becomes the main
-// agent when it is the default one, and the button; once it is in the archive, Restore. The archive itself is the
-// hub's (POST /api/agents/:id/archive, docs/superpowers/specs/2026-11-01-agent-archive-design.md).
+// agent when it is the default one, and the button; once it is in the archive, Restore. The same archive as the agent's
+// menu (state/agentActions.ts, docs/superpowers/specs/2026-11-01-agent-archive-design.md).
 
 import { useEffect, useState } from "react";
 import { Archive, ArchiveRestore } from "lucide-react";
-import { api, errorText } from "../../lib/api";
+import { errorText } from "../../lib/api";
 import { useStore } from "../../lib/store";
-import { agents, ensureAgents, refreshAgents, session } from "../../state/app";
+import { agents, ensureAgents, session } from "../../state/app";
+import { archiveAgent } from "../../state/agentActions";
 import { toast } from "../../state/toast";
 import { AgentAvatar } from "../../components/AgentAvatar";
 import { Button, cx } from "../../components/ui";
@@ -29,8 +30,7 @@ export function ArchiveCard({ agentId }: { agentId: string }) {
   const set = async (to: boolean) => {
     setBusy(true);
     try {
-      await api.post(`/api/agents/${encodeURIComponent(agent.id)}/archive`, { archived: to, ...(to && isDefault && successor ? { successor } : {}) });
-      await refreshAgents();
+      await archiveAgent(agent.id, to, to && isDefault ? successor : undefined);
       toast(t(to ? "archiveCard.done" : "archiveCard.restored", { agent: agent.name }), "success");
     } catch (e) {
       toast(errorText(e), "error");
