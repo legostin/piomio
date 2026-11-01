@@ -14,6 +14,12 @@ on:
 permissions:
   contents: write
 
+# Releases come out one at a time in the order of their tags (release-on-push.yml can make a new one while the last is
+# still building), so the newest ends up as GitHub's latest release, the image's latest tag and the latest.json
+# installed apps update from. A newer tag waiting replaces an older one waiting: it holds all of the older one's changes.
+concurrency:
+  group: release-build
+
 jobs:
   version:
     runs-on: ubuntu-latest
