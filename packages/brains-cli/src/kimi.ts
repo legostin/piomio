@@ -106,9 +106,9 @@ interface ConfigOption {
 const optionOf = (options: ConfigOption[] | undefined, id: string, category: string) => options?.find((o) => o?.id === id || o?.category === category);
 
 /**
- * What Kimi offers to think with, from a session's configOptions: its models (the plan decides which) and thinking
- * levels, least first. Presets on the current model: fast = the lightest thinking, balanced = what it thinks by
- * default, deep = the most.
+ * What Kimi offers to think with, from a session's configOptions: its models (the plan decides which, ids such as
+ * "kimi-code/k3") and thinking levels, least first. Presets on the current model: fast = the lightest thinking,
+ * balanced = what it thinks by default (the middle when that is an end), deep = the most.
  */
 export function kimiThinking(options: ConfigOption[] | undefined): Pick<ProbeResult, "models" | "modelNames" | "model" | "efforts" | "presets" | "catalog"> {
   const model = optionOf(options, "model", "model");
@@ -118,7 +118,9 @@ export function kimiThinking(options: ConfigOption[] | undefined): Pick<ProbeRes
   const def = model?.currentValue && models.some((m) => m.value === model.currentValue) ? model.currentValue : models[0].value;
   const efforts = (thinking?.options ?? []).map((o) => String(o.value)).filter(Boolean);
   const on = efforts.filter((e) => e !== "off");
-  const current = thinking?.currentValue && on.includes(thinking.currentValue) ? thinking.currentValue : on[Math.floor((on.length - 1) / 2)];
+  // Balanced is what Kimi thinks by default, unless that is already the lightest or the deepest: then the middle.
+  const at = thinking?.currentValue ? on.indexOf(thinking.currentValue) : -1;
+  const current = at > 0 && at < on.length - 1 ? on[at] : on[Math.floor((on.length - 1) / 2)];
   const e = (v: string | undefined) => (v ? { effort: v } : {});
   return {
     models: models.map((m) => m.value),
@@ -199,6 +201,10 @@ export class KimiUpdateParser {
   }
 }
 
+/** Signed in, but the account's plan does not include Kimi Code (Kimi answers "Authentication required: 403 …"). */
+const NO_PLAN = /subscription|upgrade your plan|membership|\b403\b/i;
+/** How long a brain whose plan has no Kimi Code rests before the hub tries it again. */
+const NO_PLAN_REST_MS = 60 * 60_000;
 /** Quota and rate limits, in the words providers use. */
 const LIMIT = /rate.?limit|quota|usage limit|too many requests|\b429\b|limit (reached|exceeded)|insufficient (balance|credit)/i;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -360,7 +366,14 @@ class KimiSession implements BrainSessionImpl {
   private failure(e: unknown): BrainEvent {
     const t = this.t();
     const message = String((e as Error)?.message ?? e);
-    if (e instanceof AcpError && e.code === ACP_AUTH_REQUIRED) return { type: "error", fatal: true, message: t("kimi.notSignedIn") };
+    if (e instanceof AcpError && e.code === ACP_AUTH_REQUIRED) {
+      // The plan has no Kimi Code: the brain rests (the hub moves on to the next one) and says what Kimi said.
+      if (NO_PLAN.test(message)) {
+        const detail = message.replace(/^Authentication required:\s*/i, "");
+        return { type: "limit_hit", resetAt: new Date(Date.now() + NO_PLAN_REST_MS).toISOString(), detail: t("kimi.noPlan", { detail }) };
+      }
+      return { type: "error", fatal: true, message: t("kimi.notSignedIn") };
+    }
     if (/ENOENT|not recognized|command not found/i.test(`${message}\n${this.conn?.stderr() ?? ""}`)) return { type: "error", fatal: true, message: t("kimi.notInstalled") };
     if (LIMIT.test(message)) return { type: "limit_hit", resetAt: parseCodexReset(message), detail: `Kimi: ${message}` };
     return { type: "error", fatal: true, message: message || t("kimi.failed") };

@@ -89,6 +89,13 @@ describe("reading Kimi's output", () => {
       { id: "model", category: "model", currentValue: "k3", options: [{ value: "k3", name: "K3" }, { value: "kimi-for-coding", name: "Kimi for Coding" }] },
       { id: "thinking", category: "thought_level", currentValue: "high", options: [{ value: "off" }, { value: "low" }, { value: "high" }, { value: "max" }] },
     ];
+    // Kimi's real list for kimi-for-coding: always thinking, max by default. Balanced is the middle then.
+    const real = [
+      { id: "model", category: "model", currentValue: "kimi-code/kimi-for-coding", options: [{ value: "kimi-code/kimi-for-coding", name: "K2.8 Preview" }, { value: "kimi-code/k3.1-pro", name: "K3.1 Pro" }] },
+      { id: "thinking", category: "thought_level", currentValue: "max", options: [{ value: "low" }, { value: "high" }, { value: "max" }] },
+    ];
+    expect(kimiThinking(real).presets).toEqual({ fast: { model: "kimi-code/kimi-for-coding", effort: "low" }, balanced: { model: "kimi-code/kimi-for-coding", effort: "high" }, deep: { model: "kimi-code/kimi-for-coding", effort: "max" } });
+    expect(kimiThinking(real).catalog?.find((m) => m.id === "kimi-code/k3.1-pro")?.tier).toBe(5);
     expect(kimiThinking(options)).toMatchObject({
       models: ["k3", "kimi-for-coding"],
       modelNames: { k3: "K3", "kimi-for-coding": "Kimi for Coding" },
@@ -210,6 +217,12 @@ describe("sessions over ACP (fake kimi)", () => {
     const hit = limited.find((e) => e.type === "limit_hit") as Extract<BrainEvent, { type: "limit_hit" }>;
     expect(hit.detail).toMatch(/Rate limit/);
     expect(Date.parse(hit.resetAt!)).toBeGreaterThan(Date.now() + 60 * 60_000);
+
+    // Signed in, but the plan has no Kimi Code: the brain rests for an hour and says what Kimi said.
+    const noPlan = await collect((await session({ home, log: join(home, "l") }).create()).send({ text: "NOPLAN" }));
+    const rest = noPlan.find((e) => e.type === "limit_hit") as Extract<BrainEvent, { type: "limit_hit" }>;
+    expect(rest.detail).toMatch(/^Kimi Code: this Kimi account's plan does not include Kimi Code \(403 Your current subscription/);
+    expect(noPlan.some((e) => e.type === "error")).toBe(false);
   });
 
   it("resumes its session; a session that is gone starts afresh from the hub's recap", async () => {

@@ -2,7 +2,7 @@
 // 2.4 does, then "signs in" (writes HOME/.kimi-code/credentials/kimi-code.json) and exits 0; and `acp`, an Agent Client
 // Protocol agent that answers "Authentication required" until signed in. The prompt's first word picks a script:
 // HELLO, TOOL (Bash, asks permission), WRITE, MCP (a hub tool), ASK (AskUserQuestion), SLOW (waits for session/cancel),
-// LIMIT (a rate-limit error). Every request it gets is appended as JSON to FAKE_KIMI_LOG.
+// LIMIT (a rate-limit error), NOPLAN (signed in, but the plan has no Kimi Code). Every request it gets is appended as JSON to FAKE_KIMI_LOG.
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -55,6 +55,11 @@ if (args[0] === "login") {
     const word = text.split(/\s/)[0];
     if (!existsSync(creds)) return send({ id, error: { code: -32000, message: "Authentication required" } });
     if (word === "LIMIT") return send({ id, error: { code: -32603, message: "Rate limit reached for your plan, try again in 2 hours" } });
+    // What Kimi Code 2.4.1 answers for an account whose plan has no Kimi Code.
+    if (word === "NOPLAN") {
+      const message = "Authentication required: 403 Your current subscription does not have access to Kimi Code right now. Upgrade your plan to keep coding with Kimi Code: https://www.kimi.com/code/#pricing";
+      return send({ id, error: { code: -32000, message } });
+    }
     if (word === "HELLO") {
       update(s, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking…" } });
       update(s, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hi " } });

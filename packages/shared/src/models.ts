@@ -73,9 +73,11 @@ export const KNOWN_MODELS: ReadonlyArray<readonly [RegExp, Traits]> = [
   [/gemini[\w.-]*flash/i, { tier: 3, speed: 3, cost: 1, good: ["vision", "code"] }],
   [/gemini[\w.-]*pro/i, { tier: 5, speed: 2, cost: 2, good: ["reasoning", "code", "vision", "writing"] }],
   [/gemma/i, { tier: 2, speed: 3, cost: 1 }],
-  // Moonshot (Kimi). Kimi Code's plan names its models k3, k3-256k, kimi-for-coding and kimi-for-coding-highspeed.
+  // Moonshot (Kimi). Kimi Code's plan names its models kimi-code/k3, k3-256k, k3.1-pro(-highspeed), kimi-for-coding
+  // and kimi-for-coding-highspeed; the highspeed K3 costs twice the plan's quota.
   [/kimi-for-coding-highspeed/i, { tier: 4, speed: 3, cost: 1, good: ["code"] }],
-  [/(^|\/)k3(-256k)?$/i, { tier: 5, speed: 2, cost: 1, good: ["code", "reasoning", "writing"] }],
+  [/(^|\/)k3[\w.-]*highspeed/i, { tier: 5, speed: 3, cost: 2, good: ["code", "reasoning", "writing"] }],
+  [/(^|\/)k3([.-][\w.-]*)?$/i, { tier: 5, speed: 2, cost: 1, good: ["code", "reasoning", "writing"] }],
   [/kimi[\w.-]*(thinking|k2\.5|k3)/i, { tier: 4, speed: 1, cost: 1, good: ["reasoning", "code"] }],
   [/kimi|moonshot/i, { tier: 4, speed: 2, cost: 1, good: ["code", "writing"] }],
   // DeepSeek
