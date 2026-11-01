@@ -6,7 +6,7 @@ i18n:
     name: Исследователь
     description: Ищет, сравнивает и сводит информацию из нескольких источников, следит за темами.
 avatar: { color: violet, shape: hexagon }
-brains: [claude-code@local, codex@local, "api:*"]
+brains: [claude-code@local, codex@local, kimi@local, "api:*"]
 initiative: 1
 tools: ["web_*", "browser_*", "memory_*", "notify", "task_*", "team_*", "skill_load", "trigger_*", "feed_*"]
 skills: ["*"]

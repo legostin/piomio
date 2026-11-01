@@ -25,6 +25,8 @@ export interface Policy {
   brains: {
     "claude-code": { enabled: boolean; command?: string; allowedTools: string[] };
     codex: { enabled: boolean; command?: string; sandbox: CodexSandbox };
+    /** Kimi Code has no sandbox: its commands follow `exec`, its writes `fs.write` and the allowed folders. */
+    kimi: { enabled: boolean; command?: string };
   };
   /** Brain sessions run in <workspacesRoot>/<agent>/<task-or-conversation>. */
   workspacesRoot: string;
@@ -44,6 +46,7 @@ export function defaultPolicy(userHome = homedir()): Policy {
     brains: {
       "claude-code": { enabled: true, allowedTools: [...DEFAULT_NODE_CLAUDE_TOOLS] },
       codex: { enabled: true, sandbox: "workspace-write" },
+      kimi: { enabled: true },
     },
     workspacesRoot: ws,
   };
@@ -81,6 +84,7 @@ export function normalizePolicy(raw: any, userHome = homedir()): Policy {
   const brains = raw.brains ?? {};
   const cc = brains["claude-code"] ?? {};
   const cx = brains.codex ?? {};
+  const km = brains.kimi ?? {};
   const sandbox = cx.sandbox ?? d.brains.codex.sandbox;
   if (!SANDBOXES.includes(sandbox)) throw new Error(t("policy.sandbox", { values: SANDBOXES.join(", ") }));
   const maxTimeoutMs = exec.maxTimeoutMs === undefined ? undefined : Number(exec.maxTimeoutMs);
@@ -109,6 +113,10 @@ export function normalizePolicy(raw: any, userHome = homedir()): Policy {
         enabled: bool(cx.enabled, true, "brains.codex.enabled"),
         ...(command(cx.command, "brains.codex.command") ? { command: command(cx.command, "brains.codex.command") } : {}),
         sandbox,
+      },
+      kimi: {
+        enabled: bool(km.enabled, true, "brains.kimi.enabled"),
+        ...(command(km.command, "brains.kimi.command") ? { command: command(km.command, "brains.kimi.command") } : {}),
       },
     },
     workspacesRoot: raw.workspacesRoot === undefined ? (allowedDirs[0] ?? d.workspacesRoot) : expandPath(raw.workspacesRoot, userHome, "workspacesRoot"),
@@ -217,5 +225,6 @@ export function policySummary(p: Policy): string[] {
     }),
     t("policy.summary.claude", { state: cc.enabled ? t("policy.summary.claudeOn", { tools: cc.allowedTools.join(", ") }) : t("policy.summary.off") }),
     t("policy.summary.codex", { state: p.brains.codex.enabled ? t("policy.summary.codexOn", { sandbox: p.brains.codex.sandbox }) : t("policy.summary.off") }),
+    t("policy.summary.kimi", { state: p.brains.kimi.enabled ? t("policy.summary.kimiOn") : t("policy.summary.off") }),
   ];
 }

@@ -1,0 +1,6 @@
+{
+  "name": "Kimi Code",
+  "description": "Brain on a Kimi membership: runs the official Kimi Code CLI (kimi acp) with Piomio tools. Sign in from the chat with a one-time code.",
+  "settings.command.title": "CLI command",
+  "settings.command.description": "Left as “kimi”, the hub runs the Kimi Code CLI from PATH, or the copy it installed when you signed in."
+}

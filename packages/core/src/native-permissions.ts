@@ -1,5 +1,5 @@
 // What a CLI brain's own tools may do without asking: Claude Code's Read/Write/Edit/Bash/…, Codex's commands and
-// file changes. The brains run them in their own processes, outside the hub's tool gateway; the CLI asks the hub here
+// file changes, Kimi Code's tools (which have no sandbox around them). The brains run them in their own processes, outside the hub's tool gateway; the CLI asks the hub here
 // (Claude Code through its permission prompt tool, Codex through its approval requests: tools/native-permission.ts).
 // Inside the agent's own folder (and the temp folders, and the CLI's own folder for the session's saved tool output)
 // they just work, and so does a command that runs inside the sandbox; reading or writing elsewhere in the person's
@@ -60,6 +60,25 @@ export function classifyClaudeTool(tool: string, input: unknown, cwd: string): N
     if (i.dangerouslyDisableSandbox !== true) return { kind: "sandboxed", tool, command: str(i.command) ?? "" };
     return { kind: "command", tool, command: str(i.command) ?? "", cwd, reason: str(i.description) };
   }
+  return { kind: "other", tool, input };
+}
+
+/** Kimi Code's tools with no reach of their own (planning, subagents that ask again, skills, its goals). */
+const KIMI_FREE = new Set(["Agent", "AgentSwarm", "Skill", "SetTodoList", "TodoList", "TaskList", "TaskOutput", "TaskStop", "WaitFor", "ExitPlanMode", "Think", "select_tools", "NotifyUser", "CreateGoal", "GetGoal", "SetGoalBudget", "UpdateGoal"]);
+
+/**
+ * A Kimi Code tool call (asked as "kimi.<tool>") as an action. Kimi runs commands with no sandbox around them, so
+ * Bash is a command outside one; its file tools name the file `path`.
+ */
+export function classifyKimiTool(tool: string, input: unknown, cwd: string): NativeAction {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const at = (p: string | undefined) => (p ? resolve(cwd, expandHome(p)) : cwd);
+  const file = str(i.path) ?? str(i.file_path);
+  if (KIMI_FREE.has(tool)) return { kind: "free", tool };
+  if (tool === "Bash") return { kind: "command", tool, command: str(i.command) ?? "", cwd, reason: str(i.description) };
+  if (tool === "Write" || tool === "Edit") return { kind: "write", tool, path: at(file) };
+  if (tool === "Read" || tool === "Glob" || tool === "Grep" || tool === "ReadMediaFile") return { kind: "read", tool, path: at(file) };
+  if (tool === "FetchURL" || tool === "WebSearch") return { kind: "fetch", tool, url: str(i.url) };
   return { kind: "other", tool, input };
 }
 

@@ -1,0 +1,6 @@
+{
+  "name": "Kimi Code",
+  "description": "Интеллект на подписке Kimi: запускает официальный Kimi Code CLI (kimi acp) с инструментами Piomio. Вход из чата по одноразовому коду.",
+  "settings.command.title": "Команда CLI",
+  "settings.command.description": "Если оставить «kimi», хаб запускает Kimi Code CLI из PATH или копию, которую сам поставил при входе."
+}

@@ -1,9 +1,10 @@
 // Command-line tools the hub runs without relying on the system's: npm (plugin installs) and, where they are missing,
-// the Claude Code and Codex CLIs. The desktop installers ship Node with no npm on the PATH, so npm is the npm-cli.js
-// that came with the hub's own Node. A missing brain CLI is installed from its official npm package into <data>/tools
-// when the user signs it in from the chat; its native binary goes on the PATH of the plugin hosting that brain, after
-// the system PATH, so a CLI the user installed themselves wins. Under user isolation (the Docker image) both CLIs are
-// part of the image and run as another user, so the hub never installs them there.
+// the Claude Code, Codex and Kimi Code CLIs. The desktop installers ship Node with no npm on the PATH, so npm is the
+// npm-cli.js that came with the hub's own Node. A missing brain CLI is installed from its official npm package into
+// <data>/tools when the user signs it in from the chat; its native binary goes on the PATH of the plugin hosting that
+// brain, after the system PATH, so a CLI the user installed themselves wins (Kimi Code is a Node script: its npm link
+// in node_modules/.bin, which the brain runs with the hub's own Node). Under user isolation (the Docker image) the CLIs
+// are part of the image and run as another user, so the hub never installs them there.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -83,6 +84,7 @@ export function cliToolSpecs(platform: string = process.platform, arch: string =
   const tools: CliTool[] = [{ brainId: "claude-code", label: "Claude Code", pkg: "@anthropic-ai/claude-code", dirs: [`@anthropic-ai/claude-code-${plat}${musl ? "-musl" : ""}`] }];
   const triple = CODEX_TRIPLES[plat];
   if (triple) tools.push({ brainId: "codex", label: "Codex", pkg: "@openai/codex", dirs: [`@openai/codex-${plat}/vendor/${triple}/bin`, `@openai/codex-${plat}/vendor/${triple}/codex-path`] });
+  tools.push({ brainId: "kimi", label: "Kimi Code", pkg: "@moonshot-ai/kimi-code", dirs: [".bin"] });
   return tools;
 }
 

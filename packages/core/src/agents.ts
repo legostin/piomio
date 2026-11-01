@@ -9,7 +9,7 @@ import type { AgentDef, Locale } from "@piomio/shared";
 import { normalizeLocale, parseAvatar, parseFrontmatter, parseThinking } from "@piomio/shared";
 import type { AgentsState } from "./agents-state.ts";
 
-export const DEFAULT_BRAINS = ["claude-code@local", "codex@local", "api:*"];
+export const DEFAULT_BRAINS = ["claude-code@local", "codex@local", "kimi@local", "api:*"];
 
 export function agentFromMarkdown(id: string, text: string, source: string): AgentDef {
   const { data, body } = parseFrontmatter(text);

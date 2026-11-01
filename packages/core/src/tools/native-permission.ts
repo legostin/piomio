@@ -1,6 +1,7 @@
 // native_permission: where a CLI brain asks before its own tools reach beyond its folder (native-permissions.ts).
 // Claude Code calls it as its permission prompt tool ({tool_name, input}); the Codex brain calls it for the approval
-// requests its sandbox raises ("codex.command", "codex.fileChange", "codex.permissions"). The answer is Claude Code's
+// requests its sandbox raises ("codex.command", "codex.fileChange", "codex.permissions"); the Kimi brain for Kimi's
+// permission requests ("kimi.<tool>"). The answer is Claude Code's
 // format, a JSON text: {"behavior":"allow","updatedInput":…} or {"behavior":"deny","message":…}. When the person
 // has to say yes, the hub shows the same approval card as for an external action and waits for it.
 import type { ApprovalAsk, ToolResult } from "@piomio/shared";
@@ -15,7 +16,7 @@ import type { Redactor } from "../vault/redact.ts";
 import type { AgentRegistry } from "../agents.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
-import { classifyClaudeTool, confinement, decideNative, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
+import { classifyClaudeTool, classifyKimiTool, confinement, decideNative, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
 
 export const NATIVE_PERMISSION_TOOL = "native_permission";
 /** How long a brain's question waits for the person: the CLI holds its turn meanwhile. */
@@ -91,7 +92,11 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       const i = (raw ?? {}) as { tool_name?: unknown; input?: unknown };
       const tool = String(i.tool_name ?? "");
       const input = i.input && typeof i.input === "object" ? (i.input as Record<string, unknown>) : {};
-      const action = tool.startsWith("codex.") ? classifyCodex(tool, input, ctx.workspace) : classifyClaudeTool(tool, input, ctx.workspace);
+      const action = tool.startsWith("codex.")
+        ? classifyCodex(tool, input, ctx.workspace)
+        : tool.startsWith("kimi.")
+          ? classifyKimiTool(tool.slice(5), input, ctx.workspace)
+          : classifyClaudeTool(tool, input, ctx.workspace);
       const { denyRead } = confinement(d.dataDir, ctx.workspace);
       let decided = decideNative(action, { workspace: ctx.workspace, roots: d.roots(), denied: denyRead });
 

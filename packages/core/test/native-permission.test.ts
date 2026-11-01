@@ -8,7 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Approval } from "@piomio/shared";
 import { Hub, loadConfig } from "../src/index.ts";
-import { classifyClaudeTool, claudeProjectDir, commandRule, confinement, decideNative, systemStatusOnly } from "../src/native-permissions.ts";
+import { classifyClaudeTool, classifyKimiTool, claudeProjectDir, commandRule, confinement, decideNative, systemStatusOnly } from "../src/native-permissions.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
 const home = homedir();
@@ -102,6 +102,25 @@ describe("what a brain's own tools may do", () => {
       // System tools (sips) write their scratch files in the person's temp folder, whatever TMPDIR says.
       allowWrite: expect.arrayContaining([tmpdir().replace(/\/+$/, "")]),
     });
+  });
+});
+
+describe("what Kimi Code's tools may do (no sandbox around them)", () => {
+  const ws = "/data/workspaces/a/c1";
+  const scope = { workspace: ws, home, denied: confinement("/data", ws, [], home).denyRead };
+  const d = (tool: string, input: unknown) => decideNative(classifyKimiTool(tool, input, ws), scope).decision;
+
+  it("writes in its folder, asks before any other command or write, never touches credentials", () => {
+    expect(d("Write", { path: "notes.md", content: "x" })).toBe("allow");
+    expect(d("Edit", { path: `${ws}/src/a.ts` })).toBe("allow");
+    expect(d("Write", { path: "/etc/hosts" })).toBe("ask");
+    // Every command asks: nothing keeps it inside the folder.
+    expect(d("Bash", { command: "npm test" })).toBe("ask");
+    expect(d("Bash", { command: "uptime" })).toBe("allow");
+    expect(d("Read", { path: join(home, ".ssh", "id_ed25519") })).toBe("deny");
+    expect(d("FetchURL", { url: "https://x.io" })).toBe("allow");
+    expect(d("SetTodoList", {})).toBe("allow");
+    expect(d("CronCreate", { schedule: "* * * * *" })).toBe("ask");
   });
 });
 

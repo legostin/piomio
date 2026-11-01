@@ -1535,7 +1535,8 @@ export class SessionRunner {
     const skills = this.d.skills.forAgent(agent, task?.skill);
     let skillsDir: string | undefined;
     if (local && ref.brainId === "claude-code") skillsDir = join(workspace, ".claude", "skills");
-    if (local && ref.brainId === "codex") skillsDir = join(workspace, ".agents", "skills");
+    // Codex and Kimi Code both read a project's skills from .agents/skills.
+    if (local && (ref.brainId === "codex" || ref.brainId === "kimi")) skillsDir = join(workspace, ".agents", "skills");
     if (skillsDir) this.d.skills.materialize(skillsDir, skills);
 
     const hook = await this.d.hooks.run("session.start", { sessionId: row.id, agentId: agent.id, conversationId: conv.id, taskId: task?.id, background }, (p) => p);

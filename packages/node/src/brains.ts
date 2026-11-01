@@ -1,22 +1,25 @@
-// Brains on this machine: Claude Code / Codex CLIs logged in with the owner's subscriptions.
+// Brains on this machine: Claude Code / Codex / Kimi Code CLIs logged in with the owner's subscriptions.
 // Same brain.* contract as plugin processes (packages/plugin-sdk/src/runner.ts), driven over the hub WebSocket.
 
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BrainEvent, BrainSessionOptions, BrainTurn, MachineInfo, MachineModel, NodeSetup, ProbeResult } from "@piomio/shared";
+import type { BrainEvent, BrainSessionOptions, BrainTurn, MachineBrainId, MachineInfo, MachineModel, NodeSetup, ProbeResult } from "@piomio/shared";
 import { brainWire, cheapestModel, keyProvider, profileFrom } from "@piomio/shared";
 import type { BrainProviderImpl, BrainSessionImpl } from "@piomio/plugin-sdk";
-import { codexChooser, createClaudeCodeProvider, createCodexProvider } from "@piomio/brains-cli";
-import type { PolicyStore } from "./policy.ts";
-import { resolveWorkspace } from "./guard.ts";
+import { codexChooser, createClaudeCodeProvider, createCodexProvider, createKimiProvider } from "@piomio/brains-cli";
+import type { Policy, PolicyStore } from "./policy.ts";
+import { resolveAllowedPath, resolveWorkspace } from "./guard.ts";
+import { checkCommand } from "./exec.ts";
 import { hubLocale, tHub } from "./messages.ts";
 import type { ModelGateway } from "./gateway.ts";
 
-export const BRAIN_IDS = ["claude-code", "codex"] as const;
+export const BRAIN_IDS = ["claude-code", "codex", "kimi"] as const;
+/** The brains the hub sets up per machine (sign-in or keys, models): Kimi Code only signs in. */
+const MACHINE_SETUP_BRAINS: readonly MachineBrainId[] = ["claude-code", "codex"];
 export type NodeBrainId = (typeof BRAIN_IDS)[number];
 
-const DEFAULT_COMMANDS: Record<NodeBrainId, string> = { "claude-code": "claude", codex: "codex" };
+const DEFAULT_COMMANDS: Record<NodeBrainId, string> = { "claude-code": "claude", codex: "codex", kimi: "kimi" };
 
 /**
  * Windows: spawn() without a shell only runs .exe/.com. npm installs CLIs as .cmd shims, so find the
@@ -83,6 +86,20 @@ const SAFE_ENV = /^(TZ|LANG|LANGUAGE|LC_[A-Z]+)$/;
  */
 const SAFE_ARG = /^[A-Za-z0-9][\w.:/@[\]-]{0,199}$/;
 
+/**
+ * What Kimi Code may do on this machine without asking (it has no sandbox): commands as `exec` allows them, writes
+ * where `fs.write` and the allowed folders (and its own workspace) allow them; nothing else it would ask about.
+ */
+export function kimiAllowed(policy: Policy, tool: string, input: Record<string, unknown>, workspace: string): boolean {
+  try {
+    if (tool === "Bash") return !!checkCommand(input.command, policy);
+    if (tool === "Write" || tool === "Edit") return policy.fs.write && !!resolveAllowedPath(input.path ?? input.file_path, [workspace, ...policy.allowedDirs], { base: workspace });
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function safeArg(v: unknown, field: string): string | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   if (typeof v !== "string" || !SAFE_ARG.test(v)) throw new Error(`Invalid ${field}: ${String(v).slice(0, 80)}`);
@@ -136,13 +153,24 @@ export class BrainHost {
         locale: hubLocale,
       }),
     );
+    this.providers.set(
+      "kimi",
+      createKimiProvider({
+        command: () => policy().brains.kimi.command ?? DEFAULT_COMMANDS.kimi,
+        // No sandbox around Kimi: the owner's policy answers what it asks before running.
+        allow: (tool, input, workspace) => kimiAllowed(policy(), tool, input, workspace),
+        stateDir: stateDir("kimi"),
+        log,
+        locale: hubLocale,
+      }),
+    );
   }
 
   /** The hub's setup for this machine; the gateway takes the keys, models and limit at once. */
   applySetup(setup: NodeSetup): void {
     this.setup = setup;
     const wires: Parameters<ModelGateway["configure"]>[0]["wires"] = {};
-    for (const id of BRAIN_IDS) {
+    for (const id of MACHINE_SETUP_BRAINS) {
       const b = setup.brains[id];
       if (b?.auth === "key") wires[brainWire(id)] = { models: b.models, providers: b.providers ?? [] };
     }
@@ -150,13 +178,18 @@ export class BrainHost {
     this.lastProbe.clear();
   }
 
+  /** What the hub set for this brain here; Kimi Code has no setup in the hub (its own sign-in, any model). */
+  private brainSetup(id: NodeBrainId): NodeSetup["brains"][MachineBrainId] {
+    return id === "kimi" ? undefined : this.setup?.brains[id];
+  }
+
   /** Key mode: the hub gives this brain provider keys, through the gateway. */
-  private keyMode(id: NodeBrainId): boolean {
-    return this.setup?.brains[id]?.auth === "key" && !!this.o.gateway?.port;
+  private keyMode(id: NodeBrainId): id is MachineBrainId {
+    return this.brainSetup(id)?.auth === "key" && !!this.o.gateway?.port;
   }
 
   private allowed(id: NodeBrainId): MachineModel[] {
-    return this.setup?.brains[id]?.models ?? [];
+    return this.brainSetup(id)?.models ?? [];
   }
 
   /** Codex in key mode talks to the gateway as a model provider of its own; the session token comes in its env. */
@@ -174,9 +207,9 @@ export class BrainHost {
   /** What the hub's setup changes in a probe: who signs in, and which models the router may pick. */
   private shaped(id: NodeBrainId, r: ProbeResult): ProbeResult {
     const allowed = this.allowed(id);
-    if (!this.setup?.brains[id]) return r;
+    const b = this.brainSetup(id);
+    if (!this.setup || !b) return r;
     if (this.keyMode(id)) {
-      const b = this.setup.brains[id]!;
       const keyed = (b.providers ?? []).map((p) => keyProvider(p.id)?.label ?? p.id);
       const authenticated = r.available && keyed.length > 0 && allowed.length > 0 && !this.setup.sealed;
       const detail = !r.available
@@ -274,7 +307,7 @@ export class BrainHost {
   }
 
   /** The env a key-mode session gets: the gateway and its own token, never a key. */
-  private keyEnv(id: NodeBrainId, sessionId: string, model: string | undefined): Record<string, string> {
+  private keyEnv(id: MachineBrainId, sessionId: string, model: string | undefined): Record<string, string> {
     const token = this.o.gateway!.open(sessionId, id);
     if (id === "codex") return { PIOMIO_GATEWAY_KEY: token, OPENAI_API_KEY: "", CODEX_API_KEY: "" };
     const allowed = this.allowed(id);

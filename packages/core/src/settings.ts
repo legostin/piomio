@@ -39,6 +39,11 @@ export const DEFAULT_BRAIN_EGRESS = [
   "openai.com",
   "chatgpt.com",
   "*.chatgpt.com",
+  // Kimi Code: its sign-in (auth.kimi.com/.ai) and its plan's API (api.kimi.com/.ai).
+  "kimi.com",
+  "*.kimi.com",
+  "kimi.ai",
+  "*.kimi.ai",
   "*.googleapis.com",
   "openrouter.ai",
   "registry.npmjs.org",

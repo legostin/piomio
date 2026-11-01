@@ -2,7 +2,8 @@
 // process per session, kept between turns for a dialog. The CLI signs in with its own device-code login (`kimi login`)
 // and keeps the token in $HOME/.kimi-code: the hub never sees it (Kimi lets only its own clients use the account).
 // Kimi has no OS sandbox: confined, it asks before writes and commands (`default` mode) and the hub decides
-// (hub-permission.ts); elsewhere it runs `yolo`, as Codex runs danger-full-access there.
+// (hub-permission.ts); on a machine whose own policy decides (`allow`), that answers; elsewhere it runs `yolo`, as
+// Codex runs danger-full-access there.
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
@@ -26,6 +27,11 @@ export interface KimiOptions {
   locale?: () => Locale;
   /** How long a sign-in from the chat may wait for the person (Kimi's device codes last 30 minutes). */
   loginTimeoutMs?: number;
+  /**
+   * Where the hub does not confine the session but a policy of its own does (a machine's policy.json): whether Kimi
+   * may run this tool with this input. With it, Kimi asks before writes and commands and this answers.
+   */
+  allow?: (tool: string, input: Record<string, unknown>, workspace: string) => boolean;
 }
 
 /** What every Kimi process gets: no colours, no telemetry to Moonshot. */
@@ -246,9 +252,9 @@ class KimiSession implements BrainSessionImpl {
     return [{ name: "piomio", command, args, env: [{ name: "PIOMIO_URL", value: this.o.mcp.url }, { name: "PIOMIO_TOKEN_FILE", value: join(this.dir, "token") }] }];
   }
 
-  /** Confined or a front desk: Kimi asks before writes and commands. Otherwise it goes ahead. */
+  /** Confined, a front desk or under a machine's policy: Kimi asks before writes and commands. Otherwise it goes ahead. */
   private wantedMode(): string {
-    return this.o.confine || this.o.frontDesk ? "default" : "yolo";
+    return this.o.confine || this.o.frontDesk || this.p.allow ? "default" : "yolo";
   }
 
   private open(): Promise<void> {
@@ -328,11 +334,11 @@ class KimiSession implements BrainSessionImpl {
     if (tool.startsWith("mcp__piomio__")) return pick(true);
     // A dialog's front desk only looks: what Kimi asks about there (writes, commands) is a task's work.
     if (this.o.frontDesk) return pick(false);
+    const raw = this.parser?.calls.get(String(tc.toolCallId ?? ""))?.input;
+    const input = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
     const confine = this.o.confine;
-    if (!confine) return pick(true);
-    const input = this.parser?.calls.get(String(tc.toolCallId ?? ""))?.input;
-    const yes = await askHub(this.o.mcp, confine.permissionTool, `kimi.${tool}`, input && typeof input === "object" ? (input as Record<string, unknown>) : {});
-    return pick(yes);
+    if (confine) return pick(await askHub(this.o.mcp, confine.permissionTool, `kimi.${tool}`, input));
+    return pick(this.p.allow ? this.p.allow(tool, input, this.o.workspace) : true);
   }
 
   private prompt(turn: BrainTurn): unknown[] {
