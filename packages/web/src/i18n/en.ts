@@ -347,6 +347,8 @@ export default {
   "message.approval.deny": "Deny",
   "message.approval.failed": "The answer was not sent: {error}",
   "message.approval.asked": "you asked",
+  "message.approval.autoStopped": "auto mode stopped it: {reason}",
+  "message.approval.autoAllowed": "you allowed it",
   "message.approval.askedFailed": "you asked, but it did not work",
   "secret.title": "Secret: {title}",
   "secret.placeholder": "Paste it here",

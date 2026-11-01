@@ -128,7 +128,54 @@ function AskedLine({ part }: { part: Extract<MessagePart, { type: "approval" }> 
   );
 }
 
+/** An action auto mode stopped: a quiet line with its reason, and "Allow" for when the person wants it anyway (once). */
+function BlockedLine({ part }: { part: Extract<MessagePart, { type: "approval" }> }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const blocked = part.status === "blocked";
+  const allow = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/api/approvals/${encodeURIComponent(part.approvalId)}`, { decision: "approve" });
+    } catch (e) {
+      setError(t("message.approval.failed", { error: errorText(e) }));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex w-full max-w-md flex-col gap-1 px-1 text-xs leading-relaxed text-muted">
+      <div className="flex items-start gap-1.5">
+        <ShieldAlert className={cx("mt-0.5 size-3.5 shrink-0", blocked ? "text-warning" : "text-success")} />
+        <button type="button" onClick={() => setOpen((v) => !v)} className="min-w-0 flex-1 text-left">
+          <span className={cx("break-words", !open && "line-clamp-2")}>
+            {part.summary}
+            <span className="text-muted/70"> · {blocked ? t("message.approval.autoStopped", { reason: part.auto?.reason ?? "" }) : t("message.approval.autoAllowed")}</span>
+          </span>
+        </button>
+        {blocked && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void allow()}
+            className="shrink-0 rounded-full border border-hairline px-2.5 py-0.5 font-medium text-fg hover:bg-surface-2 disabled:opacity-50"
+          >
+            {t("message.approval.approve")}
+          </button>
+        )}
+      </div>
+      {error && (
+        <div className="break-words text-danger" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ApprovalCard({ part }: { part: Extract<MessagePart, { type: "approval" }> }) {
+  if (part.auto) return <BlockedLine part={part} />;
   if (part.asked) return <AskedLine part={part} />;
   const known = APPROVAL[part.status];
   const st = known ? { label: t(known.label), tone: known.tone } : { label: part.status, tone: "neutral" as const };

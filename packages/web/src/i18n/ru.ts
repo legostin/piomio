@@ -347,6 +347,8 @@ export default {
   "message.approval.deny": "Отклонить",
   "message.approval.failed": "Ответ не отправлен: {error}",
   "message.approval.asked": "вы просили",
+  "message.approval.autoStopped": "автомод остановил: {reason}",
+  "message.approval.autoAllowed": "вы разрешили",
   "message.approval.askedFailed": "вы просили, но не вышло",
   "secret.title": "Секрет: {title}",
   "secret.placeholder": "Вставьте сюда",
