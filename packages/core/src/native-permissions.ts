@@ -2,12 +2,16 @@
 // file changes, Kimi Code's tools (which have no sandbox around them). The brains run them in their own processes, outside the hub's tool gateway; the CLI asks the hub here
 // (Claude Code through its permission prompt tool, Codex through its approval requests: tools/native-permission.ts).
 // Inside the agent's own folder (and the temp folders, and the CLI's own folder for the session's saved tool output)
-// they just work, and so does a command that runs inside the sandbox; reading or writing elsewhere in the person's
-// home, a command outside the sandbox, network from a command, and anything unknown wait for the person's yes on an
-// approval card, like an external action. Outside the home (system files, tools) reading is fine. The person's
-// credentials and the hub's own data (conversations, the vault, other agents' folders) are never theirs to read.
+// they just work, and so does a command that runs inside the sandbox or only reads (policy/commands.ts); the agent's
+// other folders (its earlier tasks and dialogs) it may read. Reading or writing elsewhere in the person's home, any
+// other command outside the sandbox, network from a command, and anything unknown wait for a yes: auto mode's
+// (policy/auto.ts) or the person's on an approval card, like an external action. Outside the home (system files,
+// tools) reading is fine. The person's credentials and the hub's own data (conversations, the vault, other agents'
+// folders) are never theirs to read, and a command that names them is refused.
+import { existsSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { deniedPathIn, readOnlyCommand } from "./policy/commands.ts";
 
 export type NativeAction =
   | { kind: "read"; tool: string; path: string }
@@ -28,6 +32,8 @@ export interface NativeScope {
   workspace: string;
   /** More folders it may read and write in (temp folders are always in). */
   roots?: string[];
+  /** Folders it may read but not write: its agent's whole folder, folders the person or auto mode opened this session. */
+  readRoots?: string[];
   /** Folders no tool of the brain may read or write, whatever the person says (see `confinement`). */
   denied?: string[];
   home?: string;
@@ -137,10 +143,14 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
   const home = scope.home ?? homedir();
   const own = [scope.workspace, claudeProjectDir(scope.workspace, home), ...(scope.roots ?? []), ...temps()];
   const mine = (p: string) => own.some((d) => within(p, d));
-  // Only the agent's own folders open a denied one (the hub's data may well sit in a temp folder).
+  const readable = (p: string) => (scope.readRoots ?? []).some((d) => within(p, d));
+  // Only the agent's own folders open a denied one (the hub's data may well sit in a temp folder); its agent's other
+  // folders only for reading.
   const exempt = [scope.workspace, ...(scope.roots ?? [])];
-  const denied = (p: string) => !exempt.some((d) => within(p, d)) && (scope.denied ?? []).some((d) => within(p, d));
-  if ((a.kind === "read" || a.kind === "write") && denied(a.path)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
+  const exemptRead = [...exempt, ...(scope.readRoots ?? [])];
+  const denied = (p: string, open: string[]) => !open.some((d) => within(p, d)) && (scope.denied ?? []).some((d) => within(p, d));
+  if (a.kind === "read" && denied(a.path, exemptRead)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
+  if (a.kind === "write" && denied(a.path, exempt)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
   switch (a.kind) {
     case "free":
       return { decision: "allow", reason: "no reach of its own" };
@@ -149,16 +159,20 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
     case "fetch":
       return { decision: "allow", reason: "the web, through the hub's egress rules" };
     case "read":
-      if (mine(a.path)) return { decision: "allow", reason: "inside the agent's folder" };
+      if (mine(a.path) || readable(a.path)) return { decision: "allow", reason: "inside the agent's folder" };
       // System files and tools are fine to read; the person's home is theirs.
       if (!within(a.path, home)) return { decision: "allow", reason: "outside the person's home" };
       return { decision: "ask", reason: "reads the person's files outside the agent's folder" };
     case "write":
       if (mine(a.path)) return { decision: "allow", reason: "inside the agent's folder" };
       return { decision: "ask", reason: "writes outside the agent's folder" };
-    case "command":
+    case "command": {
+      const env = { home, tmp: tmpdir() };
+      if (deniedPathIn(a.command, scope.denied ?? [], exemptRead, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
       if (!a.network && systemStatusOnly(a.command)) return { decision: "allow", reason: "only reads how the computer is doing" };
+      if (!a.network && readOnlyCommand(a.command, env)) return { decision: "allow", reason: "only reads" };
       return { decision: "ask", reason: a.network ? `a command reaching ${a.network}` : "a command outside the sandbox" };
+    }
     case "other":
       return { decision: "ask", reason: `an unknown tool (${a.tool})` };
   }
@@ -274,6 +288,29 @@ export function systemStatusOnly(command: string): boolean {
   });
 }
 
+/** The agent's whole folder (`<data>/workspaces/<agent>`) a session's folder sits in; undefined for any other layout. */
+export function agentRoot(workspace: string): string | undefined {
+  const root = dirname(workspace);
+  return basename(dirname(root)) === "workspaces" ? root : undefined;
+}
+
+/**
+ * The folder a read opens for the rest of the session once allowed: the repository it is in, else its own folder.
+ * Never the whole home or the disk.
+ */
+export function grantFolder(path: string, home = homedir()): string | undefined {
+  let start = path;
+  try {
+    if (!statSync(path).isDirectory()) start = dirname(path);
+  } catch {
+    start = dirname(path);
+  }
+  for (let dir = start; dir !== dirname(dir) && dir !== home; dir = dirname(dir)) {
+    if (existsSync(join(dir, ".git"))) return dir;
+  }
+  return start === home || start === dirname(start) ? undefined : start;
+}
+
 /** The path a summary shows: relative to the home when it is inside it. */
 export function shownPath(p: string, home = homedir()): string {
   return within(p, home) && p !== home ? `~${sep}${relative(home, p)}` : p;
@@ -315,10 +352,13 @@ const PRIVATE = [
 
 /**
  * What a sandboxed brain may not read: the person's credentials and private stores, and the hub's data folder (its
- * conversations, vault, memory and the other agents' folders), except the session's own workspace and `allow`.
+ * conversations, vault, memory and the other agents' folders), except the session's own workspace, the rest of its
+ * agent's folder (earlier tasks and dialogs) and `allow`.
  */
 export function confinement(dataDir: string, workspace: string, allow: string[] = [], home = homedir()): { denyRead: string[]; allowRead: string[]; allowWrite: string[] } {
-  return { denyRead: [...PRIVATE.map((p) => join(home, p)), dataDir], allowRead: [workspace, ...allow.filter((d) => within(d, dataDir))], allowWrite: userTemp() };
+  const own = agentRoot(workspace);
+  const allowRead = [workspace, ...(own && within(own, dataDir) ? [own] : []), ...allow.filter((d) => within(d, dataDir))];
+  return { denyRead: [...PRIVATE.map((p) => join(home, p)), dataDir], allowRead, allowWrite: userTemp() };
 }
 
 /**

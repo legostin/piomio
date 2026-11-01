@@ -16,7 +16,7 @@ import type { Redactor } from "../vault/redact.ts";
 import type { AgentRegistry } from "../agents.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
-import { classifyClaudeTool, classifyKimiTool, confinement, decideNative, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
+import { agentRoot, classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
 
 export const NATIVE_PERMISSION_TOOL = "native_permission";
 /** How long a brain's question waits for the person: the CLI holds its turn meanwhile. */
@@ -76,6 +76,12 @@ function askOf(a: NativeAction): ApprovalAsk {
 }
 
 export function registerNativePermission(d: NativePermissionDeps): void {
+  /** Folders a yes opened for reading, by session: the rest of a repository is read without asking again. */
+  const opened = new Map<string, Set<string>>();
+  const open = (sessionId: string, a: NativeAction) => {
+    const dir = a.kind === "read" ? grantFolder(a.path) : undefined;
+    if (dir) opened.set(sessionId, (opened.get(sessionId) ?? new Set()).add(dir));
+  };
   d.registry.register(
     {
       name: NATIVE_PERMISSION_TOOL,
@@ -98,7 +104,9 @@ export function registerNativePermission(d: NativePermissionDeps): void {
           ? classifyKimiTool(tool.slice(5), input, ctx.workspace)
           : classifyClaudeTool(tool, input, ctx.workspace);
       const { denyRead } = confinement(d.dataDir, ctx.workspace);
-      let decided = decideNative(action, { workspace: ctx.workspace, roots: d.roots(), denied: denyRead });
+      const own = agentRoot(ctx.workspace);
+      const readRoots = [...(own ? [own] : []), ...(opened.get(ctx.sessionId) ?? [])];
+      let decided = decideNative(action, { workspace: ctx.workspace, roots: d.roots(), readRoots, denied: denyRead });
 
       // The person's own rules: "deny" always wins; "always allow" (from an approval card) answers for them.
       if (decided.decision !== "deny") {
@@ -111,7 +119,10 @@ export function registerNativePermission(d: NativePermissionDeps): void {
           return simpleCommand(command) && ruleMatches(r, tool, ctx.agentId, spaced);
         });
         if (rules.some((r) => r.decision === "deny")) decided = { decision: "deny", reason: "denied by the person's rule" };
-        else if (decided.decision === "ask" && rules.some((r) => r.decision === "allow")) decided = { decision: "allow", reason: "allowed by the person's rule" };
+        else if (decided.decision === "ask" && rules.some((r) => r.decision === "allow")) {
+          decided = { decision: "allow", reason: "allowed by the person's rule" };
+          open(ctx.sessionId, action);
+        }
       }
       // Background work of an agent that may only suggest has nobody to ask.
       const agent = d.agents.get(ctx.agentId);
@@ -139,7 +150,10 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       if (ctx.taskId) d.store.updateTask(ctx.taskId, { status: "waiting_approval" });
       const outcome = await d.approvals.wait(approval.id, Math.max(WAIT_MS, d.settings.get().approvalInlineWaitSec * 1000));
       if (ctx.taskId) d.store.updateTask(ctx.taskId, { status: "running" });
-      if (outcome === "approved") return answer({ behavior: "allow", updatedInput: input });
+      if (outcome === "approved") {
+        open(ctx.sessionId, action);
+        return answer({ behavior: "allow", updatedInput: input });
+      }
       if (outcome === "timeout") {
         // Nothing runs it later: the brain's turn has moved on.
         try {
