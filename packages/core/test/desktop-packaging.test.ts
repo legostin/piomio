@@ -16,7 +16,7 @@ import { loadCatalogs } from "../../../packaging/desktop/locales.mjs";
 // @ts-ignore
 import { distributionXml, installerPage } from "../../../packaging/macos/generate.mjs";
 // @ts-ignore
-import { machOFiles } from "../../../packaging/macos/sign.mjs";
+import { machOFiles, tauriEnv } from "../../../packaging/macos/sign.mjs";
 // @ts-ignore
 import { latestJson } from "../../../packaging/desktop/latest-json.mjs";
 // @ts-ignore
@@ -183,5 +183,16 @@ describe("macOS signing", () => {
     writeFileSync(join(dir, "run.sh"), "#!/bin/sh\necho hi\n");
     symlinkSync(join(dir, "runtime", "x64", "bin", "node"), join(dir, "node-link"));
     expect((machOFiles(dir) as string[]).map((f) => f.slice(dir.length + 1)).sort()).toEqual(["bin/darwin-arm64/piomio-tailnet", "bin/universal", "runtime/x64/bin/node"]);
+  });
+
+  it("hands Tauri the notary sign-in only for a signed app with all of it, never an empty variable", () => {
+    const id = "Developer ID Application: Someone (TEAM123456)";
+    const signIn = { APPLE_ID: "a@b.c", APPLE_PASSWORD: "pw", APPLE_TEAM_ID: "TEAM123456" };
+    // A run without the secrets: Actions passes them empty, and Tauri would try to notarize the ad hoc app.
+    expect(tauriEnv({ PATH: "/bin", APPLE_ID: "", APPLE_PASSWORD: "" }, "")).toEqual({ PATH: "/bin" });
+    expect(tauriEnv({ PATH: "/bin", ...signIn }, "")).toEqual({ PATH: "/bin" });
+    expect(tauriEnv({ PATH: "/bin", ...signIn, APPLE_API_KEY: "" }, id)).toEqual({ PATH: "/bin", ...signIn });
+    // Signed without a team: signed, not notarized.
+    expect(tauriEnv({ PATH: "/bin", APPLE_ID: "a@b.c", APPLE_PASSWORD: "pw", APPLE_SIGNING_IDENTITY: id }, id)).toEqual({ PATH: "/bin", APPLE_SIGNING_IDENTITY: id });
   });
 });

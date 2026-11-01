@@ -21,7 +21,7 @@ import { parseArgs } from "node:util";
 import { ROOT, VERSION, npm, run, stage } from "./stage.mjs";
 import { loadCatalogs } from "./locales.mjs";
 import { buildPkg } from "../macos/pkg.mjs";
-import { canNotarize, installerIdentity, notarize, signNested, signingIdentity } from "../macos/sign.mjs";
+import { canNotarize, installerIdentity, notarize, signNested, signingIdentity, tauriEnv } from "../macos/sign.mjs";
 import { nsisHooks } from "../windows/generate.mjs";
 
 const mac = process.platform === "darwin";
@@ -69,7 +69,7 @@ if (test) config.plugins.updater = { dangerousInsecureTransportProtocol: true };
 const keyFile = join(homedir(), ".tauri", "piomio.key");
 const signingKey = process.env.TAURI_SIGNING_PRIVATE_KEY || (existsSync(keyFile) ? readFileSync(keyFile, "utf8").trim() : "");
 config.bundle.createUpdaterArtifacts = !!signingKey;
-const env = { ...process.env, ...(signingKey ? { TAURI_SIGNING_PRIVATE_KEY: signingKey, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "" } : {}) };
+const env = tauriEnv({ ...process.env, ...(signingKey ? { TAURI_SIGNING_PRIVATE_KEY: signingKey, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "" } : {}) }, identity);
 if (!test && !signingKey) console.log("no update signing key: building without update files");
 const configFile = join(build, "tauri.build.json");
 writeFileSync(configFile, JSON.stringify(config, null, 2));
