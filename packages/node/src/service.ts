@@ -11,6 +11,7 @@ import type { Logger } from "./info.ts";
 import { execRun, killTree } from "./exec.ts";
 import { fsList, fsRead, fsWrite } from "./fsops.ts";
 import { t as tLocal } from "./messages.ts";
+import { applyUpdate, type NodeUpdate } from "./self-update.ts";
 
 const short = (s: unknown, max = 160): string => {
   const t = typeof s === "string" ? s : JSON.stringify(s ?? "");
@@ -111,6 +112,12 @@ export class NodeService {
         .join("; ");
       this.log(tLocal("gateway.setup", { brains: brains || "—" }));
       return {};
+    });
+    // The hub's own version of this daemon (the machines block's "Update"): checked, swapped in, then a restart.
+    peer.handle("node.update", async (p: NodeUpdate) => {
+      const r = await applyUpdate(p);
+      this.log(tLocal("update.applied", { version: p.version }));
+      return r;
     });
     peer.handle("files.changes", (p: { cursor?: number; limit?: number }) => {
       if (!this.files) return { changes: [], cursor: Number(p?.cursor) || 0, more: false };

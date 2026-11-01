@@ -1,7 +1,8 @@
 // The machines in the sidebar: the hub's computer and the paired ones, a dot for each, and under a busy one who works
 // there and what they do right now. A row opens that dialog, group chat or task. Kept current by "machines.activity".
+// A machine with an update on offer (a server's hub, a node older than the hub) has "Update" on its row.
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import type { AgentDef, MachineActivity, MachineWork, WorkStep } from "@piomio/shared";
 import { useStore } from "../lib/store";
@@ -10,6 +11,8 @@ import { agents, ensureMachineActivity, machineActivity, session, team } from ".
 import { AgentAvatar } from "./AgentAvatar";
 import { cx } from "./ui";
 import { t, type MessageKey } from "../i18n";
+import { api, errorText } from "../lib/api";
+import { toast } from "../state/toast";
 
 const STEP: Record<WorkStep, MessageKey> = {
   thinking: "machines.step.thinking",
@@ -39,6 +42,25 @@ function WorkRow({ work, agent, href, onNavigate }: { work: MachineWork; agent?:
   );
 }
 
+/** "Update" until it is pressed, then "Updating…" until the machine runs the new version. */
+function UpdateButton({ machine }: { machine: MachineActivity }) {
+  const [asked, setAsked] = useState(false);
+  if (!machine.update) return null;
+  if (machine.updating || asked) return <span className="shrink-0 text-[12px] text-muted">{t("machines.updating")}</span>;
+  const update = () => {
+    setAsked(true);
+    api.post(`/api/machines/${encodeURIComponent(machine.id)}/update`).catch((e: unknown) => {
+      setAsked(false);
+      toast(errorText(e), "error");
+    });
+  };
+  return (
+    <button type="button" onClick={update} title={t("machines.updateTo", { version: machine.update })} className="shrink-0 text-[12px] font-medium text-accent-text hover:underline">
+      {t("machines.update")}
+    </button>
+  );
+}
+
 function MachineRow({ machine, byId, pathOf, onNavigate }: { machine: MachineActivity; byId: Map<string, AgentDef>; pathOf: (w: MachineWork) => string; onNavigate?: () => void }) {
   const busy = machine.work.length > 0;
   return (
@@ -46,6 +68,7 @@ function MachineRow({ machine, byId, pathOf, onNavigate }: { machine: MachineAct
       <div className="flex items-center gap-2.5 px-2.5 py-1" title={t(machine.online ? "machines.online" : "machines.offline")}>
         <span className={cx("size-1.5 shrink-0 rounded-full", !machine.online ? "ring-1 ring-muted/60" : busy ? "live-dot" : "bg-success")} />
         <span className={cx("min-w-0 flex-1 truncate text-[13px]", machine.online ? "text-fg" : "text-muted")}>{machine.name}</span>
+        <UpdateButton key={machine.update} machine={machine} />
       </div>
       {machine.work.map((w) => (
         <WorkRow key={`${w.conversationId}:${w.agentId}`} work={w} agent={byId.get(w.agentId)} href={pathOf(w)} onNavigate={onNavigate} />

@@ -24,7 +24,8 @@ import { hubLocale, t, tFor } from "../i18n.ts";
 import { listIntegrations } from "../integrations.ts";
 import type { InstallPreview } from "../plugins/host.ts";
 import { ruleMatches } from "../policy/engine.ts";
-import { inviteUrl, machineHubUrl } from "../pairing.ts";
+import { hubName, inviteUrl, machineHubUrl } from "../pairing.ts";
+import { UpdateError } from "../self-update.ts";
 import { isSetupStep, SETUP_STEPS } from "../setup.ts";
 import { sanitizeToolName } from "./registry.ts";
 import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, skillSaveSummary } from "../taught-skills.ts";
@@ -697,6 +698,45 @@ export function registerHubTools(hub: Hub): void {
   );
 
   // ---------- the cluster: hub replicas ----------
+
+  reg(
+    {
+      name: "machine_update",
+      effect: "local-write",
+      description:
+        "Update Piomio on a machine. \"local\" (the default) is this hub when it was installed on a server with install.sh: it downloads the new release, " +
+        "checks it, restarts and is back in about a minute, and goes back to the old version by itself if the new one does not start. A paired machine " +
+        "(id or name) gets this hub's version of its program and restarts in a few seconds. The machines block shows the same Update button.",
+      inputSchema: obj({ machine: { type: "string", description: '"local" for this hub, else a machine\'s id or name' } }),
+    },
+    async (i) => {
+      const asked = String(i.machine ?? "").trim() || "local";
+      const local = asked === "local" || asked.toLowerCase() === hubName().toLowerCase();
+      const m = local ? undefined : hub.machines.find(asked);
+      if (!local && !m) return text(`No machine ${asked}. See machine_list.`, true);
+      const name = m?.name ?? "This hub";
+      try {
+        const r = await hub.updates.update(m?.id ?? "local");
+        return text(
+          local
+            ? `Updating this hub to Piomio ${r.version}: it downloads and checks the release, then restarts (this conversation pauses for about a minute). If something fails it stays on ${hub.config.version} and says so.`
+            : `${name} is updating to ${r.version}: it restarts and comes back online in a few seconds.`,
+        );
+      } catch (e: any) {
+        if (!(e instanceof UpdateError)) return text(`The update failed: ${e?.message ?? e}`, true);
+        const why: Record<string, string> = {
+          notInstalled:
+            "This hub was not installed with the server installer (it runs in the desktop app or in Docker), so it can't update itself from here: the desktop app updates from its tray menu, Docker with `docker compose pull && docker compose up -d`.",
+          upToDate: `${name} already runs the latest version (${e.version}).`,
+          unknown: `No machine ${asked}.`,
+          offline: `${name} is offline; it can be updated once it is back.`,
+          notSelf: `${name} runs inside the Piomio app on that computer, which updates it from its tray menu.`,
+          noBundle: "This hub has no machine program to send (packages/node/dist/piomio-node.mjs is missing).",
+        };
+        return text(why[e.reason] ?? e.message, e.reason !== "upToDate");
+      }
+    },
+  );
 
   reg(
     {

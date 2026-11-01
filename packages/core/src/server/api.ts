@@ -15,6 +15,7 @@ import { draftPatch } from "../agent-drafts.ts";
 import { applyThinking } from "../thinking.ts";
 import { pipeToLeader } from "./forward.ts";
 import { attachmentDisposition, HttpError, safeFile, sendFile } from "./http.ts";
+import { UpdateError } from "../self-update.ts";
 import { imageFileName, MediaError } from "../media.ts";
 import { entryRef, googleScopes, listCatalog, listIntegrations, logoFile } from "../integrations.ts";
 import { callbackParams } from "../connections.ts";
@@ -494,6 +495,15 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   // One link connects a computer or a phone (invites.ts); a phone's chat may invite a computer too.
   api.post("/api/invites", async () => hub.createInvite());
   api.delete("/api/invites/:code", async (req) => ({ ok: hub.invites.revoke((req.params as { code: string }).code) }));
+  // "Update" on a machine's row: this hub's own update on a server install ("local"), or a machine's daemon.
+  api.post("/api/machines/:id/update", async (req) => {
+    try {
+      return await hub.updates.update((req.params as { id: string }).id);
+    } catch (e) {
+      if (e instanceof UpdateError) throw new HttpError(409, `update.${e.reason}`, { version: e.version ?? "" });
+      throw e;
+    }
+  });
   api.patch("/api/machines/:id", async (req) => hub.machines.rename((req.params as any).id, String((req.body as any)?.name ?? "")));
   api.delete("/api/machines/:id", async (req) => {
     hub.machines.revoke((req.params as any).id);

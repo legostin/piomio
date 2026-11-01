@@ -1,0 +1,27 @@
+#!/bin/sh
+# Piomio on a Linux server (install.sh puts this at ~/.local/lib/piomio/piomio, linked from ~/.local/bin/piomio):
+# systemd's piomio.service runs `piomio start`; `piomio version`, `reset-password`, `backup`, `uninstall`… run the
+# same hub CLI with the version `current` points at (packaging/linux/start.mjs).
+# While an update is on trial (packages/core/src/self-update.ts writes `trial` = "<from> <to> <starts>"), each start
+# is counted; the new version removes the file once it is up. After three starts that never got there, `current`
+# goes back to the previous version and `rolled-back` tells it to restore the database and say what happened.
+set -eu
+
+ROOT="${PIOMIO_INSTALL_ROOT:-$HOME/.local/lib/piomio}"
+export PIOMIO_INSTALL_ROOT="$ROOT"
+
+if [ "${1:-start}" = start ] && [ -f "$ROOT/trial" ]; then
+  read -r from to starts <"$ROOT/trial" || true
+  starts=$((${starts:-0} + 1))
+  if [ "$starts" -gt 3 ] && [ -n "${from:-}" ] && [ -d "$ROOT/versions/$from" ]; then
+    ln -sfn "versions/$from" "$ROOT/current.rollback"
+    mv -Tf "$ROOT/current.rollback" "$ROOT/current"
+    printf '%s %s\n' "$from" "$to" >"$ROOT/rolled-back"
+    rm -f "$ROOT/trial"
+    echo "[piomio] $to did not start $((starts - 1)) times: back to $from" >&2
+  else
+    printf '%s %s %s\n' "$from" "$to" "$starts" >"$ROOT/trial"
+  fi
+fi
+
+exec "$ROOT/current/runtime/bin/node" --disable-warning=ExperimentalWarning "$ROOT/current/packaging/linux/start.mjs" "$@"

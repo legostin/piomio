@@ -2,7 +2,7 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, ThinkingView } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, MachineInfo, ThinkingView } from "@piomio/shared";
 import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
@@ -29,6 +29,7 @@ import { Team } from "./team.ts";
 import { roadRoute } from "./routing.ts";
 import { UserLocations } from "./user-location.ts";
 import { announceUpdate } from "./updates.ts";
+import { clearRolledBack, confirmStarted, HubUpdates, type StartState } from "./self-update.ts";
 import { FEED_RUN_TOOLS, Feeds } from "./feeds.ts";
 import { SetupChats } from "./setup-chats.ts";
 import { registerFeedTools } from "./tools/feed-tools.ts";
@@ -119,6 +120,10 @@ export class Hub {
   cluster: Cluster;
   /** What every machine is doing now, for the machines block (activity.ts). */
   activity: MachineActivityFeed;
+  /** Updates on the person's button: this hub's on a server install, and the machines' (self-update.ts). */
+  updates: HubUpdates;
+  /** What cli.ts found of an update in progress before the database opened (settleBeforeStart). */
+  startState: StartState = {};
   /** Phones paired with the hub (the Piomio app) and the device port they talk to. */
   devices: DeviceRegistry;
   /** Where the user is, when their phone shares it (user-location.ts). */
@@ -214,6 +219,21 @@ export class Hub {
     this.cluster = new Cluster(this);
     this.machines.cluster = this.cluster;
     this.activity = new MachineActivityFeed(this.bus, this.machines);
+    this.updates = new HubUpdates({
+      config,
+      db: this.db,
+      bus: this.bus,
+      tell: (note) => this.tellDefaultAgent(note),
+      // cli.ts stops the hub on SIGTERM; systemd then starts the version `current` points at.
+      restart: () => void process.kill(process.pid, "SIGTERM"),
+      machine: (id) => {
+        const m = this.machines.get(id);
+        return m ? { info: m.info, online: m.status === "online" } : undefined;
+      },
+      sendNode: (id, update) => this.machines.sendUpdate(id, update),
+    });
+    this.activity.updates = this.updates;
+    this.bus.on("machine.updated", (m: { id?: string; info?: MachineInfo } | undefined) => m?.id && this.updates.machineChanged(m.id, m.info));
     this.devices = new DeviceRegistry({ db: this.db, bus: this.bus, audit: this.audit, invites: this.invites });
     this.locations = new UserLocations(this.settings, (id) => !!this.devices.get(id));
     this.secrets = new SecretIntake({ db: this.db, bus: this.bus, audit: this.audit, vault: this.vault, plugins: () => this.plugins });
@@ -881,6 +901,12 @@ export class Hub {
     if (cfg.installClis) await this.userPath.refresh();
     await this.cluster.start();
     if (this.cluster.leads()) await this.lead();
+    if (cfg.installRoot) this.settleUpdate(cfg.installRoot);
+    this.updates.start();
+    // No brain works yet: the CLIs are looked for again, so one signed in over SSH is found without "Check again".
+    const recheck = setInterval(() => void this.recheckBrains(), 30_000);
+    recheck.unref();
+    this.timers.push(recheck);
     const sweep = setInterval(() => this.auth.sweep(), 3600_000);
     sweep.unref();
     this.timers.push(sweep);
@@ -896,11 +922,37 @@ export class Hub {
     }
   }
 
+  /** A note to the default agent, which tells the person; only the replica that leads talks. */
+  private tellDefaultAgent(note: string): void {
+    if (!this.leading) return;
+    this.runner.tellAgent(this.store.agentConversation(this.settings.get().defaultAgent).id, note);
+  }
+
+  /** The new version is up, so its update stays; or the launcher went back to this one, which the person hears. */
+  private settleUpdate(root: string): void {
+    if (this.startState.trial) confirmStarted(root, this.config.version);
+    const back = this.startState.rolledBack;
+    if (back) this.updates.rolledBack(back.to);
+    if (back && this.leading) {
+      this.tellDefaultAgent(
+        `[System] The update to Piomio ${back.to} did not start, so the server went back to ${back.from} by itself; everything is as it was before the update. ` +
+          "Tell the person in one short message. The server's log: `journalctl --user -u piomio`.",
+      );
+      clearRolledBack(root);
+    }
+  }
+
+  private async recheckBrains(): Promise<void> {
+    if (!this.leading || (await this.setup.usable().catch(() => true))) return;
+    await this.refreshBrains().catch(() => {});
+  }
+
   private stopping = false;
 
   async stop(): Promise<void> {
     this.stopping = true;
     for (const t of this.timers) clearInterval(t);
+    this.updates.stop();
     await this.cluster.stop();
     this.notifier.stop();
     this.feeds.stop();
