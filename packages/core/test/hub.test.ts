@@ -135,7 +135,8 @@ describe("hub (integration)", () => {
     expect((await web.raw("POST", "/api/conversations", { title: "x" }, { origin: "null", "sec-fetch-site": "same-origin" })).status).toBe(200);
     expect((await web.raw("POST", "/api/conversations", { title: "x" }, { origin: "https://evil.example", "sec-fetch-site": "same-origin" })).status).toBe(403);
     expect((await web.raw("POST", "/api/conversations", { title: "x" })).status).toBe(200);
-    await web.req("PATCH", "/api/settings", { approvalInlineWaitSec: 1 });
+    // No quiet hours: the hub runs in UTC, and from 23:00 to 08:00 its alerts would wait for the digest instead.
+    await web.req("PATCH", "/api/settings", { approvalInlineWaitSec: 1, quietHours: { enabled: false, start: "23:00", end: "08:00" } });
   });
 
 
