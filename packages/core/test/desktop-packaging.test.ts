@@ -16,6 +16,8 @@ import { loadCatalogs } from "../../../packaging/desktop/locales.mjs";
 // @ts-ignore
 import { distributionXml, installerPage } from "../../../packaging/macos/generate.mjs";
 // @ts-ignore
+import { machOFiles } from "../../../packaging/macos/sign.mjs";
+// @ts-ignore
 import { latestJson } from "../../../packaging/desktop/latest-json.mjs";
 // @ts-ignore
 import { nsisHooks, nsisString } from "../../../packaging/windows/generate.mjs";
@@ -164,5 +166,22 @@ describe("desktop updates", () => {
       },
     });
     expect(() => latestJson(dir, "0.3.0", "legostin/piomio")).toThrow(/missing piomio-0.3.0-mac.app.tar.gz/);
+  });
+});
+
+describe("macOS signing", () => {
+  it("finds the binaries to sign by their first bytes, not a Java class or a script", () => {
+    const dir = tmp();
+    const file = (rel: string, bytes: number[]) => {
+      mkdirSync(join(dir, rel, ".."), { recursive: true });
+      writeFileSync(join(dir, rel), Buffer.from([...bytes, 0, 0, 0, 0, 0, 0, 0, 0]));
+    };
+    file("bin/darwin-arm64/piomio-tailnet", [0xcf, 0xfa, 0xed, 0xfe]);
+    file("runtime/x64/bin/node", [0xcf, 0xfa, 0xed, 0xfe]);
+    file("bin/universal", [0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 2]);
+    file("lib/Main.class", [0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 0x41]);
+    writeFileSync(join(dir, "run.sh"), "#!/bin/sh\necho hi\n");
+    symlinkSync(join(dir, "runtime", "x64", "bin", "node"), join(dir, "node-link"));
+    expect((machOFiles(dir) as string[]).map((f) => f.slice(dir.length + 1)).sort()).toEqual(["bin/darwin-arm64/piomio-tailnet", "bin/universal", "runtime/x64/bin/node"]);
   });
 });

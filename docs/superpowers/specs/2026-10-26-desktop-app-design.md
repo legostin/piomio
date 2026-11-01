@@ -182,6 +182,14 @@ runs in passive mode. A failed install starts the hub again.
 - Building: with the signing key (`TAURI_SIGNING_PRIVATE_KEY`, a GitHub secret for CI, or `~/.tauri/piomio.key` on a
   release machine) `build.mjs` turns on `createUpdaterArtifacts` and also writes `piomio-<version>-mac.app.tar.gz` and
   the Windows installer's `.sig`. Without the key the installers are built as before, without update files.
+- Developer ID (`packaging/macos/sign.mjs`): with the secrets `APPLE_CERTIFICATE` (a .p12 with the "Developer ID
+  Application" identity, base64) and `APPLE_CERTIFICATE_PASSWORD`, `desktop.yml` imports the identity into a keychain
+  of the run's own. `build.mjs` then signs our binaries in the staged hub (the Tailscale node; Node's keep Node's
+  signature) with the hardened runtime and a timestamp, Tauri signs the app, and with `APPLE_ID` + `APPLE_PASSWORD`
+  (an app-specific password; the team comes from the identity) notarizes and staples it; the disk image is signed,
+  notarized and stapled after it. A "Developer ID Installer" identity in the same .p12 signs the .pkg too. The job
+  checks the signatures, the tickets and Gatekeeper's verdict. Without the secrets (a fork's PR) the app is signed
+  ad hoc as before.
 - Releasing: `release.yml` passes the secret to `desktop.yml` and writes `latest.json` with
   `packaging/desktop/latest-json.mjs` (the universal Mac app for both architectures, the Windows installer). Updates
   need increasing versions: the tag is the root `package.json` version.
