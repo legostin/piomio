@@ -1,5 +1,5 @@
 // The server install's updates (self-update.ts): the files of an install root, the release check, the hub's own
-// update (download, check, snapshot, switch) and the machines it updates.
+// update (download, check, snapshot, switch) and the machines it updates; the desktop app's update on the same button.
 import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventBus } from "../src/bus.ts";
-import { HubUpdates, archiveName, clearRolledBack, confirmStarted, currentVersion, installLayout, latestOffer, settleBeforeStart, switchTo, UpdateError, type HubUpdatesDeps } from "../src/self-update.ts";
+import { HubUpdates, archiveName, clearRolledBack, confirmStarted, currentVersion, desktopOffer, desktopPlatform, installLayout, latestOffer, settleBeforeStart, switchTo, UpdateError, type HubUpdatesDeps } from "../src/self-update.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "owl-selfupdate-"));
 
@@ -215,5 +215,82 @@ describe("machines", () => {
     m = { online: false, info: info("0.2.3", true) };
     await expect(u.update("m1")).rejects.toMatchObject({ reason: "offline" });
     u.stop();
+  });
+});
+
+describe("the desktop app's update", () => {
+  /** The desktop app's latest.json (packaging/desktop/latest-json.mjs). */
+  const latest = (version: string, platforms = ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"]) => ({
+    version,
+    platforms: Object.fromEntries(platforms.map((p) => [p, { url: `https://example.test/${p}`, signature: "sig" }])),
+  });
+
+  it("knows the app's name for this computer", () => {
+    expect(desktopPlatform("darwin", "arm64")).toBe("darwin-aarch64");
+    expect(desktopPlatform("darwin", "x64")).toBe("darwin-x86_64");
+    expect(desktopPlatform("win32", "x64")).toBe("windows-x86_64");
+    expect(desktopPlatform("linux", "x64")).toBeUndefined();
+  });
+
+  it("offers a newer version that latest.json lists for this computer", async () => {
+    expect(await desktopOffer("o/r", "0.2.4", "darwin-aarch64", jsonFetch(latest("0.3.0")))).toEqual({ version: "0.3.0" });
+    expect(await desktopOffer("o/r", "0.3.0", "darwin-aarch64", jsonFetch(latest("0.3.0")))).toBeUndefined();
+    expect(await desktopOffer("o/r", "0.2.4", "darwin-aarch64", jsonFetch(latest("0.3.0", ["windows-x86_64"])))).toBeUndefined();
+    await expect(desktopOffer("o/r", "0.2.4", "darwin-aarch64", jsonFetch({}, 404))).rejects.toThrow("404");
+  });
+
+  function desktop(over: Partial<HubUpdatesDeps> = {}) {
+    const launched: string[][] = [];
+    let now = Date.parse("2026-11-02T10:00:00Z");
+    const t = updates(root(), {
+      config: { desktopApp: "/Applications/Piomio.app/Contents/MacOS/piomio", version: "0.2.4", releasesRepo: "o/r", dataDir: tmp(), appRoot: tmp() },
+      platform: "darwin",
+      arch: "arm64",
+      fetch: jsonFetch(latest("0.3.0")),
+      launch: (file, args) => void launched.push([file, ...args]),
+      now: () => now,
+      ...over,
+    });
+    return { ...t, launched, later: (ms: number) => void (now += ms) };
+  }
+
+  it("is how a hub in the desktop app updates; elsewhere the app is not asked", () => {
+    expect(desktop().u.kind).toBe("desktop");
+    expect(desktop({ platform: "linux" }).u.kind).toBeUndefined();
+    expect(updates(root("0.2.4")).u.kind).toBe("server");
+  });
+
+  it("asks the app to install, shows it updating, and hears why when the app can't", async () => {
+    const { u, launched, told, restart } = desktop();
+    await u.check();
+    expect(told[0]).toContain("the Piomio app on this computer runs 0.2.4");
+    expect(u.offerFor("local")).toEqual({ update: "0.3.0" });
+    expect(await u.update("local")).toEqual({ version: "0.3.0" });
+    expect(launched).toEqual([["/Applications/Piomio.app/Contents/MacOS/piomio", "--install-update"]]);
+    expect(u.offerFor("local")).toEqual({ update: "0.3.0", updating: true });
+    // A second press while it installs does not ask again; the app restarts the hub itself.
+    await u.update("local");
+    expect(launched).toHaveLength(1);
+    expect(restart).not.toHaveBeenCalled();
+    u.desktopFailed("no network");
+    expect(u.offerFor("local")).toEqual({ update: "0.3.0" });
+    expect(told[1]).toContain("could not update (no network); it stays on 0.2.4");
+    u.stop();
+  });
+
+  it("offers each version once and at most once a day", async () => {
+    const { u, told, later } = desktop();
+    await u.check();
+    later(3600_000);
+    (u as any).d.fetch = jsonFetch(latest("0.3.1"));
+    await u.check();
+    // The button already offers 0.3.1; the chat hears of it a day after the last offer.
+    expect(u.offerFor("local")).toEqual({ update: "0.3.1" });
+    expect(told).toHaveLength(1);
+    later(24 * 3600_000);
+    await u.check();
+    await u.check();
+    expect(told).toHaveLength(2);
+    expect(told[1]).toContain("Piomio 0.3.1 is out");
   });
 });

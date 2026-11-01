@@ -42,7 +42,10 @@ function WorkRow({ work, agent, href, onNavigate }: { work: MachineWork; agent?:
   );
 }
 
-/** "Update" until it is pressed, then "Updating…" until the machine runs the new version. */
+/**
+ * "Update" until it is pressed, then "Updating…" until the machine runs the new version; an update that ended without
+ * it (the desktop app could not install) shows "Update" again, since the row's key changes with `updating`.
+ */
 function UpdateButton({ machine }: { machine: MachineActivity }) {
   const [asked, setAsked] = useState(false);
   if (!machine.update) return null;
@@ -68,7 +71,7 @@ function MachineRow({ machine, byId, pathOf, onNavigate }: { machine: MachineAct
       <div className="flex items-center gap-2.5 px-2.5 py-1" title={t(machine.online ? "machines.online" : "machines.offline")}>
         <span className={cx("size-1.5 shrink-0 rounded-full", !machine.online ? "ring-1 ring-muted/60" : busy ? "live-dot" : "bg-success")} />
         <span className={cx("min-w-0 flex-1 truncate text-[13px]", machine.online ? "text-fg" : "text-muted")}>{machine.name}</span>
-        <UpdateButton key={machine.update} machine={machine} />
+        <UpdateButton key={`${machine.update}:${!!machine.updating}`} machine={machine} />
       </div>
       {machine.work.map((w) => (
         <WorkRow key={`${w.conversationId}:${w.agentId}`} work={w} agent={byId.get(w.agentId)} href={pathOf(w)} onNavigate={onNavigate} />

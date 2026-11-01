@@ -346,7 +346,7 @@ export default {
   "cli.backupDone": "Резервная копия: {path} (vault остаётся зашифрованным)",
   "cli.uninstalled": "Piomio удалён. Данные остались в {data} (разговоры, vault, рабочие папки): удалите эту папку сами, если они больше не нужны.",
   "cli.uninstallNotServer": "piomio uninstall удаляет установку на сервере (install.sh). Приложение для компьютера удаляется как любое приложение, Docker — через docker compose down.",
-  "update.notInstalled": "Этот хаб обновляется иначе: приложение для компьютера — из меню в трее, Docker — через docker compose pull.",
+  "update.notInstalled": "Этот хаб обновляется иначе: Docker — через docker compose pull, исходный код — через git pull.",
   "update.upToDate": "Уже последняя версия ({version}).",
   "update.unknown": "Такой машины нет.",
   "update.offline": "Машина не в сети.",

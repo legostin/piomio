@@ -26,6 +26,8 @@ pub struct Args {
   pub quit: bool,
   /// `--update`: the menu's update item from a script (install the downloaded update, or check now).
   pub update: bool,
+  /// `--install-update`: the hub's Update button (check, download and install now; update.rs install_now).
+  pub install_update: bool,
 }
 
 impl Args {
@@ -37,6 +39,7 @@ impl Args {
         "--background" => out.background = true,
         "--quit" => out.quit = true,
         "--update" => out.update = true,
+        "--install-update" => out.install_update = true,
         "--mode" => out.mode = it.next().and_then(|m| Mode::parse(&m)),
         _ => {}
       }
@@ -235,6 +238,12 @@ fn spec(st: &AppState, mode: Mode) -> Spec {
   match mode {
     Mode::Hub => {
       env.push(("PIOMIO_DATA_DIR".into(), arg(&p.hub_data)));
+      // The hub's Update button runs the app with `--install-update` (packages/core/src/self-update.ts).
+      if crate::update::enabled(st) {
+        if let Ok(exe) = std::env::current_exe() {
+          env.push(("PIOMIO_DESKTOP_APP".into(), arg(&exe)));
+        }
+      }
       Spec { program: p.node.clone(), args: vec![arg(&p.launch()), "run".into()], env, log: p.hub_log.clone(), ports: p.hub_ports(), restart_delay: delay }
     }
     Mode::Node => {
@@ -413,8 +422,9 @@ pub fn on_window_link(app: &AppHandle, url: &Url) {
   });
 }
 
-/// A second launch hands its arguments to this one: `--quit` stops the app, `--mode` makes the first-run choice when
-/// none was made, anything else shows the window. Links arrive through the deep-link plugin.
+/// A second launch hands its arguments to this one: `--quit` stops the app, `--update` and `--install-update` are the
+/// menu's update item and the hub's Update button, `--mode` makes the first-run choice when none was made, anything
+/// else shows the window. Links arrive through the deep-link plugin.
 pub fn second_instance(app: &AppHandle, argv: Vec<String>) {
   let scheme = format!("{}:", app.state::<AppState>().paths.flavor.scheme());
   let link = argv.iter().any(|a| a.starts_with(&scheme));
@@ -425,6 +435,10 @@ pub fn second_instance(app: &AppHandle, argv: Vec<String>) {
   }
   if args.update {
     crate::update::on_menu(app);
+    return;
+  }
+  if args.install_update {
+    crate::update::install_now(app);
     return;
   }
   let unset = app.state::<AppState>().settings.lock().unwrap().mode.is_none();
@@ -562,9 +576,10 @@ mod tests {
 
   #[test]
   fn parses_flags() {
-    assert_eq!(args(&["--mode", "hub", "--background"]), Args { background: true, mode: Some(Mode::Hub), quit: false, update: false });
+    assert_eq!(args(&["--mode", "hub", "--background"]), Args { background: true, mode: Some(Mode::Hub), quit: false, update: false, install_update: false });
     assert!(args(&["--quit"]).quit);
     assert!(args(&["--update"]).update);
+    assert!(args(&["--install-update"]).install_update);
     assert_eq!(args(&["--mode", "x"]).mode, None);
     assert_eq!(args(&["piomio://pair?hub=x&code=y"]), Args::default());
   }

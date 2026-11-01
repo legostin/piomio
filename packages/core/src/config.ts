@@ -79,7 +79,15 @@ export interface Config {
    * to the one that runs, the launcher. Such a hub updates itself on the person's button (self-update.ts).
    */
   installRoot?: string;
-  /** A release in the shape of GitHub's `releases/latest` to update from instead (PIOMIO_UPDATE_URL): a local check. */
+  /**
+   * The desktop app's executable when it runs this hub and updates itself (PIOMIO_DESKTOP_APP, set by the app): the
+   * hub's Update button runs it with `--install-update` (self-update.ts).
+   */
+  desktopApp?: string;
+  /**
+   * Another release to update from (PIOMIO_UPDATE_URL): a local check. A server install reads it in the shape of
+   * GitHub's `releases/latest`, the desktop app (and its hub) as its latest.json.
+   */
   updateUrl?: string;
   /** For tests: skip starting builtin plugins. */
   plugins: "all" | "none" | string[];
@@ -161,6 +169,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     version: appVersion(),
     releasesRepo: env.PIOMIO_RELEASES_REPO || "legostin/piomio",
     ...(env.PIOMIO_INSTALL_ROOT ? { installRoot: resolve(env.PIOMIO_INSTALL_ROOT) } : {}),
+    ...(env.PIOMIO_DESKTOP === "1" && env.PIOMIO_DESKTOP_APP ? { desktopApp: env.PIOMIO_DESKTOP_APP } : {}),
     ...(env.PIOMIO_UPDATE_URL ? { updateUrl: env.PIOMIO_UPDATE_URL } : {}),
     plugins: (env.PIOMIO_PLUGINS ?? "all") === "all" ? "all" : env.PIOMIO_PLUGINS === "none" ? "none" : (env.PIOMIO_PLUGINS ?? "").split(","),
   };

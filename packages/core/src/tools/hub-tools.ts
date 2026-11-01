@@ -712,8 +712,9 @@ export function registerHubTools(hub: Hub): void {
       name: "machine_update",
       effect: "local-write",
       description:
-        "Update Piomio on a machine. \"local\" (the default) is this hub when it was installed on a server with install.sh: it downloads the new release, " +
-        "checks it, restarts and is back in about a minute, and goes back to the old version by itself if the new one does not start. A paired machine " +
+        "Update Piomio on a machine. \"local\" (the default) is this hub. When it runs in the desktop app, the app downloads its update, restarts with it " +
+        "and is back in a minute or two. When it was installed on a server with install.sh, it downloads the new release, checks it, restarts and is back " +
+        "in about a minute, and goes back to the old version by itself if the new one does not start. A paired machine " +
         "(id or name) gets this hub's version of its program and restarts in a few seconds. The machines block shows the same Update button.",
       inputSchema: obj({ machine: { type: "string", description: '"local" for this hub, else a machine\'s id or name' } }),
     },
@@ -726,15 +727,17 @@ export function registerHubTools(hub: Hub): void {
       try {
         const r = await hub.updates.update(m?.id ?? "local");
         return text(
-          local
-            ? `Updating this hub to Piomio ${r.version}: it downloads and checks the release, then restarts (this conversation pauses for about a minute). If something fails it stays on ${hub.config.version} and says so.`
-            : `${name} is updating to ${r.version}: it restarts and comes back online in a few seconds.`,
+          !local
+            ? `${name} is updating to ${r.version}: it restarts and comes back online in a few seconds.`
+            : hub.updates.kind === "desktop"
+              ? `The Piomio app is updating to ${r.version}: it downloads the update, then restarts with it (this conversation pauses for a minute or two). If it can't, it stays on ${hub.config.version} and says so.`
+              : `Updating this hub to Piomio ${r.version}: it downloads and checks the release, then restarts (this conversation pauses for about a minute). If something fails it stays on ${hub.config.version} and says so.`,
         );
       } catch (e: any) {
         if (!(e instanceof UpdateError)) return text(`The update failed: ${e?.message ?? e}`, true);
         const why: Record<string, string> = {
           notInstalled:
-            "This hub was not installed with the server installer (it runs in the desktop app or in Docker), so it can't update itself from here: the desktop app updates from its tray menu, Docker with `docker compose pull && docker compose up -d`.",
+            "This hub runs neither in the desktop app nor from the server installer (it runs in Docker or from the source code), so it can't update itself from here: Docker updates with `docker compose pull && docker compose up -d`, the source code with `git pull`.",
           upToDate: `${name} already runs the latest version (${e.version}).`,
           unknown: `No machine ${asked}.`,
           offline: `${name} is offline; it can be updated once it is back.`,

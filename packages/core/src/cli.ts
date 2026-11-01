@@ -62,8 +62,10 @@ async function main(): Promise<void> {
       };
       process.on("SIGINT", () => void shutdown("SIGINT"));
       process.on("SIGTERM", () => void shutdown("SIGTERM"));
-      // Run by the desktop app: its stdin carries `stop` and sign-in tickets; closing it stops the hub.
-      if (process.env.PIOMIO_DESKTOP === "1") readDesktopCommands(process.stdin, { stop: () => void shutdown("stop"), ticket: (t) => hub.desktopTickets.add(t) });
+      // Run by the desktop app: its stdin carries `stop`, sign-in tickets and a failed update; closing it stops the hub.
+      if (process.env.PIOMIO_DESKTOP === "1") {
+        readDesktopCommands(process.stdin, { stop: () => void shutdown("stop"), ticket: (t) => hub.desktopTickets.add(t), updateFailed: (why) => hub.updates.desktopFailed(why) });
+      }
       process.on("unhandledRejection", (e) => console.error("[piomio] unhandled rejection:", e));
       await hub.start();
       return;

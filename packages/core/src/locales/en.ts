@@ -347,7 +347,7 @@ export default {
   "cli.backupDone": "Backup: {path} (the vault stays encrypted)",
   "cli.uninstalled": "Piomio is removed. Its data stays in {data} (conversations, the vault, workspaces): delete that folder yourself if you no longer need it.",
   "cli.uninstallNotServer": "piomio uninstall removes a server install (install.sh). The desktop app uninstalls like any app; Docker with docker compose down.",
-  "update.notInstalled": "This hub updates another way: the desktop app from its tray menu, Docker with docker compose pull.",
+  "update.notInstalled": "This hub updates another way: Docker with docker compose pull, the source code with git pull.",
   "update.upToDate": "Already on the latest version ({version}).",
   "update.unknown": "There is no such machine.",
   "update.offline": "The machine is offline.",
