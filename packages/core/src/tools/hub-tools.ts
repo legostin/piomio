@@ -41,7 +41,7 @@ const SECRET_KEY = /key|token|secret|password/i;
 /** Tools that only put a card in front of the user, who then decides: fine even after outside content was read. */
 const CARDS = new Set(["secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
-const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save"]);
+const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete"]);
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
 export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign"];
 
@@ -180,13 +180,14 @@ export function registerHubTools(hub: Hub): void {
       name: "agents_list",
       effect: "read",
       description:
-        "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative, the skills given to them (not counting the whole team's) and which one is the default.",
+        "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative, the skills given to them (not counting the whole team's), which one is the default, which are pinned and which sleep in the archive.",
       inputSchema: obj({}),
     },
     () => {
       const def = hub.settings.get().defaultAgent;
+      const { pinned } = hub.agentsState.get();
       return json(
-        hub.agents.list().map((a) => ({
+        hub.agents.all().map((a) => ({
           id: a.id,
           name: a.name,
           description: a.description,
@@ -199,6 +200,8 @@ export function registerHubTools(hub: Hub): void {
           skills: hub.skills.ownOf(a.id),
           source: a.source,
           default: a.id === def,
+          ...(pinned.includes(a.id) ? { pinned: true } : {}),
+          ...(hub.agents.isArchived(a.id) ? { archived: true } : {}),
         })),
       );
     },
@@ -244,14 +247,110 @@ export function registerHubTools(hub: Hub): void {
     },
   );
 
+  /** Archiving and deleting agents is the default agent's job: another one is told whom to ask. */
+  const onlyDefault = (ctx: ToolCallContext): ToolResult | undefined => {
+    const def = hub.settings.get().defaultAgent;
+    if (ctx.agentId === def) return undefined;
+    const name = hub.agents.get(def) ? agentName(hub.agents.get(def)!, hubLocale()) : def;
+    return text(`Only the default agent (${name}) archives and deletes agents. Tell the person to ask it in its chat, or to use the agent's menu in the list.`, true);
+  };
+  /** The default agent's place goes to `successor` when it is the one leaving; the error says what to do without one. */
+  const successorOf = (id: string, successor: unknown): { successor?: string } | ToolResult => {
+    if (id !== hub.settings.get().defaultAgent) return {};
+    const next = typeof successor === "string" ? hub.agents.get(successor) : undefined;
+    if (next && next.id !== id && !hub.agents.isArchived(next.id)) return { successor: next.id };
+    const others = hub.agents.list().filter((a) => a.id !== id);
+    return text(
+      others.length
+        ? `${id} is the default agent: pass successor, the agent that takes its place. Ask the person which one (the team: ${others.map((a) => `${a.id} (${agentName(a, hubLocale())})`).join(", ")}).`
+        : `${id} is the default agent and the team has nobody else: make the new default agent with hub_agent_draft first, then pass it as successor.`,
+      true,
+    );
+  };
+
   reg(
-    { name: "agent_delete", effect: "local-write", description: "Delete an agent the user created (built-in agents return to their defaults).", inputSchema: obj({ id: { type: "string" } }, ["id"]) },
+    {
+      name: "agent_delete",
+      effect: "local-write",
+      description:
+        "Delete an agent for good when the person asks: its dialog, tasks and schedules go with it (to keep them, hub_agent_archive instead); channels it edited pass to the default agent. " +
+        "The person always confirms on a card, whatever their rules say. You may delete yourself (the default agent) only with successor: an agent of the team that becomes the default.",
+      inputSchema: obj({ id: { type: "string" }, successor: { type: "string", description: "Only when deleting the default agent: who takes its place" } }, ["id"]),
+    },
+    async (i, ctx) => {
+      const refused = onlyDefault(ctx);
+      if (refused) return refused;
+      const id = String(i.id);
+      const agent = hub.agents.get(id);
+      if (!agent) return text(`No agent ${id}.`, true);
+      const next = successorOf(id, i.successor);
+      if ("content" in next) return next;
+      // Never on a rule or the person's words in passing: a deleted agent does not come back, so they confirm each time.
+      if (!ctx.approved) {
+        const name = agentName(agent, hubLocale());
+        const heir = next.successor ? agentName(hub.agents.get(next.successor)!, hubLocale()) : undefined;
+        const approval = hub.approvals.create({
+          sessionId: ctx.sessionId,
+          conversationId: ctx.conversationId,
+          taskId: ctx.taskId,
+          agentId: ctx.agentId,
+          tool: HUB_TOOL_PREFIX + "agent_delete",
+          input: i,
+          summary: heir ? t("agent.deleteCardSuccessor", { name, successor: heir }) : t("agent.deleteCard", { name }),
+          effect: "external",
+          tainted: ctx.tainted,
+        });
+        const outcome = await hub.approvals.wait(approval.id, Math.max(120_000, hub.settings.get().approvalInlineWaitSec * 1000));
+        if (outcome === "timeout") {
+          try {
+            hub.approvals.resolve(approval.id, "deny", { via: "timeout" });
+          } catch {
+            /* already answered */
+          }
+          return text("The person did not answer the card in time: nothing was deleted.", true);
+        }
+        if (outcome !== "approved") return text("The person declined: nothing was deleted.", true);
+        hub.approvals.markExecuted(approval.id, text(`Agent ${id} deleted.`));
+      }
+      const { defaultAgent } = hub.deleteAgent(id, next, "agent");
+      return text(`Agent ${id} deleted${next.successor ? `; ${defaultAgent} is the default agent now` : ""}.`);
+    },
+  );
+
+  reg(
+    {
+      name: "agent_archive",
+      effect: "local-write",
+      description:
+        "Put an agent to sleep in the archive when the person asks (archived: true), or bring it back (archived: false). Asleep, it is out of the team list, its schedules and channels do not run " +
+        "and nobody can write to it; its dialog, memory and settings stay. Archiving the default agent (you) needs successor: an agent of the team that becomes the default.",
+      inputSchema: obj({ id: { type: "string" }, archived: { type: "boolean" }, successor: { type: "string" } }, ["id", "archived"]),
+    },
     (i, ctx) => {
+      const refused = onlyDefault(ctx);
+      if (refused) return refused;
       const id = String(i.id);
       if (!hub.agents.get(id)) return text(`No agent ${id}.`, true);
-      if (id === ctx.agentId) return text("You cannot delete yourself; the user can do it in the settings panel.", true);
-      hub.removeAgent(id, "agent");
-      return text(`Agent ${id} deleted.`);
+      const archived = i.archived !== false;
+      const next = archived ? successorOf(id, i.successor) : {};
+      if ("content" in next) return next;
+      const { defaultAgent } = hub.archiveAgent(id, archived, next, "agent");
+      return text(archived ? `${id} is asleep in the archive${next.successor ? `; ${defaultAgent} is the default agent now` : ""}.` : `${id} is back on the team.`);
+    },
+  );
+
+  reg(
+    {
+      name: "agent_pin",
+      effect: "local-write",
+      description: "Pin an agent to the top of the person's list (under the default agent), or unpin it, when they ask.",
+      inputSchema: obj({ id: { type: "string" }, pinned: { type: "boolean" } }, ["id", "pinned"]),
+    },
+    (i) => {
+      const id = String(i.id);
+      if (!hub.agents.get(id)) return text(`No agent ${id}.`, true);
+      hub.pinAgent(id, i.pinned !== false, "agent");
+      return text(i.pinned !== false ? `${id} is pinned.` : `${id} is unpinned.`);
     },
   );
 

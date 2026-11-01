@@ -64,6 +64,7 @@
   "error.tooManyRedirects": "Too many redirects: {url}",
   "error.dailyLimit": "Daily run limit ({max}) reached",
   "error.previousRunning": "The previous run has not finished yet",
+  "error.agentArchived": "The agent is in the archive",
   "error.notFound": "Trigger {id} not found",
   "error.unknownAgent": "Unknown agent \"{id}\". Available: {available}",
   "error.unknownMachine": "No computer \"{machine}\". Computers: {available}",

@@ -452,6 +452,8 @@ export interface TeamMember {
   running: boolean;
   /** Messages from the agent (or the system) the user has not seen yet. */
   unread: number;
+  /** Pinned to the top of the list (under the default agent): its place among the pinned, 0 first. */
+  pinned?: number;
 }
 
 /** A group chat as the sidebar shows it, kept current by "group.updated". */
@@ -596,6 +598,11 @@ export interface AgentDef {
   source: "builtin" | "user" | string;
   /** Colour + shape picked when the agent was created; the UI derives one from the id when absent. */
   avatar?: AgentAvatar;
+  /**
+   * In the archive, asleep: out of the team list, its schedules and channels do not run, teammates do not see it; its
+   * dialog, memory and settings stay. Set by the hub when it lists agents (agents-state.ts), not stored in the file.
+   */
+  archived?: boolean;
   /** Translated name / description shown in the UI ("i18n: { ru: { name: … } }" in the frontmatter). */
   i18n?: Partial<Record<Locale, { name?: string; description?: string }>>;
 }

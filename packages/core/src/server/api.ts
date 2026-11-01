@@ -112,6 +112,15 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     hub.notifier.inboxChanged(unread);
     return { ok: true };
   });
+  // "Mark unread" in the agent's menu: its last message counts as unread again until the dialog is read.
+  api.post("/api/conversations/:id/unread", async (req) => {
+    const id = (req.params as any).id as string;
+    if (!hub.store.getConversation(id)) throw new HttpError(404, "conversation.notFound");
+    const unread = hub.notifier.unreadCount();
+    hub.team.markUnread(id);
+    hub.notifier.inboxChanged(unread);
+    return { ok: true };
+  });
   api.get("/api/conversations/:id/messages", async (req) => {
     const q = req.query as { before?: string; limit?: string };
     return hub.store.listMessages((req.params as any).id, { before: q.before, limit: Math.min(Number(q.limit ?? 100), 500) });
@@ -257,9 +266,10 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   api.post("/api/tasks/:id/retry", async (req) => hub.runner.retryTask((req.params as any).id) ?? { error: "not found" });
 
   // ----- agents -----
+  // The team and the archive: archived agents carry `archived` (their dialog still opens, to bring them back).
   api.get("/api/agents", async (req) => {
     const locale = requestLocale(req);
-    return hub.agents.list().map((a) => localizedAgent(a, locale));
+    return hub.agents.all().map((a) => ({ ...localizedAgent(a, locale), ...(hub.agents.isArchived(a.id) ? { archived: true } : {}) }));
   });
   api.put("/api/agents/:id", async (req) => {
     const id = (req.params as any).id as string;
@@ -270,8 +280,18 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const agent: AgentDef = b.markdown ? agentFromMarkdown(id, b.markdown, "user") : { ...patchAgent(base, b, requestLocale(req)), id, source: "user" };
     return hub.saveAgent(agent, "user");
   });
+  // The agent's menu in the list (web, desktop, phone). The default agent leaves only with a successor in its place.
   api.delete("/api/agents/:id", async (req) => {
-    hub.removeAgent((req.params as any).id as string, "user");
+    const successor = (req.query as { successor?: string }).successor;
+    return { ok: true, ...hub.deleteAgent((req.params as any).id as string, { successor: successor || undefined }, "user") };
+  });
+  api.post("/api/agents/:id/archive", async (req) => {
+    const b = (req.body ?? {}) as { archived?: unknown; successor?: unknown };
+    const successor = typeof b.successor === "string" && b.successor ? b.successor : undefined;
+    return { ok: true, ...hub.archiveAgent((req.params as any).id as string, b.archived !== false, { successor }, "user") };
+  });
+  api.post("/api/agents/:id/pin", async (req) => {
+    hub.pinAgent((req.params as any).id as string, (req.body as { pinned?: unknown } | undefined)?.pinned !== false, "user");
     return { ok: true };
   });
   // How the agent thinks for each kind of work: the header picker, the chat card and the phone.

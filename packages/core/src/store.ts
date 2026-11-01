@@ -173,6 +173,49 @@ export class Store {
     this.db.prepare("update conversations set read_at = ? where id = ? and (read_at is null or read_at < ?)").run(ts, id, ts);
   }
 
+  /** The last finished message from the agent or the system counts as unread again (the marker moves back to it). */
+  markUnread(id: string): void {
+    const last = this.db
+      .prepare("select created_at from messages where conversation_id = ? and role != 'user' and status != 'streaming' order by created_at desc limit 1")
+      .get(id) as { created_at: string } | undefined;
+    if (!last) return;
+    const ts = new Date(Date.parse(last.created_at) - 1).toISOString();
+    this.db.prepare("update conversations set read_at = ? where id = ? and (read_at is null or read_at > ?)").run(ts, id, ts);
+  }
+
+  /**
+   * Everything a deleted agent leaves: its dialog and the threads of its tasks with their messages, sessions and
+   * approvals, its tasks and its notifications. Group chats keep their history; the agent leaves their members.
+   * Returns the conversations removed.
+   */
+  deleteAgentData(agentId: string): string[] {
+    const convs = (
+      this.db.prepare("select id from conversations where agent_id = ? and kind != 'group'").all(agentId) as Array<{ id: string }>
+    ).map((r) => r.id);
+    const taskConvs = (this.db.prepare("select conversation_id as id from tasks where agent_id = ?").all(agentId) as Array<{ id: string }>).map((r) => r.id);
+    const ids = [...new Set([...convs, ...taskConvs])];
+    this.db.exec("begin");
+    try {
+      for (const id of ids) {
+        for (const table of ["messages", "sessions", "approvals"]) this.db.prepare(`delete from ${table} where conversation_id = ?`).run(id);
+        this.db.prepare("delete from conversations where id = ?").run(id);
+      }
+      this.db.prepare("delete from tasks where agent_id = ?").run(agentId);
+      this.db.prepare("delete from sessions where agent_id = ?").run(agentId);
+      this.db.prepare("delete from approvals where agent_id = ? and status = 'pending'").run(agentId);
+      this.db.prepare("delete from notifications where agent_id = ?").run(agentId);
+      for (const g of this.listGroups()) {
+        const members = (g.members ?? [g.agentId]).filter((m) => m !== agentId);
+        if (members.length && members.length !== (g.members ?? [g.agentId]).length) this.updateConversation(g.id, { members });
+      }
+      this.db.exec("commit");
+    } catch (e) {
+      this.db.exec("rollback");
+      throw e;
+    }
+    return ids;
+  }
+
   /** Finished messages from the agent or the system after the user's read marker. */
   unreadCount(id: string): number {
     const r = this.db

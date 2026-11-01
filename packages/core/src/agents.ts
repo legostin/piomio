@@ -1,11 +1,13 @@
 // Agents are markdown files with frontmatter (compatible with Claude Code subagent files).
 // Sources, later wins: builtin (repo /agents) → plugin agents with `brains:` → user (/data/agents).
+// What the person did with them (archived, deleted built-ins) is agents-state.ts: the team is the agents not archived.
 
 import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, basename } from "node:path";
 import { stringify as toYaml } from "yaml";
 import type { AgentDef, Locale } from "@piomio/shared";
 import { normalizeLocale, parseAvatar, parseFrontmatter, parseThinking } from "@piomio/shared";
+import type { AgentsState } from "./agents-state.ts";
 
 export const DEFAULT_BRAINS = ["claude-code@local", "codex@local", "api:*"];
 
@@ -135,12 +137,37 @@ export class AgentRegistry {
     }
   }
 
+  /** Set by the hub (agents-state.ts); the registry alone knows of no archive. */
+  state: () => Pick<AgentsState, "archived" | "removed"> = () => ({ archived: [], removed: [] });
+
+  /** An agent by id, archived ones too (their dialog still opens); never one the person deleted. */
   get(id: string): AgentDef | undefined {
-    return this.agents.get(id);
+    const a = this.agents.get(id);
+    return a && !this.state().removed.includes(id) ? a : undefined;
   }
 
+  /** The team: every agent but the archived (asleep) ones. */
   list(): AgentDef[] {
-    return [...this.agents.values()].sort((a, b) => (a.id === "assistant" ? -1 : b.id === "assistant" ? 1 : a.name.localeCompare(b.name)));
+    const { archived } = this.state();
+    return this.all().filter((a) => !archived.includes(a.id));
+  }
+
+  /** The team and the archive. */
+  all(): AgentDef[] {
+    const { removed } = this.state();
+    return [...this.agents.values()]
+      .filter((a) => !removed.includes(a.id))
+      .sort((a, b) => (a.id === "assistant" ? -1 : b.id === "assistant" ? 1 : a.name.localeCompare(b.name)));
+  }
+
+  isArchived(id: string): boolean {
+    return this.state().archived.includes(id);
+  }
+
+  /** The agent ships with the hub or a plugin (the person's own copy, if any, sits over it). */
+  shipped(id: string): boolean {
+    const f = (dir: string) => existsSync(join(dir, `${id}.md`));
+    return id === "assistant" || f(this.builtinDir) || this.pluginDirs.some((p) => f(p.dir));
   }
 
   save(a: AgentDef): AgentDef {
