@@ -70,8 +70,6 @@ export const en = {
   "vault.strength.2": "fair",
   "vault.strength.3": "good",
   "vault.strength.4": "strong",
-  "vault.tpl.claude_code_token.name": "Claude Code (subscription)",
-  "vault.tpl.claude_code_token.hint": "Run “claude setup-token” on a computer with Claude Code, sign in, and paste the token it prints.",
   "vault.tpl.anthropic_api_key.name": "Anthropic API",
   "vault.tpl.anthropic_api_key.hint": "console.anthropic.com → Settings → API Keys → Create Key.",
   "vault.tpl.openai_api_key.name": "OpenAI API",

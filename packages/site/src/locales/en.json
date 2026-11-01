@@ -1,6 +1,6 @@
 {
   "meta.title": "Piomio — open-source AI agents on your own computer",
-  "meta.description": "A free, open-source team of AI agents on your Mac, PC or server, running on the Claude Code or Codex plan you already have. It goes through your email and drafts replies you approve with a tap. Show it a chore once in its browser and it learns it.",
+  "meta.description": "A free, open-source team of AI agents on your Mac, PC or server, running on the Claude or ChatGPT plan you already have. It goes through your email and drafts replies you approve with a tap. Show it a chore once in its browser and it learns it.",
   "meta.ogAlt": "The Piomio app window with the team of agents at work",
 
   "nav.demo": "Demo",
@@ -14,7 +14,7 @@
 
   "hero.titleLead": "Your own AI team",
   "hero.titleMarker": "on your computer",
-  "hero.lead": "Free and open source. It runs on the Claude Code or Codex plan you already pay for and asks before it sends or buys anything.",
+  "hero.lead": "Free and open source. It runs Claude Code and Codex on the Claude or ChatGPT plan you already pay for, and asks before it sends or buys anything.",
   "hero.downloadMac": "Download for macOS",
   "hero.downloadWin": "Download for Windows",
   "hero.share": "Send yourself the link",
@@ -69,7 +69,7 @@
   "chapter.machines.chip": "Computers",
   "chapter.machines.time": "14:00",
   "chapter.machines.title": "Bit hits the limit and keeps going",
-  "chapter.machines.text": "Bit fixes a failing test on Alex’s MacBook with Alex’s Claude Code plan. When the plan hits its limit, Bit carries on with Codex on the same laptop. The sidebar shows who’s working where.",
+  "chapter.machines.text": "Bit fixes a failing test on Alex’s MacBook through Claude Code, on Alex’s Claude plan. When the plan hits its limit, Bit carries on with Codex on the same laptop. The sidebar shows who’s working where.",
 
   "chapter.browser.chip": "Browser",
   "chapter.browser.time": "16:00",
@@ -120,7 +120,7 @@
   "feature.channels.text": "An agent reads your sources on a schedule and posts only what changes something.",
   "feature.machines.eyebrow": "No new subscription",
   "feature.machines.title": "Runs on the plan you already pay for",
-  "feature.machines.text": "Agents think with your Claude Code or Codex plan, through the official CLIs you sign in to yourself, and API keys are there as a backup. If a plan hits its limit, the work moves to the next one and comes back after the reset. You can add a laptop for code, or a server that stays on and takes over while the Mac at home is asleep.",
+  "feature.machines.text": "Agents think with your Claude or ChatGPT plan, through the official Claude Code and Codex CLIs you sign in to yourself, and API keys are there as a backup. If a plan hits its limit, the work moves to the next one and comes back after the reset. You can add a laptop for code, or a server that stays on and takes over while the Mac at home is asleep.",
   "feature.machines.p1": "Free under Apache-2.0, no account with us",
   "feature.machines.p2": "DeepSeek, Kimi, GLM, OpenRouter or a local Ollama work too",
   "feature.machines.p3": "Another computer runs commands only if its owner allows it",
@@ -257,7 +257,7 @@
   "faq.eyebrow": "Questions",
   "faq.title": "Before you install",
   "faq.q1": "What does it cost?",
-  "faq.a1": "Nothing. Piomio is free and open source (Apache-2.0). There’s no paid tier and no account to create with us. The agents run on what you already have, a Claude Code or Codex plan or your own API keys.",
+  "faq.a1": "Nothing. Piomio is free and open source (Apache-2.0). There’s no paid tier and no account to create with us. The agents run on what you already have, a Claude or ChatGPT plan or your own API keys.",
   "faq.q2": "What leaves my computer?",
   "faq.a2": "Chats, memory, files and the vault stay on your machine. The text an agent is working on goes to the model you picked, or nowhere if that’s a local Ollama model. Services you connect through Composio, Gmail for example, go through Composio’s cloud. Nothing is sent to us.",
   "faq.q3": "Can it do things without asking me?",
@@ -297,5 +297,6 @@
   "footer.github": "GitHub",
   "footer.license": "Apache-2.0",
   "footer.readme": "Documentation",
-  "footer.releases": "Releases"
+  "footer.releases": "Releases",
+  "footer.disclaimer": "An independent open-source project, not affiliated with or endorsed by Anthropic or OpenAI. Claude and Claude Code are trademarks of Anthropic; ChatGPT and Codex are trademarks of OpenAI."
 }

@@ -199,6 +199,7 @@ function Running({ login, label, busy, onCode, onCancel }: { login: NonNullable<
         {login.expiresAt && !verifying && <span>· {t(login.userCode ? "brainLogin.validUntil" : "brainLogin.finishBy", { time: formatTime(login.expiresAt) })}</span>}
       </div>
       {login.userCode && <div className="text-xs text-muted">{t("brainLogin.phishing")}</div>}
+      {login.needsCode && <div className="text-xs text-muted">{t("brainLogin.ownSignIn", { name: label })}</div>}
       {!verifying && (
         <div>
           <Button variant="ghost" size="sm" onClick={onCancel}>

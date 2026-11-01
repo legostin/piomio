@@ -10,6 +10,7 @@ import { Hub, loadConfig } from "../src/index.ts";
 const fixtures = join(import.meta.dirname, "fixtures");
 const FAKE = "fk_abcdefghij0123456789";
 const GITHUB = `ghp_${"a1B2".repeat(9)}`;
+const CLAUDE_TOKEN = `sk-ant-oat01-${"Ab9_".repeat(20)}`;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -165,6 +166,30 @@ describe("secrets in the chat", () => {
     expect(await allText()).not.toContain("plain-token-value-xyz");
     const user = (await messages()).filter((m) => m.role === "user").at(-1);
     expect(user.parts[0].text).toBe("vault://other_key");
+  });
+
+  it("never keeps a Claude subscription token: it leaves the message and cards unstored, and the agent offers the sign-in", async () => {
+    const reply = await say(`my token ${CLAUDE_TOKEN}`, /fake heard/);
+    expect(await allText()).not.toContain(CLAUDE_TOKEN);
+    expect(JSON.stringify(reply)).toMatch(/hub_brain_login/);
+    expect((await messages()).some((m) => m.role === "system" && m.parts.some((p: any) => p.type === "error" && /does not keep these/.test(p.message)))).toBe(true);
+    expect(hub.vault.getMeta("claude_code_token")).toBeUndefined();
+
+    // Nor as the answer to a card, bare in the chat or typed into it.
+    await say('CALL hub_secret_request {"vault":"another_key","title":"Another key"}', /tool said: A secure input card/);
+    await say(CLAUDE_TOKEN, /fake heard/);
+    const card = (await messages()).flatMap((m) => m.parts).find((p: any) => p.type === "secret_request" && p.vaultId === "another_key");
+    expect((await req("POST", `/api/secret-requests/${card.requestId}`, { value: CLAUDE_TOKEN })).status).toBe(400);
+    expect(hub.vault.getMeta("another_key")).toBeUndefined();
+    expect(await allText()).not.toContain(CLAUDE_TOKEN);
+    await ok("POST", `/api/secret-requests/${card.requestId}/cancel`);
+  });
+
+  it("deletes a Claude subscription token an earlier version kept, once", () => {
+    hub.vault.upsert({ id: "claude_code_token", type: "secret", name: "Claude Code token", fields: { value: CLAUDE_TOKEN } });
+    expect(hub.forgetClaudeToken()).toBe(true);
+    expect(hub.vault.getMeta("claude_code_token")).toBeUndefined();
+    expect(hub.forgetClaudeToken()).toBe(false);
   });
 
   it("shows a plugin's setup card and stores its secrets write-only", async () => {

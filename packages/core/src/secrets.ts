@@ -28,6 +28,17 @@ const MAX_SECRET = 16_384;
 /** Characters people wrap a pasted token in. */
 const WRAP = /^[`'"«“<(\[]+|[`'"»”>)\].,;:!?]+$/g;
 
+/**
+ * Tokens the hub never keeps, however they come (a message, a card): Claude subscription tokens from `claude setup-token`.
+ * Anthropic's terms don't let an app collect or store them; Claude Code signs in on each computer itself (hub_brain_login).
+ */
+const REFUSED = [/^sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}$/];
+
+function refusedSecret(value: string): boolean {
+  const v = value.trim().replace(WRAP, "");
+  return REFUSED.some((p) => p.test(v));
+}
+
 export interface StoredSecret {
   vaultId: string;
   title: string;
@@ -40,6 +51,8 @@ export interface CaptureResult {
   stored: StoredSecret[];
   /** Secrets found while the vault was locked: removed from the text, stored nowhere. */
   withheld: number;
+  /** Tokens the hub never keeps (REFUSED): removed from the text, stored nowhere. */
+  refused: number;
   /** A pending request answered by this message, and whether its tool call was still waiting for it. */
   answered?: { request: SecretRequest; waited: boolean };
 }
@@ -191,6 +204,7 @@ export class SecretIntake {
   store(input: { vaultId: string; title: string; value: string; pluginId?: string; setting?: string; actor: string }): StoredSecret {
     const value = input.value.trim();
     if (!value || value.length > MAX_SECRET) throw new LocalizedError("secrets.badValue", undefined, 400);
+    if (refusedSecret(value)) throw new LocalizedError("secrets.refused", undefined, 400);
     if (!VAULT_ID.test(input.vaultId)) throw new LocalizedError("vault.badId", { id: input.vaultId.slice(0, 80) }, 400);
     if (this.d.vault.state() !== "unlocked") throw new LocalizedError("secrets.vaultLocked", undefined, 409);
     const prev = this.d.vault.getMeta(input.vaultId);
@@ -225,7 +239,7 @@ export class SecretIntake {
    * conversation's pending request.
    */
   capture(text: string, conversationId: string, actor: string): CaptureResult {
-    const result: CaptureResult = { text, stored: [], withheld: 0 };
+    const result: CaptureResult = { text, stored: [], withheld: 0, refused: 0 };
     if (!text) return result;
     const matchers = this.matchers();
     const locked = this.d.vault.state() !== "unlocked";
@@ -236,6 +250,11 @@ export class SecretIntake {
     for (const raw of text.split(/\s+/)) {
       const token = raw.replace(WRAP, "");
       if (token.length < 16) continue;
+      if (refusedSecret(token)) {
+        result.refused++;
+        replace(token, tFor(hubLocale())("secrets.refusedPlaceholder"));
+        continue;
+      }
       const m = matchers.find((x) => x.pattern.test(token));
       if (!m) continue;
       if (locked) {
@@ -250,7 +269,7 @@ export class SecretIntake {
       const open = this.pending(conversationId).find((r) => r.vaultId === m.vault);
       if (open) result.answered = this.resolve(open.id, "saved", true);
     }
-    if (result.stored.length || result.withheld) return result;
+    if (result.stored.length || result.withheld || result.refused) return result;
 
     // One bare token while the chat waits for a secret: that is the answer.
     const open = this.pending(conversationId);
@@ -374,5 +393,10 @@ export function captureNote(c: CaptureResult): string {
     );
   }
   if (c.withheld) lines.push("[System] The user's message contained a secret, but the vault is locked, so it was removed and stored nowhere. Ask the user to unlock the vault and send it again.");
+  if (c.refused)
+    lines.push(
+      "[System] The user's message contained a Claude subscription token (from `claude setup-token`). Piomio never keeps these (Anthropic's terms forbid apps to store them), so it was removed and stored nowhere. " +
+        "If Claude Code needs signing in, show its sign-in card with hub_brain_login; never ask for a token.",
+    );
   return lines.join("\n");
 }

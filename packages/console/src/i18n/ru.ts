@@ -71,8 +71,6 @@ export const ru = {
   "vault.strength.2": "средний",
   "vault.strength.3": "хороший",
   "vault.strength.4": "сильный",
-  "vault.tpl.claude_code_token.name": "Claude Code (подписка)",
-  "vault.tpl.claude_code_token.hint": "Выполните «claude setup-token» на компьютере с Claude Code, войдите в аккаунт и вставьте выданный токен.",
   "vault.tpl.anthropic_api_key.name": "Anthropic API",
   "vault.tpl.anthropic_api_key.hint": "console.anthropic.com → Settings → API Keys → Create Key.",
   "vault.tpl.openai_api_key.name": "OpenAI API",

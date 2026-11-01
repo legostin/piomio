@@ -59,7 +59,7 @@ export function createCoreCall(hub: Hub) {
           channel: String(p.channel ?? pluginId),
           ...(attachments.length ? { attachments } : {}),
           ...(typeof p.context === "string" && p.context.trim() ? { context: p.context.slice(0, 2000) } : {}),
-          onCapture: (c) => (secrets = c.stored.length + c.withheld),
+          onCapture: (c) => (secrets = c.stored.length + c.withheld + c.refused),
         });
         // secrets > 0: the channel should delete the user's original message, it still holds the value.
         return { messageId: m.id, conversationId: conv.id, ...(secrets ? { secrets } : {}) };

@@ -424,7 +424,7 @@ export function Footer() {
   const repo = `https://github.com/${data.repo}`;
   return (
     <footer className="border-t border-hairline">
-      <div className="mx-auto flex max-w-[1320px] flex-col gap-6 px-4 py-12 sm:flex-row sm:items-center sm:px-6 lg:px-10">
+      <div className="mx-auto flex max-w-[1320px] flex-col gap-6 px-4 pt-12 pb-6 sm:flex-row sm:items-center sm:px-6 lg:px-10">
         <div className="flex items-center gap-3">
           <OwlMark size={34} />
           <div>
@@ -448,6 +448,7 @@ export function Footer() {
           </a>
         </div>
       </div>
+      <p className="mx-auto max-w-[1320px] px-4 pb-12 text-[12.5px] text-muted sm:px-6 lg:px-10">{t("footer.disclaimer")}</p>
     </footer>
   );
 }

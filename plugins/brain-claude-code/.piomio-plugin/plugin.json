@@ -6,20 +6,13 @@
   "builtin": true,
   "server": "./server/index.ts",
   "contributes": {
-    "setup": {
-      "secrets": [
-        {"vault": "claude_code_token", "setting": "tokenRef", "title": "%setup.token.title%", "hint": "%setup.token.hint%", "pattern": "^sk-ant-oat\\d{2}-[A-Za-z0-9_-]{20,}$"}
-      ]
-    },
     "brains": ["claude-code"],
     "settings": {
       "type": "object",
       "properties": {
-        "tokenRef": { "type": "string", "title": "%settings.tokenRef.title%", "default": "vault://claude_code_token", "description": "%settings.tokenRef.description%" },
         "command": { "type": "string", "title": "%settings.command.title%", "default": "claude" },
         "allowedTools": { "type": "array", "items": { "type": "string" }, "title": "%settings.allowedTools.title%", "description": "%settings.allowedTools.description%" }
       }
     }
-  },
-  "permissions": { "vault": ["claude_code_token"] }
+  }
 }

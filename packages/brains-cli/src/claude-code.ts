@@ -1,8 +1,9 @@
 // Claude Code as a brain: a headless `claude -p` process, `--resume` when one has to start again. The turn's input goes
 // in as stream-json and stdin stays open while it runs: more user messages (steer) join the turn at its next step.
 // A task's process ends with its turn; a dialog's (keepWarm) waits for the next turn and can start before the first.
-// Uses the user's subscription (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`, or a login in HOME, which the user
-// can make from the chat: `claude auth login` prints a sign-in page and reads the code that page shows from stdin).
+// Uses the user's own Claude login in HOME, which the user can make from the chat: `claude auth login` prints a sign-in
+// page and reads the code that page shows from stdin. Piomio never holds Claude credentials (Anthropic's terms forbid
+// apps to collect or store subscription tokens); credentials the person set in the environment themselves still work.
 
 import { mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -36,7 +37,7 @@ export const DEFAULT_CLAUDE_TOOLS = [
 export interface ClaudeCodeOptions {
   /** CLI command (default "claude"). */
   command?: () => string;
-  /** Extra env for the CLI (e.g. CLAUDE_CODE_OAUTH_TOKEN), resolved per session. */
+  /** Extra env for the CLI, resolved per session. */
   authEnv?: () => Promise<Record<string, string>>;
   /** Built-in tools Claude Code may use without asking (dontAsk mode denies everything else). */
   allowedTools?: () => string[];
@@ -618,7 +619,7 @@ export function createClaudeCodeProvider(p: ClaudeCodeOptions): BrainProviderImp
       const version = v.stdout.trim().split(/\s+/)[0];
       const c = await capsOf(command, version, env).catch((): ClaudeCaps => ({ snapshot: false }));
       const thinking = { models: CLAUDE_MODELS, modelNames: CLAUDE_MODEL_NAMES, ...(c.efforts ? { efforts: c.efforts } : {}), presets: claudePresets(c.efforts) };
-      if (env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_API_KEY) return { available: true, authenticated: true, version, ...thinking, detail: t("claude.vaultToken") };
+      if (env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_API_KEY) return { available: true, authenticated: true, version, ...thinking, detail: t("claude.envAuth") };
       const s = await capture(command, ["auth", "status", "--json"], env);
       try {
         const j = JSON.parse(s.stdout);
