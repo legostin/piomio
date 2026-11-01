@@ -167,7 +167,7 @@ Your data stays in `%LOCALAPPDATA%\Piomio` (Windows) or `~/Library/Application S
 
 The desktop version runs the hub, plugins and CLI brains as your own user: the Docker image's separate Unix users and its kernel-level network block are not there. For the strongest isolation, run Piomio in Docker.
 
-The app is not signed yet. Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. If macOS refuses to open it, choose **Open Anyway** in **System Settings → Privacy & Security** (on macOS 13 and 14, Control-clicking the app and choosing **Open** works too).
+The Mac app is signed and notarized by Apple. The Windows one is not signed yet, so SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
 
 <a id="on-a-server"></a>
 #### On a server (Docker)
