@@ -1,8 +1,8 @@
 #!/bin/sh
 # Piomio on a Linux server, in one command:
 #   curl -fsSL https://piomio.io/install.sh | sh
-# Installs the latest release as a systemd user service of this user, whose signed-in Claude Code or Codex the agents
-# then think with. Run as root it creates the user "piomio" (no sudo) and installs for it. Running it again
+# Installs the latest release as a systemd user service of this user, whose signed-in Claude Code, Codex or Kimi Code
+# the agents then think with. Run as root it creates the user "piomio" (no sudo) and installs for it. Running it again
 # updates. Settings: ~/.config/piomio/env; remove: piomio uninstall (the data stays).
 # PIOMIO_VERSION=x.y.z installs that release; PIOMIO_ARCHIVE=<file> a local archive (packaging/linux/build.mjs);
 # PIOMIO_REPO=<owner/name> another repository's releases.
@@ -65,8 +65,8 @@ msg() {
     ru:brain_out) echo "  %s: установлен, вход не выполнен" ;;
     en:brain_found) echo "  %s: installed" ;;
     ru:brain_found) echo "  %s: установлен" ;;
-    en:brains_none) echo "No brain is signed in yet. Sign in to Claude Code or Codex as %s (or from the chat), and Piomio picks it up within a minute by itself." ;;
-    ru:brains_none) echo "Ни в один мозг ещё не выполнен вход. Войдите в Claude Code или Codex от пользователя %s (или из чата), и Piomio сам подхватит его в течение минуты." ;;
+    en:brains_none) echo "No brain is signed in yet. Sign in to Claude Code, Codex or Kimi Code as %s (or from the chat), and Piomio picks it up within a minute by itself." ;;
+    ru:brains_none) echo "Ни в один мозг ещё не выполнен вход. Войдите в Claude Code, Codex или Kimi Code от пользователя %s (или из чата), и Piomio сам подхватит его в течение минуты." ;;
     en:brains_how) echo "  For example:  %s" ;;
     ru:brains_how) echo "  Например:  %s" ;;
     en:settings) echo "Settings: %s. Remove: piomio uninstall (the data stays)." ;;
@@ -139,7 +139,7 @@ UNITS="$H/.config/systemd/user"
 
 if [ -n "${PIOMIO_ARCHIVE:-}" ]; then
   cp "$PIOMIO_ARCHIVE" "$TMP/piomio.tar.gz"
-  V=$(tar -tzf "$TMP/piomio.tar.gz" | head -n 1 | sed -n 's#^piomio-\([^/]*\)/.*#\1#p')
+  V=$(tar -tzf "$TMP/piomio.tar.gz" 2>/dev/null | head -n 1 | sed -n 's#^piomio-\([^/]*\)/.*#\1#p')
 else
   V="${PIOMIO_VERSION:-}"
   if [ -z "$V" ]; then
@@ -182,6 +182,19 @@ as_user cp "$ROOT/versions/$V/packaging/linux/piomio" "$ROOT/piomio.new"
 as_user chmod 755 "$ROOT/piomio.new"
 as_user mv -f "$ROOT/piomio.new" "$ROOT/piomio"
 as_user ln -sfn "$ROOT/piomio" "$H/.local/bin/piomio"
+# The command on the user's PATH: a login shell that doesn't add ~/.local/bin by itself gets a line that does.
+if ! login_sh 'command -v piomio' >/dev/null 2>&1; then
+  PROFILE="$H/.profile"
+  case "$(getent passwd "$TARGET" | cut -d: -f7)" in
+    */zsh) PROFILE="$H/.zprofile" ;;
+    */bash)
+      # bash reads the first of these that exists and skips .profile then.
+      if [ -f "$H/.bash_profile" ]; then PROFILE="$H/.bash_profile"; elif [ -f "$H/.bash_login" ]; then PROFILE="$H/.bash_login"; fi
+      ;;
+  esac
+  # shellcheck disable=SC2016 # $HOME and $PATH are for the profile
+  printf '\n# Piomio (install.sh): the piomio command\nexport PATH="$HOME/.local/bin:$PATH"\n' | as_user sh -c 'cat >>"$1"' sh "$PROFILE"
+fi
 
 # The agents' browser (Chromium, which the hub downloads by itself) needs system libraries: root installs them once.
 if [ "$(id -u)" = 0 ] && [ "$FIRST" = 1 ]; then

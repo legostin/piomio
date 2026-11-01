@@ -116,7 +116,7 @@ jobs:
           curl -fsS http://127.0.0.1:8080/api/auth/state | tee state.json
           grep -q '"hasPassword":false' state.json
           grep -q "\"version\":\"$v\"" state.json
-          test "$(ps -o user= -p "$(pgrep -f 'piomio/current/packaging/linux/start.mjs' | head -n 1)")" = piomio
+          pgrep -u piomio -f 'packaging/linux/start.mjs start' >/dev/null
           sudo -iu piomio piomio version | grep -qx "$v"
           sudo -iu piomio piomio uninstall
           if curl -fsS http://127.0.0.1:8080/api/auth/state; then echo "the hub still answers"; exit 1; fi

@@ -1,7 +1,7 @@
 // The hub on a Linux server (install.sh): what the launcher (packaging/linux/piomio) runs, with this release's Node.
 //   <root>/current/runtime/bin/node <root>/current/packaging/linux/start.mjs [start|version|reset-password …]
 // Like the desktop app, the hub runs as the person's user with their home and the PATH of their login shell, so the
-// Claude Code or Codex they signed in to over SSH is what the agents think with; nothing is copied.
+// Claude Code, Codex or Kimi Code they signed in to over SSH is what the agents think with; nothing is copied.
 // Ports as in Docker (8080 the chat, 8081 the console, 8082 phones), on 127.0.0.1 unless ~/.config/piomio/env says.
 
 import { homedir } from "node:os";
