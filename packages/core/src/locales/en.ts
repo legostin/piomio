@@ -278,6 +278,7 @@ export default {
   "media.notImage": "That address is not an image",
   "media.badType": "That address does not answer with data a page can use",
   "media.hostNotAllowed": "Pages cannot fetch from {detail}",
+  "settings.autoModeCard": "Turn on auto mode: a reviewer model decides what used to be an approval card; money, messages to people and publishing still ask you",
   "native.command": "Run a command outside the sandbox: {command}",
   "native.commandNetwork": "Run a command that reaches {host}: {command}",
   "native.read": "Read {path}",

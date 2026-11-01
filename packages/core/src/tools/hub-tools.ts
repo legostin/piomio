@@ -35,7 +35,7 @@ import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 export const HUB_TOOL_PREFIX = "hub_";
 
 /** Settings the assistant may change on request. Everything else is refused with a pointer to the settings panel. */
-export const AGENT_SETTABLE = ["timezone", "defaultAgent", "language", "quietHours", "digestTimes", "notifyRatePerHour", "brainConcurrency", "channelMirror"] as const;
+export const AGENT_SETTABLE = ["timezone", "defaultAgent", "language", "quietHours", "digestTimes", "notifyRatePerHour", "brainConcurrency", "channelMirror", "approvalMode"] as const;
 
 const SECRET_KEY = /key|token|secret|password/i;
 
@@ -43,6 +43,8 @@ const SECRET_KEY = /key|token|secret|password/i;
 const CARDS = new Set(["secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
 const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete"]);
+/** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. */
+export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n));
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
 export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign"];
 
@@ -131,8 +133,9 @@ export function registerHubTools(hub: Hub): void {
     hub.tools.register(
       descriptor,
       async (input, ctx) => {
-        // After outside content a change runs only with the person's yes: on its card, or their "always allow" rule.
-        if (guarded && ctx.tainted && !ctx.approved) {
+        // After outside content a change runs only with a yes: the person's on its card or by their "always allow"
+        // rule, or auto mode's reviewer's.
+        if (guarded && ctx.tainted && !ctx.approved && !ctx.reviewed) {
           return text(
             "Refused: this conversation has read outside content, so each change of the hub needs the person's yes on its approval card, " +
               "and this call had none. Tell the person what you want to change and why.",
@@ -161,17 +164,43 @@ export function registerHubTools(hub: Hub): void {
       description:
         `Change hub settings when the user asks. Allowed keys: ${AGENT_SETTABLE.join(", ")}. ` +
         'Shapes: timezone "Europe/Berlin"; language "en"|"ru"; quietHours {enabled, start:"23:00", end:"08:00"}; digestTimes ["09:00","19:00"]; notifyRatePerHour number; brainConcurrency number; defaultAgent agent id; ' +
-        "channelMirror true|false (the default agent's replies to messages typed in the web UI also go to Telegram). " +
-        "Network allowlists and approval behaviour can only be changed by the user in the settings panel.",
+        "channelMirror true|false (the default agent's replies to messages typed in the web UI also go to Telegram); " +
+        'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card). ' +
+        "Network allowlists can only be changed by the user in the settings panel.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
     },
-    (i) => {
+    async (i, ctx) => {
       const patch = (i.patch && typeof i.patch === "object" ? i.patch : {}) as Record<string, unknown>;
       const refused = Object.keys(patch).filter((k) => !(AGENT_SETTABLE as readonly string[]).includes(k));
       if (refused.length) return text(`Refused: ${refused.join(", ")} can only be changed by the user in the settings panel (gear icon → Settings).`, true);
       if (!Object.keys(patch).length) return text("Nothing to change.", true);
       const err = validateSettings(patch);
       if (err) return text(err, true);
+      // Asking the person more needs no yes; letting a reviewer decide instead of them does, on a card.
+      if (patch.approvalMode === "auto" && hub.settings.get().approvalMode === "ask" && !ctx.approved) {
+        const approval = hub.approvals.create({
+          sessionId: ctx.sessionId,
+          conversationId: ctx.conversationId,
+          taskId: ctx.taskId,
+          agentId: ctx.agentId,
+          tool: HUB_TOOL_PREFIX + "settings_update",
+          input: i,
+          summary: t("settings.autoModeCard"),
+          effect: "external",
+          tainted: ctx.tainted,
+        });
+        const outcome = await hub.approvals.wait(approval.id, Math.max(120_000, hub.settings.get().approvalInlineWaitSec * 1000));
+        if (outcome === "timeout") {
+          try {
+            hub.approvals.resolve(approval.id, "deny", { via: "timeout" });
+          } catch {
+            /* already answered */
+          }
+          return text("The person did not answer the card in time: auto mode stays off.", true);
+        }
+        if (outcome !== "approved") return text("The person declined: auto mode stays off.", true);
+        hub.approvals.markExecuted(approval.id, text("Auto mode is on."));
+      }
       const next = hub.updateSettings(patch, "agent");
       return text(`Settings updated: ${Object.keys(patch).map((k) => `${k}=${JSON.stringify((next as any)[k])}`).join(", ")}`);
     },
@@ -1484,6 +1513,7 @@ function validateSettings(p: Record<string, unknown>): string | undefined {
   }
   if ("digestTimes" in p && (!Array.isArray(p.digestTimes) || !p.digestTimes.every(hhmm))) return 'digestTimes must be a list of "HH:MM".';
   if ("channelMirror" in p && typeof p.channelMirror !== "boolean") return "channelMirror must be true or false.";
+  if ("approvalMode" in p && p.approvalMode !== "auto" && p.approvalMode !== "ask") return 'approvalMode must be "auto" or "ask".';
   for (const [k, min, max] of [["notifyRatePerHour", 0, 100], ["brainConcurrency", 1, 16]] as const) {
     if (k in p && (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max)) return `${k} must be a whole number from ${min} to ${max}.`;
   }

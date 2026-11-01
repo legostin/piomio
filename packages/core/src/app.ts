@@ -8,7 +8,7 @@ import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
 import { EventBus } from "./bus.ts";
 import { Store } from "./store.ts";
-import { Settings, type CoreSettings } from "./settings.ts";
+import { DEFAULT_BRAIN_EGRESS, Settings, type CoreSettings } from "./settings.ts";
 import { VaultService } from "./vault/service.ts";
 import { AuditLog } from "./audit.ts";
 import { RuleStore } from "./policy/rules.ts";
@@ -38,6 +38,8 @@ import { thinkingView } from "./thinking.ts";
 import { registerPageTools } from "./tools/page-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
+import { AutoMode, type AutoContext, type AutoWhere } from "./policy/auto.ts";
+import { brainReviewer } from "./policy/reviewer.ts";
 import { Pages } from "./pages.ts";
 import { registerCoreTools } from "./tools/core-tools.ts";
 import { McpEndpoint } from "./mcp/server.ts";
@@ -88,6 +90,9 @@ export class Hub {
   tools = new ToolRegistry();
   hooks = new HookRegistry();
   gateway: ToolGateway;
+  /** Auto mode: a reviewer decides what used to be an approval card (policy/auto.ts). */
+  auto: AutoMode;
+  private reviewToken?: string;
   agents: AgentRegistry;
   /** Pinned, archived and deleted built-in agents (agents-state.ts). */
   agentsState: AgentsStateStore;
@@ -196,6 +201,14 @@ export class Hub {
         return a ? agentName(a, hubLocale()) : id;
       },
     });
+    // The reviewer runs on this computer's own Claude Code, through the egress proxy like any brain.
+    this.auto = new AutoMode({
+      reviewer: brainReviewer({ brains: this.brains, dataDir: config.dataDir, env: () => this.reviewerEnv(), log: (m) => console.log(m) }),
+      context: (w) => this.autoContext(w),
+      dataDir: config.dataDir,
+      language: () => this.settings.get().language,
+      audit: this.audit,
+    });
     this.gateway = new ToolGateway({
       store: this.store,
       registry: this.tools,
@@ -209,6 +222,8 @@ export class Hub {
       workspaceFor: (s) => this.runner.workspacePath(s),
       jobTools: (s) => (s.taskId && this.store.getTask(s.taskId)?.feedId ? FEED_RUN_TOOLS : []),
       skills: this.skills,
+      auto: this.auto,
+      machineName: (id) => this.runner.computerName(id),
       // "%key%" approval summaries resolve against the owner's messages in the hub language.
       localize: (owner, text) =>
         owner === "core" ? localizeValue(text, catalogLookup(coreCatalog, hubLocale())) : localizePluginValue(this.plugins.get(owner)?.layout, text, hubLocale()),
@@ -423,6 +438,8 @@ export class Hub {
       agents: this.agents,
       dataDir: config.dataDir,
       roots: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
+      auto: this.auto,
+      machineName: (id) => this.runner.computerName(id),
     });
     registerPageTools({
       registry: this.tools,
@@ -621,6 +638,27 @@ export class Hub {
     this.audit.append(actor, "agent.save", saved.id);
     this.bus.emit("agents.updated", {});
     return saved;
+  }
+
+  /** The reviewer's environment: the egress proxy with the brains' hosts, as for a brain session (runner.ts). */
+  private reviewerEnv(): Record<string, string> {
+    this.reviewToken ??= this.egress.issueToken("brain:auto-review", DEFAULT_BRAIN_EGRESS);
+    const proxy = `http://${this.reviewToken}:x@127.0.0.1:${this.config.egressPort}`;
+    return { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" };
+  }
+
+  /**
+   * What auto mode's reviewer reads besides the action: the person's own recent words where the session works, the
+   * task's goal, and the agent's earlier calls there (never their results).
+   */
+  private autoContext(w: AutoWhere): AutoContext {
+    const person = this.gateway.personWords({ conversationId: w.conversationId, taskId: w.taskId }).texts;
+    const goal = w.taskId ? this.store.getTask(w.taskId)?.goal : undefined;
+    const calls = this.store
+      .listMessages(w.conversationId, { limit: 40 })
+      .filter((m) => m.role === "assistant" && (!m.agentId || m.agentId === w.agentId))
+      .flatMap((m) => m.parts.flatMap((p) => (p.type === "tool_call" ? [{ name: p.name, input: this.vault.redactor.value(p.input) }] : [])));
+    return { person, ...(goal ? { goal } : {}), calls: calls.slice(-20) };
   }
 
   /** The id an agent's binding (AgentDef.machines) names this hub's computer by: its replica id in a cluster, else "local". */

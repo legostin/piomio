@@ -206,6 +206,11 @@ export class AutoMode {
     return verdict;
   }
 
+  /** Another reviewer from now on (tests; a hub that reviews elsewhere). */
+  useReviewer(reviewer: () => Reviewer | undefined): void {
+    this.d = { ...this.d, reviewer };
+  }
+
   /** The person said yes on a card in this session: auto mode starts counting blocks in a row afresh. */
   personSaidYes(sessionId: string): void {
     const b = this.blocks.get(sessionId);

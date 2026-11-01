@@ -106,6 +106,11 @@ export interface ToolCallContext {
   tainted: boolean;
   /** The user approved this call: on its approval card, or ahead of time with an "always allow" rule. */
   approved?: boolean;
+  /**
+   * Auto mode's reviewer allowed this call instead of a card (core/src/policy/auto.ts): enough for a change after
+   * outside content, never for a card that is always the person's (a tool's own).
+   */
+  reviewed?: boolean;
   background: boolean;
   workspace: string;
   machineId: string;
@@ -819,6 +824,12 @@ export interface BrainSessionOptions {
    * commands and changing files is work for a task (task_delegate), so the dialog never waits on it.
    */
   frontDesk?: boolean;
+  /**
+   * A session with no tools at all (no hub tools, shell, files, skills or plugins, none of the person's own settings
+   * or hooks): it only answers in text, with `systemPrompt` as its whole instructions, and keeps nothing afterwards.
+   * Auto mode's reviewer (core/src/policy/reviewer.ts); only Claude Code supports it.
+   */
+  bare?: boolean;
 }
 
 export type BrainEvent =

@@ -401,6 +401,24 @@ describe("confined brains (BrainSessionOptions.confine)", () => {
     expect(plain).not.toContain("--permission-prompt-tool");
   });
 
+  it("auto mode's reviewer is bare: no tools, no MCP server, its prompt alone, none of the person's settings, nothing kept", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "owl-cc-state-"));
+    const provider = createClaudeCodeProvider({ command: () => fake, stateDir });
+    const argsFile = join(mkdtempSync(join(tmpdir(), "owl-cc-args-")), "args.jsonl");
+    const o = opts({ bare: true, model: "haiku", confine, env: { FAKE_ARGS_FILE: argsFile } });
+    const ev = await collect((await provider.createSession(o)).send({ text: "hi" }));
+    expect(ev.at(-1)?.type).toBe("done");
+    const args = JSON.parse(readFileSync(argsFile, "utf8").trim().split("\n")[0]) as string[];
+    const after = (flag: string) => args[args.indexOf(flag) + 1];
+    expect(after("--tools")).toBe("");
+    expect(after("--setting-sources")).toBe("project");
+    expect(after("--model")).toBe("haiku");
+    expect(readFileSync(after("--system-prompt-file"), "utf8")).toBe("SYSTEM");
+    expect(JSON.parse(readFileSync(after("--mcp-config"), "utf8"))).toEqual({ mcpServers: {} });
+    expect(args).toContain("--no-session-persistence");
+    for (const flag of ["--permission-prompt-tool", "--permission-mode", "--allowedTools", "--append-system-prompt-file", "--settings", "--plugin-dir"]) expect(args, flag).not.toContain(flag);
+  });
+
   it("a dialog's front desk only looks: no shell or file changes of its own, nothing to ask for", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "owl-cc-state-"));
     const claude = createClaudeCodeProvider({ command: () => fake, stateDir });

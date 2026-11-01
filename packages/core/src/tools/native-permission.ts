@@ -14,6 +14,7 @@ import type { Settings } from "../settings.ts";
 import type { AuditLog } from "../audit.ts";
 import type { Redactor } from "../vault/redact.ts";
 import type { AgentRegistry } from "../agents.ts";
+import type { AutoAction, AutoMode } from "../policy/auto.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
 import { agentRoot, classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
@@ -34,6 +35,10 @@ export interface NativePermissionDeps {
   dataDir: string;
   /** More folders the session's brain may use (Claude Code plugin folders). */
   roots: () => string[];
+  /** Auto mode: decides what would ask the person, when the settings say so. */
+  auto?: AutoMode;
+  /** A machine's name for the reviewer ("local" is this hub's). */
+  machineName?: (id: string) => string;
 }
 
 const answer = (o: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(o) }] });
@@ -47,6 +52,12 @@ function classifyCodex(kind: string, input: Record<string, unknown>, cwd: string
   }
   if (kind === "codex.fileChange") return { kind: "write", tool: kind, path: str(input.grantRoot) ?? str(input.path) ?? cwd };
   return { kind: "other", tool: kind, input };
+}
+
+/** The action for auto mode's reviewer, with why it was not let through at once. */
+function autoAction(a: NativeAction, input: unknown, why: string): AutoAction {
+  const kind = a.kind === "command" || a.kind === "read" || a.kind === "write" ? a.kind : "tool";
+  return { tool: a.tool, input, summary: summary(a), kind, ...(kind === "tool" ? { effect: "external" as const } : {}), ...(a.kind === "command" && a.reason ? { reason: a.reason } : {}), why };
 }
 
 function summary(a: NativeAction): string {
@@ -124,10 +135,27 @@ export function registerNativePermission(d: NativePermissionDeps): void {
           open(ctx.sessionId, action);
         }
       }
+      const safe = d.redactor.value(input);
+      // The person allowed this very call after auto mode had stopped it.
+      if (decided.decision === "ask" && d.approvals.takeAllowance(ctx.sessionId, tool, safe)) decided = { decision: "allow", reason: "the person allowed it after auto mode stopped it" };
       // Background work of an agent that may only suggest has nobody to ask.
       const agent = d.agents.get(ctx.agentId);
       if (decided.decision === "ask" && ctx.background && (agent?.initiative ?? 0) < 2) decided = { decision: "deny", reason: "background work cannot ask the person" };
-      d.audit.append(`agent:${ctx.agentId}`, "native.decision", tool, { sessionId: ctx.sessionId, decision: decided.decision, reason: decided.reason, input: d.redactor.value(input) });
+
+      // Auto mode decides instead of a card; what it hands over still gets one.
+      if (decided.decision === "ask" && d.auto && d.settings.get().approvalMode !== "ask") {
+        const where = { sessionId: ctx.sessionId, conversationId: ctx.conversationId, taskId: ctx.taskId, agentId: ctx.agentId, workspace: ctx.workspace, machine: d.machineName?.(ctx.machineId ?? "local") ?? ctx.machineId ?? "local" };
+        const verdict = await d.auto.decide(autoAction(action, safe, decided.reason), where);
+        if (verdict.decision === "allow") {
+          decided = { decision: "allow", reason: `auto mode: allowed at stage ${verdict.stage}` };
+          open(ctx.sessionId, action);
+        } else if (verdict.decision === "block") {
+          d.audit.append(`agent:${ctx.agentId}`, "native.decision", tool, { sessionId: ctx.sessionId, decision: "deny", reason: `auto mode: ${verdict.rule}`, input: safe });
+          d.approvals.block({ sessionId: ctx.sessionId, conversationId: ctx.conversationId, taskId: ctx.taskId, agentId: ctx.agentId, tool, input: safe, summary: summary(action), ask: askOf(action), effect: "external", tainted: ctx.tainted, auto: { rule: verdict.rule, reason: verdict.reason } });
+          return answer({ behavior: "deny", message: `Auto mode stopped this: [${verdict.rule}] ${verdict.reason} Find another way that fits what the person asked, or ask them in your reply.` });
+        }
+      }
+      d.audit.append(`agent:${ctx.agentId}`, "native.decision", tool, { sessionId: ctx.sessionId, decision: decided.decision, reason: decided.reason, input: safe });
 
       if (decided.decision === "allow") return answer({ behavior: "allow", updatedInput: input });
       if (decided.decision === "deny") {
@@ -141,7 +169,7 @@ export function registerNativePermission(d: NativePermissionDeps): void {
         taskId: ctx.taskId,
         agentId: ctx.agentId,
         tool,
-        input: d.redactor.value(input),
+        input: safe,
         summary: text,
         ask: askOf(action),
         effect: "external",
@@ -152,6 +180,7 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       if (ctx.taskId) d.store.updateTask(ctx.taskId, { status: "running" });
       if (outcome === "approved") {
         open(ctx.sessionId, action);
+        d.auto?.personSaidYes(ctx.sessionId);
         return answer({ behavior: "allow", updatedInput: input });
       }
       if (outcome === "timeout") {
