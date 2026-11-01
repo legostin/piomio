@@ -962,6 +962,10 @@ export interface MachineInfo {
   clis: Array<{ brainId: string } & ProbeResult>;
   allowedDirs: string[];
   nodeVersion: string;
+  /** Piomio's version of the machine's daemon (piomio-node.mjs); older daemons don't say. */
+  version?: string;
+  /** It runs from the single-file download, not inside the desktop app, and can replace itself (`node.update`). */
+  selfUpdate?: boolean;
 }
 
 export interface Machine {
@@ -1014,6 +1018,10 @@ export interface MachineActivity {
   name: string;
   online: boolean;
   work: MachineWork[];
+  /** The version an "Update" on this machine would bring: a newer release for a server's hub, the hub's for a node. */
+  update?: string;
+  /** That update is under way. */
+  updating?: boolean;
 }
 
 // ---------- Machines: brain setup, keys and spend (docs/superpowers/specs/2026-10-30-cluster-design.md) ----------

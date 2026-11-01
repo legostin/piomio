@@ -63,6 +63,9 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           test -f "dist/piomio-setup-$v-x64.exe"
           test -f "dist/piomio-$v.dmg"
+          # The server install: the archives with their checksums for install.sh and signatures for the hubs' updates.
+          for a in x64 arm64; do for f in "" .sha256 .sig; do test -f "dist/piomio-$v-linux-$a.tar.gz$f"; done; done
+          cp packaging/linux/install.sh dist/install.sh
           node packaging/desktop/latest-json.mjs dist "$v" "$GITHUB_REPOSITORY"
           ls -l dist
       - name: Publish the release

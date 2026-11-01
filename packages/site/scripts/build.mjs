@@ -82,8 +82,10 @@ await build({ root: SITE, configFile: join(SITE, "vite.config.ts"), logLevel: "w
 await prerender({ dist: DIST, ssrEntry: join(ssrOut, "entry-server.js"), languages: siteConfig.languages, base, origin });
 rmSync(ssrOut, { recursive: true, force: true });
 
-// 4. The demo next to the page, the pictures for links, and GitHub Pages' own files.
+// 4. The demo next to the page, the server installer (curl -fsSL <site>/install.sh | sh), the pictures for links, and
+// GitHub Pages' own files.
 cpSync(join(WEB, "dist-demo"), join(DIST, "demo"), { recursive: true });
+cpSync(join(ROOT, "packaging", "linux", "install.sh"), join(DIST, "install.sh"));
 await ogImages(DIST, siteConfig.languages);
 writeFileSync(join(DIST, ".nojekyll"), "");
 if (process.env.SITE_CNAME) writeFileSync(join(DIST, "CNAME"), `${process.env.SITE_CNAME.trim()}\n`);

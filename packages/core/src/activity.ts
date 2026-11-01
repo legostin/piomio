@@ -2,7 +2,7 @@
 // machines block of the web UI and the phone app. The runner reports turns and their steps; this keeps the view and
 // announces it as "machines.activity", at most a few times a second.
 
-import type { Approval, MachineActivity, MachineWork, WorkStep } from "@piomio/shared";
+import type { Approval, MachineActivity, MachineInfo, MachineWork, WorkStep } from "@piomio/shared";
 import { nowIso, parseBrainRef } from "@piomio/shared";
 import type { EventBus } from "./bus.ts";
 import type { MachineHub } from "./machines.ts";
@@ -74,6 +74,8 @@ const EMIT_DELAY_MS = 250;
 export class MachineActivityFeed {
   bus: EventBus;
   machines: MachineHub;
+  /** The "Update" each row offers (self-update.ts). */
+  updates?: { offerFor(id: string, info?: MachineInfo): { update?: string; updating?: boolean } };
   /** By the streaming message's id: one per turn. */
   private turns = new Map<string, Turn>();
   private timer?: NodeJS.Timeout;
@@ -83,6 +85,7 @@ export class MachineActivityFeed {
     this.machines = machines;
     // Online and offline, renames and revoked machines.
     bus.on("machine.updated", () => this.changed());
+    bus.on("updates.changed", () => this.changed());
     bus.on("approval.created", (a: Approval) => this.hold(a, true));
     bus.on("approval.resolved", (a: Approval | undefined) => a && this.hold(a, false));
   }
@@ -148,9 +151,10 @@ export class MachineActivityFeed {
         .filter((t) => t.machineId === machineId)
         .sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0))
         .map(({ machineId: _, held: __, heldDetail: ___, ...w }) => w);
+    const offer = (id: string, info?: MachineInfo) => this.updates?.offerFor(id, info) ?? {};
     return [
-      { id: "local", name: hubName(), online: true, work: work("local") },
-      ...this.machines.list().map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id) })),
+      { id: "local", name: hubName(), online: true, work: work("local"), ...offer("local") },
+      ...this.machines.list().map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id), ...(m.status === "online" ? offer(m.id, m.info) : {}) })),
     ];
   }
 

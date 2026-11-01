@@ -56,6 +56,8 @@ export type BusEvents = {
   "replica.synced": { tables: string[] };
   /** What every machine is doing now (activity.ts). */
   "machines.activity": MachineActivity[];
+  /** An update came on offer for this hub or a machine, started or ended (self-update.ts). */
+  "updates.changed": Record<string, never>;
   /** A phone paired, was renamed or revoked: listeners re-read the list. */
   "device.updated": { id: string };
   "devices.network": DeviceNetwork;

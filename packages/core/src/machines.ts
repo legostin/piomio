@@ -54,6 +54,14 @@ export class MachineHub {
     });
   }
 
+  /** Sends a machine the hub's own daemon to replace itself with (node.update); it restarts and says hello again. */
+  async sendUpdate(machineId: string, update: { version: string; sha256: string; bundle: string }): Promise<void> {
+    const peer = this.peers.get(machineId);
+    if (!peer || peer.closed) throw new Error(`machine ${machineId} is offline`);
+    await peer.request("node.update", update, { timeoutMs: 120_000 });
+    this.audit.append("core", "machine.update", machineId, { version: update.version });
+  }
+
   /** Sends a machine its setup (node.setup); a daemon from before setups ignores it. */
   async pushSetup(machineId: string): Promise<void> {
     const peer = this.peers.get(machineId);

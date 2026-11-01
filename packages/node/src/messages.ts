@@ -115,6 +115,7 @@ const en = {
   "brains.keyWaitsVault": "API key mode: waiting for the hub's vault to be unlocked",
   "gateway.ready": "model gateway on 127.0.0.1:{port}",
   "gateway.setup": "setup from the hub: {brains}",
+  "update.applied": "updated to Piomio {version} by the hub: restarting",
 };
 
 const ru: Record<keyof typeof en, string> = {
@@ -223,6 +224,7 @@ const ru: Record<keyof typeof en, string> = {
   "brains.keyWaitsVault": "режим ключа API: ждёт, пока хранилище хаба разблокируют",
   "gateway.ready": "шлюз моделей на 127.0.0.1:{port}",
   "gateway.setup": "настройка от хаба: {brains}",
+  "update.applied": "хаб обновил программу до Piomio {version}: перезапуск",
 };
 
 export const nodeCatalog: Catalog = { en, ru };

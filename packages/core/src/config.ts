@@ -74,6 +74,13 @@ export interface Config {
   version: string;
   /** GitHub repository whose releases carry the desktop installers (`/download/desktop/<os>`). */
   releasesRepo: string;
+  /**
+   * Where packaging/linux/install.sh put this hub (PIOMIO_INSTALL_ROOT, set by its launcher): its versions, the link
+   * to the one that runs, the launcher. Such a hub updates itself on the person's button (self-update.ts).
+   */
+  installRoot?: string;
+  /** A release in the shape of GitHub's `releases/latest` to update from instead (PIOMIO_UPDATE_URL): a local check. */
+  updateUrl?: string;
   /** For tests: skip starting builtin plugins. */
   plugins: "all" | "none" | string[];
 }
@@ -153,6 +160,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     timezone: env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     version: appVersion(),
     releasesRepo: env.PIOMIO_RELEASES_REPO || "legostin/piomio",
+    ...(env.PIOMIO_INSTALL_ROOT ? { installRoot: resolve(env.PIOMIO_INSTALL_ROOT) } : {}),
+    ...(env.PIOMIO_UPDATE_URL ? { updateUrl: env.PIOMIO_UPDATE_URL } : {}),
     plugins: (env.PIOMIO_PLUGINS ?? "all") === "all" ? "all" : env.PIOMIO_PLUGINS === "none" ? "none" : (env.PIOMIO_PLUGINS ?? "").split(","),
   };
   const merged = { ...cfg, ...overrides };

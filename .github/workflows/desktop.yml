@@ -1,5 +1,5 @@
-# Builds the desktop app and its installers and checks them on clean runners: install, the hub answers, quit,
-# uninstall, the data stays. release.yml calls it on a version tag and publishes what it built.
+# Builds the desktop app and its installers, and the Linux server archives, and checks them on clean runners: install,
+# the hub answers, quit or uninstall, the data stays. release.yml calls it on a version tag and publishes what it built.
 name: desktop app
 
 on:
@@ -82,6 +82,55 @@ jobs:
           path: |
             dist/desktop/piomio-setup-*.exe
             dist/desktop/piomio-setup-*.exe.sig
+          if-no-files-found: ignore
+
+  linux:
+    strategy:
+      matrix:
+        include:
+          - { arch: x64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/tailnet/go.mod
+          cache-dependency-path: packages/tailnet/go.sum
+      - run: npm ci
+      # Signed with the project's update key, which hubs check before they update; a fork's PR builds without the .sig.
+      - run: node packaging/linux/build.mjs --arch ${{ matrix.arch }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: "install.sh as root: the user piomio, its service answers, uninstall keeps the data"
+        run: |
+          set -eu
+          v=$(node -p "require('./package.json').version")
+          sudo env PIOMIO_ARCHIVE="$PWD/dist/linux/piomio-$v-linux-${{ matrix.arch }}.tar.gz" sh packaging/linux/install.sh
+          curl -fsS http://127.0.0.1:8080/api/auth/state | tee state.json
+          grep -q '"hasPassword":false' state.json
+          grep -q "\"version\":\"$v\"" state.json
+          test "$(ps -o user= -p "$(pgrep -f 'piomio/current/packaging/linux/start.mjs' | head -n 1)")" = piomio
+          sudo -iu piomio piomio version | grep -qx "$v"
+          sudo -iu piomio piomio uninstall
+          if curl -fsS http://127.0.0.1:8080/api/auth/state; then echo "the hub still answers"; exit 1; fi
+          sudo test -f /home/piomio/.local/share/piomio/piomio.db
+          sudo test ! -e /home/piomio/.local/lib/piomio
+          echo ok
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-${{ matrix.arch }}-installer
+          path: |
+            dist/linux/piomio-*-linux-*.tar.gz
+            dist/linux/piomio-*-linux-*.tar.gz.sha256
+            dist/linux/piomio-*-linux-*.tar.gz.sig
           if-no-files-found: ignore
 
   macos:

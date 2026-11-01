@@ -1,6 +1,7 @@
-// Piomio hub CLI: start | reset-password | pairing-code | devices pair | backup | audit-verify
+// Piomio hub CLI: start | version | reset-password | pairing-code | devices pair | backup | audit-verify | uninstall
 
-import { cpSync, mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig } from "./config.ts";
@@ -18,7 +19,8 @@ import { deviceTls } from "./devices-tls.ts";
 import { deviceUrls, hubName, pairingLink, qrText } from "./pairing.ts";
 import { joinCluster, localInvite } from "./cluster.ts";
 import { InviteRegistry } from "./invites.ts";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
+import { installLayout, settleBeforeStart, TRIAL_MAX_MS } from "./self-update.ts";
 
 const [cmd = "start", ...args] = process.argv.slice(2);
 const config = loadConfig();
@@ -35,7 +37,19 @@ function cliT(db?: Db): Translate {
 async function main(): Promise<void> {
   switch (cmd) {
     case "start": {
+      // A server install (packaging/linux): an update that rolled back puts the database back first; one on trial must
+      // come up within TRIAL_MAX_MS, or this start counts as failed.
+      const update = config.installRoot ? settleBeforeStart(config.installRoot, config.dataDir, config.version) : {};
+      if (update.trial) {
+        const trial = installLayout(config.installRoot!).trial;
+        setTimeout(() => {
+          if (!existsSync(trial)) return;
+          console.log(`[piomio] ${config.version} did not come up in ${TRIAL_MAX_MS / 1000} s`);
+          process.exit(1);
+        }, TRIAL_MAX_MS).unref();
+      }
       const hub = new Hub(config);
+      hub.startState = update;
       let stopping = false;
       const shutdown = async (sig: string) => {
         if (stopping) return;
@@ -52,6 +66,28 @@ async function main(): Promise<void> {
       if (process.env.PIOMIO_DESKTOP === "1") readDesktopCommands(process.stdin, { stop: () => void shutdown("stop"), ticket: (t) => hub.desktopTickets.add(t) });
       process.on("unhandledRejection", (e) => console.error("[piomio] unhandled rejection:", e));
       await hub.start();
+      return;
+    }
+    case "version":
+      // Also what an update runs to make sure a new tree loads (self-update.ts).
+      console.log(config.version);
+      return;
+    case "uninstall": {
+      // A server install: the app and the service go, the data stays.
+      if (!config.installRoot) throw new Error(cliT()("cli.uninstallNotServer"));
+      const systemctl = (...a: string[]) => {
+        try {
+          execFileSync("systemctl", ["--user", ...a], { stdio: "ignore" });
+        } catch {
+          /* not running, or no user manager */
+        }
+      };
+      systemctl("disable", "--now", "piomio.service");
+      rmSync(join(homedir(), ".config", "systemd", "user", "piomio.service"), { force: true });
+      systemctl("daemon-reload");
+      rmSync(join(homedir(), ".local", "bin", "piomio"), { force: true });
+      rmSync(config.installRoot, { recursive: true, force: true });
+      console.log(cliT()("cli.uninstalled", { data: config.dataDir }));
       return;
     }
     case "reset-password": {
@@ -137,7 +173,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      console.log("usage: piomio [start|reset-password <pass>|pairing-code [name]|devices pair|replica invite|join|backup [dir]|audit-verify]");
+      console.log("usage: piomio [start|version|reset-password <pass>|pairing-code [name]|devices pair|replica invite|join|backup [dir]|audit-verify|uninstall]");
       process.exitCode = 1;
   }
 }

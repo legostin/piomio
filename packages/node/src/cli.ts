@@ -10,6 +10,8 @@ import { createNodeDaemon } from "./daemon.ts";
 import { consoleLogger, machineInfo, osName } from "./info.ts";
 import { t } from "./messages.ts";
 import { stopOnDesktopStdin } from "./desktop.ts";
+import { PIOMIO_VERSION } from "./version.ts";
+import { restart, RESTART_CODE } from "./self-update.ts";
 
 const help = () => t("cli.help", { home: nodeHome() });
 
@@ -81,7 +83,8 @@ async function cmdRun(): Promise<void> {
     const force = setTimeout(() => process.exit(1), 10_000);
     force.unref();
     await daemon.stop().catch(() => {});
-    process.exit(0);
+    // After an update (self-update.ts): a code systemd's Restart= starts the daemon again on.
+    process.exit(restart.requested ? RESTART_CODE : 0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -141,6 +144,10 @@ function cmdPolicy(): void {
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
+  if (cmd === "--version" || cmd === "version") {
+    out(PIOMIO_VERSION);
+    return;
+  }
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h" || flags.help) {
     out(help());
     return;
