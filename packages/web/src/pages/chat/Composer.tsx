@@ -10,7 +10,7 @@ import type { AgentDef } from "@piomio/shared";
 import { api, errorText } from "../../lib/api";
 import { mobileMode } from "../../lib/mobile";
 import { native, nativeErrorText, type NativeBridge } from "../../lib/native";
-import { applyCommand, filterCommands, slashQuery, type CommandInfo } from "../../lib/commands";
+import { applyCommand, filterCommands, sendsAtOnce, slashQuery, type CommandInfo } from "../../lib/commands";
 import { applyMention, filterMentions, mentionQuery, type MentionOption } from "../../lib/mentions";
 import { canSend, readyPaths } from "../../lib/attachments";
 import { isStreaming } from "../../lib/messages";
@@ -289,6 +289,10 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
   };
 
   const choose = (c: CommandInfo) => {
+    if (sendsAtOnce(c)) {
+      setDismissed(true);
+      return void submit(`/${c.name}`);
+    }
     setText(applyCommand(c.name));
     setDismissed(true);
     ta.current?.focus();
@@ -358,9 +362,12 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
               onMouseMove={() => setSel(i)}
               className={cx("flex w-full items-baseline gap-3 rounded-xl px-3 py-2 text-left text-sm", i === active ? "bg-accent-soft" : "")}
             >
-              <span className="shrink-0 font-mono font-medium text-accent-text">/{c.name.replace(/^\//, "")}</span>
+              <span className="shrink-0 font-mono font-medium text-accent-text">
+                /{c.name.replace(/^\//, "")}
+                {c.args && <span className="font-sans font-normal text-muted"> {c.args}</span>}
+              </span>
               <span className="min-w-0 flex-1 truncate text-muted">{c.description}</span>
-              {c.source && <span className="shrink-0 text-xs text-muted">{c.source}</span>}
+              {c.source && c.source !== "hub" && <span className="shrink-0 text-xs text-muted">{c.source}</span>}
             </button>
           ))}
         </div>

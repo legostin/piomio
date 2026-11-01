@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { globSpecificity, matchesAny, matchesGlob } from "./glob";
 import { backoffDelay } from "./backoff";
-import { applyCommand, filterCommands, slashQuery } from "./commands";
+import { applyCommand, filterCommands, sendsAtOnce, slashQuery } from "./commands";
 import { groupParts, inputPreview, prettyJson } from "./parts";
 import { parseMcpConfig } from "./mcp-config";
 import { countdown, groupedCode, slugify } from "./format";
@@ -61,6 +61,13 @@ describe("slash commands", () => {
     expect(filterCommands(cmds, "d").map((c) => c.name)).toEqual(["deploy", "digest"]);
     expect(filterCommands(cmds, "review").map((c) => c.name)).toEqual(["review", "digest"]);
     expect(filterCommands(cmds, "").length).toBe(3);
+  });
+  it("lists the hub's commands first, in their own order; those without words are sent at once", () => {
+    const all = [...cmds, { name: "task", description: "Start a task", source: "hub", args: "what to do" }, { name: "brain", description: "Choose the brain", source: "hub" }];
+    expect(filterCommands(all, "").map((c) => c.name)).toEqual(["task", "brain", "deploy", "digest", "review"]);
+    expect(sendsAtOnce(all[4])).toBe(true);
+    expect(sendsAtOnce(all[3])).toBe(false);
+    expect(sendsAtOnce(cmds[0])).toBe(false);
   });
   it("applies a command with a trailing space", () => {
     expect(applyCommand("review")).toBe("/review ");

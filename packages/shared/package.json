@@ -9,6 +9,7 @@
     "./avatar": "./src/avatar.ts",
     "./group": "./src/group.ts",
     "./thinking": "./src/thinking.ts",
+    "./commands": "./src/commands.ts",
     "./models": "./src/models.ts",
     "./pages": "./src/pages.ts"
   },

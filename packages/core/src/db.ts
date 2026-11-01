@@ -129,6 +129,8 @@ const MIGRATIONS: string[] = [
   `,
   // Who has a skill (skills.ts SkillHolders): JSON list of agent ids; no row = the whole team.
   `create table skill_agents(skill text primary key, agents text not null);`,
+  // A long goal's rounds so far (the /goal command, Task.kind "goal").
+  `alter table tasks add column rounds integer not null default 0;`,
 ];
 
 /**

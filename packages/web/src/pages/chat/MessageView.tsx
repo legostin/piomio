@@ -31,6 +31,8 @@ import { MapCard } from "./MapCard";
 import { NewsCard } from "./NewsCard";
 import { Choices, FeedCard } from "./ChatButtons";
 import { ThinkingCard } from "./ThinkingCard";
+import { ThinkingMenuCard } from "./ThinkingMenu";
+import { ArchiveCard } from "./ArchiveCard";
 import { PageCard } from "./PageCard";
 import { TaskLine } from "./TaskLine";
 import { LiveStep } from "./LiveStep";
@@ -166,6 +168,11 @@ function ErrorPart({ message }: { message: string }) {
       <span className="min-w-0 break-words whitespace-pre-wrap">{message}</span>
     </div>
   );
+}
+
+/** A line from the hub itself (a command's answer or hint): quiet and centred, not anyone speaking. */
+function NotePart({ text }: { text: string }) {
+  return <div className="mx-auto max-w-md px-3 py-1 text-center text-[13px] leading-snug text-muted break-words whitespace-pre-wrap">{text}</div>;
 }
 
 /**
@@ -330,6 +337,8 @@ function Parts({ message }: { message: Message }) {
             return <NotificationCard key={it.key} part={p} taskId={message.taskId} />;
           case "error":
             return <ErrorPart key={it.key} message={p.message} />;
+          case "note":
+            return <NotePart key={it.key} text={p.text} />;
           case "attachment":
             return <Attachment key={it.key} part={p} message={message} index={it.index} />;
           case "images":
@@ -363,7 +372,9 @@ function Parts({ message }: { message: Message }) {
           case "feed":
             return <FeedCard key={it.key} feedId={p.feedId} />;
           case "thinking":
-            return <ThinkingCard key={it.key} agentId={p.agentId} />;
+            return p.focus ? <ThinkingMenuCard key={it.key} agentId={p.agentId} focus={p.focus} /> : <ThinkingCard key={it.key} agentId={p.agentId} />;
+          case "agent_archive":
+            return <ArchiveCard key={it.key} agentId={p.agentId} />;
           case "page":
             return <PageCard key={it.key} pageId={p.pageId} conversationId={message.conversationId} />;
           case "widget":

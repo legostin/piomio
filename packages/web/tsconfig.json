@@ -20,6 +20,7 @@
       "@piomio/shared/avatar": ["../shared/src/avatar.ts"],
       "@piomio/shared/group": ["../shared/src/group.ts"],
       "@piomio/shared/thinking": ["../shared/src/thinking.ts"],
+      "@piomio/shared/commands": ["../shared/src/commands.ts"],
       "@piomio/shared/models": ["../shared/src/models.ts"],
       "@piomio/ui": ["../ui-sdk/src/index.ts"]
     }

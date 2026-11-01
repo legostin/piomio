@@ -65,6 +65,7 @@ import { Connections } from "./connections.ts";
 import { entryRef } from "./integrations.ts";
 import { cleanTranscription, Transcriber } from "./transcribe.ts";
 import { RemoteAccess } from "./remote.ts";
+import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
 import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
@@ -95,6 +96,8 @@ export class Hub {
   channels: ChannelRegistry;
   notifier: Notifier;
   runner: SessionRunner;
+  /** "/task …", "/brain": the hub's own commands (commands.ts). */
+  commands: HubCommands;
   team: Team;
   /** The user's channels: news an agent gathers on a schedule (feeds.ts). */
   feeds: Feeds;
@@ -268,6 +271,16 @@ export class Hub {
       tellAgent: (id, note) => this.runner.tellAgent(id, note),
     });
     this.runner.d.setup = this.setup;
+    this.commands = new HubCommands({
+      store: this.store,
+      agents: this.agents,
+      channels: this.channels,
+      publicUrl: config.publicUrl,
+      thinkingView: (a) => this.thinkingView(a),
+      saveAgent: (a, actor) => this.saveAgent(a, actor),
+      tasks: this.runner,
+    });
+    this.runner.d.commands = this.commands;
     this.team = new Team({
       store: this.store,
       agents: this.agents,
@@ -345,6 +358,7 @@ export class Hub {
       tasks: {
         place: (agentId, machine) => this.runner.placeTask(agentId, machine),
         ask: (taskId, question) => this.runner.askStarter(taskId, question),
+        goal: (taskId, status, summary) => this.runner.reportGoal(taskId, status, summary),
         message: (taskId, text, from) => this.runner.messageTask(taskId, text, from),
         cancel: (taskId, from) => this.runner.cancelTaskFrom(taskId, from),
         computers: () => this.runner.computers(),
