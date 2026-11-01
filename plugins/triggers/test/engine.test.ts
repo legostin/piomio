@@ -181,6 +181,38 @@ describe("trigger engine", () => {
     e.stop();
   });
 
+  it("skips a run while the agent sleeps in the archive, without counting it", async () => {
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    kv.set("trigger:t_sleep", base({ id: "t_sleep", maxRunsPerDay: 1, agentId: "scout" }));
+    const f = fakeCtx(kv);
+    const call = f.ctx.core.call;
+    let asleep = true;
+    (f.ctx.core as any).call = async (method: string, params: any) => (method === "tasks.create" && asleep ? { skipped: "agentArchived" } : call(method, params));
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    expect(await e.runNow("t_sleep")).toMatchObject({ status: "skipped", code: "agentArchived" });
+    expect(e.get("t_sleep")!.state).toMatchObject({ lastStatus: "skipped", lastErrorCode: "agentArchived" });
+    asleep = false;
+    expect((await e.runNow("t_sleep")).status).toBe("started");
+    e.stop();
+  });
+
+  it("drops a deleted agent's triggers and keeps the others", async () => {
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    kv.set("trigger:t_a", base({ id: "t_a", agentId: "scout" }));
+    kv.set("trigger:t_b", base({ id: "t_b", agentId: "scout", kind: "once", at: "2030-01-01T09:00:00Z" } as Partial<Trigger>));
+    kv.set("trigger:t_c", base({ id: "t_c" }));
+    const f = fakeCtx(kv);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    expect(await e.removeAgent("scout")).toBe(2);
+    expect(e.get("t_a")).toBeUndefined();
+    expect(e.get("t_b")).toBeUndefined();
+    expect(e.get("t_c")).toBeDefined();
+    expect(kv.has("trigger:t_a")).toBe(false);
+    e.stop();
+  });
+
   it("keeps only the last 20 runs", async () => {
     const kv = new Map<string, unknown>([["initialized", true]]);
     kv.set("trigger:t_many", base({ id: "t_many", maxRunsPerDay: 100 }));

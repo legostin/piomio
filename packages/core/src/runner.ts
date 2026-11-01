@@ -283,6 +283,10 @@ export class SessionRunner {
   ): Promise<Message> {
     const conv = this.d.store.getConversation(conversationId);
     if (!conv) throw new LocalizedError("conversation.notFound");
+    // An agent in the archive sleeps: its dialog takes nothing until it comes back.
+    if (conv.kind !== "group" && this.d.agents.isArchived(conv.agentId)) {
+      throw new LocalizedError("agent.archivedChat", { name: this.agentLabel(conv.agentId) }, 409);
+    }
     // Secrets come out first: message hooks, the stored message and the model only see vault:// references.
     const cap = this.d.secrets.capture(text, conversationId, "user");
     if (cap.stored.length || cap.withheld) opts.onCapture?.(cap);
@@ -427,12 +431,12 @@ export class SessionRunner {
 
   // ---------- group chats ----------
 
-  /** A group's members that are still on the team, in order (the lead first), with their names. */
+  /** A group's members that are still on the team (not deleted, not asleep in the archive), in order (the lead first), with their names. */
   private groupMembers(conv: Conversation): Array<{ id: string; name: string }> {
     const out: Array<{ id: string; name: string }> = [];
     for (const id of conv.members ?? [conv.agentId]) {
       const a = this.d.agents.get(id);
-      if (a) out.push({ id, name: agentName(a, hubLocale()) });
+      if (a && !this.d.agents.isArchived(id)) out.push({ id, name: agentName(a, hubLocale()) });
     }
     return out;
   }
@@ -673,6 +677,15 @@ export class SessionRunner {
     return task;
   }
 
+  /** The agent goes to sleep or leaves: the turn in its dialog stops and its unfinished tasks are cancelled. */
+  stopAgent(agentId: string): void {
+    this.interrupt(this.d.store.agentConversation(agentId).id);
+    const open = this.d.store.db
+      .prepare("select id from tasks where agent_id = ? and status in ('queued', 'running', 'paused', 'waiting_approval', 'waiting_input', 'interrupted')")
+      .all(agentId) as Array<{ id: string }>;
+    for (const t of open) this.cancelTask(t.id);
+  }
+
   cancelTask(id: string): Task | undefined {
     const t = this.d.store.getTask(id);
     if (!t) return undefined;
@@ -737,6 +750,11 @@ export class SessionRunner {
     if (!fresh || !["queued", "paused"].includes(fresh.status)) return;
     const agent = this.d.agents.get(fresh.agentId);
     const conv = this.d.store.getConversation(fresh.conversationId);
+    // Asleep in the archive: the task waits for nobody (archiving cancels them; this one came after).
+    if (agent && this.d.agents.isArchived(agent.id)) {
+      this.d.store.updateTask(fresh.id, { status: "cancelled", error: t("task.agentArchived") });
+      return;
+    }
     if (!agent || !conv) {
       this.d.store.updateTask(fresh.id, { status: "failed", error: t("task.missingAgent") });
       // The digest's writer cannot run: the hub sends the card now, not after the writer's time is up.

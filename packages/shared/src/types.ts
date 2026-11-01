@@ -459,6 +459,8 @@ export interface TeamMember {
   running: boolean;
   /** Messages from the agent (or the system) the user has not seen yet. */
   unread: number;
+  /** Pinned to the top of the list (under the default agent): its place among the pinned, 0 first. */
+  pinned?: number;
 }
 
 /** A group chat as the sidebar shows it, kept current by "group.updated". */

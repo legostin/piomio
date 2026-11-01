@@ -82,7 +82,7 @@ function useMentionable(conversationId: string): { members: Array<{ id: string; 
   }, [kind]);
   return useMemo(() => {
     if (kind === "group") return { members: (members ?? []).map((id) => agentList?.find((a) => a.id === id) ?? { id, name: id, avatar: undefined }), group: true };
-    if (kind === "main") return { members: (agentList ?? []).filter((a) => a.id !== own), group: false };
+    if (kind === "main") return { members: (agentList ?? []).filter((a) => a.id !== own && !a.archived), group: false };
     return { members: [], group: false };
   }, [kind, members, own, agentList]);
 }

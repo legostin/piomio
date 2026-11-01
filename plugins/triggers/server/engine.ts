@@ -382,7 +382,7 @@ export class TriggerEngine {
       } else {
         try {
           const goal = renderPrompt(t, { reason, now, tz: this.tz, ...extra });
-          const task = await this.ctx.core.call<{ id?: string }>("tasks.create", {
+          const task = await this.ctx.core.call<{ id?: string; skipped?: string }>("tasks.create", {
             agentId: t.agentId,
             goal,
             title: t.name,
@@ -392,10 +392,17 @@ export class TriggerEngine {
             ...(t.machine ? { machine: t.machine } : {}),
             ...(t.skill ? { skill: t.skill } : {}),
           });
-          rt.count++;
-          run.taskId = task?.id;
-          t.state.lastTaskId = task?.id;
-          t.state.lastRunAt = run.at;
+          if (task?.skipped) {
+            // The agent sleeps in the archive: nothing ran, and nothing counts against the day's runs.
+            run.status = "skipped";
+            run.detail = "The agent is in the archive";
+            run.code = task.skipped;
+          } else {
+            rt.count++;
+            run.taskId = task?.id;
+            t.state.lastTaskId = task?.id;
+            t.state.lastRunAt = run.at;
+          }
         } catch (e: any) {
           run.status = "error";
           run.detail = e?.message ?? String(e);
@@ -616,6 +623,13 @@ export class TriggerEngine {
       this.arm();
       return t;
     });
+  }
+
+  /** The person deleted the agent for good: its schedules, reminders, watches and webhooks go with it. */
+  async removeAgent(agentId: string): Promise<number> {
+    const ids = [...this.triggers.values()].filter((t) => t.agentId === agentId).map((t) => t.id);
+    for (const id of ids) await this.remove(id);
+    return ids.length;
   }
 
   /** Start the agent now. `force` (the user, from the UI) ignores the daily limit. */

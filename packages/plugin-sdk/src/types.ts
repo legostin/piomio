@@ -107,6 +107,8 @@ export type EventName =
   | "approval.created"
   | "approval.resolved"
   | "conversation.updated"
+  /** `{ agentId }`: the person deleted an agent for good; drop what the plugin keeps for it. */
+  | "agent.removed"
   | "vault.state"
   /** `{ ids }`: vault items just stored, changed or removed (chat, security console…), e.g. the token this plugin waits for. */
   | "vault.updated";

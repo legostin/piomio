@@ -8,7 +8,8 @@ import { countdown, groupedCode, slugify } from "./format";
 import { mergeClasses } from "./classes";
 import { stickAfterScroll } from "./stick";
 import { sectionForPath } from "../components/nav";
-import { agentForPath, agentPath, teamOrder } from "./team";
+import { agentForPath, agentMenuActions, agentPath, successorsOf, teamOrder } from "./team";
+import { placeMenu } from "./menu";
 import { AVATAR_COLORS, AVATAR_SHAPES, defaultAvatar, parseAvatar } from "@piomio/shared/avatar";
 
 describe("glob", () => {
@@ -180,6 +181,42 @@ describe("team sidebar", () => {
     expect(teamOrder(entries, "assistant").map((e) => e.agent.id)).toEqual(["assistant", "coder", "writer", "anna", "zed"]);
   });
 
+  it("puts the pinned under the default agent in their order, and leaves the archived out", () => {
+    const pinned = (agentId: string, at: string | undefined, place: number) => ({ ...member(agentId, at), pinned: place });
+    const entries = [
+      { agent: { id: "zed", name: "Zed" }, member: pinned("zed", undefined, 1) },
+      { agent: { id: "writer", name: "Writer" }, member: member("writer", "2026-10-26T09:00:00.000Z") },
+      { agent: { id: "assistant", name: "Assistant" }, member: pinned("assistant", "2026-10-01T00:00:00.000Z", 2) },
+      { agent: { id: "coder", name: "Coder" }, member: pinned("coder", "2026-10-20T10:00:00.000Z", 0) },
+      { agent: { id: "old", name: "Old", archived: true }, member: member("old", "2026-10-30T10:00:00.000Z") },
+      { agent: { id: "anna", name: "Anna" } },
+    ];
+    // The default agent stays first even when pinned; a pin outranks a newer message.
+    expect(teamOrder(entries, "assistant").map((e) => e.agent.id)).toEqual(["assistant", "coder", "zed", "writer", "anna"]);
+  });
+
+  it("offers what fits the agent in its menu", () => {
+    expect(agentMenuActions({ isDefault: false, unread: 0, hasMessages: true })).toEqual(["pin", "unread", "default", "settings", "archive", "delete"]);
+    expect(agentMenuActions({ isDefault: false, pinned: true, unread: 2, hasMessages: true })).toEqual(["unpin", "read", "default", "settings", "archive", "delete"]);
+    // An empty dialog has nothing to mark unread.
+    expect(agentMenuActions({ isDefault: false, unread: 0, hasMessages: false })).toEqual(["pin", "default", "settings", "archive", "delete"]);
+    // The default agent is always on top and already the default.
+    expect(agentMenuActions({ isDefault: true, unread: 0, hasMessages: true })).toEqual(["unread", "settings", "archive", "delete"]);
+    expect(agentMenuActions({ isDefault: false, archived: true, unread: 0, hasMessages: true })).toEqual(["restore", "delete"]);
+  });
+
+  it("finds who can take the default agent's place: active agents other than it", () => {
+    const agents = [
+      { id: "assistant", name: "Assistant" },
+      { id: "zed", name: "Zed" },
+      { id: "old", name: "Old", archived: true },
+      { id: "anna", name: "Anna" },
+    ];
+    expect(successorsOf("assistant", agents).map((a) => a.id)).toEqual(["anna", "zed"]);
+    expect(successorsOf("assistant", agents, [{ ...member("zed"), pinned: 0 }]).map((a) => a.id)).toEqual(["zed", "anna"]);
+    expect(successorsOf("assistant", [agents[0], agents[2]])).toEqual([]);
+  });
+
   it("gives every agent a stable address, the default agent the root", () => {
     expect(agentPath("assistant", "assistant")).toBe("/");
     expect(agentPath("researcher", "assistant")).toBe("/agent/researcher");
@@ -187,6 +224,28 @@ describe("team sidebar", () => {
     expect(agentForPath("/agent/researcher", "assistant")).toBe("researcher");
     expect(agentForPath("/tasks/t1", "assistant")).toBeUndefined();
     expect(agentForPath("/chat/c1", "assistant")).toBeUndefined();
+  });
+});
+
+describe("placeMenu", () => {
+  const size = { width: 200, height: 240 };
+  const viewport = { width: 1000, height: 800 };
+
+  it("opens right and down from the pointer, flipping where it does not fit", () => {
+    expect(placeMenu({ x: 100, y: 100 }, size, viewport)).toEqual({ left: 100, top: 100 });
+    expect(placeMenu({ x: 950, y: 700 }, size, viewport)).toEqual({ left: 750, top: 460 });
+  });
+
+  it("opens under a button, right edges lined up, or over it near the bottom", () => {
+    const box = { left: 220, top: 100, right: 248, bottom: 128 };
+    expect(placeMenu({ box }, size, viewport)).toEqual({ left: 48, top: 132 });
+    const low = { left: 220, top: 700, right: 248, bottom: 728 };
+    expect(placeMenu({ box: low }, size, viewport)).toEqual({ left: 48, top: 456 });
+  });
+
+  it("stays inside a small window", () => {
+    expect(placeMenu({ x: 5, y: 5 }, size, { width: 320, height: 200 })).toEqual({ left: 8, top: 8 });
+    expect(placeMenu({ box: { left: 0, top: 0, right: 30, bottom: 30 } }, size, viewport)).toEqual({ left: 8, top: 34 });
   });
 });
 
