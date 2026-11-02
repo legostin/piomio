@@ -87,9 +87,10 @@ export function defaultSettings(timezone: string, language: Locale = localeFromE
 export class Settings {
   db: Db;
   defaults: CoreSettings;
-  constructor(db: Db, timezone: string) {
+  /** `defaults`: what this kind of install starts with (a server's hub: access from anywhere on). */
+  constructor(db: Db, timezone: string, defaults: Partial<CoreSettings> = {}) {
     this.db = db;
-    this.defaults = defaultSettings(timezone);
+    this.defaults = { ...defaultSettings(timezone), ...defaults };
   }
 
   get(): CoreSettings {

@@ -1,9 +1,9 @@
 // First-run setup. A new hub gets a brain before anything else: until one works the web app shows only the setup card
 // (sign in, install the CLI, or a key), and a message written meanwhile is answered with that card and kept until a
-// brain takes it. Any brain the hub has counts, whichever agent asked. Then the default agent opens the intro (its
-// name, look and proactivity, who else joins the team) and from then on leads the rest of the setup (Telegram, a backup
-// brain, other computers, getting to know the user) from a short block in its system prompt and two hub tools. Nothing
-// here needs a model.
+// brain takes it. Any brain the hub has counts, whichever agent asked. Then the default agent opens the intro (a
+// server's link first when it waits for Tailscale's sign-in, then its name, look and proactivity, who else joins the
+// team) and from then on leads the rest of the setup (Telegram, a backup brain, other computers, getting to know the
+// user) from a short block in its system prompt and two hub tools. Nothing here needs a model.
 
 import type { SetupBrain, SetupState, SetupStep, VaultState } from "@piomio/shared";
 import { expandBrains, formatBrainRef, parseBrainRef } from "@piomio/shared";
@@ -17,8 +17,8 @@ import type { Settings } from "./settings.ts";
 import type { Store } from "./store.ts";
 
 /** The order the agent offers the steps in. */
-export const SETUP_STEPS: readonly SetupStep[] = ["identity", "team", "telegram", "backupBrain", "machines", "profile"];
-/** The intro the agent leads on its own: only on hubs that went through it (Saved.intro). */
+export const SETUP_STEPS: readonly SetupStep[] = ["remote", "identity", "team", "telegram", "backupBrain", "machines", "profile"];
+/** The intro the agent leads on its own: only on hubs that went through it (Saved.intro); "remote" opens it when left. */
 const INTRO_STEPS: readonly SetupStep[] = ["identity", "team"];
 
 /** Messages written while no brain worked are answered only this long afterwards. */
@@ -29,6 +29,11 @@ export const INTRO_NOTE =
   "[System] The person has just set up the hub and opened your dialog: this is your first conversation. Greet them in one short sentence in the hub's language and say you are ready. " +
   "Then start getting acquainted (see Hub setup in your instructions) with its first question: what name they want to give you, their new assistant (your name, not theirs), " +
   "with 3–4 names that would suit you as quick replies (`show_choices`).";
+
+/** The intro on a hub whose link waits for Tailscale's sign-in (a server's): the link comes first. */
+export const INTRO_REMOTE_NOTE =
+  "[System] The person has just set up the hub and opened your dialog: this is your first conversation. Greet them in one short sentence in the hub's language and say you are ready. " +
+  "Then start with the first step of Hub setup in your instructions: the link to open you from anywhere (remote).";
 
 interface Saved {
   /** The hub has started talking with the person (every hub used before the intro existed has it). */
@@ -63,6 +68,8 @@ export interface SetupDeps {
   vault: { state(): VaultState };
   channels: ChannelRegistry;
   machines: { list(): unknown[] };
+  /** Access from anywhere: switched on (and in this build), and its link up. */
+  remote?: () => { on: boolean; up: boolean };
   cliTools: CliTools;
   bus: EventBus;
   isRunning: (conversationId: string) => boolean;
@@ -132,9 +139,11 @@ export class SetupGuide {
     return INTRO_STEPS.filter((s) => !saved.done?.includes(s) && !saved.skipped?.includes(s));
   }
 
-  /** The steps this hub has: the intro's only if it went through it. */
+  /** The steps this hub has: the intro's only if it went through it, the link's while access from anywhere is on. */
   private steps(): SetupStep[] {
-    return this.saved().intro ? [...SETUP_STEPS] : SETUP_STEPS.filter((s) => !INTRO_STEPS.includes(s));
+    const intro = !!this.saved().intro;
+    const remote = !!this.d.remote?.().on;
+    return SETUP_STEPS.filter((s) => (intro || !INTRO_STEPS.includes(s)) && (remote || s !== "remote"));
   }
 
   /**
@@ -194,7 +203,7 @@ export class SetupGuide {
     const cli = brains.filter((b) => b.kind === "cli");
     // A backup is only worth offering when a second CLI could still be signed in.
     const backupOffer = cli.filter((b) => b.signedIn).length < 2 && cli.some((b) => !b.signedIn && (b.installed || b.canInstall));
-    const auto: Partial<Record<SetupStep, boolean>> = { telegram, backupBrain: !backupOffer, machines: machines > 0 };
+    const auto: Partial<Record<SetupStep, boolean>> = { remote: !!this.d.remote?.().up, telegram, backupBrain: !backupOffer, machines: machines > 0 };
     const steps = this.steps();
     const done = steps.filter((s) => auto[s] || saved.done?.includes(s));
     const skipped = steps.filter((s) => !done.includes(s) && saved.skipped?.includes(s));
@@ -236,7 +245,8 @@ export class SetupGuide {
     // Already talking (an answer to a message that waited for a brain): the intro follows from the setup section.
     const conv = this.d.store.agentConversation(agentId);
     if (this.d.isRunning(conv.id) || this.d.store.listMessages(conv.id, { limit: 1 }).length) return false;
-    this.d.tellAgent(conv.id, INTRO_NOTE);
+    const remoteFirst = (await this.state(agentId)).remaining[0] === "remote";
+    this.d.tellAgent(conv.id, remoteFirst ? INTRO_REMOTE_NOTE : INTRO_NOTE);
     return true;
   }
 
@@ -300,6 +310,11 @@ export class SetupGuide {
     if (!s.remaining.length) return undefined;
     const backup = s.brains.find((b) => b.kind === "cli" && !b.signedIn && (b.installed || b.canInstall));
     const steps: Record<SetupStep, string> = {
+      remote:
+        'remote: access from anywhere is on, and its permanent link waits for the person to sign in to Tailscale (a free account is enough). Call `integration_connect` with id "remote-access": ' +
+        "its card has the Sign in to Tailscale button, then Allow Funnel if Tailscale asks, and shows the link once it answers. " +
+        "Say in one or two short sentences why: they open you from any phone or browser, and connect the iPhone app and other computers, with no SSH. " +
+        "The step is done by itself once the link is up: you get a system note with it; tell them to open it.",
       identity:
         "identity: who you are for this person, one short question per message. " +
         "1) Ask what name they want to give you (your name is being chosen, not theirs), with 3–4 names that would suit you as quick replies (`show_choices`, your current name among them); save their pick with `profile_update` (name). " +
@@ -317,8 +332,10 @@ export class SetupGuide {
       profile:
         'profile: get to know the user: how to address them, their language, what they want help with. Keep each fact with `memory_remember`, change the hub language with `hub_settings_update` if needed and your own name or instructions with `profile_update` if they want; then call `hub_setup_update` with step "profile" and status "done".',
     };
-    const intro = s.remaining.filter((step) => INTRO_STEPS.includes(step));
-    const later = s.remaining.filter((step) => !INTRO_STEPS.includes(step));
+    const opening = s.remaining.filter((step) => INTRO_STEPS.includes(step));
+    // A link waiting for its sign-in opens the intro: the person may have reached this chat only through SSH.
+    const intro: SetupStep[] = opening.length && s.remaining.includes("remote") ? ["remote", ...opening] : opening;
+    const later = s.remaining.filter((step) => !intro.includes(step));
     const lines = ["## Hub setup"];
     // The intro first, alone: the rest of the setup is not even mentioned until it is over.
     if (intro.length)

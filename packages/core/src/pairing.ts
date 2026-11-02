@@ -37,6 +37,14 @@ export function inviteUrl(hubUrl: string, code: string): string | undefined {
   return isLocalHost(new URL(hubUrl).hostname) ? undefined : `${hubUrl}/join/${code}`;
 }
 
+/** packaging/linux/install.sh, as the site serves it. */
+export const INSTALL_SH = "https://piomio.io/install.sh";
+
+/** The line that makes a Linux server a computer of the hub: install.sh with the invite's link. */
+export function serverJoinCommand(link: string): string {
+  return `curl -fsSL ${INSTALL_SH} | sh -s -- ${link}`;
+}
+
 /** The desktop app's link (packages/desktop deeplink.rs): pair this computer with the hub at `hubUrl`. */
 export function desktopPairLink(hubUrl: string, code: string): string {
   return `piomio://pair?${new URLSearchParams({ hub: hubUrl, code })}`;

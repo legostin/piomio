@@ -1,7 +1,7 @@
 // Single-user authentication: password (Argon2id), passkeys (WebAuthn), cookie sessions with CSRF tokens.
 // Two session kinds: "main" (web UI, 30 days) and "console" (security console, 30 minutes idle).
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -38,6 +38,12 @@ export class AuthError extends LocalizedError {
   constructor(status: number, key: string) {
     super(key, undefined, status);
   }
+}
+
+function sameSecret(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
 }
 
 export class AuthService {
@@ -106,10 +112,11 @@ export class AuthService {
 
   // ---------- password ----------
 
-  setup(token: string, password: string, ip: string): void {
-    this.checkRate(ip);
+  /** `remote`: through the link (a server's hub is set up there), counted toward its shared budget. */
+  setup(token: string, password: string, ip: string, opts: { remote?: boolean } = {}): void {
+    this.checkRate(ip, opts.remote);
     if (this.hasPassword()) throw new AuthError(409, "auth.passwordExists");
-    if (!this.setupToken || token.trim() !== this.setupToken) this.fail(ip, "setup");
+    if (!this.setupToken || !sameSecret(token.trim(), this.setupToken)) this.fail(ip, "setup", opts.remote);
     if (password.length < 8) throw new AuthError(400, "auth.passwordTooShort");
     this.set("password", hashPassword(password));
     this.setupToken = undefined;

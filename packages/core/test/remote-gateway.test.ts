@@ -1,5 +1,6 @@
 // The link's gateways end to end, with a fake node (fixtures/tailnet): what the link opens and what it never does,
-// the client's real address, the shared sign-in budget, phones through the link, and the library's card.
+// the client's real address, the shared sign-in budget, phones through the link, the library's card, and a new hub's
+// first-run setup through the link.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
@@ -132,7 +133,7 @@ describe("the link's gateways", () => {
         PIOMIO_TAILNET_BIN: FAKE,
         TZ: "UTC",
       },
-      { dataDir, builtinPluginsDirs: [join(fixtures, "plugins")], builtinAgentsDir: join(fixtures, "agents"), plugins: "none" },
+      { dataDir, builtinPluginsDirs: [join(fixtures, "plugins")], builtinAgentsDir: join(fixtures, "agents"), plugins: "none", tailnetLinkCheck: false },
     );
     hub = new Hub(config);
     await hub.start();
@@ -162,9 +163,9 @@ describe("the link's gateways", () => {
     expect((await viaLink(ports.web, "GET", "/api/bootstrap")).status).toBe(401);
   });
 
-  it("never has the first-run setup, desktop sign-in, passkeys, Google's return page or webhooks", async () => {
+  it("never has the desktop sign-in, passkeys, Google's return page or webhooks; setup only before the first password", async () => {
+    expect((await viaLink(ports.web, "POST", "/api/auth/setup", { body: { token: "x", password: "something-long" } })).status).toBe(409);
     for (const [method, path] of [
-      ["POST", "/api/auth/setup"],
       ["POST", "/api/auth/desktop"],
       ["POST", "/api/auth/passkey/options"],
       ["POST", "/api/auth/passkey/verify"],
@@ -223,6 +224,7 @@ describe("the link's gateways", () => {
     // One invite for any device: its link is on the web gateway, never the phones' port; the phone's QR uses that.
     const invite = await web.req("POST", "/api/invites", {});
     expect(invite.json.url).toBe(`https://${LINK}/join/${invite.json.code}`);
+    expect(invite.json.serverCommand).toBe(`curl -fsSL https://piomio.io/install.sh | sh -s -- https://${LINK}/join/${invite.json.code}`);
     expect(parsePairingLink(invite.json.phoneLink)!.urls).toEqual([`https://${LINK}:8443`]);
     const page = await viaLink(ports.web, "GET", `/join/${invite.json.code}`, { headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" } });
     expect(page.status).toBe(200);
@@ -251,5 +253,52 @@ describe("the link's gateways", () => {
     await expect(viaLink(ports.web, "GET", "/api/auth/state")).rejects.toThrow();
     const lib = await web.req("GET", "/api/integrations");
     expect(lib.json[0]).toMatchObject({ id: "remote-access", status: "off" });
+  });
+});
+
+describe("a new hub through its link", () => {
+  let hub: Hub;
+  let web: number;
+
+  beforeAll(async () => {
+    const [port, consolePort, egressPort, devicePort] = [await freePort(), await freePort(), await freePort(), await freePort()];
+    const dataDir = mkdtempSync(join(tmpdir(), "owl-remote-new-"));
+    mkdirSync(join(dataDir, "tailnet"), { recursive: true });
+    writeFileSync(join(dataDir, "tailnet", "fake.json"), JSON.stringify({ states: [{ state: "running", url: `https://${LINK}`, deviceUrl: `https://${LINK}:8443` }] }));
+    const config = loadConfig(
+      {
+        PIOMIO_PORT: String(port),
+        PIOMIO_DEVICES: "0",
+        PIOMIO_CONSOLE_PORT: String(consolePort),
+        PIOMIO_EGRESS_PORT: String(egressPort),
+        PIOMIO_DEVICE_PORT: String(devicePort),
+        PIOMIO_DEVICE_HOST: "127.0.0.1",
+        PIOMIO_TAILNET_BIN: FAKE,
+        TZ: "UTC",
+      },
+      { dataDir, builtinPluginsDirs: [join(fixtures, "plugins")], builtinAgentsDir: join(fixtures, "agents"), plugins: "none", tailnetLinkCheck: false },
+    );
+    hub = new Hub(config);
+    // What a server's hub starts with (install.sh): the switch on, no password yet.
+    hub.settings.update({ remoteAccess: true });
+    await hub.start();
+    await until(() => hub.remote.link());
+    web = Number(JSON.parse(readFileSync(join(dataDir, "tailnet", "start.json"), "utf8")).web.split(":")[1]);
+  });
+
+  afterAll(async () => {
+    await hub?.stop();
+  });
+
+  it("is set up through the link with the setup code, whose wrong guesses count toward the link's budget", async () => {
+    expect((await viaLink(web, "GET", "/api/auth/state")).json).toMatchObject({ hasPassword: false });
+    const wrong = await viaLink(web, "POST", "/api/auth/setup", { ip: "203.0.113.9", body: { token: "guess", password: PASSWORD } });
+    expect(wrong.status).toBe(401);
+    expect(hub.audit.list({ action: "auth.failure" })[0]).toMatchObject({ target: "setup", data: { ip: "203.0.113.9", remote: true } });
+    const ok = await viaLink(web, "POST", "/api/auth/setup", { ip: "203.0.113.10", body: { token: hub.auth.setupToken, password: PASSWORD } });
+    expect(ok.status).toBe(200);
+    expect(String(ok.headers["set-cookie"])).toMatch(/Secure/);
+    expect(hub.auth.hasPassword()).toBe(true);
+    expect((await viaLink(web, "POST", "/api/auth/setup", { body: { token: "x", password: PASSWORD } })).status).toBe(409);
   });
 });

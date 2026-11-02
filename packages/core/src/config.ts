@@ -30,6 +30,8 @@ export interface Config {
   tailnetBin: string;
   /** The node's name in the tailnet, the link's first label (PIOMIO_TAILNET_HOSTNAME, default "piomio"). */
   tailnetHostname: string;
+  /** The link is shown once it answers from the internet (remote.ts); tests, which have no internet, turn it off. */
+  tailnetLinkCheck: boolean;
   /** The OSRM servers show_map asks for routes along roads (routing.ts): PIOMIO_ROUTER_URL, else OpenStreetMap Germany's. */
   routerUrl: string;
   /** URL of the isolated security console. */
@@ -133,6 +135,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     tailnetBin:
       env.PIOMIO_TAILNET_BIN ?? join(appRoot, "packages", "tailnet", "bin", `${process.platform}-${process.arch}`, process.platform === "win32" ? "piomio-tailnet.exe" : "piomio-tailnet"),
     tailnetHostname: env.PIOMIO_TAILNET_HOSTNAME?.trim() || "piomio",
+    tailnetLinkCheck: true,
     routerUrl: (env.PIOMIO_ROUTER_URL ?? "https://routing.openstreetmap.de").replace(/\/$/, ""),
     internalUrl: `http://127.0.0.1:${port}`,
     google: {

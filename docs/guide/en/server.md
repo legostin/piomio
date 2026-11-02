@@ -39,14 +39,27 @@ curl -fsSL https://piomio.io/install.sh | sh
 5. On the first install as root on a system with `apt-get`, installs the system libraries the agents' browser needs.
 6. Writes the settings file `~/.config/piomio/env` (only if there is none) and the systemd user service `piomio`, starts it and waits up to two minutes for an answer.
 
-At the end it prints the version that runs, the `ssh` line that opens the chat on your computer, the setup code (until a password is set), and the brains the user `piomio` has: signed in, or installed but not signed in. If none is signed in, it shows how to sign in.
+At the end it prints the version that runs, the setup code (until a password is set), and the brains the user `piomio` has: signed in, or installed but not signed in. If none is signed in, it shows how to sign in.
 
-Two variables change what it does:
+Then it gets you [the link](#through-the-link). The hub starts with [access from anywhere](anywhere.md) on, so the installer shows Tailscale's sign-in page and waits:
+
+```text
+To open Piomio from any phone or browser, sign in to Tailscale (a free account is enough):
+  https://login.tailscale.com/a/…
+Waiting for the sign-in (Ctrl+C to stop: Piomio keeps running)…
+Piomio's link, for any device:
+  https://piomio.<your-tailnet>.ts.net/#setup=<code>
+```
+
+Open the sign-in page on any device and sign in. If Tailscale asks to allow Funnel, the installer shows that page next. Once the link answers from the internet, the installer prints it, with the setup code in it until a password is set. If you stop waiting, or don't want Tailscale, it prints the `ssh` line for [a tunnel](#through-an-ssh-tunnel) instead.
+
+Three variables change what it does:
 
 | Variable | What it does |
 |---|---|
 | `PIOMIO_VERSION=0.2.12` | installs that release instead of the latest |
 | `PIOMIO_LANG=ru` | the installer speaks Russian (it also follows `LANG`) |
+| `PIOMIO_NO_WAIT=1` | shows Tailscale's sign-in page without waiting for the link; also when the output isn't a terminal, for example when an agent runs the installer |
 
 ```bash
 curl -fsSL https://piomio.io/install.sh | PIOMIO_VERSION=0.2.12 sh
@@ -67,7 +80,7 @@ Run the command as an ordinary user, and Piomio installs for that user, in its h
 ## Install as a computer of your hub
 
 1. **Let the server reach your hub.** A hub on a Mac or PC at home is reachable only there until you turn on [access from anywhere](anywhere.md). Say "turn on access from anywhere" in its chat.
-2. **Get an invite.** Say "connect a computer" in the chat and press the button on the card. You get a one-time link that works for an hour. Open it: under **Server without a screen** the page shows the command with your link in it.
+2. **Get an invite.** Say "connect a computer" in the chat. The card makes a one-time link that works for an hour; its **Linux server** button shows the command with that link in it, with a copy button. The link's own page shows the same command under **Server without a screen**.
 3. **Run it on the server as root:**
 
    ```bash
@@ -95,9 +108,19 @@ While no brain works, the hub looks for the CLIs again every 30 seconds, so a si
 
 ## Open the chat
 
+### Through the link
+
+Open the link the installer printed, `https://piomio.<your-tailnet>.ts.net/#setup=<code>`, on any phone or computer. The setup code is already in it: choose a password, and the assistant takes you through the rest in the chat ([First run](first-run.md)). From then on you sign in there with that password. The link works in any browser, the phone app and on your other computers, with no tunnel and no open ports. See [Access from anywhere](anywhere.md).
+
+Didn't sign in to Tailscale during the install? The assistant offers it first thing in the chat, or sign in later and print the link:
+
+```bash
+sudo -iu piomio piomio link --wait
+```
+
 ### Through an SSH tunnel
 
-The chat listens only on the server itself. On your computer, run the line the installer printed and keep it running:
+The chat itself listens only on the server. On your computer, run the line the installer printed and keep it running:
 
 ```bash
 ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 root@<server-ip>
@@ -110,10 +133,6 @@ sudo -iu piomio cat ~/.local/share/piomio/setup-code
 ```
 
 Use the same port numbers on both sides of the tunnel. The hub accepts changes only from the address it knows, `http://localhost:8080`: through `-L 18080:localhost:8080` the page loads, but nothing can be saved. If you change `PIOMIO_PORT`, use the new number on both sides.
-
-### From anywhere
-
-Say "turn on access from anywhere" in the chat and sign in to Tailscale with a free account. The hub gets a permanent HTTPS link that works in any browser, the phone app and on your other computers, with no tunnel and no open ports. See [Access from anywhere](anywhere.md).
 
 ### Why not the server's IP?
 
@@ -167,6 +186,7 @@ Run these after `sudo -iu piomio`:
 | Command | What it does |
 |---|---|
 | `piomio version` | prints the installed version |
+| `piomio link [--wait]` | prints the link from anywhere, or Tailscale's sign-in page while it waits for one; `--wait` waits for the sign-in |
 | `piomio backup [folder]` | makes a backup, see [Backups](#backups) |
 | `piomio reset-password <new>` | sets a new password for the chat (8 characters or more) and signs out every session |
 | `piomio devices pair` | shows a QR code for the phone app right in the terminal, with its link and code |

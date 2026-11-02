@@ -53,7 +53,7 @@ import { MachineActivityFeed } from "./activity.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { InviteRegistry } from "./invites.ts";
 import { deviceTls, type DeviceTls } from "./devices-tls.ts";
-import { deviceUrls, hubName, inviteUrl, machineHubUrl, pairingLink, qrSvg } from "./pairing.ts";
+import { deviceUrls, hubName, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
 import { createCoreCall } from "./core-call.ts";
 import { configureHubLocale, coreCatalog, hubLocale, localizePluginValue, LocalizedError, t } from "./i18n.ts";
 import { registerHubTools, slug } from "./tools/hub-tools.ts";
@@ -67,7 +67,7 @@ import { MediaService } from "./media.ts";
 import { Connections } from "./connections.ts";
 import { entryRef } from "./integrations.ts";
 import { cleanTranscription, Transcriber } from "./transcribe.ts";
-import { RemoteAccess } from "./remote.ts";
+import { RemoteAccess, remoteStatusFile } from "./remote.ts";
 import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
 import { buildConsoleApp } from "./server/console-app.ts";
@@ -163,7 +163,8 @@ export class Hub {
     this.db = openDb(hubDbFile(config.dataDir));
     this.skills.holders = new SkillHolders(this.db);
     this.store = new Store(this.db, this.bus);
-    this.settings = new Settings(this.db, config.timezone);
+    // A server's hub (install.sh) opens through its link: access from anywhere starts on, waiting for Tailscale's sign-in.
+    this.settings = new Settings(this.db, config.timezone, config.installRoot ? { remoteAccess: true } : {});
     configureHubLocale(() => normalizeLocale(this.settings.get().language) ?? DEFAULT_LOCALE);
     this.vault = new VaultService(join(config.dataDir, "vault.db"), {
       onState: (state) => this.bus.emit("vault.state", { state }),
@@ -302,6 +303,10 @@ export class Hub {
       vault: this.vault,
       channels: this.channels,
       machines: this.machines,
+      remote: () => {
+        const v = this.remote.view();
+        return { on: v.available && v.enabled, up: v.state === "running" };
+      },
       cliTools: this.cliTools,
       bus: this.bus,
       isRunning: (id) => this.runner.isRunning(id),
@@ -382,9 +387,17 @@ export class Hub {
       deviceTls: () => this.deviceTls(),
       gateways: { start: () => this.startRemoteGateways(), stop: () => this.stopRemoteGateways() },
       hasPassword: () => this.auth.hasPassword(),
+      ...(config.tailnetLinkCheck ? {} : { checkLink: async () => true }),
+      ...(config.installRoot ? { statusFile: remoteStatusFile(config.dataDir) } : {}),
     });
-    // The link is one of the phones' addresses: the Devices page follows it.
-    this.bus.on("remote.updated", () => this.bus.emit("devices.network", this.deviceNetwork()));
+    // The link is one of the phones' addresses: the Devices page follows it. The chat that showed its card hears it is up.
+    let linkUp = false;
+    this.bus.on("remote.updated", (v) => {
+      this.bus.emit("devices.network", this.deviceNetwork());
+      const was = linkUp;
+      linkUp = v.state === "running" && !!v.url;
+      if (linkUp && !was) this.linkCameUp(v.url!);
+    });
     registerCoreTools({
       registry: this.tools,
       skills: this.skills,
@@ -557,7 +570,7 @@ export class Hub {
     const { code, expiresAt } = this.invites.create();
     const url = inviteUrl(machineHubUrl(this.config.publicUrl, this.remote.link()), code);
     const phoneLink = this.phoneLink(code);
-    return { code, expiresAt, ...(url ? { url } : {}), ...(phoneLink ? { phoneLink, qrSvg: qrSvg(phoneLink) } : {}) };
+    return { code, expiresAt, ...(url ? { url, serverCommand: serverJoinCommand(url) } : {}), ...(phoneLink ? { phoneLink, qrSvg: qrSvg(phoneLink) } : {}) };
   }
 
   /** A one-time code and the QR for a phone; the device port or the link must be up. */
@@ -797,6 +810,23 @@ export class Hub {
     return (this.plugins?.list() ?? [])
       .filter((r) => r.enabled && r.layout?.mcpFile)
       .map((r) => ({ pluginId: r.id, file: r.layout!.mcpFile!, dir: r.dir, data: this.plugins.dataDirOf(r.id), network: r.granted.network, builtin: r.source === "builtin" }));
+  }
+
+  /** The chat that showed access from anywhere's card, waiting for its link. */
+  private linkAsked?: { conversationId: string; at: number };
+
+  remoteCardShown(conversationId: string): void {
+    if (this.store.getConversation(conversationId)) this.linkAsked = { conversationId, at: Date.now() };
+  }
+
+  private linkCameUp(url: string): void {
+    const asked = this.linkAsked;
+    this.linkAsked = undefined;
+    if (!asked || Date.now() - asked.at > ENTRY_SIGNIN_MS || !this.store.getConversation(asked.conversationId)) return;
+    this.runner.tellAgent(
+      asked.conversationId,
+      `[System] Access from anywhere works now: the link is ${url} (the card shows it with a QR code). Through it the person signs in with their Piomio password. Carry on with what it was needed for.`,
+    );
   }
 
   /** A sign-in to a plugin's MCP server finished: the chat that showed its card hears it and carries on. */

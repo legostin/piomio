@@ -184,6 +184,7 @@ await (await fetch("/api/settings", { method: "PATCH", headers: { "content-type"
 |---|---|---|
 | `PIOMIO_VERSION` | последний релиз | `install.sh`: какой релиз ставить |
 | `PIOMIO_NAME` | имя хоста | `install.sh` с приглашением: имя компьютера |
+| `PIOMIO_NO_WAIT` | выключено | `install.sh`: `1` показывает страницу входа в Tailscale и не ждёт ссылку |
 | `PIOMIO_REPO`, `PIOMIO_ARCHIVE` | `legostin/piomio`, нет | `install.sh`: релизы другого репозитория или локальный архив |
 | `PIOMIO_NODE_HOME` | `~/.piomio-node` | `piomio-node`: его ключ, привязка и политика |
 

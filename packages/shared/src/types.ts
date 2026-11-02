@@ -742,10 +742,11 @@ export interface BrainLoginView {
 // ---------- First-run setup ----------
 
 /**
- * What the default agent walks the user through once a brain works. "identity" (its name, look, proactivity) and
- * "team" (who else to add) open a new hub's intro and exist only on hubs that went through it.
+ * What the default agent walks the user through once a brain works. "remote" (signing the link in to Tailscale) exists
+ * while access from anywhere is on and its link is not up yet, and opens a new hub's intro. "identity" (its name, look,
+ * proactivity) and "team" (who else to add) come next in the intro and exist only on hubs that went through it.
  */
-export type SetupStep = "identity" | "team" | "telegram" | "backupBrain" | "machines" | "profile";
+export type SetupStep = "remote" | "identity" | "team" | "telegram" | "backupBrain" | "machines" | "profile";
 
 /** One of the agent's brains on this hub, as the setup card shows it. */
 export interface SetupBrain {
@@ -1170,6 +1171,8 @@ export interface Invite {
   expiresAt: ISODate;
   /** https://<hub>/join/<code>: forwarded to the device or opened there. Absent when only this computer reaches the hub. */
   url?: string;
+  /** With `url`: the line that makes a Linux server a computer of the hub (install.sh with the link). */
+  serverCommand?: string;
   /** piomio://pair?hub=…&code=…: opens the desktop app on the computer the web UI is open on. */
   appLink?: string;
   /** piomio://pair?v=1&c=…: the phone's link, while phones can reach the hub; `qrSvg` draws it. */
@@ -1214,6 +1217,8 @@ export interface RemoteView {
   account?: string;
   /** When the node's key expires (ISO); absent when expiry is off. */
   keyExpiry?: string;
+  /** "starting": the node is up and the link is being checked until it answers (Tailscale issues its certificate). */
+  preparing?: boolean;
   /** Why it is unavailable or failing (in the reader's language). */
   error?: string;
   /** The link as a QR code (SVG), from GET /api/remote while it is up. */

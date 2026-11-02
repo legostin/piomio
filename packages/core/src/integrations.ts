@@ -274,6 +274,6 @@ function remoteIntegration(hub: Hub, locale: Locale): IntegrationView {
   if (!r.enabled) return { ...view, status: "off" };
   if (r.state === "running") return { ...view, ...(r.url ? { account: r.url } : {}) };
   if (r.state === "error") return { ...view, status: "broken", ...(r.error ? { detail: r.error } : {}) };
-  const step = r.state === "needs-login" ? t("remote.stepLogin") : r.state === "needs-funnel" ? t("remote.stepFunnel") : t("remote.starting");
+  const step = r.state === "needs-login" ? t("remote.stepLogin") : r.state === "needs-funnel" ? t("remote.stepFunnel") : t(r.preparing ? "remote.preparing" : "remote.starting");
   return { ...view, status: "needs-setup", detail: r.error ?? step };
 }

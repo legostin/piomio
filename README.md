@@ -80,15 +80,15 @@ From there the assistant walks you through the rest in the chat, one thing at a 
 curl -fsSL https://piomio.io/install.sh | sh
 ```
 
-It makes a user `piomio` for the hub and its agents and prints the setup code and the `ssh -L` line that opens the chat on your computer. Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead. Step by step: [the server guide](https://piomio.io/en/server/), and [On a Linux server](https://piomio.io/en/docs/server/) in the docs.
+It makes a user `piomio` for the hub and its agents and prints the setup code, then Tailscale's sign-in page and, once you have signed in with a free account, the hub's permanent link, which opens on any phone or computer (an `ssh -L` tunnel works too). Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead: the card that connects a computer shows its command. Step by step: [the server guide](https://piomio.io/en/server/), and [On a Linux server](https://piomio.io/en/docs/server/) in the docs.
 
 **With your AI.** Already use Claude Code, Codex or Kimi Code? Paste this into it on the computer or server where Piomio should run:
 
 ```text
-Install Piomio on this computer and set it up for me. Follow https://piomio.io/setup.md step by step. Ask me whenever a decision is mine, and never ask me for passwords or keys. At the end, tell me how to open the chat.
+Install Piomio on this computer and set it up for me. Follow https://piomio.io/setup.md step by step. You will need the internet: if a download fails, ask me for permission instead of stopping. Ask me whenever a decision is mine, and never ask me for passwords or keys. At the end, tell me how to open the chat.
 ```
 
-It works out what the machine is, installs Piomio and asks you only what is yours to decide ([what it will do](https://piomio.io/setup.md)). On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in.
+It works out what the machine is, installs Piomio and asks you only what is yours to decide ([what it will do](https://piomio.io/setup.md)). On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in. Codex says it can't ask before downloading? Choose "Ask for approval" in its `/permissions`.
 
 **On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub through a QR code, and approvals need Face ID.
 

@@ -952,6 +952,7 @@ export function registerHubTools(hub: Hub): void {
   /** An integration's card in the chat, and what the agent should tell the user about it. */
   function integrationCard(view: IntegrationView, conversationId: string): ToolResult {
     hub.runner.attachPart(conversationId, { type: "integration", id: view.id });
+    if (view.id === "remote-access" && view.status !== "connected") hub.remoteCardShown(conversationId);
     const state =
       view.status === "connected"
         ? `already connected${view.account ? ` (${view.account})` : ""}; the card shows it`

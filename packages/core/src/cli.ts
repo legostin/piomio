@@ -1,7 +1,7 @@
-// Piomio hub CLI: start | version | reset-password | pairing-code | devices pair | backup | audit-verify | uninstall
+// Piomio hub CLI: start | version | reset-password | pairing-code | devices pair | link | backup | audit-verify | uninstall
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig } from "./config.ts";
@@ -21,6 +21,7 @@ import { joinCluster, localInvite } from "./cluster.ts";
 import { InviteRegistry } from "./invites.ts";
 import { homedir, hostname } from "node:os";
 import { installLayout, settleBeforeStart, TRIAL_MAX_MS } from "./self-update.ts";
+import { printLink, remoteStatusFile } from "./remote.ts";
 
 const [cmd = "start", ...args] = process.argv.slice(2);
 const config = loadConfig();
@@ -122,6 +123,22 @@ async function main(): Promise<void> {
       if (config.devicesOff) console.log(`\n${T("cli.devicesOff")}`);
       return;
     }
+    case "link": {
+      // The link from anywhere of a server's hub (install.sh runs it): `--wait` waits for Tailscale's sign-in.
+      const db = openDb(dbFile());
+      const hasPassword = !!db.prepare("select 1 from auth where key = 'password'").get();
+      let setupCode: string | undefined;
+      if (!hasPassword) {
+        try {
+          setupCode = readFileSync(join(config.dataDir, "setup-code"), "utf8").trim() || undefined;
+        } catch {
+          /* set up already, or not a server install */
+        }
+      }
+      const up = await printLink({ file: remoteStatusFile(config.dataDir), setupCode, wait: args.includes("--wait"), t: cliT(db), print: (line) => console.log(line) });
+      process.exitCode = up ? 0 : 3;
+      return;
+    }
     case "backup": {
       const target = args[0] ?? join(config.dataDir, "backups", new Date().toISOString().replace(/[:.]/g, "-"));
       mkdirSync(target, { recursive: true });
@@ -177,7 +194,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      console.log("usage: piomio [start|version|reset-password <pass>|pairing-code [name]|devices pair|replica invite|join|backup [dir]|audit-verify|uninstall]");
+      console.log("usage: piomio [start|version|reset-password <pass>|pairing-code [name]|devices pair|link [--wait]|replica invite|join|backup [dir]|audit-verify|uninstall]");
       process.exitCode = 1;
   }
 }
