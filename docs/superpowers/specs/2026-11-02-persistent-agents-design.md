@@ -82,3 +82,40 @@ A guessed `message` (or `note`) is the text; an empty one is refused instead of 
 - Runner (fake brains): a task with no connected brain waits and runs when one connects; one placed on an offline
   computer waits; a broken turn continues; after the window it fails as before.
 - Docs: the tasks and computers pages in `docs/guide/{en,ru}`.
+
+## Follow-up: the render really runs on the PC (2026-11-02, live check)
+
+The live check showed the rule and the routing work, and why the render still did not happen on LEGOSTIN-PC: the
+hub's Blender integration drives Blender on the hub's own Mac (it rendered there and replaced the person's unsaved
+scene), and Claude Code on the PC may not run commands (its policy: `exec.enabled` false, don't-ask mode). A later task
+found `blender.exe`, wrote the scene and stopped only at that permission. The person asked how to allow it "from this
+computer" and chose: **from the chat, with their yes on a card**.
+
+### 7. Commands on a computer, from the chat
+
+- Node policy: `exec.enabled` is "commands on this computer". New `hubChanges` (default true): false keeps the
+  permissions on the computer itself. RPC `node.policy {commands}` writes `exec.enabled` into policy.json (the
+  person's other fields stay as they are) unless `hubChanges` is false; the node reports `commands` in its info.
+- Hub tool `hub_machine_commands {machine, on}` (the default agent's): always the person's own card (OWN_CARD_TOOLS:
+  auto mode never decides it, "you asked" never skips it). A node too old for it says to update that computer's app once.
+- A node's Claude Code with commands on asks the hub (`BrainSessionOptions.askTool`, the hub's native_permission) for
+  what is not in its allowed tools, so its commands go through auto mode and cards as on the hub; with commands off it
+  stays in don't-ask mode.
+- Prompts: a session on another computer hears whether commands are on there and how the person turns them on; the
+  dialog's computers list says "commands off".
+
+### 8. Apps on the hub's computer stay there
+
+- Manifest `integration.localApp`: the plugin's tools drive an app on the hub's own computer (Blender). The gateway
+  hides them from sessions whose brain runs on another computer, so a task there uses that computer's own app.
+
+### 9. Pictures made on another computer
+
+- `show_images` with a path on another computer looks in the hub's copy of the task's folder (the hub pulls a
+  machine's workspaces every 5 s), waiting up to 30 s for it; an absolute path is taken relative to the task's folder.
+
+### 10. The desktop app on a node updates from the hub
+
+- The desktop app passes `PIOMIO_DESKTOP_APP` to its node too; the node reports `desktopApp: true` and takes
+  `node.appUpdate` by starting `<app> --install-update`. The hub offers Update for such a node when it runs an older
+  version than the hub, and `hub_machine_update` does it. The PC needs this once by hand (tray → Install update).
