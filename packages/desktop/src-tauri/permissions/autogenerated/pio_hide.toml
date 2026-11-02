@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pio-hide"
+description = "Enables the pio_hide command without any pre-configured scope."
+commands.allow = ["pio_hide"]
+
+[[permission]]
+identifier = "deny-pio-hide"
+description = "Denies the pio_hide command without any pre-configured scope."
+commands.deny = ["pio_hide"]

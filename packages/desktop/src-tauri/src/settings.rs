@@ -26,13 +26,20 @@ impl Mode {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
   #[serde(default)]
   pub mode: Option<Mode>,
   /// Start at login: on by default; applied at every start, so an upgrade that dropped the entry gets it back.
   #[serde(default = "on")]
   pub autostart: bool,
+  /// Pio's bubble over every app (pio/): the hub's page turns it on while its Pio plugin is on, the bubble's own
+  /// "hide" turns it off.
+  #[serde(default)]
+  pub pio: bool,
+  /// Where the bubble was left: its top-left corner in screen points.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub pio_pos: Option<(f64, f64)>,
 }
 
 fn on() -> bool {
@@ -41,7 +48,7 @@ fn on() -> bool {
 
 impl Default for Settings {
   fn default() -> Self {
-    Settings { mode: None, autostart: true }
+    Settings { mode: None, autostart: true, pio: false, pio_pos: None }
   }
 }
 
@@ -87,15 +94,27 @@ mod tests {
 
   #[test]
   fn first_run_has_no_mode_and_autostart_on() {
-    assert_eq!(load(&dir("none")), Settings { mode: None, autostart: true });
+    assert_eq!(load(&dir("none")), Settings { mode: None, autostart: true, pio: false, pio_pos: None });
   }
 
   #[test]
   fn saves_and_loads() {
     let d = dir("roundtrip");
-    save(&d, &Settings { mode: Some(Mode::Node), autostart: false }).unwrap();
-    assert_eq!(load(&d), Settings { mode: Some(Mode::Node), autostart: false });
+    let s = Settings { mode: Some(Mode::Node), autostart: false, pio: true, pio_pos: Some((1200.5, -40.0)) };
+    save(&d, &s).unwrap();
+    assert_eq!(load(&d), s);
     assert!(fs::read_to_string(file(&d)).unwrap().contains("\"node\""));
+  }
+
+  #[test]
+  fn an_older_file_loads_without_pio() {
+    let d = dir("old");
+    fs::create_dir_all(&d).unwrap();
+    fs::write(file(&d), r#"{"mode":"hub","autostart":false}"#).unwrap();
+    assert_eq!(load(&d), Settings { mode: Some(Mode::Hub), autostart: false, pio: false, pio_pos: None });
+    save(&d, &load(&d)).unwrap();
+    assert!(!fs::read_to_string(file(&d)).unwrap().contains("pio_pos"));
+    let _ = fs::remove_dir_all(&d);
   }
 
   #[test]

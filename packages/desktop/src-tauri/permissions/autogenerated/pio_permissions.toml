@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pio-permissions"
+description = "Enables the pio_permissions command without any pre-configured scope."
+commands.allow = ["pio_permissions"]
+
+[[permission]]
+identifier = "deny-pio-permissions"
+description = "Denies the pio_permissions command without any pre-configured scope."
+commands.deny = ["pio_permissions"]

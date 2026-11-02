@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pio-hotkey"
+description = "Enables the pio_hotkey command without any pre-configured scope."
+commands.allow = ["pio_hotkey"]
+
+[[permission]]
+identifier = "deny-pio-hotkey"
+description = "Denies the pio_hotkey command without any pre-configured scope."
+commands.deny = ["pio_hotkey"]

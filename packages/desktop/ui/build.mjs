@@ -1,4 +1,5 @@
-// Builds the app's own screens into ui/dist (Tauri's frontendDist): the bundled script, the page and its styles.
+// Builds the app's own screens into ui/dist (Tauri's frontendDist): the bundled script, the page and its styles, and
+// the frame shown while Pio drives.
 import { build } from "esbuild";
 import { copyFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -15,4 +16,4 @@ await build({
   legalComments: "none",
   logLevel: "warning",
 });
-for (const f of ["index.html", "style.css"]) copyFileSync(join(here, f), join(out, f));
+for (const f of ["index.html", "style.css", "frame.html"]) copyFileSync(join(here, f), join(out, f));

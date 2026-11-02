@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pio-open-settings"
+description = "Enables the pio_open_settings command without any pre-configured scope."
+commands.allow = ["pio_open_settings"]
+
+[[permission]]
+identifier = "deny-pio-open-settings"
+description = "Denies the pio_open_settings command without any pre-configured scope."
+commands.deny = ["pio_open_settings"]
