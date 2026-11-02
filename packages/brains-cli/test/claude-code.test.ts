@@ -475,6 +475,8 @@ describe("confined brains (BrainSessionOptions.confine)", () => {
         'permissions.piomio.extends=":workspace"',
         'permissions.piomio.filesystem={"/Users/x/.ssh"="deny","/data"="deny","/data/workspaces/a"="read","/tmp/me"="write"}',
         "permissions.piomio.network.enabled=false",
+        // The hub's gateway decides about its own tools: Codex asking first came back "user rejected MCP tool call".
+        'mcp_servers.piomio.default_tools_approval_mode="approve"',
       ]),
     );
     expect(started.args.some((a: string) => a.startsWith("sandbox_mode=") || a.startsWith("sandbox_workspace_write"))).toBe(false);
