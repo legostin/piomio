@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { graphicsCards } from "@piomio/shared/hardware";
 import { UserPath } from "@piomio/shared/user-path";
 import { configFile, keyFile, loadConfig, nodeHome, normalizeHubUrl, NotPairedError, parseInviteLink, UserError } from "./home.ts";
 import { PolicyStore, policySummary } from "./policy.ts";
@@ -50,7 +51,7 @@ async function cmdPair(args: string[], flags: Record<string, string | true>): Pr
   out(t("cli.checkingClis"));
   const clis = await brains.probeAll();
   const name = typeof flags.name === "string" ? flags.name : undefined;
-  const r = await pair({ home, hubUrl, code, name, info: machineInfo(policy.get(), clis) });
+  const r = await pair({ home, hubUrl, code, name, info: machineInfo(policy.get(), clis, await graphicsCards()) });
   out(t("cli.paired", { hub: r.hubUrl, name: r.name, id: r.machineId }));
   if (r.replaced) out(t("cli.replaced", { id: r.replaced }));
   out(t("cli.line.key", { file: keyFile(home) }));

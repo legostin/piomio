@@ -27,9 +27,11 @@ export interface PromptContext {
   dispatch?: {
     /** `skills`: the ones given to that teammate itself (the whole team's are everyone's). */
     team: Array<{ id: string; name: string; description: string; where: string[]; brains?: string[]; skills?: string[] }>;
-    computers: Array<{ id: string; name: string; online: boolean }>;
+    computers: Array<{ id: string; name: string; online: boolean; gpus?: string[] }>;
     /** The brains the team can think with (by id), for `brain` in task_delegate. */
     brains?: Array<{ id: string; label: string; models: string[]; ready: boolean }>;
+    /** The user's rules for where work goes, one line each (work-rules.ts `ruleLine`). */
+    rules?: string[];
   };
   /** A thread where the agent answers a teammate who wrote to it (team_message): who that is. */
   thread?: { id: string; name: string };
@@ -77,7 +79,8 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     "- In this dialog your own tools only look (read files, search the web): running commands and changing files is a task's work.",
     "- Anything with steps or deep thought (coding, analysis, checking, research, browsing, running commands, writing or changing code or files, long reading, careful writing) goes to a task with `task_delegate` (`goal`: complete instructions; `title`; `depth`; `about`) at once, one task per independent request: two requests in one message are two tasks. Then say in one short line what you started and end your turn; do not wait for tasks.",
     "- Say how hard each task is and what it is about (`depth`, `about` in task_delegate): `deep` for hard problems, `balanced` for everyday work, `fast` for simple errands; the hub then picks the brain and model that fit (a coding model for code, the most capable one for deep thought, a cheap quick one for errands) and moves on by itself when one is busy or over its limit. Name a `brain` only when it must be that one.",
-    "- Choose who does it: yourself, or the teammate whose role or skills fit better (the skills in the team list are that teammate's own: work that needs one goes to them). Choose where: the computer whose files, apps or hardware the work needs (`machine`). If the right agent or computer is unclear and the choice matters, ask the user one short question first; otherwise choose, and name your choice in a few words.",
+    "- Choose who does it: yourself, or the teammate whose role or skills fit better (the skills in the team list are that teammate's own: work that needs one goes to them). Choose where: the computer whose files, apps or hardware the work needs (`machine`; rendering, 3D, video and model training go to a computer with a strong GPU). The task then thinks with its agent's brain on that computer. If the right agent or computer is unclear and the choice matters, ask the user one short question first; otherwise choose, and name your choice in a few words.",
+    '- When the user says how some kind of work should always go ("run renders on LEGOSTIN-PC", "code goes to Codex", "research is for the researcher"), save it with `work_rule_set` (the whole team follows it from then on) and confirm in a line. A rule that fits a task decides its `machine`, `agent` and `brain` in task_delegate, also when that computer is offline (the task then waits for it); what the user says in the request itself wins over a rule. To change or drop one, `work_rule_set` with its id or `work_rule_remove`.',
     "- The user may write again while tasks run. A new request is a new task; a detail or a correction for work in progress goes to that task with `task_message`; \"stop that\" is `task_cancel`. The `[Open tasks you started]` lines before a message show what is still going.",
     "- A task may ask you something (a `[System]` note). Answer with `task_message` when you know (this dialog, memory); otherwise ask the user in one short message, then pass their answer on.",
     "- When a task finishes, its result comes to you: tell the user the outcome in a few lines, in your own words.",
@@ -97,9 +100,10 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     lines.push(
       "",
       "Computers (`machine` in task_delegate; task_agents shows which are online now):",
-      ...c.dispatch.computers.map((m) => `- ${m.id}: ${m.name}${m.id === "local" ? " (the hub's own computer)" : ""}${m.online ? "" : " (offline when this session started)"}`),
+      ...c.dispatch.computers.map((m) => `- ${m.id}: ${m.name}${m.id === "local" ? " (the hub's own computer)" : ""}${m.gpus?.length ? `; GPU: ${m.gpus.join(", ")}` : ""}${m.online ? "" : " (offline when this session started)"}`),
     );
   }
+  if (c.dispatch.rules?.length) lines.push("", "The user's rules for where work goes (follow them in task_delegate):", ...c.dispatch.rules);
   return lines;
 }
 

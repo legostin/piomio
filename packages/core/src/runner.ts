@@ -39,6 +39,7 @@ import { MAX_AUTO_TRANSCRIBE_SEC, type Transcriber } from "./transcribe.ts";
 import { firstSpeakers, groupTurn, groupTurnText, handOff, MAX_HANDOFFS, USER_LABEL } from "./group-chat.ts";
 import { hubName } from "./pairing.ts";
 import { cardKind, delivered, deliveredNote, recap, type NotificationPart } from "./continuity.ts";
+import { ruleLine, WorkRules } from "./work-rules.ts";
 
 export interface RunnerDeps {
   config: Config;
@@ -63,6 +64,10 @@ export interface RunnerDeps {
   machines?: () => Machine[];
   /** The id an agent's binding (AgentDef.machines) names the hub's own computer by: its replica id in a cluster, else "local". */
   here?: () => string;
+  /** The kinds of brain the brain plugins and the computers offer: one of those not connected now may come back. */
+  brainKinds?: () => string[];
+  /** The hub's own computer's graphics cards (set by the hub once it has read them). */
+  gpus?: () => string[] | undefined;
   /** Turns in progress by machine, for the machines block (set by the hub). */
   activity?: MachineActivityFeed;
   /** Where the user is, when their phone shares it. */
@@ -238,11 +243,14 @@ export class SessionRunner {
   /** Tasks that could not run for now (brains not connected, a broken turn): since when, and how many broken turns. */
   private waiting = new Map<string, { since: number; broken: number }>();
   waits: TaskWaits = { brainMs: 30 * 60_000, machineMs: 24 * 60 * 60_000, everyMs: 60_000 };
+  /** The team's rules for where work goes: in every dialog's instructions. */
+  readonly rules: WorkRules;
   /** Timers that look at the tasks again when one waiting is due (cleared on stop, like the others). */
   private wakes = new Set<NodeJS.Timeout>();
 
   constructor(deps: RunnerDeps) {
     this.d = deps;
+    this.rules = new WorkRules(deps.settings);
     deps.approvals.onDeferredApproved = (a) => this.onDeferredApproved(a);
     deps.approvals.onBlockedAllowed = (a) => this.onBlockedAllowed(a);
     deps.approvals.onDeferredDenied = (a) => this.onDeferredDenied(a);
@@ -851,7 +859,8 @@ export class SessionRunner {
    * to try again later, with the reason on it. Undefined once it has waited long enough (or broke too often): it fails.
    */
   private retryLater(task: Task, r: TurnResult): { resumeAt: string; error: string } | undefined {
-    if (r.errorCode !== "brain-offline" && !r.broken) {
+    // The digest has its own time: its card goes out without the writer (notifier.ts).
+    if ((r.errorCode !== "brain-offline" && !r.broken) || task.deliver === "digest") {
       this.waiting.delete(task.id);
       return undefined;
     }
@@ -1237,8 +1246,12 @@ export class SessionRunner {
   }
 
   /** The computers a task can run on: the hub's own first, then the paired ones. */
-  computers(): Array<{ id: string; name: string; online: boolean }> {
-    return [{ id: "local", name: hubName(), online: true }, ...(this.d.machines?.() ?? []).map((m) => ({ id: m.id, name: m.name, online: m.status === "online" }))];
+  computers(): Array<{ id: string; name: string; online: boolean; gpus?: string[] }> {
+    const gpus = (list: string[] | undefined) => (list?.length ? { gpus: list } : {});
+    return [
+      { id: "local", name: hubName(), online: true, ...gpus(this.d.gpus?.()) },
+      ...(this.d.machines?.() ?? []).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", ...gpus(m.info?.gpus) })),
+    ];
   }
 
   /** The id an agent's binding names the hub's own computer by: its replica id in a cluster, else "local". */
@@ -1276,7 +1289,7 @@ export class SessionRunner {
    * task_delegate's `machine`: the agent's brain on that computer (its own entry, or the same kind of brain there), or
    * the agent's usual brain working there through the machine tools when the computer has none.
    */
-  placeTask(agentId: string, machine: string): { brainRef?: string; machineName: string; note?: string } | { error: string } {
+  placeTask(agentId: string, machine: string): { brainRef?: string; machineName: string; note?: string; offline?: boolean } | { error: string } {
     const agent = this.d.agents.get(agentId);
     if (!agent) return { error: `No agent ${agentId}.` };
     const list = this.computers();
@@ -1287,15 +1300,27 @@ export class SessionRunner {
       const names = this.boundNames(agent);
       return { error: `${agentName(agent, hubLocale())} works only on ${names}. Place the task there, or ask the user whether to change the agent's computers.` };
     }
-    if (!m.online) return { error: `"${m.name}" is offline right now. Ask the user whether to wait or use another computer.` };
     const refs = agent.brains.map(parseBrainRef);
     const own = refs.find((r) => r.machineId === m.id);
+    // Offline now: the task waits for the agent's brain there (its own entry, or one the computer said it was signed in to).
+    if (!m.online) {
+      const known = (this.d.machines?.() ?? []).find((x) => x.id === m.id)?.info?.clis.filter((c) => c.available && c.authenticated).map((c) => c.brainId) ?? [];
+      const there = own ?? refs.find((r) => known.includes(r.brainId));
+      if (!there) return { error: `"${m.name}" is offline right now, and no brain of ${agentName(agent, hubLocale())} is known there. Ask the user whether to wait or use another computer.` };
+      return { brainRef: formatBrainRef({ brainId: there.brainId, variant: there.variant, machineId: m.id }), machineName: m.name, offline: true };
+    }
     if (own) return { brainRef: formatBrainRef(own), machineName: m.name };
     for (const r of refs) {
       const there = formatBrainRef({ brainId: r.brainId, variant: r.variant, machineId: m.id });
       if (this.d.brains.has(there)) return { brainRef: there, machineName: m.name };
     }
     return { machineName: m.name, ...(m.id === "local" ? {} : { note: `Work on the computer "${m.name}" (machine id ${m.id}) through the machine_* tools.` }) };
+  }
+
+  /** What a session is opened with; a dialog's carries the team's rules for where work goes too. */
+  private stampOf(agent: AgentDef, conv: Conversation, kind: WorkKind): string {
+    const stamp = sessionStamp(agent, conv, kind, this.d.toolNames?.());
+    return conv.kind === "main" ? `${stamp}|${this.rules.stamp()}` : stamp;
   }
 
   /** The team and the computers, for a dialog's prompt. */
@@ -1319,7 +1344,8 @@ export class SessionRunner {
       const probe = (ready ?? of[0])?.probe;
       return { id, label: of[0]?.label ?? id, models: probe?.models ?? [], ready: !!ready };
     });
-    return { team, computers, brains };
+    const rules = this.rules.list().map((r) => ruleLine(r, (id) => this.computerName(id)));
+    return { team, computers, brains, ...(rules.length ? { rules } : {}) };
   }
 
   /** ", on <computer>" for a task placed on another computer. */
@@ -1538,7 +1564,7 @@ export class SessionRunner {
     for (const ref of ordered) {
       if (!this.d.brains.has(ref)) {
         setup++;
-        offline++;
+        if (this.d.brainKinds?.().includes(parseBrainRef(ref).brainId) ?? true) offline++;
         reasons.push(t("brain.reason.notConnected", { ref }));
         continue;
       }
@@ -1706,7 +1732,7 @@ export class SessionRunner {
         ? { confine: { ...confinement(this.d.config.dataDir, workspace, local && ref.brainId === "claude-code" ? this.d.claudePluginDirs() : []), permissionTool: NATIVE_PERMISSION_TOOL } }
         : {}),
     });
-    this.live.set(row.id, { handle, brainRef: formatBrainRef(ref), stamp: sessionStamp(agent, conv, kind, this.d.toolNames?.()), ...(thinking.model ? { model: thinking.model } : {}), ...(thinking.effort ? { effort: thinking.effort } : {}) });
+    this.live.set(row.id, { handle, brainRef: formatBrainRef(ref), stamp: this.stampOf(agent, conv, kind), ...(thinking.model ? { model: thinking.model } : {}), ...(thinking.effort ? { effort: thinking.effort } : {}) });
     if (!sameBrain) this.d.audit.append("core", "session.open", row.id, { agent: agent.id, brain: formatBrainRef(ref), conversation: conv.id, task: task?.id });
     return { row, handle, fresh: !!prior && !resume };
   }
@@ -1813,7 +1839,7 @@ export class SessionRunner {
       if (!ref) return false;
       const key = formatBrainRef(parseBrainRef(ref));
       let live = prior ? this.live.get(prior.id) : undefined;
-      if (!live || live.brainRef !== key || live.stamp !== sessionStamp(agent, conv, "chat", this.d.toolNames?.())) {
+      if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, "chat")) {
         if (live && prior) {
           if (live.brainRef === key) await this.closeLive(prior.id);
           else void this.closeLive(prior.id);
@@ -2067,7 +2093,7 @@ export class SessionRunner {
       // Opened ahead without the history: this first turn still gets the recap.
       if (curPrior && this.freshAhead.delete(curPrior.id)) fresh = true;
       try {
-        if (!live || live.brainRef !== key || live.stamp !== sessionStamp(agent, conv, kind, this.d.toolNames?.())) {
+        if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, kind)) {
           // The same brain resumes the same conversation with the new instructions: let the old process finish first.
           if (live && curPrior) {
             if (live.brainRef === key) await this.closeLive(curPrior.id);

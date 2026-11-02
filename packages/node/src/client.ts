@@ -6,6 +6,7 @@ import { createRpcPeer, normalizeLocale, wsTransport, type MachineInfo, type Rpc
 import { setHubLocale, t } from "./messages.ts";
 import { nodeWsUrl } from "./home.ts";
 import { signChallenge } from "./keys.ts";
+import { graphicsCards } from "@piomio/shared/hardware";
 import { machineInfo, type Logger } from "./info.ts";
 import type { NodeService } from "./service.ts";
 
@@ -186,7 +187,7 @@ export class NodeClient {
     const clis = probed ?? (await this.o.service.brains.probeAll());
     this.announced = cliState(clis);
     this.signedIn = clis.some((c) => c.authenticated);
-    const info = machineInfo(this.o.service.policy.get(), clis);
+    const info = machineInfo(this.o.service.policy.get(), clis, await graphicsCards());
     const brains = this.o.service.brains.available();
     const r = await peer.request<{ machineId: string; name: string; language?: string }>("node.hello", { info, brains }, { timeoutMs: 30_000 });
     setHubLocale(normalizeLocale(r?.language));
