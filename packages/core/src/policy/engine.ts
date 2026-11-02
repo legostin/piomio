@@ -20,6 +20,8 @@ export interface PolicyInput {
   skillRun?: boolean;
   /** The person asked for this call in their own words (policy/asked.ts, checked by the gateway): an external action needs no card. */
   asked?: boolean;
+  /** The call opens a web address that may carry data out of a tainted session (policy/egress.ts): its host. */
+  egress?: string;
 }
 
 export interface PolicyResult {
@@ -28,6 +30,8 @@ export interface PolicyResult {
   ruleId?: string;
   /** Allowed because the person asked for it in their own words: the chat shows a quiet line for it. */
   asked?: boolean;
+  /** Asks because the address it opens may carry data out (policy/egress.ts). */
+  egress?: boolean;
 }
 
 /** What a run of a taught skill may do by itself beyond reading: drive the browser the person showed it in. */
@@ -82,19 +86,25 @@ export function ruleMatches(rule: Rule, tool: string, agentId: string, input: un
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const URL_RE = /\bhttps?:\/\/[^\s"'<>]+/gi;
+/** Fields that name who a message goes to, whatever they hold (a chat id, a handle, a phone number). */
+const RECIPIENT_KEYS = /^(?:to|cc|bcc|recipients?|chat|chat_?id|phone)$/i;
 
 /** Recipients and domains an action reaches: used to decide whether a tainted session may rely on "always" rules. */
 export function extractTargets(input: unknown): string[] {
   const out = new Set<string>();
-  const walk = (v: unknown) => {
+  const walk = (v: unknown, recipient = false) => {
     if (typeof v === "string") {
-      for (const m of v.match(EMAIL_RE) ?? []) out.add(m.toLowerCase());
-      for (const m of v.match(URL_RE) ?? []) {
+      const emails = v.match(EMAIL_RE) ?? [];
+      for (const m of emails) out.add(m.toLowerCase());
+      const urls = v.match(URL_RE) ?? [];
+      for (const m of urls) {
         const h = hostOf(m);
         if (h) out.add(h);
       }
-    } else if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") Object.values(v).forEach(walk);
+      if (recipient && !emails.length && !urls.length && v.trim()) out.add(v.trim().toLowerCase());
+    } else if (typeof v === "number" && recipient) out.add(String(v));
+    else if (Array.isArray(v)) v.forEach((x) => walk(x, recipient));
+    else if (v && typeof v === "object") Object.entries(v).forEach(([k, x]) => walk(x, RECIPIENT_KEYS.test(k)));
   };
   walk(input);
   return [...out];
@@ -112,6 +122,9 @@ export function decide(p: PolicyInput, rules: Rule[], isKnownTarget: (t: string)
   if (p.background && p.initiative < 2 && !(p.skillRun && SKILL_RUN_TOOLS.test(tool.name)) && tool.effect !== "read" && !BACKGROUND_ALWAYS_ALLOWED.includes(tool.name)) {
     return { decision: "deny", reason: t("policy.backgroundReadOnly") };
   }
+
+  // After outside content, a read that opens an address which may carry data out is reviewed like an action.
+  if (p.egress && p.tainted && tool.effect !== "external") return allowedByRule() ?? { decision: "ask", reason: t("policy.taintedEgress", { host: p.egress }), egress: true };
 
   if (tool.effect === "read") return { decision: "allow", reason: t("policy.read") };
   if (tool.effect === "local-write") {

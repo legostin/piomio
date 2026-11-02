@@ -15,6 +15,7 @@ import type { AuditLog } from "../audit.ts";
 import type { Redactor } from "../vault/redact.ts";
 import type { AgentRegistry } from "../agents.ts";
 import type { AutoAction, AutoMode } from "../policy/auto.ts";
+import type { EgressGiven, EgressGuard } from "../policy/egress.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
 import { agentRoot, classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
@@ -40,6 +41,9 @@ export interface NativePermissionDeps {
   auto?: AutoMode;
   /** A machine's name for the reviewer ("local" is this hub's). */
   machineName?: (id: string) => string;
+  /** What a tainted session may open on the web without a review (policy/egress.ts), and what the person gave it. */
+  egress?: EgressGuard;
+  given?: (s: { conversationId: string; taskId?: string }) => EgressGiven;
 }
 
 const answer = (o: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(o) }] });
@@ -69,13 +73,16 @@ function classify(tool: string, input: Record<string, unknown>, workspace: strin
 function actionKey(a: NativeAction, input: unknown): string {
   if (a.kind === "command") return `command:${a.command.trim()}`;
   if (a.kind === "read" || a.kind === "write") return `${a.kind}:${a.path}`;
+  // The CLI's prompt for its fetch is new every time; the address is the action.
+  if (a.kind === "fetch") return `fetch:${a.url ?? ""}`;
   return `other:${JSON.stringify(input)}`;
 }
 
 /** The action for auto mode's reviewer, with why it was not let through at once. */
 function autoAction(a: NativeAction, input: unknown, why: string): AutoAction {
   const kind = a.kind === "command" || a.kind === "read" || a.kind === "write" ? a.kind : "tool";
-  return { tool: a.tool, input, summary: summary(a), kind, ...(kind === "tool" ? { effect: "external" as const } : {}), ...(a.kind === "command" && a.reason ? { reason: a.reason } : {}), why };
+  const effect = a.kind === "fetch" ? ("read" as const) : ("external" as const);
+  return { tool: a.tool, input, summary: summary(a), kind, ...(kind === "tool" ? { effect } : {}), ...(a.kind === "command" && a.reason ? { reason: a.reason } : {}), why };
 }
 
 function summary(a: NativeAction): string {
@@ -86,6 +93,8 @@ function summary(a: NativeAction): string {
       return t("native.read", { path: shownPath(a.path) });
     case "write":
       return t("native.write", { path: shownPath(a.path) });
+    case "fetch":
+      return a.url ? truncate(t("native.fetch", { url: a.url }), 300) : t("native.other", { tool: a.tool });
     default:
       return t("native.other", { tool: a.tool });
   }
@@ -99,6 +108,8 @@ function askOf(a: NativeAction): ApprovalAsk {
     case "read":
     case "write":
       return { kind: a.kind, detail: shownPath(a.path) };
+    case "fetch":
+      return { kind: "tool", detail: truncate(a.url ?? a.tool, 2000) };
     default:
       return { kind: "tool", detail: a.tool };
   }
@@ -134,6 +145,22 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       const own = agentRoot(ctx.workspace);
       const readRoots = [...(own ? [own] : []), ...(opened.get(ctx.sessionId) ?? [])];
       let decided = decideNative(action, { workspace: ctx.workspace, roots: d.roots(), readRoots, denied: denyRead });
+      // The CLI's own fetch after outside content: its address may carry data out (policy/egress.ts).
+      const urls = action.kind === "fetch" && action.url ? [action.url] : [];
+      if (urls.length && d.egress) {
+        if (!ctx.tainted) d.egress.opened(ctx.sessionId, urls);
+        else if (decided.decision === "allow") {
+          const risk = d.egress.check(ctx.sessionId, urls, () => d.given?.(ctx) ?? { texts: [], knownHost: (h) => d.rules.isKnownTarget(h) });
+          if (risk) decided = { decision: "ask", reason: risk.why };
+        }
+        // Only the address: the CLI's prompt about the page names its site, which is not the agent writing it out.
+        d.egress.wrote(ctx.sessionId, { url: urls[0] });
+      }
+      /** The fetch goes out: opening its address again tells nobody anything new. */
+      const out = () => {
+        if (urls.length) d.egress?.passed(ctx.sessionId, urls);
+        return answer({ behavior: "allow", updatedInput: input });
+      };
 
       // The person's own rules: "deny" always wins; "always allow" (from an approval card) answers for them.
       if (decided.decision !== "deny") {
@@ -176,7 +203,7 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       }
       d.audit.append(`agent:${ctx.agentId}`, "native.decision", tool, { sessionId: ctx.sessionId, decision: decided.decision, reason: decided.reason, input: safe });
 
-      if (decided.decision === "allow") return answer({ behavior: "allow", updatedInput: input });
+      if (decided.decision === "allow") return out();
       if (decided.decision === "deny") {
         return answer({ behavior: "deny", message: `Not allowed: ${decided.reason}. Work inside your own folder (${ctx.workspace}), or use the hub's tools for the web.` });
       }
@@ -200,7 +227,7 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       if (outcome === "approved") {
         open(ctx.sessionId, action);
         d.auto?.personSaidYes(ctx.sessionId);
-        return answer({ behavior: "allow", updatedInput: input });
+        return out();
       }
       if (outcome === "timeout") {
         // Nothing runs it later: the brain's turn has moved on.

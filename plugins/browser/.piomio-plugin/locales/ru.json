@@ -149,5 +149,8 @@
   "ui.files.cancel": "Отмена",
   "ui.files.sending": "Отправляю на страницу…",
   "ui.files.tooBig": "{name} больше 25 МБ",
-  "ui.files.failed": "Файл не дошёл до страницы: {detail}"
+  "ui.files.failed": "Файл не дошёл до страницы: {detail}",
+  "approval.open": "Браузер: открыть {url}",
+  "approval.tabs": "Браузер: открыть {url} в новой вкладке",
+  "approval.download": "Браузер: скачать {url}"
 }

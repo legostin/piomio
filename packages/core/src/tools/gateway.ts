@@ -13,6 +13,7 @@ import type { Settings } from "../settings.ts";
 import { BACKGROUND_ALWAYS_ALLOWED, decide, SKILL_RUN_TOOLS } from "../policy/engine.ts";
 import { checkAsked, type AskedCheck, type PersonWords } from "../policy/asked.ts";
 import type { AutoMode } from "../policy/auto.ts";
+import { urlsIn, type EgressGiven, type EgressGuard } from "../policy/egress.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { HUB_TOOL_PREFIX, HUB_TOOLS_FOR_EVERY_AGENT, OWN_CARD_TOOLS } from "./hub-tools.ts";
 
@@ -41,6 +42,8 @@ export interface GatewayDeps {
   auto?: AutoMode;
   /** A machine's name for the reviewer ("local" is this hub's). */
   machineName?: (id: string) => string;
+  /** What a tainted session may open on the web without a review (policy/egress.ts). */
+  egress?: EgressGuard;
 }
 
 /** How far back the person's words count as asking for an action (ToolSpec.asked): this request, not last week's. */
@@ -138,8 +141,14 @@ export class ToolGateway {
 
     const settings = this.d.settings.get();
     const asked = this.asked(s, tool, input);
+    // A read that reaches the web after outside content may carry data out in its address (policy/egress.ts).
+    const urls = tool.source && tool.effect !== "external" ? urlsIn(input) : [];
+    const egress = s.tainted && urls.length ? this.d.egress?.check(s.id, urls, () => this.egressGiven(s)) : undefined;
+    if (!s.tainted && urls.length) this.d.egress?.opened(s.id, urls);
+    // The CLI's question carries its own tool's input: native_permission records it once it is answered.
+    if (name !== NATIVE_PERMISSION_TOOL) this.d.egress?.wrote(s.id, input);
     const policy = decide(
-      { tool, input, agentId: s.agentId, tainted: s.tainted, background: s.background, initiative: agent.initiative, profile: agent.policyProfile, skillRun, asked: asked?.ok },
+      { tool, input, agentId: s.agentId, tainted: s.tainted, background: s.background, initiative: agent.initiative, profile: agent.policyProfile, skillRun, asked: asked?.ok, egress: egress?.host },
       this.d.rules.list(),
       (t) => this.d.rules.isKnownTarget(t),
     );
@@ -166,7 +175,8 @@ export class ToolGateway {
       // Auto mode decides instead of a card, except for the tools that always show the person their own.
       if (this.d.auto && settings.approvalMode !== "ask" && !OWN_CARD_TOOLS.has(name)) {
         const where = { sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, workspace: ctx.workspace, machine: this.d.machineName?.(ctx.machineId) ?? ctx.machineId, brain: parseBrainRef(s.brainRef).brainId };
-        const verdict = await this.d.auto.decide({ tool: name, input: safe, summary, kind: "tool", effect: tool.effect, why: policy.reason }, where);
+        const why = policy.egress && egress ? egress.why : policy.reason;
+        const verdict = await this.d.auto.decide({ tool: name, input: safe, summary, kind: "tool", effect: tool.effect, why }, where);
         if (verdict.decision === "allow") return this.execute(s, tool, input, { ...ctx, reviewed: true });
         if (verdict.decision === "block") {
           const blocked = this.d.approvals.block({ sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, tool: name, input: safe, summary, effect: tool.effect, tainted: s.tainted, auto: { rule: verdict.rule, reason: verdict.reason } });
@@ -176,6 +186,14 @@ export class ToolGateway {
             _meta: { status: "denied", approvalId: blocked.id },
           };
         }
+      }
+      // A background run of an agent that may only suggest has nobody to show a card to.
+      if (policy.egress && s.background && agent.initiative < 2 && !skillRun) {
+        return {
+          content: [{ type: "text", text: `Denied by policy: ${policy.reason}. Nobody can approve it during a background run: open only the addresses you were given or found in what you read.` }],
+          isError: true,
+          _meta: { status: "denied" },
+        };
       }
       const approval = this.d.approvals.create({
         sessionId: s.id,
@@ -279,6 +297,15 @@ export class ToolGateway {
     return { texts, files };
   }
 
+  /**
+   * What the person gave a session to open on the web (policy/egress.ts): their own recent words, the goal of a task
+   * that was started before any outside content, and the hosts of actions they approved.
+   */
+  egressGiven(s: Pick<SessionRow, "conversationId" | "taskId">): EgressGiven {
+    const task = s.taskId ? this.d.store.getTask(s.taskId) : undefined;
+    return { texts: [...this.personWords(s).texts, ...(task && !task.tainted && task.goal ? [task.goal] : [])], knownHost: (h) => this.d.rules.isKnownTarget(h) };
+  }
+
   /** Run an approved action later (deferred approval). */
   async executeApproved(a: Approval): Promise<ToolResult> {
     const s = this.d.store.getSession(a.sessionId);
@@ -293,6 +320,7 @@ export class ToolGateway {
     const entry = this.d.registry.get(tool.name)!;
     let result: ToolResult;
     const started = Date.now();
+    if (tool.source) this.d.egress?.passed(s.id, urlsIn(input));
     try {
       result = await entry.invoke(input, ctx);
     } catch (e: any) {
@@ -310,6 +338,8 @@ export class ToolGateway {
     if ((tool.source || result._meta?.taint) && !s.tainted) {
       this.d.store.updateSession(s.id, { tainted: true });
     }
+    // Links in what came from outside may be followed without a review (policy/egress.ts).
+    if (tool.source || result._meta?.taint) this.d.egress?.read(s.id, textOf(result));
     this.d.audit.append(`agent:${s.agentId}`, "tool.call", tool.name, {
       sessionId: s.id,
       taskId: s.taskId,

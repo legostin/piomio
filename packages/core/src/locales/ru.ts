@@ -72,6 +72,7 @@ export default {
   "policy.localWrite": "локальное изменение",
   "policy.taintedLastingChange": "после чтения внешних материалов агент меняет свой профиль и другие долгие настройки только с вашего подтверждения",
   "policy.taintedNewTargets": "сессия читала недоверенный контент, новые адресаты: {targets}",
+  "policy.taintedEgress": "сессия читала недоверенный контент; адрес на {host} может унести данные наружу",
   "policy.externalNeedsApproval": "внешнее действие требует подтверждения",
   "policy.askedByPerson": "человек сам попросил об этом",
 
@@ -283,6 +284,7 @@ export default {
   "native.read": "Прочитать {path}",
   "native.write": "Записать в {path}",
   "native.other": "Использовать инструмент {tool}",
+  "native.fetch": "Открыть {url}",
   "pages.kitMissing": "Страницы ещё не собраны: выполните npm run build",
   "pages.notFound": "Такой страницы нет",
   "media.tooLarge": "Изображение слишком большое",

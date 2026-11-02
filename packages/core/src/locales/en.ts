@@ -73,6 +73,7 @@ export default {
   "policy.localWrite": "local change",
   "policy.taintedLastingChange": "after outside content, an agent changes its profile and other lasting settings only with your approval",
   "policy.taintedNewTargets": "the session has read untrusted content; new recipients: {targets}",
+  "policy.taintedEgress": "the session has read untrusted content; an address on {host} could carry data out",
   "policy.externalNeedsApproval": "external actions need approval",
   "policy.askedByPerson": "the person asked for it in their own words",
 
@@ -284,6 +285,7 @@ export default {
   "native.read": "Read {path}",
   "native.write": "Write to {path}",
   "native.other": "Use the tool {tool}",
+  "native.fetch": "Open {url}",
   "pages.kitMissing": "Pages are not built yet: run npm run build",
   "pages.notFound": "No such page",
   "media.tooLarge": "The image is too large",

@@ -149,5 +149,8 @@
   "ui.files.cancel": "Cancel",
   "ui.files.sending": "Sending to the page…",
   "ui.files.tooBig": "{name} is larger than 25 MB",
-  "ui.files.failed": "The file did not reach the page: {detail}"
+  "ui.files.failed": "The file did not reach the page: {detail}",
+  "approval.open": "Browser: open {url}",
+  "approval.tabs": "Browser: open {url} in a new tab",
+  "approval.download": "Browser: download {url}"
 }

@@ -224,8 +224,12 @@ export function claudePresets(efforts?: string[]): NonNullable<ProbeResult["pres
 /** What a dialog's front desk may not do itself (BrainSessionOptions.frontDesk): run commands, change files. */
 const FRONT_DESK_DENIED = ["Bash", "BashOutput", "KillShell", "Write", "Edit", "MultiEdit", "NotebookEdit"];
 
-/** Tools a confined session may use without asking: the web (through the hub's proxy), planning, subagents, skills, the hub. */
-const CONFINED_ALLOWED = /^(WebFetch|WebSearch|TodoWrite|Task|Agent|Skill|ToolSearch|mcp__piomio)$/;
+/**
+ * Tools a confined session may use without asking: search (the query goes to Anthropic's search, never to a site the
+ * agent picks), planning, subagents, skills, the hub. WebFetch asks the hub: after outside content the address it opens
+ * can carry data out (the hub's policy/egress.ts).
+ */
+const CONFINED_ALLOWED = /^(WebSearch|TodoWrite|Task|Agent|Skill|ToolSearch|mcp__piomio)$/;
 
 /**
  * The hub's own tools are always allowed: they act on the hub, which gates them itself, and without them don't-ask mode

@@ -47,7 +47,10 @@ export interface NativeDecision {
 
 /** Tools with no reach of their own: planning, subagents (which ask again), skills, deferred tool lookup. */
 const FREE = new Set(["TodoWrite", "Task", "Agent", "Skill", "ToolSearch", "ExitPlanMode", "EnterPlanMode", "KillShell", "BashOutput", "TaskOutput", "TaskStop"]);
-/** The web through the CLI: outside content, which taints the session (runner.ts), but reaches nothing of the person's. */
+/**
+ * The web through the CLI: outside content, which taints the session (runner.ts). Allowed here; after outside content
+ * native_permission checks the address a fetch opens, which could carry data out (policy/egress.ts).
+ */
 const FETCH = new Set(["WebFetch", "WebSearch"]);
 const READ = new Set(["Read", "Glob", "Grep", "LS", "NotebookRead"]);
 const WRITE = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);

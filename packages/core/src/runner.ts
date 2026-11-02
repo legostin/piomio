@@ -24,6 +24,7 @@ import type { ApprovalService } from "./approvals.ts";
 import { detailOfTool, stepOfTool, type MachineActivityFeed } from "./activity.ts";
 import { needOf, route, skillOfGoal, type Route } from "./model-router.ts";
 import type { EgressProxy } from "./egress.ts";
+import { urlsIn, type EgressGuard } from "./policy/egress.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
 import { buildSystemPrompt, goalPrompt, taskEnding } from "./prompt.ts";
 import { humanFailure } from "./notifier.ts";
@@ -54,6 +55,8 @@ export interface RunnerDeps {
   bus: EventBus;
   redactor: Redactor;
   gateway: ToolGateway;
+  /** What a tainted session may open on the web without a review: the brains' own fetches and inputs feed it (policy/egress.ts). */
+  egressGuard?: EgressGuard;
   approvals: ApprovalService;
   egress: EgressProxy;
   /** Claude Code-format plugin dirs to pass to Claude Code sessions. */
@@ -2113,6 +2116,10 @@ export class SessionRunner {
     let resumeToken: string | undefined;
     let awaitingApproval = false;
     let tokens = 0;
+    /** The brain's own web calls this turn, by id: their results are outside content. */
+    const sourceCalls = new Set<string>();
+    /** This step's first web calls were made before anything from outside reached the session (policy/egress.ts). */
+    let opening = false;
 
     const current = () => this.d.store.getMessage(msg.id)?.parts ?? parts;
     const flush = (force = false) => {
@@ -2157,7 +2164,17 @@ export class SessionRunner {
           produced = true;
           parts.push({ type: "tool_call", id: e.id, name: e.name, input: this.d.redactor.value(e.input) });
           // The brain's own tools (its shell, files, web) never pass the gateway: the security log gets them here.
-          if (!this.d.gateway.has(e.name)) this.d.audit.append(`agent:${agent.id}`, "brain.tool", e.name, { sessionId: row.id, input: truncateInput(this.d.redactor.value(e.input)) });
+          const own = !this.d.gateway.has(e.name);
+          if (own) this.d.audit.append(`agent:${agent.id}`, "brain.tool", e.name, { sessionId: row.id, input: truncateInput(this.d.redactor.value(e.input)) });
+          // What the brain's own tools wrote and opened, for what its session may open later (policy/egress.ts).
+          if (own && NATIVE_SOURCE_TOOLS.test(e.name)) {
+            sourceCalls.add(e.id);
+            // Chosen before anything from outside reached the session: the addresses are the agent's own pick.
+            if (!row.tainted || opening) {
+              this.d.egressGuard?.opened(row.id, urlsIn(e.input));
+              opening = true;
+            }
+          } else if (own) this.d.egressGuard?.wrote(row.id, e.input);
           if (NATIVE_SOURCE_TOOLS.test(e.name) && !row.tainted) {
             this.d.store.updateSession(row.id, { tainted: true });
             row.tainted = true;
@@ -2168,6 +2185,8 @@ export class SessionRunner {
         }
         case "tool_result": {
           const out = this.d.redactor.text(e.output);
+          opening = false;
+          if (sourceCalls.has(e.id)) this.d.egressGuard?.read(row.id, out);
           if (/awaiting_approval/.test(out)) awaitingApproval = true;
           parts.push({ type: "tool_result", id: e.id, output: truncate(out, 4000), isError: e.isError });
           activity?.step(turnKey, "thinking");

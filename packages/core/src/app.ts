@@ -39,6 +39,7 @@ import { registerPageTools } from "./tools/page-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
 import { AutoMode, type AutoContext, type AutoWhere } from "./policy/auto.ts";
+import { EgressGuard } from "./policy/egress.ts";
 import { brainReviewer } from "./policy/reviewer.ts";
 import { Pages } from "./pages.ts";
 import { registerCoreTools } from "./tools/core-tools.ts";
@@ -94,6 +95,8 @@ export class Hub {
   gateway: ToolGateway;
   /** Auto mode: a reviewer decides what used to be an approval card (policy/auto.ts). */
   auto: AutoMode;
+  /** What a tainted session may open on the web without a review (policy/egress.ts). */
+  egressGuard = new EgressGuard();
   private reviewToken?: string;
   agents: AgentRegistry;
   /** Pinned, archived and deleted built-in agents (agents-state.ts). */
@@ -226,6 +229,7 @@ export class Hub {
       skills: this.skills,
       auto: this.auto,
       machineName: (id) => this.runner.computerName(id),
+      egress: this.egressGuard,
       // "%key%" approval summaries resolve against the owner's messages in the hub language.
       localize: (owner, text) =>
         owner === "core" ? localizeValue(text, catalogLookup(coreCatalog, hubLocale())) : localizePluginValue(this.plugins.get(owner)?.layout, text, hubLocale()),
@@ -277,6 +281,7 @@ export class Hub {
       bus: this.bus,
       redactor: this.vault.redactor,
       gateway: this.gateway,
+      egressGuard: this.egressGuard,
       approvals: this.approvals,
       egress: this.egress,
       claudePluginDirs: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
@@ -442,6 +447,8 @@ export class Hub {
       roots: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
       auto: this.auto,
       machineName: (id) => this.runner.computerName(id),
+      egress: this.egressGuard,
+      given: (s) => this.gateway.egressGiven(s),
     });
     registerPageTools({
       registry: this.tools,
