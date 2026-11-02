@@ -76,16 +76,24 @@ export function urlsIn(input: unknown): string[] {
   return [...out];
 }
 
+/** What clings to an address at its end in prose or Markdown: "address.", "[label](address)", "**address**". */
+const CLINGS = /[.,;:!?)\]}*_]+$/;
+
 /** The addresses a text mentions, each also without what clings to it in prose or Markdown (".", ")", "&amp;"). */
 export function addressesIn(text: string): URL[] {
   const out: URL[] = [];
   for (const m of text.match(URL_IN_TEXT) ?? []) {
-    for (const v of new Set([m, m.replace(/[.,;:!?)\]}*_]+$/, ""), m.replace(/&amp;/g, "&")])) {
+    for (const v of new Set([m, m.replace(CLINGS, ""), m.replace(/&amp;/g, "&")])) {
       const u = parse(v);
       if (u) out.push(u);
     }
   }
   return out;
+}
+
+/** The web links a text shows, in order and as written, without what clings to them. */
+export function linksIn(text: string): string[] {
+  return (text.match(URL_IN_TEXT) ?? []).map((m) => m.replace(CLINGS, "")).filter((v) => parse(v));
 }
 
 function entropy(s: string): number {

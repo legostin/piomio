@@ -969,6 +969,11 @@ export interface OutboundMessage {
   silent?: boolean;
   /** Images and maps of the reply, sent after its text. */
   media?: OutboundMedia[];
+  /**
+   * The one address in `text` the channel may draw a link preview of (its servers fetch it without a click), as written
+   * there. The hub names it only when it carries nothing out (core policy/previews.ts); without it, no preview.
+   */
+  preview?: string;
 }
 
 /**

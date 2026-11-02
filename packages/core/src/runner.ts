@@ -26,6 +26,7 @@ import { needOf, route, skillOfGoal, type Route } from "./model-router.ts";
 import type { EgressProxy } from "./egress.ts";
 import { urlsIn, type EgressGiven, type EgressGuard } from "./policy/egress.ts";
 import { markdownPictures, type Pictures } from "./policy/pictures.ts";
+import { previewOf } from "./policy/previews.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
 import { buildSystemPrompt, goalPrompt, taskEnding } from "./prompt.ts";
 import { humanFailure } from "./notifier.ts";
@@ -1783,8 +1784,8 @@ export class SessionRunner {
    * Where a finished reply goes besides the web UI: back to the channel the message came from; or, in the default
    * agent's dialog, to every channel, so the user follows the main agent on the phone too (setting channelMirror).
    */
-  /** Returns true when the reply went to every channel (the mirror). */
-  private async deliver(conv: Conversation, text: string, opts: TurnOpts, messageId?: string): Promise<boolean> {
+  /** Returns true when the reply went to every channel (the mirror). `row`: the session that wrote it, for its preview. */
+  private async deliver(conv: Conversation, text: string, opts: TurnOpts, messageId?: string, row?: SessionRow): Promise<boolean> {
     const ch = opts.replyChannel;
     const toChannel = !!ch && ch !== WEB_CHANNEL;
     // Typed in the web UI, or a turn nobody typed (a task finished, a system note): only the default agent's dialog is mirrored.
@@ -1794,10 +1795,18 @@ export class SessionRunner {
     const media = await this.replyMedia(messageId);
     if (!text && !media.length) return !toChannel;
     const path = conv.kind === "main" ? `agent/${encodeURIComponent(conv.agentId)}` : conv.taskId ? `tasks/${encodeURIComponent(conv.taskId)}` : `chat/${encodeURIComponent(conv.id)}`;
-    const reply: OutboundMessage = { kind: "reply", text, conversationId: conv.id, link: `${this.d.config.publicUrl}/${path}`, ...(media.length ? { media } : {}) };
+    const preview = row && text ? this.previewFor(row, text) : undefined;
+    const reply: OutboundMessage = { kind: "reply", text, conversationId: conv.id, link: `${this.d.config.publicUrl}/${path}`, ...(media.length ? { media } : {}), ...(preview ? { preview } : {}) };
     if (toChannel) await this.d.channels.send(ch, reply);
     else await this.d.channels.broadcast(opts.quote ? { ...reply, quote: opts.quote } : reply);
     return !toChannel;
+  }
+
+  /** The link a channel may draw a preview of for a session's reply: one that carries nothing out (policy/previews.ts). */
+  private previewFor(row: SessionRow, text: string): string | undefined {
+    // The hub's own web tools mark the stored session, not this turn's copy of it.
+    const tainted = row.tainted || !!this.d.store.getSession(row.id)?.tainted;
+    return previewOf(text, { id: row.id, tainted }, this.d.egressGuard, () => this.d.gateway.egressGiven(row));
   }
 
   /** Blocks plugins add before a turn's input (turn.context hook), or undefined. Never fails the turn. */
@@ -2061,9 +2070,9 @@ export class SessionRunner {
         // among themselves: the phone gets the outcome, not that.
         const chatter = !opts.replyChannel && opts.quote === undefined && this.wroteToTeammate(r.messageId);
         if (conv.kind !== "group" && !chatter) {
-          const broadcast = await this.deliver(conv, r.answer ?? r.text, opts, r.messageId);
+          const broadcast = await this.deliver(conv, r.answer ?? r.text, opts, r.messageId, row!);
           // Messages from other channels joined the turn: those channels get the reply too (unless all of them did).
-          if (!broadcast) for (const ch of r.channels ?? []) if (ch !== opts.replyChannel) await this.deliver(conv, r.answer ?? r.text, { replyChannel: ch }, r.messageId);
+          if (!broadcast) for (const ch of r.channels ?? []) if (ch !== opts.replyChannel) await this.deliver(conv, r.answer ?? r.text, { replyChannel: ch }, r.messageId, row!);
         }
         return r;
       } finally {

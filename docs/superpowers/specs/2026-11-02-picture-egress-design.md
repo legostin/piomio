@@ -51,9 +51,9 @@ pages' image route included. Telegram gets only shown pictures.
   open (one click, not zero). Their API route keeps its host list. A page made after outside content is a separate gap.
 - Plugin widgets drawing an agent's picture through `@piomio/ui` `mediaSrc` keep the old behaviour for addresses the
   hub never decided.
-- Telegram previews the first link of a reply, and its formatter turns a Markdown picture in the words into a link: an
-  address the agent wrote into its words (a link, or a picture there) can still reach that site through Telegram's
-  servers. `images` parts are covered (only shown ones are sent); link previews after outside content are a follow-up.
+- Telegram previewed the first link of a reply, and its formatter turns a Markdown picture in the words into a link: an
+  address the agent wrote into its words could reach that site through Telegram's servers. `images` parts are covered
+  (only shown ones are sent); link previews are closed in `2026-11-02-link-preview-design.md`.
 - A Markdown form the hub's scanner reads differently from the client's parser is held (a false hold, never a leak).
 - Verdicts replicate with the database; a replica that missed one holds the picture (more taps, never a leak).
 
