@@ -47,6 +47,11 @@ export interface GatewayDeps {
   egress?: EgressGuard;
   /** Which pictures the hub may fetch when the person sees them (policy/pictures.ts). */
   pictures?: Pictures;
+  /**
+   * Plugins whose tools drive an app on the hub's own computer (manifest integration.localApp, Blender): a session
+   * whose brain runs on another computer does not get them, so its work uses that computer's own app.
+   */
+  hubOnly?: (owner: string) => boolean;
 }
 
 /** How far back the person's words count as asking for an action (ToolSpec.asked): this request, not last week's. */
@@ -93,6 +98,7 @@ export class ToolGateway {
   private visible(t: ToolDescriptor, agent: AgentDef, s: SessionRow, skillRun = false): boolean {
     // The CLIs' permission prompt (native-permission.ts): theirs only, never on the model's list of an API brain.
     if (t.name === NATIVE_PERMISSION_TOOL) return /^(claude-code|codex)\b/.test(s.brainRef ?? "");
+    if (this.d.hubOnly?.(t.owner) && parseBrainRef(s.brainRef).machineId !== "local") return false;
     const job = this.d.jobTools?.(s) ?? [];
     // Saving what the person taught is for whichever agent they showed it to (it always asks on its own card).
     const everyAgent = t.owner === "core" && HUB_TOOLS_FOR_EVERY_AGENT.includes(t.name);

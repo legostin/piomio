@@ -3,7 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import type { Machine, MachineInfo, MachineUsage, ToolResult } from "@piomio/shared";
-import { createRpcPeer, newId, nowIso, wsTransport, type RpcPeer, type WsLike } from "@piomio/shared";
+import { createRpcPeer, newId, nowIso, RpcCodes, wsTransport, type RpcPeer, type WsLike } from "@piomio/shared";
 import { pieceServer, readInPieces, type PieceAnswer, type PieceRequest } from "@piomio/replica";
 import { json, type Db } from "./db.ts";
 import type { EventBus } from "./bus.ts";
@@ -64,6 +64,37 @@ export class MachineHub {
     if (!peer || peer.closed) throw new Error(`machine ${machineId} is offline`);
     await peer.request("node.update", update, { timeoutMs: 120_000 });
     this.audit.append("core", "machine.update", machineId, { version: update.version });
+  }
+
+  /**
+   * Commands on a machine on or off (its policy's exec.enabled), after the person's yes on a card (hub_machine_commands).
+   * The machine refuses when its owner keeps its permissions there; a daemon from before this cannot do it at all.
+   */
+  async setCommands(machineId: string, on: boolean): Promise<{ commands: boolean } | { refused: "offline" | "tooOld" | "owner"; message?: string }> {
+    const peer = this.peers.get(machineId);
+    if (!peer || peer.closed) return { refused: "offline" };
+    let r: { commands: boolean };
+    try {
+      r = await peer.request<{ commands: boolean }>("node.policy", { commands: on }, { timeoutMs: 30_000 });
+    } catch (e: any) {
+      if (e?.code === RpcCodes.MethodNotFound) return { refused: "tooOld" };
+      return { refused: "owner", message: String(e?.message ?? e) };
+    }
+    const row = this.db.prepare("select info from machines where id = ?").get(machineId) as { info: string | null } | undefined;
+    const info = row?.info ? JSON.parse(row.info) : undefined;
+    if (info) this.db.prepare("update machines set info = ? where id = ?").run(JSON.stringify({ ...info, commands: r.commands }), machineId);
+    this.audit.append("core", "machine.commands", machineId, { commands: r.commands });
+    const m = this.get(machineId);
+    if (m) this.bus.emit("machine.updated", m);
+    return { commands: r.commands };
+  }
+
+  /** Has a machine inside the desktop app install the app's update (node.appUpdate); it restarts and says hello again. */
+  async appUpdate(machineId: string): Promise<void> {
+    const peer = this.peers.get(machineId);
+    if (!peer || peer.closed) throw new Error(`machine ${machineId} is offline`);
+    await peer.request("node.appUpdate", {}, { timeoutMs: 30_000 });
+    this.audit.append("core", "machine.update", machineId, { app: true });
   }
 
   /** Sends a machine its setup (node.setup); a daemon from before setups ignores it. */

@@ -434,6 +434,22 @@ describe("confined brains (BrainSessionOptions.confine)", () => {
     expect(pa[pa.indexOf("--allowedTools") + 1]).toBe("Read,WebSearch,mcp__piomio");
   });
 
+  it("on a computer that allows commands, asks the hub about them instead of being refused", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "owl-cc-state-"));
+    const argsOf = async (allows: boolean, over: Partial<BrainSessionOptions> = {}) => {
+      const claude = createClaudeCodeProvider({ command: () => fake, stateDir, asks: () => allows });
+      const file = join(mkdtempSync(join(tmpdir(), "owl-cc-args-")), "args.jsonl");
+      await collect((await claude.createSession(opts({ askTool: "native_permission", env: { FAKE_ARGS_FILE: file }, ...over }))).send({ text: "hi" }));
+      const a = JSON.parse(readFileSync(file, "utf8").trim().split("\n")[0]) as string[];
+      return { mode: a[a.indexOf("--permission-mode") + 1], tool: a.includes("--permission-prompt-tool") ? a[a.indexOf("--permission-prompt-tool") + 1] : undefined };
+    };
+    expect(await argsOf(true)).toEqual({ mode: "default", tool: "mcp__piomio__native_permission" });
+    // Commands off there: what is not allowed is refused, as before.
+    expect(await argsOf(false)).toEqual({ mode: "dontAsk", tool: undefined });
+    // A dialog's front desk only looks, wherever it runs.
+    expect(await argsOf(true, { frontDesk: true })).toEqual({ mode: "dontAsk", tool: undefined });
+  });
+
   it("the hub's own tools stay allowed, also with a list saved before the rename or one without them", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "owl-cc-state-"));
     const allowed = async (tools: string[]) => {

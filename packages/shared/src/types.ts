@@ -816,6 +816,11 @@ export interface BrainSessionOptions {
    */
   confine?: { denyRead: string[]; allowRead: string[]; allowWrite?: string[]; permissionTool: string };
   /**
+   * The hub's MCP tool a brain on a paired computer asks about what that computer's policy does not let it do by
+   * itself, when the policy allows commands there (a node's Claude Code: Bash); auto mode or the person answers.
+   */
+  askTool?: string;
+  /**
    * A dialog the person talks in: the brain keeps its process between turns (and may start it before the first one,
    * `warm`), so a reply does not wait for a CLI to start. Unset for tasks: their process ends with the turn.
    */
@@ -1000,6 +1005,10 @@ export interface MachineInfo {
   selfUpdate?: boolean;
   /** Its graphics cards, by name (older daemons don't say). */
   gpus?: string[];
+  /** Commands may run there (its policy's exec.enabled); the person turns them on from the chat (node.policy). */
+  commands?: boolean;
+  /** It runs inside the Piomio desktop app, which installs its update when the hub asks (node.appUpdate). */
+  desktopApp?: boolean;
 }
 
 export interface Machine {

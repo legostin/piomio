@@ -1,7 +1,7 @@
 // Tools implemented by the core itself (owner "core").
 
-import { realpathSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { BehindEntry, ImageItem, InboxEntry, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { brainsFor, isThinkingPreset, MAP_ICONS, sameBrain, truncate } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
@@ -78,6 +78,28 @@ function coord(v: unknown, name: string, min: number, max: number): number | str
   const n = typeof v === "string" && v.trim() ? Number(v) : v;
   if (typeof n !== "number" || !Number.isFinite(n) || n < min || n > max) return `${name} must be a number from ${min} to ${max}`;
   return n;
+}
+
+/** How long show_images waits for a picture made on another computer to reach the hub's copy of the folder. */
+const REMOTE_FILE_WAIT_MS = 30_000;
+
+/**
+ * A path on another computer as one relative to the session's folder: as it is when relative, or the part after the
+ * folder's own `<agent>/<task>` in an absolute one (C:\Users\me\piomio-workspace\<agent>\<task>\render.png).
+ */
+export function folderRelative(path: string, workspace: string): string | undefined {
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  if (!/^([a-zA-Z]:)?[\\/]/.test(path)) return parts.includes("..") ? undefined : parts.join("/");
+  const key = basename(workspace);
+  const agent = basename(dirname(workspace));
+  const at = parts.findIndex((p, n) => p === key && parts[n - 1] === agent);
+  const rest = at >= 0 ? parts.slice(at + 1) : [];
+  return rest.length && !rest.includes("..") ? rest.join("/") : undefined;
+}
+
+/** Resolves once `file` exists, or after `ms`. */
+async function arrived(file: string, ms: number): Promise<void> {
+  for (const t0 = Date.now(); !existsSync(file) && Date.now() - t0 < ms; ) await new Promise((r) => setTimeout(r, 500));
 }
 
 /** `path` (relative to the agent's workspace) as a real file inside it, or an error text. */
@@ -389,7 +411,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
       },
     },
     (i) => {
-      const when = clip(i.when, 300);
+      const when = clip(i.when ?? i.rule, 300);
       if (!when) return text("No rule saved: give `when`, the kind of work in the user's words.", true);
       const computers = d.tasks.computers();
       let machine: string | undefined;
@@ -600,7 +622,8 @@ export function registerCoreTools(d: CoreToolDeps): void {
         "When your reply also goes to the user's phone (Telegram), the images go with it. Use it whenever a picture says more than words: photos of a place or product, " +
         "charts and screenshots you made, search results with images. Each image is either `url` (a public http(s) image address) or `path` " +
         "(an image file: relative to your workspace, or an absolute path in it or in the folder of a task you started; png, jpg, gif, webp, avif, bmp or svg, " +
-        "up to 30 MB, a PNG render as it is). Shown inside a task, the images also reach the dialog that started it. Add a short `caption` in the user's language. " +
+        "up to 30 MB, a PNG render as it is). On another computer, a file in your task's folder there works too: it reaches the hub in a few seconds. " +
+        "Shown inside a task, the images also reach the dialog that started it. Add a short `caption` in the user's language. " +
         "Do not repeat the images as markdown in your text; refer to them in words.",
       effect: "read",
       inputSchema: {
@@ -624,7 +647,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
         required: ["images"],
       },
     },
-    (i, ctx) => {
+    async (i, ctx) => {
       const list: unknown[] = Array.isArray(i.images) ? i.images : i.url || i.path ? [i] : [];
       if (!list.length) return text("Give images: [{url} or {path}, …].", true);
       if (list.length > MAX_IMAGES) return text(`At most ${MAX_IMAGES} images at once; split them into several calls.`, true);
@@ -635,11 +658,18 @@ export function registerCoreTools(d: CoreToolDeps): void {
         const label = `image ${n + 1}`;
         let src: string | undefined;
         if (typeof it.path === "string" && it.path.trim()) {
+          let path = it.path.trim();
+          // Made on another computer: the hub's copy of the task's folder has it once the hub pulled it (every few seconds).
           if (ctx.machineId !== "local") {
-            problems.push(`${label}: files on ${ctx.machineId} cannot be shown; use a public url`);
-            continue;
+            const rel = folderRelative(path, ctx.workspace);
+            if (!rel) {
+              problems.push(`${label}: ${path} is not in your task's folder; save the picture there and show it by its path`);
+              continue;
+            }
+            await arrived(resolve(ctx.workspace, rel), REMOTE_FILE_WAIT_MS);
+            path = rel;
           }
-          const r = workspaceImage(it.path.trim(), ctx.workspace, d.workspacesRoot, d.startedWorkspaces?.(ctx.conversationId));
+          const r = workspaceImage(path, ctx.workspace, d.workspacesRoot, d.startedWorkspaces?.(ctx.conversationId));
           if (typeof r !== "string") {
             problems.push(`${label}: ${r.error}`);
             continue;

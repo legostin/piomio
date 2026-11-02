@@ -240,6 +240,7 @@ export class Hub {
       machineName: (id) => this.runner.computerName(id),
       egress: this.egressGuard,
       pictures: this.pictures,
+      hubOnly: (owner) => !!this.plugins.get(owner)?.layout?.manifest.integration?.localApp,
       // "%key%" approval summaries resolve against the owner's messages in the hub language.
       localize: (owner, text) =>
         owner === "core" ? localizeValue(text, catalogLookup(coreCatalog, hubLocale())) : localizePluginValue(this.plugins.get(owner)?.layout, text, hubLocale()),
@@ -263,6 +264,7 @@ export class Hub {
         return m ? { info: m.info, online: m.status === "online" } : undefined;
       },
       sendNode: (id, update) => this.machines.sendUpdate(id, update),
+      appUpdateNode: (id) => this.machines.appUpdate(id),
     });
     this.activity.updates = this.updates;
     this.bus.on("machine.updated", (m: { id?: string; info?: MachineInfo } | undefined) => m?.id && this.updates.machineChanged(m.id, m.info));

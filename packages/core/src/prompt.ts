@@ -17,8 +17,8 @@ export interface PromptContext {
   /** True when the brain loads skills natively (Claude Code, Codex): we still list them briefly. */
   nativeSkills: boolean;
   appended: string[];
-  /** The computer the session's brain runs on; `local` is the hub's own. */
-  machine?: { name: string; local: boolean };
+  /** The computer the session's brain runs on; `local` is the hub's own. `commands`: whether commands may run there. */
+  machine?: { name: string; local: boolean; commands?: boolean };
   /** What is left of the hub's first-run setup (the default agent, interactive sessions only). */
   setup?: string;
   /** A group chat the agent takes part in: its title and members, the lead first. */
@@ -27,7 +27,7 @@ export interface PromptContext {
   dispatch?: {
     /** `skills`: the ones given to that teammate itself (the whole team's are everyone's). */
     team: Array<{ id: string; name: string; description: string; where: string[]; brains?: string[]; skills?: string[] }>;
-    computers: Array<{ id: string; name: string; online: boolean; gpus?: string[] }>;
+    computers: Array<{ id: string; name: string; online: boolean; gpus?: string[]; commands?: boolean }>;
     /** The brains the team can think with (by id), for `brain` in task_delegate. */
     brains?: Array<{ id: string; label: string; models: string[]; ready: boolean }>;
     /** The user's rules for where work goes, one line each (work-rules.ts `ruleLine`). */
@@ -100,7 +100,7 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     lines.push(
       "",
       "Computers (`machine` in task_delegate; task_agents shows which are online now):",
-      ...c.dispatch.computers.map((m) => `- ${m.id}: ${m.name}${m.id === "local" ? " (the hub's own computer)" : ""}${m.gpus?.length ? `; GPU: ${m.gpus.join(", ")}` : ""}${m.online ? "" : " (offline when this session started)"}`),
+      ...c.dispatch.computers.map((m) => `- ${m.id}: ${m.name}${m.id === "local" ? " (the hub's own computer)" : ""}${m.gpus?.length ? `; GPU: ${m.gpus.join(", ")}` : ""}${m.commands === false ? "; commands off (hub_machine_commands turns them on with the person's yes)" : ""}${m.online ? "" : " (offline when this session started)"}`),
     );
   }
   if (c.dispatch.rules?.length) lines.push("", "The user's rules for where work goes (follow them in task_delegate):", ...c.dispatch.rules);
@@ -161,6 +161,11 @@ export function buildSystemPrompt(c: PromptContext): string {
     `Local time when this session started: ${now} (${c.timezone}); the latest \`[Now: …]\` line before a message is the current time. Reply in the user's language (default: ${LANGUAGE_NAMES[c.language as Locale] ?? c.language}).`,
     where,
     c.machine ? `You are running on the computer "${c.machine.name}"${c.machine.local ? " (the hub's own computer)" : ""}.` : "",
+    c.machine && !c.machine.local
+      ? c.machine.commands
+        ? "Commands may run on this computer: use your shell for its programs (Blender, builds); auto mode checks each command."
+        : "Commands are off on this computer, so its programs (Blender, builds) do not start from here. The person can turn them on from the chat (a card from their assistant): when the work needs them, say so (task_ask, or in your result) and do everything else meanwhile."
+      : "",
     c.thinking ? thinkingLine(c.thinking) : "",
     "Your dialog with the user, your tasks and your threads with teammates are all you, in separate sessions. The `[You now]` block before a message says where this session runs, what else you are doing, what each teammate is busy with and where the user is; it is current, so answer from it when asked what you or a teammate are doing.",
     "",

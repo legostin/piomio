@@ -25,6 +25,16 @@ export type Run = (file: string, args: string[], timeoutMs: number) => Promise<s
 const runFile: Run = (file, args, timeoutMs) =>
   new Promise((resolve, reject) => execFile(file, args, { timeout: timeoutMs, killSignal: "SIGKILL" }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
 
+/**
+ * Starts the desktop app with `args` without waiting: a second launch hands them to the running app and exits
+ * (packages/desktop/src-tauri/src/main.rs), which then installs its update and restarts this daemon with it.
+ */
+export function launchApp(file: string, args: string[]): void {
+  const child = spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true });
+  child.on("error", () => {});
+  child.unref();
+}
+
 /** Stops the daemon the way a signal does (cli.ts closes everything) and has it come back. */
 export function restartSelf(): void {
   restart.requested = true;

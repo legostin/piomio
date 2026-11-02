@@ -249,6 +249,12 @@ fn spec(st: &AppState, mode: Mode) -> Spec {
     Mode::Node => {
       env.push(("PIOMIO_LANG".into(), texts().lang().into()));
       env.push(("PIOMIO_NODE_HOME".into(), arg(&p.node_home)));
+      // The hub's Update for this machine runs the app with `--install-update` (packages/node/src/service.ts).
+      if crate::update::enabled(st) {
+        if let Ok(exe) = std::env::current_exe() {
+          env.push(("PIOMIO_DESKTOP_APP".into(), arg(&exe)));
+        }
+      }
       // The hub finds the user's CLIs itself (packages/core/src/user-path.ts); piomio-node needs this PATH.
       if let Some(path) = &st.path_env {
         env.push(("PATH".into(), path.clone()));

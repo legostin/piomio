@@ -179,6 +179,8 @@ export default {
   // machines
   "machines.execApproval": "Run on {machine}: {command}",
   "machines.revokeApproval": "Disconnect the computer {machine} from Piomio",
+  "machines.commandsOnApproval": "Allow commands on the computer {machine}: agents there may run programs (Blender, builds), each checked by auto mode",
+  "machines.commandsOffApproval": "Forbid commands on the computer {machine}",
   "machines.setupApproval": "Change what the computer {machine} may use: brains, keys, models and spend limit",
   "machines.setupApprovalDetail": "Change what the computer {machine} may use. {brains}. {limit}",
   "machines.setupBrainSubscription": "{brain}: its own sign-in on that computer",

@@ -11,7 +11,7 @@ import type { Logger } from "./info.ts";
 import { execRun, killTree } from "./exec.ts";
 import { fsList, fsRead, fsWrite } from "./fsops.ts";
 import { t as tLocal } from "./messages.ts";
-import { applyUpdate, type NodeUpdate } from "./self-update.ts";
+import { applyUpdate, launchApp, type NodeUpdate } from "./self-update.ts";
 
 const short = (s: unknown, max = 160): string => {
   const t = typeof s === "string" ? s : JSON.stringify(s ?? "");
@@ -125,6 +125,24 @@ export class NodeService {
     });
     const serve = pieceServer(async (_root, path, sha) => this.files?.read("workspaces", path, sha));
     peer.handle("files.read", (p: PieceRequest) => (this.files && p?.root === "workspaces" ? serve(p) : null));
+    // The hub's Update for a machine inside the desktop app: the app downloads its update, stops this daemon and restarts.
+    peer.handle(
+      "node.appUpdate",
+      this.wrap("node.appUpdate", () => {
+        const app = process.env.PIOMIO_DESKTOP_APP;
+        if (!app) throw new Error("this machine does not run inside the Piomio desktop app");
+        launchApp(app, ["--install-update"]);
+        return { installing: true };
+      }),
+    );
+    // The person turned commands on this computer on or off from the hub's chat, with their yes on a card there.
+    peer.handle(
+      "node.policy",
+      this.wrap("node.policy", (p: any) => {
+        if (typeof p?.commands !== "boolean") throw new Error("node.policy takes { commands: true | false }");
+        return { commands: this.policy.setCommands(p.commands).exec.enabled };
+      }),
+    );
     peer.handle("exec.run", this.wrap("exec.run", (p: any) => execRun(p ?? {}, policy(), this.guard, this.children)));
     peer.handle("fs.read", this.wrap("fs.read", (p: any) => fsRead(p ?? {}, policy(), this.guard)));
     peer.handle("fs.write", this.wrap("fs.write", (p: any) => fsWrite(p ?? {}, policy(), this.guard)));

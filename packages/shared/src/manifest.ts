@@ -95,6 +95,11 @@ export const IntegrationSchema = z.object({
   /** The outside service it goes through: a badge on its card and on every entry's. */
   via: IntegrationViaSchema.optional(),
   /**
+   * Its tools drive an app on the hub's own computer (Blender): a task whose brain runs on another computer does not
+   * get them, and uses that computer's own app instead.
+   */
+  localApp: z.boolean().default(false),
+  /**
    * Entries of their own besides the plugin's card, shown even while it is off. The running plugin reports their
    * state, and entries it adds, with ctx.catalog.update; sign-in goes to its ctx.catalog.onSignIn.
    */

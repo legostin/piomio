@@ -40,6 +40,8 @@ from sunrise-sunset.org): copy it and change what it does, keep its shape.
      as a 128×128 PNG in the folder, at most 64 KB; the catalog draws it on a white tile instead of the icon),
      `connect` (`none`; `setup` when it needs a key or setup; `signin` for a service's own MCP server with a browser
      sign-in, see below), `summary` and `example` (`"%integration.summary%"`, `"%integration.example%"`); no `popular`;
+     `"localApp": true` when its tools drive an app on the hub's own computer (Blender): a task whose brain runs on
+     another computer then does not get them and uses that computer's own app;
    - `permissions.network`: the exact hosts it calls (`api.example.com`, `*.example.com`); never `"*"` unless the
      user gives the addresses at run time;
    - `contributes.widgets`: the card kinds the tools show (`[]` and no `ui` when there is no card);

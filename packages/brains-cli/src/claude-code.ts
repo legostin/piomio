@@ -41,6 +41,11 @@ export interface ClaudeCodeOptions {
   authEnv?: () => Promise<Record<string, string>>;
   /** Built-in tools Claude Code may use without asking (dontAsk mode denies everything else). */
   allowedTools?: () => string[];
+  /**
+   * On a paired computer whose policy allows commands: what is not in `allowedTools` (Bash) goes to the hub's
+   * `BrainSessionOptions.askTool` instead of being denied, so auto mode or the person decides, as on the hub.
+   */
+  asks?: () => boolean;
   /** Where per-session private files (MCP config with the token, prompt) are written. */
   stateDir: string;
   log?: (msg: string) => void;
@@ -367,9 +372,12 @@ class ClaudeCodeSession implements BrainSessionImpl {
     // allow rule may open the file tools or Bash, or it would answer for the hub.
     const all = withHubTools(this.p.allowedTools?.() ?? DEFAULT_CLAUDE_TOOLS);
     const tools = (confine ? all.filter((x) => CONFINED_ALLOWED.test(x)) : all).filter((x) => !this.o.frontDesk || !FRONT_DESK_DENIED.includes(x));
+    const asks = !confine && !this.o.frontDesk && !!this.o.askTool && !!this.p.asks?.();
     const mode = confine
       ? ["--permission-mode", "acceptEdits", "--permission-prompt-tool", `mcp__piomio__${confine.permissionTool}`, "--settings", join(this.dir, "settings.json")]
-      : ["--permission-mode", "dontAsk"];
+      : asks
+        ? ["--permission-mode", "default", "--permission-prompt-tool", `mcp__piomio__${this.o.askTool}`]
+        : ["--permission-mode", "dontAsk"];
     const a = [
       "-p",
       "--input-format",

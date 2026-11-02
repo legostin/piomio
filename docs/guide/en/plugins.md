@@ -116,6 +116,10 @@ Turn it on and agents can look at your scene, its objects and files, take screen
 Blender. It needs Blender 5.1 or newer on the computer the hub runs on. On first use Piomio finds Blender, installs the
 official MCP add-on into it and opens Blender when an agent needs it. Every change asks you first.
 
+These tools work with the Blender on the hub's computer only. A task on another computer (a PC with a strong graphics
+card, say) runs that computer's own Blender from the command line, once you have allowed commands there (see
+[Commands on a computer](machines.md#commands-on-a-computer)).
+
 ## MCP servers
 
 Any MCP server can give your agents more tools. **Settings → MCP servers** lists the connected ones with their status

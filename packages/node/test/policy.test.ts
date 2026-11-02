@@ -85,3 +85,29 @@ describe("policy reload", () => {
     expect(() => new PolicyStore(home, { userHome: join(root, "user4") })).toThrow(/policy.json/);
   });
 });
+
+describe("commands from the hub's chat", () => {
+  it("turns commands on and off in the file, keeping the person's other fields as they wrote them", () => {
+    const home = join(root, "home-commands");
+    const userHome = join(root, "user-commands");
+    const logs: string[] = [];
+    const store = new PolicyStore(home, { userHome, log: (m) => logs.push(m) });
+    const mine = { ...JSON.parse(readFileSync(store.file, "utf8")), exec: { enabled: false, allowCommands: ["blender*"] }, note: "mine" };
+    writeFileSync(store.file, JSON.stringify(mine));
+    expect(store.setCommands(true).exec).toMatchObject({ enabled: true, allowCommands: ["blender*"] });
+    const written = JSON.parse(readFileSync(store.file, "utf8"));
+    expect(written.exec).toEqual({ enabled: true, allowCommands: ["blender*"] });
+    expect(written.note).toBe("mine");
+    expect(store.setCommands(false).exec.enabled).toBe(false);
+    expect(logs.some((l) => l.includes("commands turned on"))).toBe(true);
+  });
+
+  it("leaves them alone when the owner keeps the permissions on the computer", () => {
+    const home = join(root, "home-owner");
+    const store = new PolicyStore(home, { userHome: join(root, "user-owner") });
+    writeFileSync(store.file, JSON.stringify({ ...JSON.parse(readFileSync(store.file, "utf8")), hubChanges: false }));
+    expect(store.get().hubChanges).toBe(false);
+    expect(() => store.setCommands(true)).toThrow(/keeps its permissions on the computer itself/);
+    expect(store.get().exec.enabled).toBe(false);
+  });
+});
