@@ -863,7 +863,10 @@ export class Hub {
       ...layouts.map((l) => ({ source: l.manifest.id, skillsDir: l.skillsDir, commandsDir: l.commandsDir })),
     ]);
     this.agents.pluginDirs = layouts.filter((l) => l.agentsDir).map((l) => ({ pluginId: l.manifest.id, dir: l.agentsDir! }));
+    const before = this.agents.list().map((a) => a.id).join(",");
     this.agents.reload();
+    // A plugin turned on or off brought or took its agents (Pio): the team list follows.
+    if (this.started && this.agents.list().map((a) => a.id).join(",") !== before) this.bus.emit("agents.updated", {});
     if (this.started) {
       void this.mcpClients.sync(this.pluginMcpFiles());
     }
