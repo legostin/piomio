@@ -101,6 +101,7 @@ It works out what the machine is, installs Piomio and asks you only what is your
 - **Say yes once.** Anything an agent sends out (an email, a booking, a push, a payment) waits for your tap. “Always allow” makes a narrow rule for one recipient or one site, up to an amount.
 - **Let it run by itself.** Reminders, schedules, page watchers and news channels work in the background. Each one decides whether to stay quiet, add to the digest, notify you or ask.
 - **Teach it.** Show it a browser task once. It keeps that as a skill and does it when asked, or on a schedule.
+- **Work side by side.** Pio, a small face over every app on your Mac or PC, sees which window you work in, talks and listens with a local open-source voice, speaks up when it has something useful, and takes the mouse and keyboard when you hand them over.
 - **Wherever you are.** You get the same chats in the desktop app for macOS and Windows, in any browser and in Telegram, and soon in the iPhone app. One private link reaches your hub from anywhere, and there are no ports to open.
 
 ## How it works
