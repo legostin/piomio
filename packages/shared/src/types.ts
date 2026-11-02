@@ -998,6 +998,8 @@ export interface MachineInfo {
   version?: string;
   /** It runs from the single-file download, not inside the desktop app, and can replace itself (`node.update`). */
   selfUpdate?: boolean;
+  /** Its graphics cards, by name (older daemons don't say). */
+  gpus?: string[];
 }
 
 export interface Machine {
@@ -1007,6 +1009,22 @@ export interface Machine {
   status: "online" | "offline";
   info?: MachineInfo;
   lastSeenAt?: ISODate;
+  createdAt: ISODate;
+}
+
+/**
+ * One of the team's standing rules for where work goes, said once to any agent ("renders go to LEGOSTIN-PC"): every
+ * dialog follows it when it starts tasks. `when` is the person's words for the kind of work.
+ */
+export interface WorkRule {
+  id: string;
+  when: string;
+  /** The computer such work runs on (machine id, or "local"). */
+  machine?: string;
+  /** The agent who does it. */
+  agent?: string;
+  /** The brain it thinks with ("codex", "claude-code", or an exact ref). */
+  brain?: string;
   createdAt: ISODate;
 }
 

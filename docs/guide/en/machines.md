@@ -64,6 +64,8 @@ Its brains join the **Brains** page under the computer's name, like **Codex (Cha
 
 Agents work there with a few tools: list and read files, write files, run commands. Writing a file and running a command count as actions that reach outside, so they go through [approvals](approvals.md).
 
+Agents also know each computer's graphics cards (an app or daemon from 0.2.18 on reports them), so "render this on a computer with a GPU" finds the right one. To send some kind of work to one computer every time, tell any agent once, for example "run renders on LEGOSTIN-PC": it becomes a rule the whole team follows, and such tasks think with the agent's brain on that computer, waiting for it while it is off (see [Rules for where work goes](tasks.md#rules-for-where-work-goes)).
+
 ## What agents may do there
 
 The owner of the computer decides, not the hub: in `~/.piomio-node/policy.json` on that computer. The daemon checks every request against it itself. The file is made with safe defaults on first start:

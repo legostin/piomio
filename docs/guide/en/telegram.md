@@ -57,8 +57,12 @@ turn that off. Other agents' chats and group chats are not mirrored to Telegram.
 
 - **Replies**, with formatting: bold, italics, lists, links, quotes and code. Headings turn bold, a table becomes an
   aligned block, and a long reply is split into several messages. While the agent works, Telegram shows "typing…".
+  Telegram's servers fetch a link to draw its preview, so a reply gets a preview of one link at most, and only of one
+  that can't carry your data away: after the agent has read outside content, a link it put together itself comes
+  without a preview, while a link from what it read or from your own words keeps it.
 - **Pictures** from a reply arrive as a photo or an album of up to ten. A large picture comes as a file. What Telegram
-  won't take arrives as links.
+  won't take arrives as links. A picture the chat holds back (see [Pictures and carousels](chat.md#pictures-and-carousels))
+  isn't sent.
 - **Maps** arrive as a location pin with the place's name.
 - **Notifications**, with the title in bold. Those from your reminders and watches have buttons: **👍 Useful**,
   **🔉 Less often** and **🔕 Turn off**. In quiet hours they come without a sound.

@@ -13,10 +13,14 @@ You just ask: "compare the three laptops I sent and pick one", "check why the si
 The agent also chooses:
 
 - **who does it**: itself, or the teammate whose role or skills fit better;
-- **where**: the computer whose files, apps or hardware the work needs;
+- **where**: the computer whose files, apps or hardware the work needs (rendering, 3D and model training go to a computer with a strong graphics card); the task then thinks with that agent's brain on that computer;
 - **how hard it is** (fast, balanced or deep) and what it is about (code, analysis, writing, research, an errand). From that the hub picks the brain, model and effort.
 
-If the right agent or computer is unclear and it matters, the agent asks you one short question first. A computer that is offline is refused, and the agent asks whether to wait or use another. Agents bound to certain computers never start tasks elsewhere (see [Agents and the team](agents.md)).
+If the right agent or computer is unclear and it matters, the agent asks you one short question first. A task placed on a computer that is offline waits for it and starts when it comes online (for up to a day). Agents bound to certain computers never start tasks elsewhere (see [Agents and the team](agents.md)).
+
+### Rules for where work goes
+
+Say once, to any agent, how some kind of work should always go: "run renders on LEGOSTIN-PC", "code goes to Codex", "research is for the researcher". The agent saves it as a rule, and from then on every agent's dialog follows it when it starts tasks: that computer, that agent, that brain. What you say in a request itself wins over a rule. "What rules do we have?" lists them, and "drop the render rule" removes one.
 
 ### The task line
 
@@ -24,7 +28,7 @@ The task line sits inside the agent's message. It shows the agent's face (pulsin
 
 | Status | Meaning |
 |---|---|
-| **queued** | Waits for its agent's brain to be free |
+| **queued** | Waits for its agent's brain to be free, or for a brain or computer to come online (**waiting for LEGOSTIN-PC to come online, then it starts**) |
 | **running** | Working |
 | **awaiting approval** | An action needs your yes (see [Approvals and auto mode](approvals.md)) |
 | **awaiting reply** | It asked a question and waits for the answer |
@@ -38,6 +42,17 @@ Tap the line to open the task.
 ### When it is done
 
 The result goes back to the agent who started the task, and it tells you the outcome in a few lines, in its own words. If you wrote about other things in the meantime, the report comes as a reply to your original request.
+
+### When it hits a wall
+
+A task doesn't stop at the first obstacle. When a step fails (a site doesn't open, a folder is closed, a tool refuses), it tries other ways to the same result, two or three really different ones, before it reports that something can't be done, and then it says what it tried and what would unblock it. It never works around your own "no" on an approval. When a task still comes back without what you asked, the agent who started it tries once more another way before telling you it failed.
+
+The hub doesn't give up on a task either:
+
+- **No brain connected** (the computer just woke up, a brain is restarting): the task waits and starts as soon as one is back, for up to 30 minutes (a day for a task placed on a computer).
+- **The brain broke off mid-work**: the task goes on from where it stopped, up to three times.
+
+Only after that does it fail.
 
 A task you started yourself (with `/task` or **New task**) ends with a notification, **Done: …**, in that agent's dialog. A task that fails sends **Didn't work out: “…”**, saying why; only background checks started by a schedule fail quietly.
 

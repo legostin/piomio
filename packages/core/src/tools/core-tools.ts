@@ -15,6 +15,7 @@ import { mimeOf } from "../attachments.ts";
 import type { Transcriber } from "../transcribe.ts";
 import type { RoadRoute } from "../routing.ts";
 import type { UserLocation } from "../user-location.ts";
+import { ruleLine, type WorkRules } from "../work-rules.ts";
 
 export interface CoreToolDeps {
   registry: ToolRegistry;
@@ -26,6 +27,8 @@ export interface CoreToolDeps {
   createTask: (t: { agentId: string; goal: string; title: string; parentConversationId?: string; parentTaskId?: string; background: boolean; createdBy: "agent"; brainRef?: string; tainted?: boolean }) => { id: string; title: string };
   /** The live line between tasks and whoever started them (SessionRunner). */
   tasks: TaskLine;
+  /** The team's rules for where work goes (work-rules.ts). */
+  rules: WorkRules;
   /** Add a card to the reply the agent is writing (SessionRunner.attachPart). */
   attachPart: (conversationId: string, part: MessagePart) => void;
   /** Pictures for the person: here, and from a task also in the dialog that started it (SessionRunner.showToPerson). */
@@ -46,7 +49,7 @@ export interface CoreToolDeps {
 export type TaskSender = { agentId: string; conversationId: string; taskId?: string; tainted?: boolean };
 
 export interface TaskLine {
-  place(agentId: string, machine: string): { brainRef?: string; machineName: string; note?: string } | { error: string };
+  place(agentId: string, machine: string): { brainRef?: string; machineName: string; note?: string; offline?: boolean } | { error: string };
   ask(taskId: string, question: string): Promise<{ ok: boolean; text: string }>;
   /** goal_report: a long goal (/goal) is reached, or cannot go on without the person. */
   goal(taskId: string, status: "achieved" | "blocked", summary: string): Promise<{ ok: boolean; text: string }>;
@@ -54,7 +57,7 @@ export interface TaskLine {
   team(): string[];
   message(taskId: string, text: string, from: TaskSender): Promise<{ ok: boolean; text: string }>;
   cancel(taskId: string, from: TaskSender): { ok: boolean; text: string };
-  computers(): Array<{ id: string; name: string; online: boolean }>;
+  computers(): Array<{ id: string; name: string; online: boolean; gpus?: string[] }>;
   /** team_message: write to a teammate (a thread on the side; the reply comes back like a task's result). */
   teammate(to: string, text: string, from: TaskSender & { background: boolean; tainted: boolean; nest: boolean }): Promise<{ ok: boolean; text: string }>;
 }
@@ -288,7 +291,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
       const thinking = { ...(depth ? { preset: depth } : {}), ...(brain ? { brain } : {}), ...(skill ? { skill } : {}) };
       if (depthOf(ctx.taskId) >= MAX_TASK_DEPTH) return text("Tasks are already nested too deep here: do this part yourself.", true);
       let goal = String(i.goal);
-      let place: { brainRef?: string; machineName: string; note?: string } | undefined;
+      let place: { brainRef?: string; machineName: string; note?: string; offline?: boolean } | undefined;
       if (i.machine) {
         const p = d.tasks.place(agentId, String(i.machine));
         if ("error" in p) return text(p.error, true);
@@ -311,7 +314,9 @@ export function registerCoreTools(d: CoreToolDeps): void {
       d.attachPart(ctx.conversationId, { type: "task", taskId: t.id });
       const where = place ? ` on ${place.machineName}${place.brainRef ? "" : " (through the machine tools)"}` : "";
       const how = [brain, depth, i.about].filter(Boolean).join(", ");
-      return text(`Task created: ${t.id} “${t.title}”${where}${how ? ` (${how})` : ""}. It works on the side; its questions and its result will arrive here as messages.`);
+      // Placed on a computer that is off: it waits for it (tell the user so).
+      const wait = place?.offline ? ` ${place.machineName} is offline now: the task starts when it comes online.` : "";
+      return text(`Task created: ${t.id} “${t.title}”${where}${how ? ` (${how})` : ""}.${wait} It works on the side; its questions and its result will arrive here as messages.`);
     },
   );
 
@@ -359,8 +364,69 @@ export function registerCoreTools(d: CoreToolDeps): void {
         const where = [...new Set(a.brains.map((b) => name(b.split("@")[1] ?? "local")))].join(", ");
         return `- ${a.id}: ${a.name} — ${a.description}${where ? ` (brains on: ${where})` : ""}`;
       });
-      const pcs = computers.map((c) => `- ${c.id}: ${c.name}${c.id === "local" ? " (the hub's own computer)" : ""}, ${c.online ? "online" : "offline"}`);
-      return text(["Agents:", ...agents, "", "Busy now:", ...d.tasks.team(), "", "Computers:", ...pcs].join("\n"));
+      const pcs = computers.map((c) => `- ${c.id}: ${c.name}${c.id === "local" ? " (the hub's own computer)" : ""}, ${c.online ? "online" : "offline"}${c.gpus?.length ? `, GPU: ${c.gpus.join(", ")}` : ""}`);
+      const rules = d.rules.list().map((r) => ruleLine(r, name));
+      return text(["Agents:", ...agents, "", "Busy now:", ...d.tasks.team(), "", "Computers:", ...pcs, ...(rules.length ? ["", "The user's rules for where work goes:", ...rules] : [])].join("\n"));
+    },
+  );
+
+  reg(
+    {
+      name: "work_rule_set",
+      description:
+        "Save one of the user's standing rules for where work of some kind goes (\"run renders on LEGOSTIN-PC\", \"code goes to Codex\", \"research is for the researcher\"): every dialog of the team follows it from then on when it starts tasks. With `id`, changes that rule.",
+      effect: "local-write",
+      inputSchema: {
+        type: "object",
+        properties: {
+          when: { type: "string", description: "The kind of work, in the user's words (\"rendering, 3D, anything for the GPU\")" },
+          machine: { type: "string", description: "Computer id or name such work runs on (its brain there does it)" },
+          agent: { type: "string", description: "Agent id or name who does it" },
+          brain: { type: "string", description: "Brain it thinks with (\"codex\", \"claude-code\"), only when the user named one" },
+          id: { type: "string", description: "A rule's id, to change it" },
+        },
+        required: ["when"],
+      },
+    },
+    (i) => {
+      const when = clip(i.when, 300);
+      if (!when) return text("No rule saved: give `when`, the kind of work in the user's words.", true);
+      const computers = d.tasks.computers();
+      let machine: string | undefined;
+      if (typeof i.machine === "string" && i.machine.trim()) {
+        const key = i.machine.trim().toLowerCase();
+        const m = computers.find((c) => c.id.toLowerCase() === key || c.name.toLowerCase() === key) ?? computers.find((c) => c.name.toLowerCase().includes(key));
+        if (!m) return text(`No computer "${i.machine}". Computers: ${computers.map((c) => `${c.name} (${c.id})`).join(", ")}.`, true);
+        machine = m.id;
+      }
+      let agent: string | undefined;
+      if (typeof i.agent === "string" && i.agent.trim()) {
+        const key = i.agent.trim().toLowerCase();
+        const a = d.agents.get(key) ?? d.agents.list().find((x) => x.name.toLowerCase() === key);
+        if (!a) return text(`No agent "${i.agent}". Agents: ${d.agents.list().map((x) => `${x.name} (${x.id})`).join(", ")}.`, true);
+        agent = a.id;
+      }
+      const brain = clip(i.brain, 80);
+      if (!machine && !agent && !brain) return text("No rule saved: say where such work goes (`machine`, `agent` or `brain`).", true);
+      const id = typeof i.id === "string" && i.id.trim() ? i.id.trim() : undefined;
+      const rule = d.rules.set({ id, when, machine, agent, brain });
+      if (!rule) return text(id ? `No rule ${id}. Rules: ${d.rules.list().map((r) => r.id).join(", ") || "none"}.` : "No rule saved: there are too many already; remove one first.", true);
+      const name = (cid: string) => computers.find((c) => c.id === cid)?.name ?? cid;
+      return text(`${id ? "Changed" : "Saved"} the rule ${ruleLine(rule, name).slice(2)}. Every dialog of the team follows it from now on.`);
+    },
+  );
+
+  reg(
+    {
+      name: "work_rule_remove",
+      description: "Drop one of the user's rules for where work goes (task_agents lists them with their ids).",
+      effect: "local-write",
+      inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    },
+    (i) => {
+      const gone = d.rules.remove(String(i.id ?? ""));
+      if (!gone) return text(`No rule ${String(i.id ?? "")}. Rules: ${d.rules.list().map((r) => `${r.id} (${r.when})`).join(", ") || "none"}.`, true);
+      return text(`Removed the rule ${gone.id} (${gone.when}).`);
     },
   );
 
@@ -377,7 +443,10 @@ export function registerCoreTools(d: CoreToolDeps): void {
       },
     },
     async (i, ctx) => {
-      const r = await d.tasks.message(String(i.taskId), String(i.text), { agentId: ctx.agentId, conversationId: ctx.conversationId, taskId: ctx.taskId, tainted: ctx.tainted });
+      // A brain that calls it before loading its schema guesses the name: "message" or "note" is the text.
+      const body = [i.text, i.message, i.note].find((v) => typeof v === "string" && v.trim());
+      if (!body) return text("Nothing sent: give `text`, what the task should know or do.", true);
+      const r = await d.tasks.message(String(i.taskId), String(body), { agentId: ctx.agentId, conversationId: ctx.conversationId, taskId: ctx.taskId, tainted: ctx.tainted });
       return text(r.text, !r.ok);
     },
   );

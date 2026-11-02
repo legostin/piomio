@@ -25,7 +25,7 @@ export function osName(): string {
   return `${process.platform} ${release()}`;
 }
 
-export function machineInfo(policy: Policy, clis: MachineInfo["clis"]): MachineInfo {
+export function machineInfo(policy: Policy, clis: MachineInfo["clis"], gpus: string[] = []): MachineInfo {
   return {
     os: osName(),
     hostname: hostname(),
@@ -35,6 +35,7 @@ export function machineInfo(policy: Policy, clis: MachineInfo["clis"]): MachineI
     selfUpdate: !!selfFile(),
     clis,
     allowedDirs: [...policy.allowedDirs],
+    ...(gpus.length ? { gpus } : {}),
   };
 }
 

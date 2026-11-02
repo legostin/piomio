@@ -63,6 +63,7 @@ import { SecretIntake } from "./secrets.ts";
 import { AgentDrafts } from "./agent-drafts.ts";
 import { BrainLogins } from "./brain-login.ts";
 import { CliTools } from "./cli-tools.ts";
+import { graphicsCards } from "@piomio/shared/hardware";
 import { UserPath } from "@piomio/shared/user-path";
 import { SetupGuide } from "./setup.ts";
 import { MediaService } from "./media.ts";
@@ -120,6 +121,8 @@ export class Hub {
   /** "New channel" and "Add agent" chats (setup-chats.ts). */
   setupChats: SetupChats;
   plugins: PluginHost;
+  /** This computer's graphics cards, once read (start()). */
+  private gpus?: string[];
   mcp: McpEndpoint;
   mcpClients: McpClientManager;
   auth: AuthService;
@@ -296,6 +299,12 @@ export class Hub {
       machineName: (id) => this.machines.name(id) ?? this.replicaName(id),
       machines: () => this.machines.list(),
       here: () => this.here(),
+      gpus: () => this.gpus,
+      // The kinds of brain that can be here at all: the brain plugins' and the computers' (a missing one may come back).
+      brainKinds: () => [
+        ...this.plugins.enabledLayouts().flatMap((l) => l.manifest.contributes.brains),
+        ...this.machines.list().flatMap((m) => m.info?.clis.map((c) => c.brainId) ?? []),
+      ],
       activity: this.activity,
       locations: this.locations,
       secrets: this.secrets,
@@ -418,6 +427,7 @@ export class Hub {
       notifier: this.notifier,
       agents: this.agents,
       createTask: (t) => this.runner.createTask(t),
+      rules: this.runner.rules,
       tasks: {
         place: (agentId, machine) => this.runner.placeTask(agentId, machine),
         ask: (taskId, question) => this.runner.askStarter(taskId, question),
@@ -985,6 +995,8 @@ export class Hub {
     await this.egress.listen(cfg.egressPort);
     this.plugins.discover();
     this.started = true;
+    // The hub's own graphics cards, for "a computer with a GPU" (read once, in the background).
+    void graphicsCards().then((g) => (this.gpus = g));
 
     if (opts.listen !== false) {
       this.mainApp = await buildMainApp(this);

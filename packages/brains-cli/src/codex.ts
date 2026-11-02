@@ -182,6 +182,8 @@ class CodexSession implements BrainSessionImpl {
       `mcp_servers.piomio.args=[${args.map(tomlString).join(",")}]`,
       `mcp_servers.piomio.env={PIOMIO_URL=${tomlString(this.o.mcp.url)},PIOMIO_TOKEN_FILE=${tomlString(join(this.dir, "token"))}}`,
       `mcp_servers.piomio.tool_timeout_sec=3600`,
+      // The hub's gateway decides about each of its tools; Codex asking the person first ended as "user rejected".
+      `mcp_servers.piomio.default_tools_approval_mode="approve"`,
       this.ask() ? `approval_policy="on-request"` : `approval_policy="never"`,
       ...((!exec && this.profile()) || [`sandbox_mode=${tomlString(this.sandbox())}`]),
       ...(this.o.effort ? [`model_reasoning_effort=${tomlString(this.o.effort)}`] : []),

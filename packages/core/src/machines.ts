@@ -284,7 +284,7 @@ export class MachineHub {
         if (!ms.length) return text("No machines are paired. The user can connect a computer on the Machines page.");
         return text(
           ms
-            .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}` : ""}`)
+            .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}${m.info.gpus?.length ? `, GPU: ${m.info.gpus.join(", ")}` : ""}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}` : ""}`)
             .join("\n"),
         );
       }),

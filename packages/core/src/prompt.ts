@@ -27,9 +27,11 @@ export interface PromptContext {
   dispatch?: {
     /** `skills`: the ones given to that teammate itself (the whole team's are everyone's). */
     team: Array<{ id: string; name: string; description: string; where: string[]; brains?: string[]; skills?: string[] }>;
-    computers: Array<{ id: string; name: string; online: boolean }>;
+    computers: Array<{ id: string; name: string; online: boolean; gpus?: string[] }>;
     /** The brains the team can think with (by id), for `brain` in task_delegate. */
     brains?: Array<{ id: string; label: string; models: string[]; ready: boolean }>;
+    /** The user's rules for where work goes, one line each (work-rules.ts `ruleLine`). */
+    rules?: string[];
   };
   /** A thread where the agent answers a teammate who wrote to it (team_message): who that is. */
   thread?: { id: string; name: string };
@@ -77,10 +79,12 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     "- In this dialog your own tools only look (read files, search the web): running commands and changing files is a task's work.",
     "- Anything with steps or deep thought (coding, analysis, checking, research, browsing, running commands, writing or changing code or files, long reading, careful writing) goes to a task with `task_delegate` (`goal`: complete instructions; `title`; `depth`; `about`) at once, one task per independent request: two requests in one message are two tasks. Then say in one short line what you started and end your turn; do not wait for tasks.",
     "- Say how hard each task is and what it is about (`depth`, `about` in task_delegate): `deep` for hard problems, `balanced` for everyday work, `fast` for simple errands; the hub then picks the brain and model that fit (a coding model for code, the most capable one for deep thought, a cheap quick one for errands) and moves on by itself when one is busy or over its limit. Name a `brain` only when it must be that one.",
-    "- Choose who does it: yourself, or the teammate whose role or skills fit better (the skills in the team list are that teammate's own: work that needs one goes to them). Choose where: the computer whose files, apps or hardware the work needs (`machine`). If the right agent or computer is unclear and the choice matters, ask the user one short question first; otherwise choose, and name your choice in a few words.",
+    "- Choose who does it: yourself, or the teammate whose role or skills fit better (the skills in the team list are that teammate's own: work that needs one goes to them). Choose where: the computer whose files, apps or hardware the work needs (`machine`; rendering, 3D, video and model training go to a computer with a strong GPU). The task then thinks with its agent's brain on that computer. If the right agent or computer is unclear and the choice matters, ask the user one short question first; otherwise choose, and name your choice in a few words.",
+    '- When the user says how some kind of work should always go ("run renders on LEGOSTIN-PC", "code goes to Codex", "research is for the researcher"), save it with `work_rule_set` (the whole team follows it from then on) and confirm in a line. A rule that fits a task decides its `machine`, `agent` and `brain` in task_delegate, also when that computer is offline (the task then waits for it); what the user says in the request itself wins over a rule. To change or drop one, `work_rule_set` with its id or `work_rule_remove`.',
     "- The user may write again while tasks run. A new request is a new task; a detail or a correction for work in progress goes to that task with `task_message`; \"stop that\" is `task_cancel`. The `[Open tasks you started]` lines before a message show what is still going.",
     "- A task may ask you something (a `[System]` note). Answer with `task_message` when you know (this dialog, memory); otherwise ask the user in one short message, then pass their answer on.",
     "- When a task finishes, its result comes to you: tell the user the outcome in a few lines, in your own words.",
+    "- A task that comes back without what was asked (it could not, stopped halfway, gave up) is not the end: when another way is likely to work (another approach, a teammate, another brain or computer, something it lacked that you can give), start it again at once another way with what the first one learned, and tell the user in a line. Ask the user only for what only they can give or decide; tell them it failed only when the second way failed too or nothing else is left.",
   ];
   const team = c.dispatch.team.map((a) => {
     const skills = a.skills?.length ? `skills: ${a.skills.join(", ")}` : "";
@@ -96,9 +100,10 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     lines.push(
       "",
       "Computers (`machine` in task_delegate; task_agents shows which are online now):",
-      ...c.dispatch.computers.map((m) => `- ${m.id}: ${m.name}${m.id === "local" ? " (the hub's own computer)" : ""}${m.online ? "" : " (offline when this session started)"}`),
+      ...c.dispatch.computers.map((m) => `- ${m.id}: ${m.name}${m.id === "local" ? " (the hub's own computer)" : ""}${m.gpus?.length ? `; GPU: ${m.gpus.join(", ")}` : ""}${m.online ? "" : " (offline when this session started)"}`),
     );
   }
+  if (c.dispatch.rules?.length) lines.push("", "The user's rules for where work goes (follow them in task_delegate):", ...c.dispatch.rules);
   return lines;
 }
 
@@ -107,6 +112,9 @@ const IN_A_TASK = [
   "- You do this task yourself; nobody watches the work, only the result matters. Start a sub-task only for parts that truly run in parallel.",
   "- If you need something only whoever started the task (or the user) knows, ask with `task_ask` and keep working on the rest; if nothing is left, end your turn: the answer comes as a message and you go on. Do not guess at things that matter.",
   '- A message "[System] <name>, who started this task, writes: …" comes from your starter: follow it.',
+  "- Do not give up at the first obstacle. A command that fails, a refused or blocked step, a site that does not open, a missing file or tool: find another way to the same result (another tool, command, source or route; your own folder instead of a closed place; the browser instead of a fetch; a teammate or a computer that has what is missing) and try it. Try two or three really different ways before you call something impossible.",
+  "- A refused step is about that step, not the task: do it another allowed way, or ask for what you need (`task_ask`; a login or key with `hub_secret_request`) and go on with the rest meanwhile. Never work around the person's no (an approval they declined) or the hub's security: there you ask or do without.",
+  "- Report that you could not do something only when those ways are spent: say what you tried, what exactly stands in the way, and what would unblock it.",
   "- To ask a teammate something on the way, write to them with `team_message`: their reply comes back into your work.",
 ];
 
@@ -232,7 +240,7 @@ export function goalPrompt(task: Pick<Task, "goal" | "rounds">, first: boolean, 
         `This is a long goal the person set (/goal): work toward it on your own, round after round. After each of your replies the hub gives you the next round, up to ${limit} rounds, until you call goal_report:`,
         '- the goal is fully reached and you checked it: goal_report {"status":"achieved","summary":…}; the summary is what the person gets;',
         '- you cannot go on without the person (a decision, an access, something only they have): goal_report {"status":"blocked","summary": what you need}; the goal waits for their answer and then goes on.',
-        "Move it forward in real steps and do not stop to ask about routine ones. End each round with a short line: what you did, what comes next.",
+        "Move it forward in real steps and do not stop to ask about routine ones. An obstacle you can work around (another tool, source or way) is not blocked: work around it. End each round with a short line: what you did, what comes next.",
       ]
     : [
         `Round ${round} of ${limit}. Check what is done, then do the next step.`,
