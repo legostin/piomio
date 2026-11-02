@@ -418,7 +418,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const progress = speech?.downloading && speech.downloading.total > 0 ? Math.round((speech.downloading.received / speech.downloading.total) * 100) : undefined;
 
   return (
-    <div className="pio-root" data-x={side.x} data-y={side.y} onMouseEnter={enter} onMouseLeave={leave}>
+    <div className="pio-root" data-x={side.x} data-y={side.y} onMouseEnter={enter} onMouseLeave={leave} onPointerDown={() => mic.wake()}>
       <div className="pio-stack">
         <div className="pio-face" data-state={face} data-tauri-drag-region title={t(`overlay.state.${face}`)} onClick={() => setMode((m) => (m === "card" ? "bubble" : "card"))}>
           <i className="pio-eye l" data-tauri-drag-region />
