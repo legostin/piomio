@@ -46,6 +46,8 @@ export type BusEvents = {
   /** A connected account (Google) came, went or broke. */
   "connections.updated": { provider: string };
   "machine.updated": any;
+  /** A removed machine record's computer paired again as `to` (machines.ts successor): what named `from` moves. */
+  "machine.replaced": { from: string; to: string };
   /** A machine's setup (brains, keys, models, limit) changed. */
   "machine.setup": { machineId: string };
   /** A machine's gateway reported spend. */

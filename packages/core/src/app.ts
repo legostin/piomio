@@ -2,7 +2,7 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, MachineInfo, ThinkingView } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, MachineInfo, TaskStatus, ThinkingView } from "@piomio/shared";
 import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
@@ -16,7 +16,7 @@ import { ApprovalService } from "./approvals.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import { HookRegistry } from "./hooks.ts";
 import { ToolGateway } from "./tools/gateway.ts";
-import { AgentRegistry, agentFromMarkdown, agentName } from "./agents.ts";
+import { AgentRegistry, agentFromMarkdown, agentMoved, agentName, brainMoved } from "./agents.ts";
 import { AgentsStateStore } from "./agents-state.ts";
 import { SkillHolders, SkillIndex } from "./skills.ts";
 import { PluginHost } from "./plugins/host.ts";
@@ -249,6 +249,7 @@ export class Hub {
     this.machines = new MachineHub({ db: this.db, bus: this.bus, brains: this.brains, audit: this.audit, invites: this.invites, setups: this.setups });
     this.cluster = new Cluster(this);
     this.machines.cluster = this.cluster;
+    this.machines.version = config.version;
     this.activity = new MachineActivityFeed(this.bus, this.machines);
     this.updates = new HubUpdates({
       config,
@@ -265,6 +266,8 @@ export class Hub {
     });
     this.activity.updates = this.updates;
     this.bus.on("machine.updated", (m: { id?: string; info?: MachineInfo } | undefined) => m?.id && this.updates.machineChanged(m.id, m.info));
+    // The same computer paired again: what named its removed record follows it.
+    this.bus.on("machine.replaced", (e: { from: string; to: string }) => this.machineReplaced(e.from, e.to));
     this.devices = new DeviceRegistry({ db: this.db, bus: this.bus, audit: this.audit, invites: this.invites });
     this.locations = new UserLocations(this.settings, (id) => !!this.devices.get(id));
     this.secrets = new SecretIntake({ db: this.db, bus: this.bus, audit: this.audit, vault: this.vault, plugins: () => this.plugins });
@@ -679,6 +682,36 @@ export class Hub {
     return saved;
   }
 
+  /**
+   * A removed machine record's computer paired again as `to` (machines.ts successor): the agents' brains and computers,
+   * the tasks not finished yet and the team's rules that named `from` go to `to`.
+   */
+  machineReplaced(from: string, to: string): void {
+    let agents = 0;
+    for (const a of this.agents.all()) {
+      const moved = agentMoved(a, from, to);
+      if (!moved) continue;
+      this.saveAgent(moved, "core");
+      agents++;
+    }
+    const open: TaskStatus[] = ["queued", "running", "waiting_approval", "waiting_input", "interrupted", "paused"];
+    let tasks = 0;
+    for (const t of this.store.listTasks({ status: open, limit: 10_000 })) {
+      const brainRef = t.brainRef && brainMoved(t.brainRef, from, to);
+      if (brainRef === t.brainRef) continue;
+      this.store.updateTask(t.id, { brainRef });
+      tasks++;
+    }
+    let rules = 0;
+    for (const r of this.runner.rules.list()) {
+      const brain = r.brain && brainMoved(r.brain, from, to);
+      if (r.machine !== from && brain === r.brain) continue;
+      this.runner.rules.set({ ...r, machine: r.machine === from ? to : r.machine, brain });
+      rules++;
+    }
+    if (agents || tasks || rules) this.audit.append("core", "machine.replaced", to, { from, agents, tasks, rules });
+  }
+
   /** The reviewer's environment: the egress proxy with the brains' hosts, as for a brain session (runner.ts). */
   private reviewerEnv(): Record<string, string> {
     this.reviewToken ??= this.egress.issueToken("brain:auto-review", DEFAULT_BRAIN_EGRESS);
@@ -936,6 +969,8 @@ export class Hub {
     const cfg = this.config;
     // What other replicas wrote meanwhile: settings and agents are read again.
     this.agents.reload();
+    // Computers paired again while this hub did not lead, or before it moved what named their removed records.
+    for (const r of this.machines.replaced()) this.machineReplaced(r.from, r.to);
     this.store.agentConversation(this.settings.get().defaultAgent);
     if (cfg.plugins !== "none") await this.plugins.startAll(cfg.plugins);
     await this.mcpClients.sync(this.pluginMcpFiles());
