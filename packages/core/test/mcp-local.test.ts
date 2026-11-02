@@ -2,24 +2,13 @@
 // plugin's folder and its data folder; a server that quits while starting shows its own reason on the plugin.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hub, loadConfig } from "../src/index.ts";
 import { listIntegrations } from "../src/integrations.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 // Just enough MCP over stdio; FAIL makes it quit while starting, as a launcher that finds no Blender does.
 const SERVER = `

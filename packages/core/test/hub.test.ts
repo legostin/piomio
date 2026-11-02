@@ -2,24 +2,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer as createHttpServer, request } from "node:http";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hub, loadConfig } from "../src/index.ts";
 import { createCoreCall } from "../src/core-call.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => Promise<T | undefined | false> | T | undefined | false, what: string, timeoutMs = 15_000): Promise<T> {
   const t0 = Date.now();
@@ -138,7 +127,6 @@ describe("hub (integration)", () => {
     // No quiet hours: the hub runs in UTC, and from 23:00 to 08:00 its alerts would wait for the digest instead.
     await web.req("PATCH", "/api/settings", { approvalInlineWaitSec: 1, quietHours: { enabled: false, start: "23:00", end: "08:00" } });
   });
-
 
   it("signs the desktop app's window in with a one-time ticket", async () => {
     const ticket = "t".repeat(43);

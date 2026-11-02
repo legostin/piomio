@@ -3,7 +3,7 @@
 // named; everything else (other words, another action, another site, money) still asks.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AskedSpec, ToolResult } from "@piomio/shared";
@@ -85,17 +85,6 @@ describe("asked: what counts as the person's yes", () => {
     expect(ok({ site: "url" }, { asked: QUOTE, url: PANEL }, [DNS])).toBe(false);
   });
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 describe("asked: through the gateway", () => {
   let hub: Hub;

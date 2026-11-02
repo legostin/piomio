@@ -4,7 +4,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -13,17 +13,6 @@ import { candidates, findBlender, parseVersion } from "../mcp/blender.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
 const launch = join(import.meta.dirname, "..", "mcp", "launch.ts");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 /** A `blender` executable that runs the fake, and the file where it keeps what it was asked. */
 function fakeBlender() {

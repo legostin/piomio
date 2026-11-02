@@ -2,7 +2,7 @@
 // person's; the reviewer never sees what tools returned; a failed review, or too many blocks, gives the card back.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Approval, ToolResult } from "@piomio/shared";
@@ -106,17 +106,6 @@ describe("deciding", () => {
     expect((await h.auto.decide(bash("y"), { ...where, sessionId: "s2" })).decision).toBe("block");
   });
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.once("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const port = (srv.address() as { port: number }).port;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 describe("auto mode in the hub", () => {
   let hub: Hub;

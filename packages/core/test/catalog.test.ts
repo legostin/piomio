@@ -2,7 +2,7 @@
 // categories included), and a plugin tool's widgets land in the conversation as `widget` parts, checked and redacted.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessagePart } from "@piomio/shared";
@@ -10,17 +10,6 @@ import { Hub, loadConfig } from "../src/index.ts";
 import { listCatalog, listIntegrations, situationOf } from "../src/integrations.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => T | undefined | false, what: string, timeoutMs = 15_000): Promise<T> {
   const t0 = Date.now();

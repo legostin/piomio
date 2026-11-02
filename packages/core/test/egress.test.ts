@@ -1,17 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import http from "node:http";
-import { connect, createServer } from "node:net";
+import { connect } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { EgressProxy, isPrivateAddress } from "../src/egress.ts";
-
-function freePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const s = createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 function viaProxy(proxyPort: number, token: string | undefined, url: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {

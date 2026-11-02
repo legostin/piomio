@@ -2,7 +2,7 @@
 // fs/exec over hub.machines.call and a remote brain session with a fake Claude Code CLI.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
@@ -20,17 +20,6 @@ import { loadConfig as loadNodeConfig } from "../src/home.ts";
 
 const FAKE_CLAUDE = fileURLToPath(new URL("../../brains-cli/test/fixtures/fake-claude.mjs", import.meta.url));
 const MCP_BRIDGE = fileURLToPath(new URL("../../mcp-bridge/src/index.ts", import.meta.url));
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as any).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => T | undefined | false, timeoutMs = 10_000, what = "condition"): Promise<T> {
   const end = Date.now() + timeoutMs;
