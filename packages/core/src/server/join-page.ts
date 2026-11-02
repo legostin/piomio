@@ -6,7 +6,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Hub } from "../app.ts";
 import { requestLocale, tFor } from "../i18n.ts";
-import { desktopPairLink, hubName } from "../pairing.ts";
+import { desktopPairLink, hubName, serverJoinCommand } from "../pairing.ts";
 import { HttpError, type FailureBudget } from "./http.ts";
 
 type Platform = "windows" | "macos" | "ios" | "android" | "other";
@@ -25,8 +25,6 @@ export function installerUrl(repo: string, version: string, os: "windows" | "mac
   return `https://github.com/${repo}/releases/download/v${version}/${asset}`;
 }
 
-/** packaging/linux/install.sh, as the site serves it. */
-export const INSTALL_SH = "https://piomio.io/install.sh";
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -91,7 +89,7 @@ function desktopSection(t: (k: string, p?: Record<string, string | number>) => s
 function serverSection(t: (k: string, p?: Record<string, string | number>) => string, origin: string, link: string): string {
   return (
     `<section><h2>${esc(t("join.server.title"))}</h2><p class="muted">${esc(t("join.server.hint"))}</p>` +
-    `<code>curl -fsSL ${INSTALL_SH} | sh -s -- ${esc(link)}</code>` +
+    `<code>${esc(serverJoinCommand(link))}</code>` +
     `<p class="muted">${esc(t("join.server.node"))}</p>` +
     `<code>curl -fsSLo piomio-node.mjs ${esc(origin)}/download/piomio-node.mjs &amp;&amp; node piomio-node.mjs pair ${esc(link)}</code></section>`
   );

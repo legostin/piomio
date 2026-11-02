@@ -11,6 +11,10 @@
 #   curl -fsSL https://piomio.io/install.sh | sh -s -- https://<hub>/join/<code>
 # That installs piomio-node (the hub's own build, with Node from nodejs.org) as a systemd user service instead; the
 # hub updates it on its Update button. PIOMIO_NAME=<name> names the computer; remove: piomio-node uninstall.
+#
+# A hub of its own starts with access from anywhere on: in a terminal the installer shows Tailscale's sign-in page and
+# waits for the hub's permanent link (`piomio link --wait`), which then opens from any device. PIOMIO_NO_WAIT=1, or
+# output that isn't a terminal (an agent running it), prints the sign-in page without waiting; `piomio link` later.
 set -eu
 
 LINK="${1:-}"
@@ -376,6 +380,8 @@ WantedBy=default.target
 EOF
 
 say starting
+# What the hub says about its link comes from the new start only.
+as_user rm -f "$DATA/remote.json"
 start_unit piomio.service
 
 PORT=$(sed -n 's/^PIOMIO_PORT=\([0-9][0-9]*\).*/\1/p' "$CONF" | tail -n 1)
@@ -392,10 +398,21 @@ case "$STATE" in *"\"version\":\"$V\""*) ;; *) die not_up "$JOURNAL -u piomio -n
 
 echo
 say ready "$V"
-IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-say open "ssh -N -L 8080:localhost:$PORT -L 8081:localhost:$((PORT + 1)) ${SUDO_USER:-$(id -un)}@${IP:-<server>}"
 case "$STATE" in
   *'"hasPassword":false'*) if [ -f "$DATA/setup-code" ]; then say code "$(cat "$DATA/setup-code")"; fi ;;
 esac
 report_brains
 say settings "$CONF"
+echo
+
+# The link from anywhere (Tailscale's sign-in first); without it, an SSH tunnel from the person's computer.
+IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+SSH="ssh -N -L 8080:localhost:$PORT -L 8081:localhost:$((PORT + 1)) ${SUDO_USER:-$(id -un)}@${IP:-<server>}"
+trap 'echo; say open "$SSH"; exit 0' INT
+WAIT=""
+if [ -t 1 ] && [ "${PIOMIO_NO_WAIT:-}" != 1 ]; then WAIT=--wait; fi
+# shellcheck disable=SC2086 # an optional flag
+if ! as_user env PIOMIO_LANG="$L" "$H/.local/bin/piomio" link $WAIT; then
+  echo
+  say open "$SSH"
+fi

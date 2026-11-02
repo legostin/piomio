@@ -14,7 +14,7 @@ Say "connect a computer" (or "connect my laptop") in the chat. The assistant sho
 
 > A hub in the desktop app opens only on its own computer until you turn on [access from anywhere](anywhere.md). Until then the card says other devices can't reach it and offers to set that up; the link appears once the hub has an address others can reach.
 
-The link's page shows what to do on the device it was opened on: a computer, an iPhone or a server without a screen; the rest are under **Another kind of device**.
+The link's page shows what to do on the device it was opened on: a computer, an iPhone or a server without a screen; the rest are under **Another kind of device**. For a server you needn't open it at all: the card's **Linux server** button shows the command with the link in it.
 
 ### A Mac or Windows PC
 
@@ -26,7 +26,7 @@ That computer then runs no hub of its own: its window shows your hub. When the w
 
 ### A Linux server
 
-Under **Server without a screen** the page shows one command with your link already in it. Run it as root (Linux with systemd, x64 or arm64):
+The card's **Linux server** button, and the link's page under **Server without a screen**, show one command with your link already in it. Copy it and run it on the server as root (Linux with systemd, x64 or arm64):
 
 ```bash
 curl -fsSL https://piomio.io/install.sh | PIOMIO_NAME=vps sh -s -- https://piomio.<your-tailnet>.ts.net/join/<code>

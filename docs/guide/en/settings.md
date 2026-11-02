@@ -184,6 +184,7 @@ The list you send replaces the old one, and it applies at once.
 |---|---|---|
 | `PIOMIO_VERSION` | the latest release | `install.sh`: the release to install |
 | `PIOMIO_NAME` | the host name | `install.sh` with an invite: the computer's name |
+| `PIOMIO_NO_WAIT` | off | `install.sh`: `1` shows Tailscale's sign-in page without waiting for the link |
 | `PIOMIO_REPO`, `PIOMIO_ARCHIVE` | `legostin/piomio`, none | `install.sh`: another repository's releases, or a local archive |
 | `PIOMIO_NODE_HOME` | `~/.piomio-node` | `piomio-node`: its key, pairing and policy |
 

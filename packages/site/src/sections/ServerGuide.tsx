@@ -11,9 +11,9 @@ import { Rich } from "../components/Rich";
 import { ArrowRight, ChevronDown, Laptop, Server } from "../components/icons";
 
 const REPO = `https://github.com/${siteConfig.repo}`;
-const HUB = ["install", "signin", "open", "anywhere", "update"] as const;
+const HUB = ["install", "link", "signin", "update"] as const;
 const COMPUTER = ["reach", "invite", "run", "signin", "policy"] as const;
-const TROUBLE = [1, 2, 3, 4] as const;
+const TROUBLE = [1, 2, 3, 4, 5] as const;
 
 function Part({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
@@ -77,10 +77,10 @@ export function ServerGuide() {
   const codes: Partial<Record<string, string>> = {
     "hub.install": install,
     "hub.signin": signIn,
-    "hub.open": `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 root@<${ip}>`,
+    "hub.link": t("server.ph.hubLink"),
     "computer.run": `curl -fsSL ${siteConfig.installScript} | PIOMIO_NAME=vps sh -s -- ${t("server.ph.link")}`,
   };
-  const more: Partial<Record<string, MessageKey>> = { "hub.signin": "server.hub.signin.more", "hub.open": "server.hub.open.more" };
+  const more: Partial<Record<string, MessageKey>> = { "hub.signin": "server.hub.signin.more", "hub.link": "server.hub.link.more" };
   const ways: Array<[string, ReactNode, MessageKey, MessageKey]> = [
     ["#hub", <Server size={22} />, "server.way.hub.title", "server.way.hub.text"],
     ["#computer", <Laptop size={22} />, "server.way.computer.title", "server.way.computer.text"],
@@ -119,6 +119,7 @@ export function ServerGuide() {
           title={t("server.commands")}
           rows={[
             ["piomio version", "server.cmd.version"],
+            ["piomio link", "server.cmd.link"],
             ["piomio backup", "server.cmd.backup"],
             ["piomio reset-password <…>", "server.cmd.password"],
             ["piomio devices pair", "server.cmd.phone"],

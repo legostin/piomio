@@ -1,6 +1,7 @@
 // First-run setup in the chat: with no working brain the hub answers with a setup card and keeps the message; signing
 // a brain in answers it; any brain the hub has counts, whichever agent asked; a new hub's assistant opens the intro when
-// its empty dialog is opened; the default agent leads the rest of the setup. The agent runs on `gated@local`
+// its empty dialog is opened (a server's link first, while it waits for Tailscale's sign-in); the default agent leads
+// the rest of the setup. The agent runs on `gated@local`
 // (fixtures/plugins/fakegated: signed in while HOME/.gated-ok exists) and the real Codex brain on a fake CLI that is not
 // signed in; the always-signed-in fake brains are turned off, so the hub starts with none.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -10,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatBrainRef, parseBrainRef, type ProbeResult } from "@piomio/shared";
 import { Hub, loadConfig } from "../src/index.ts";
-import { SetupGuide } from "../src/setup.ts";
+import { INTRO_REMOTE_NOTE, SetupGuide } from "../src/setup.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
 
@@ -130,6 +131,59 @@ describe("what counts as a brain", () => {
 
   it("none when nothing on the hub works", async () => {
     expect(await guideOver({ "codex@local": false, "api:anthropic@local": false }, ["codex@local", "api:*"]).usable()).toBe(false);
+  });
+});
+
+/** A guide on a hub with one signed-in brain, whose link from anywhere is as given; `saved`: the setup so far. */
+function guideWithLink(link: { on: boolean; up: boolean }, saved: Record<string, unknown> = { kickoffDone: true, intro: true }) {
+  let kept: unknown = saved;
+  const told: string[] = [];
+  const guide = new SetupGuide({
+    apiKeys: false,
+    brains: {
+      list: () => [{ ref: "claude-code@local", label: "Claude Code", login: true }],
+      has: () => true,
+      probe: async (): Promise<ProbeResult> => ({ available: true, authenticated: true }),
+    },
+    agents: { get: () => ({ brains: ["claude-code@local"] }) },
+    settings: { get: () => ({ defaultAgent: "assistant" }), getKey: () => kept, setKey: (_k: string, v: unknown) => (kept = v) },
+    store: { agentConversation: () => ({ id: "c1" }), listMessages: () => [] },
+    vault: { state: () => "uninitialized" },
+    channels: { list: () => [] },
+    machines: { list: () => [] },
+    remote: () => link,
+    cliTools: { forBrain: () => undefined },
+    bus: { on: () => {}, emit: () => {} },
+    isRunning: () => false,
+    tellAgent: (_id: string, note: string) => told.push(note),
+  } as any);
+  return { guide, told };
+}
+
+describe("the link from anywhere in the setup", () => {
+  it("opens a new hub's intro while it waits for Tailscale's sign-in", async () => {
+    const { guide, told } = guideWithLink({ on: true, up: false }, {});
+    expect(await guide.startIntro()).toBe(true);
+    expect(told).toEqual([INTRO_REMOTE_NOTE]);
+    expect((await guide.state()).remaining).toEqual(["remote", "identity", "team", "telegram", "machines", "profile"]);
+    const block = await guide.promptBlock("assistant");
+    expect(block).toMatch(/getting acquainted[\s\S]*- remote:[\s\S]*- identity:[\s\S]*- team:/);
+    expect(block).toContain('`integration_connect` with id "remote-access"');
+  });
+
+  it("is done by itself once the link is up, and absent while access from anywhere is off", async () => {
+    const up = await guideWithLink({ on: true, up: true }).guide.state();
+    expect(up.done).toContain("remote");
+    expect(up.remaining[0]).toBe("identity");
+    const off = guideWithLink({ on: false, up: false });
+    expect(await off.guide.state()).toMatchObject({ remaining: ["identity", "team", "telegram", "machines", "profile"] });
+    expect(await off.guide.promptBlock("assistant")).not.toMatch(/remote/);
+  });
+
+  it("is offered among the rest on a hub past its intro", async () => {
+    const block = await guideWithLink({ on: true, up: false }, { kickoffDone: true }).guide.promptBlock("assistant");
+    expect(block).not.toMatch(/getting acquainted/);
+    expect(block).toMatch(/Steps left:\n- remote:/);
   });
 });
 

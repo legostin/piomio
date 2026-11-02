@@ -51,7 +51,7 @@ export function RemoteAccessCard() {
     <div className="flex flex-col gap-3">
       {step === "starting" && (
         <div className="flex items-center gap-2 text-sm text-muted">
-          <Spinner size={14} /> {t("remote.starting")}
+          <Spinner size={14} /> {t(view.preparing ? "remote.preparing" : "remote.starting")}
         </div>
       )}
       {step === "login" && (

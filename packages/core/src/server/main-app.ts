@@ -1,7 +1,7 @@
 // Main web app (port 8080): sign-in, the hub API (server/api.ts) behind cookie sessions, MCP endpoint for brains,
 // node daemon endpoints, plugin webhooks and the SPA. The same app in remote mode is the link's gateway (remote.ts):
-// on loopback behind the hub's Tailscale node, the link's host only, no first-run setup, desktop sign-in, passkeys,
-// Google's return page or webhooks.
+// on loopback behind the hub's Tailscale node, the link's host only, no desktop sign-in, passkeys, Google's return page
+// or webhooks; its first-run setup and sign-in count toward the link's shared budget.
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -116,18 +116,20 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
     locales: LOCALES,
   }));
 
-  if (!remote) {
-    app.post("/api/auth/setup", async (req, reply) => {
-      if (!originAllowed(req, origins())) throw new HttpError(403, "Origin not allowed");
-      const b = req.body as { token?: string; password?: string };
-      hub.auth.setup(String(b?.token ?? ""), String(b?.password ?? ""), clientIp(req));
-      // The first user's browser language becomes the hub language unless PIOMIO_LANG pins it.
-      if (!localeFromEnv({ PIOMIO_LANG: process.env.PIOMIO_LANG })) hub.settings.update({ language: requestLocale(req) });
-      const { token } = hub.auth.createSession("main");
-      setCookie(reply, token);
-      return { ok: true };
-    });
+  // Also through the link: a server's hub opens there first (install.sh prints it with the setup code, which only the
+  // installer's terminal and the data folder have).
+  app.post("/api/auth/setup", async (req, reply) => {
+    if (!originAllowed(req, origins())) throw new HttpError(403, "Origin not allowed");
+    const b = req.body as { token?: string; password?: string };
+    hub.auth.setup(String(b?.token ?? ""), String(b?.password ?? ""), clientIp(req), { remote: !!remote });
+    // The first user's browser language becomes the hub language unless PIOMIO_LANG pins it.
+    if (!localeFromEnv({ PIOMIO_LANG: process.env.PIOMIO_LANG })) hub.settings.update({ language: requestLocale(req) });
+    const { token } = hub.auth.createSession("main");
+    setCookie(reply, token);
+    return { ok: true };
+  });
 
+  if (!remote) {
     // The desktop app's own window: a one-time ticket the app gave the hub over its stdin (desktop-login.ts).
     app.post("/api/auth/desktop", async (req, reply) => {
       if (!originAllowed(req, origins())) throw new HttpError(403, "Origin not allowed");

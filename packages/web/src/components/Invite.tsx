@@ -1,9 +1,9 @@
 // One link for any device (packages/core/src/invites.ts): the /join link to forward to a computer or a phone, "This
-// computer" when the web UI is open on another computer than the hub's, and the phone's QR. Used by the chat card the
-// assistant shows and by Machines and Devices.
+// computer" when the web UI is open on another computer than the hub's, the line for a Linux server and the phone's QR.
+// Used by the chat card the assistant shows and by Machines and Devices.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CircleCheck, Laptop, RefreshCw, Share2 } from "lucide-react";
+import { CircleCheck, Laptop, RefreshCw, Share2, SquareTerminal } from "lucide-react";
 import type { Invite, InviteUsed } from "@piomio/shared";
 import { api, errorText } from "../lib/api";
 import { countdown } from "../lib/format";
@@ -30,6 +30,7 @@ export function InviteBlock({ onJoined, onClose }: { onJoined?: (who: InviteUsed
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [now, setNow] = useState(Date.now());
+  const [server, setServer] = useState(false);
 
   const create = useCallback(async () => {
     setBusy(true);
@@ -63,12 +64,18 @@ export function InviteBlock({ onJoined, onClose }: { onJoined?: (who: InviteUsed
   useEffect(
     () =>
       hubEvents.on((e) => {
+        // Access from anywhere came on while the card waited without a link: a new invite carries it.
+        if (e.type === "remote.updated" && e.data.state === "running" && e.data.url && invite && !invite.url && !busy) {
+          void api.del(`/api/invites/${encodeURIComponent(invite.code)}`).catch(() => {});
+          void create();
+          return;
+        }
         if (e.type !== "invite.used" || !invite || e.data.code !== invite.code) return;
         if (!announced.has(e.data.code)) toast(joinedText(e.data), "success");
         announced.add(e.data.code);
         onJoined?.(e.data);
       }),
-    [invite, onJoined],
+    [invite, busy, create, onJoined],
   );
 
   const cancel = async () => {
@@ -108,14 +115,30 @@ export function InviteBlock({ onJoined, onClose }: { onJoined?: (who: InviteUsed
           </Button>
         </div>
       )}
-      {!expired && onAnotherComputer(location.hostname, navigator.userAgent) && (
-        <div>
-          <a
-            href={pairLink(location.origin, invite.code)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border bg-surface px-2.5 text-[13px] font-medium hover:bg-surface-2"
-          >
-            <Laptop className="size-3.5" /> {t("invite.thisComputer")}
-          </a>
+      {!expired && (onAnotherComputer(location.hostname, navigator.userAgent) || invite.serverCommand) && (
+        <div className="flex flex-wrap gap-2">
+          {onAnotherComputer(location.hostname, navigator.userAgent) && (
+            <a
+              href={pairLink(location.origin, invite.code)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border bg-surface px-2.5 text-[13px] font-medium hover:bg-surface-2"
+            >
+              <Laptop className="size-3.5" /> {t("invite.thisComputer")}
+            </a>
+          )}
+          {invite.serverCommand && (
+            <Button size="sm" variant={server ? "secondary" : "ghost"} icon={<SquareTerminal className="size-3.5" />} onClick={() => setServer((s) => !s)}>
+              {t("invite.server")}
+            </Button>
+          )}
+        </div>
+      )}
+      {!expired && server && invite.serverCommand && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-xs leading-relaxed text-muted">{t("invite.serverHint")}</p>
+          <div className="flex items-start gap-1 rounded-xl border border-border bg-code-bg py-1 pr-1 pl-3">
+            <code className="min-w-0 flex-1 py-1 font-mono text-[12.5px] break-all">{invite.serverCommand}</code>
+            <CopyButton text={invite.serverCommand} className="shrink-0" />
+          </div>
         </div>
       )}
       {invite.qrSvg && (

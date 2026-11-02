@@ -2,7 +2,6 @@
   "meta.title": "Piomio — open-source AI agents on your own computer",
   "meta.description": "A free, open-source team of AI agents on your Mac, PC or server, running on the Claude or ChatGPT plan you already have. It goes through your email and drafts replies you approve with a tap. Show it a chore once in its browser and it learns it.",
   "meta.ogAlt": "The Piomio app window with the team of agents at work",
-
   "nav.demo": "Demo",
   "nav.features": "Features",
   "nav.security": "Security",
@@ -12,7 +11,6 @@
   "nav.language": "Language",
   "nav.stars": "{count} stars on GitHub",
   "nav.home": "Piomio home",
-
   "hero.titleLead": "Your own AI team",
   "hero.titleMarker": "on your computer",
   "hero.lead": "Free and open source. It runs Claude Code and Codex on the Claude or ChatGPT plan you already pay for, and asks before it sends or buys anything.",
@@ -21,7 +19,6 @@
   "hero.share": "Send yourself the link",
   "hero.shared": "Link copied",
   "hero.secondary": "Servers and other ways",
-
   "demo.windowTitle": "Piomio",
   "demo.loading": "Waking the team…",
   "demo.replay": "Play again",
@@ -36,57 +33,46 @@
   "demo.prev": "Previous chapter",
   "demo.next": "Next chapter",
   "demo.touchHint": "Tap around if you like. It’s the real app.",
-
   "chapter.morning.chip": "Morning",
   "chapter.morning.time": "08:00",
   "chapter.morning.title": "Pio writes first",
   "chapter.morning.text": "Before Alex has had coffee, Pio sends the day: three meetings, two emails worth opening, the weather in Lisbon, the dentist. Then Pio offers a nudge at 12:30 to leave for lunch.",
-
   "chapter.mail.chip": "Mail",
   "chapter.mail.time": "09:30",
   "chapter.mail.title": "47 emails, sorted while you watch",
   "chapter.mail.text": "“Go through my mail.” Ada reads all of it, and a line under her reply shows which email she’s on. Three turn out to matter. She drafts a reply to Anna and puts Studio North’s €1,850 invoice on the task list.",
-
   "chapter.send.chip": "Email",
   "chapter.send.time": "09:34",
   "chapter.send.title": "Ada asks before she sends",
   "chapter.send.text": "Ada shows Alex the reply to Anna and waits. A tap on “Always allow this” sends it and adds a rule for that one address. Email to anyone else still needs a yes.",
-
   "chapter.security.chip": "Security",
   "chapter.security.time": "10:15",
   "chapter.security.title": "The email that asked too much",
   "chapter.security.text": "A phishing email tells Ada to forward every invoice to a stranger. Because she has just read outside mail, the new address stops at a warning card, and Alex says no. Later Alex types an API key into a secure field. All the model ever sees is a vault:// reference.",
-
   "chapter.services.chip": "Services",
   "chapter.services.time": "11:00",
   "chapter.services.title": "Connect a service by asking",
   "chapter.services.text": "“Connect my Notion.” A card pops up in the chat, Alex signs in, and that’s that. Then Ada puts Thursday’s review in the calendar, which also takes one tap to approve.",
-
   "chapter.team.chip": "Team",
   "chapter.team.time": "12:30",
   "chapter.team.title": "Three requests, one message",
   "chapter.team.text": "Compare three laptops, find train tickets for Friday, remind me to call mum at seven. Pio hands the laptops to Leo, whose live step line you can watch, sets the reminder and finds the trains. Each answer comes back as a reply to the request.",
-
   "chapter.machines.chip": "Computers",
   "chapter.machines.time": "14:00",
   "chapter.machines.title": "Bit hits the limit and keeps going",
   "chapter.machines.text": "Bit fixes a failing test on Alex’s MacBook through Claude Code, on Alex’s Claude plan. When the plan hits its limit, Bit carries on with Codex on the same laptop. The sidebar shows who’s working where.",
-
   "chapter.browser.chip": "Browser",
   "chapter.browser.time": "16:00",
   "chapter.browser.title": "Alex shows Leo how to order water",
   "chapter.browser.text": "“Watch how I order water.” Alex clicks through the shop and explains along the way. Leo saves it as a skill, then asks what’s fine to press without checking and up to what amount. After that the order goes out on its own, on Fridays if you like.",
-
   "chapter.pages.chip": "Pages",
   "chapter.pages.time": "18:30",
   "chapter.pages.title": "A page for Saturday’s walk",
   "chapter.pages.text": "“Make a page for Saturday’s walk.” Pio sends back an interactive page in the chat, with the route stop by stop, places with prices, the forecast and photos.",
-
   "chapter.channels.chip": "Channels",
   "chapter.channels.time": "21:00",
   "chapter.channels.title": "Your own news channel",
   "chapter.channels.text": "“Every morning, collect news about AI and electric cars.” Leo takes on the job of editor. Each morning brings a few short posts with the gist, the numbers and a picture.",
-
   "features.eyebrow": "What sets it apart",
   "features.title": "Agents that do the chores",
   "features.lead": "Here are the four things we’d point to first, each with the demo chapter that shows it.",
@@ -176,7 +162,6 @@
   "diagram.team.task3Status": "reminder at 19:00",
   "diagram.team.task4": "Meanwhile: your inbox",
   "diagram.team.task4Status": "47 sorted, 3 matter",
-
   "how.eyebrow": "How it works",
   "how.title": "What runs where",
   "how.brains.title": "Uses what you already pay for",
@@ -185,7 +170,6 @@
   "how.hardware.text": "There’s an app for macOS and Windows, and one command installs it on a Linux server. Other computers can join the same team, and a private link gets you to the hub from your phone or any browser.",
   "how.home.title": "What stays home",
   "how.home.text": "Chats, memory, files and the vault stay on your machine, and agents are plain markdown files you can open. The text an agent works on goes to the model you picked. Nothing comes to us. There’s no account and no telemetry.",
-
   "compare.eyebrow": "Compared",
   "compare.title": "Where your agent lives",
   "compare.lead": "Three kinds of personal agents, side by side.",
@@ -211,7 +195,6 @@
   "compare.code.cloud": "Closed",
   "compare.code.diy": "Open",
   "compare.code.piomio": "Open, Apache-2.0",
-
   "security.eyebrow": "Security",
   "security.title": "Built for an agent that reads your mail",
   "security.lead": "An email or a web page can hide instructions meant for the agent. That’s called prompt injection. So every action goes through the same five layers, and none of them depends on the model behaving.",
@@ -230,12 +213,10 @@
   "security.code.after": "// → waits for your yes · audit entry #4127 · sha256 9f2c…e1a0",
   "security.diagram.agent": "Agent",
   "security.diagram.world": "The world",
-
   "integrations.eyebrow": "Integrations",
   "integrations.title": "Works with what you already use",
   "integrations.lead": "Ask for a service in the chat and a card handles the sign-in. Many of these come through Composio, an outside service whose cloud sees that data. Anything with an MCP server connects directly.",
   "integrations.more": "+ any MCP server",
-
   "iphone.eyebrow": "iPhone",
   "iphone.title": "The team in your pocket",
   "iphone.soon": "Soon",
@@ -253,7 +234,6 @@
   "iphone.mock.card": "Create an event: “Review with Anna”, Thu 15:00",
   "iphone.mock.approve": "Allow",
   "iphone.mock.faceid": "Face ID",
-
   "faq.eyebrow": "Questions",
   "faq.title": "Before you install",
   "faq.q1": "What does it cost?",
@@ -270,7 +250,6 @@
   "faq.a6": "Cloud agents run on the company’s computers, your accounts get connected there, and there’s a subscription to pay. Piomio runs on your own computers with the plans you already pay for. The keys stay in a vault on your machine, and it asks before anything goes out.",
   "faq.q7": "Why does Windows warn me when I install it?",
   "faq.a7": "The Windows installer isn’t signed by Microsoft yet, so SmartScreen asks once. The Mac app is signed and notarized by Apple. GitHub Actions builds both from the public code, and every release is on GitHub.",
-
   "install.eyebrow": "Install",
   "install.title": "Up in a few minutes",
   "install.lead": "It brings everything it needs, so there’s no Node.js, Docker or WSL to install on your desktop.",
@@ -289,17 +268,15 @@
   "install.allReleases": "All releases",
   "install.copy": "Copy",
   "install.copied": "Copied",
-
   "install.tab.server": "Server",
   "install.server.lead": "On a Linux server, one command as root:",
-  "install.server.note": "It prints the setup code and the line that opens the chat on your computer. The server can also join the hub on your Mac as one of its computers.",
+  "install.server.note": "It prints the setup code, then Tailscale’s sign-in page and your hub’s permanent link, which opens on any phone or computer. The server can also join the hub on your Mac as one of its computers: the card that connects a computer shows that command.",
   "install.server.guide": "Step-by-step guide",
   "install.tab.agent": "With AI",
   "install.agent.lead": "Already use Claude Code, Codex or Kimi Code? Paste this into it on the computer or server where Piomio should run:",
-  "install.agent.prompt": "Install Piomio on this computer and set it up for me. Follow {guide} step by step. Ask me whenever a decision is mine, and never ask me for passwords or keys. At the end, tell me how to open the chat.",
-  "install.agent.note": "It works out what this machine is, installs Piomio and asks you only what is yours to decide. On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in.",
+  "install.agent.prompt": "Install Piomio on this computer and set it up for me. Follow {guide} step by step. You will need the internet: if a download fails, ask me for permission instead of stopping. Ask me whenever a decision is mine, and never ask me for passwords or keys. At the end, tell me how to open the chat.",
+  "install.agent.note": "It works out what this machine is, installs Piomio and asks you only what is yours to decide. On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in. Codex says it can’t ask before downloading? Choose “Ask for approval” in its /permissions.",
   "install.agent.guide": "What it will do",
-
   "server.meta.title": "Piomio on a server: install, sign in, open the chat",
   "server.meta.description": "One command installs Piomio on a Linux server, as the hub itself or as a computer of the hub on your Mac. Sign in to your own Claude Code, Codex or Kimi Code there and open the chat safely.",
   "server.eyebrow": "Guide",
@@ -315,15 +292,10 @@
   "server.ph.link": "https://piomio.<your-tailnet>.ts.net/join/<code>",
   "server.hub.title": "The hub on the server",
   "server.hub.install.title": "Install",
-  "server.hub.install.text": "Connect to the server over SSH as root and run the installer. It creates the user `piomio` without sudo, installs the libraries the agents’ browser needs and starts Piomio as that user’s service. At the end it prints the setup code, the line that opens the chat on your computer, and the brains it found. Running it again updates Piomio.",
+  "server.hub.install.text": "Connect to the server over SSH as root and run the installer. It creates the user `piomio` without sudo, installs the libraries the agents’ browser needs and starts Piomio as that user’s service. At the end it prints the setup code and the brains it found. Running it again updates Piomio.",
   "server.hub.signin.title": "Sign in to a brain",
   "server.hub.signin.text": "Agents think with the CLI that the user `piomio` is signed in to, on your own plan. Sign in yourself, as that user. Codex, for example:",
   "server.hub.signin.more": "Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`, then `claude`. Kimi Code: `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`, then `kimi` and `/login`. Piomio finds the sign-in within a minute, no restart needed. You can also skip this step and press **Sign in** in the chat later: it installs a missing CLI first.",
-  "server.hub.open.title": "Open the chat",
-  "server.hub.open.text": "The chat listens only on the server itself. On your computer, run the line the installer printed and keep it running:",
-  "server.hub.open.more": "Then open http://localhost:8080, enter the setup code and choose a password. The assistant takes you through the rest in the chat. Lost the code? `sudo -iu piomio cat ~/.local/share/piomio/setup-code`.",
-  "server.hub.anywhere.title": "Reach it from anywhere",
-  "server.hub.anywhere.text": "Say “turn on access from anywhere” in the chat and sign in to Tailscale with a free account. The hub gets a permanent link like `https://piomio.<your-tailnet>.ts.net`: any browser, the phone app and your other computers reach it there, with no tunnel and no open ports.",
   "server.hub.update.title": "Update with a button",
   "server.hub.update.text": "When a release is out, the server’s row in **Machines** shows **Update**, and the assistant offers it in the chat. Piomio checks the release’s signature, keeps a copy of the database and is back in about a minute. If the new version doesn’t start, it goes back to the previous one by itself.",
   "server.commands": "Commands, after `sudo -iu piomio`",
@@ -338,7 +310,7 @@
   "server.computer.reach.title": "Let the server reach your hub",
   "server.computer.reach.text": "A hub on a Mac or PC at home opens only there until you turn on access from anywhere: say “turn on access from anywhere” in its chat. If you skip this, the assistant offers it when you ask to connect a computer.",
   "server.computer.invite.title": "Get an invite",
-  "server.computer.invite.text": "Say “connect a computer” in the chat and press the button on the card. You get a one-time link that works for an hour, like `https://piomio.<your-tailnet>.ts.net/join/AB12CD34`. Open it: under **Server without a screen** the page shows the next command with your link already in it.",
+  "server.computer.invite.text": "Say “connect a computer” in the chat. The card makes a one-time link that works for an hour, and its **Linux server** button shows the next command with that link already in it, ready to copy. The link’s own page shows it too, under **Server without a screen**.",
   "server.computer.run.title": "Run it on the server as root",
   "server.computer.run.text": "It creates the user `piomio`, puts Node.js and the hub’s `piomio-node` in its home and keeps them connected as a service. `PIOMIO_NAME` is what the computer is called in **Machines**; without it, the server’s host name.",
   "server.computer.signin.title": "Sign in to a brain",
@@ -365,7 +337,6 @@
   "server.trouble.a3": "Open the user’s shell with `sudo -iu piomio`: the installer set it up so that `systemctl --user` and `journalctl --user` work there.",
   "server.trouble.q4": "The chat doesn’t open on localhost:8080",
   "server.trouble.a4": "The `ssh -L` line has to keep running while you use the chat. On the server, `sudo -iu piomio`, then `systemctl --user status piomio` and `journalctl --user -u piomio -n 50` show whether Piomio runs and what stops it.",
-
   "footer.tagline": "A team of AI agents that lives on your own computers.",
   "footer.github": "GitHub",
   "footer.license": "Apache-2.0",
@@ -374,7 +345,6 @@
   "footer.docs": "Docs",
   "footer.releases": "Releases",
   "footer.disclaimer": "An independent open-source project, not affiliated with or endorsed by Anthropic, OpenAI or Moonshot AI. Claude and Claude Code are trademarks of Anthropic; ChatGPT and Codex are trademarks of OpenAI; Kimi is a trademark of Moonshot AI.",
-
   "docs.meta.suffix": "Piomio docs",
   "docs.menu": "Docs",
   "docs.pages": "Docs pages",
@@ -388,5 +358,12 @@
   "docs.edit": "Edit this page",
   "docs.onThisPage": "On this page",
   "docs.prev": "Previous",
-  "docs.next": "Next"
+  "docs.next": "Next",
+  "server.hub.link.title": "Sign in to Tailscale and open the link",
+  "server.hub.link.text": "Piomio starts with access from anywhere on, so the installer then shows Tailscale’s sign-in page. Open it on any device and sign in with a free account (and allow Funnel if Tailscale asks). Once the link answers, the installer prints it with the setup code inside:",
+  "server.hub.link.more": "Open it on any phone or computer, choose a password, and the assistant takes you through the rest in the chat. The same link then works in any browser, the phone app and on your other computers, with no tunnel and no open ports. Rather not use Tailscale? The installer also prints an `ssh -N -L 8080:localhost:8080 …` line: run it on your computer, keep it running and open http://localhost:8080. Signed in to Tailscale later? `sudo -iu piomio piomio link` prints the link.",
+  "server.ph.hubLink": "https://piomio.<your-tailnet>.ts.net/#setup=<code>",
+  "server.cmd.link": "the link from anywhere, or Tailscale’s sign-in page while there is none",
+  "server.trouble.q5": "The link doesn’t open",
+  "server.trouble.a5": "Tailscale issues the link’s certificate on its first visit, which takes up to a minute: the installer and the card show the link only once it answers. If it still doesn’t, the card in **Settings** → **Plugins** → **Access from anywhere** says which step is left: signing in to Tailscale, allowing Funnel, or the tailnet’s admin approving the `piomio` machine."
 }
