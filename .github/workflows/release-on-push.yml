@@ -89,7 +89,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: main
+          # The history and the tags, to tell whether the current version already holds this push.
+          fetch-depth: 0
+      # The checks take minutes: a later push whose checks finished first may have released this one already.
+      - name: Not released yet?
+        id: due
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_EVENT_NAME" = push ] && git merge-base --is-ancestor "$GITHUB_SHA" "v$v" 2>/dev/null; then
+            echo "v$v already holds $GITHUB_SHA"
+            echo "due=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "due=true" >>"$GITHUB_OUTPUT"
+          fi
       - name: Raise the version
+        if: steps.due.outputs.due == 'true'
         id: version
         env:
           BUMP: ${{ inputs.bump || 'patch' }}
@@ -109,6 +123,7 @@ jobs:
           git diff
           echo "version=$v" >>"$GITHUB_OUTPUT"
       - name: Commit, tag and start the release
+        if: steps.due.outputs.due == 'true'
         env:
           V: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
