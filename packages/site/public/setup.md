@@ -40,7 +40,7 @@ hdiutil detach -quiet "$tmp/mnt"; rm -rf "$tmp"
 The app is signed and notarized by Apple. Then start it:
 
 - A new Piomio here: `open -a Piomio --args --mode hub`. Its window asks the person to pick a password: tell them to do that.
-- A computer of their Piomio: `open -a Piomio --args --mode node`, then `open "<invite link>"`: the page has **Connect with the app**, which the person clicks.
+- A computer of their Piomio: `open -a Piomio --args --mode node`, then `open "<invite link>"`: the page has **Open Piomio**, which the person clicks.
 
 ## 3b. Windows (10 or 11, x64)
 
@@ -55,7 +55,7 @@ $app = Get-ChildItem $env:LOCALAPPDATA -Filter Piomio.exe -Recurse -Depth 3 -Err
 Start-Process $app.FullName -ArgumentList "--mode", "hub"   # a computer of their Piomio: "--mode", "node"
 ```
 
-It installs for this user only, without administrator rights. A new Piomio: the person picks a password in its window. A computer of their Piomio: `Start-Process "<invite link>"`, and the person clicks **Connect with the app** on that page.
+It installs for this user only, without administrator rights. A new Piomio: the person picks a password in its window. A computer of their Piomio: `Start-Process "<invite link>"`, and the person clicks **Open Piomio** on that page.
 
 On a Mac or PC Piomio thinks with the CLIs this user is already signed in to, so the sign-in you run under works as it is: nothing to sign in again.
 
@@ -98,4 +98,4 @@ End with a short summary: what you installed and where, what they still have to 
 - A server with a new Piomio: on their own computer they run the `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 <user>@<server>` line the installer printed and keep it running, open http://localhost:8080, enter the setup code and pick a password. Later "turn on access from anywhere" in the chat gives a permanent private link with no tunnel.
 - A computer of their Piomio: it shows up in the Machines list of their Piomio; they decide there what agents may do on it.
 
-More: the README at https://github.com/legostin/piomio and the server guide at https://piomio.io/en/server/.
+More: the docs at https://piomio.io/en/docs/ (each page also as Markdown: https://piomio.io/en/docs/server.md, …; the list is in https://piomio.io/llms.txt), the server guide at https://piomio.io/en/server/ and the README at https://github.com/legostin/piomio.

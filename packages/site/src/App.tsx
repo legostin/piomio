@@ -5,14 +5,19 @@ import { Features } from "./sections/Features";
 import { ServerGuide } from "./sections/ServerGuide";
 import { Stage } from "./sections/Stage";
 import { TopBar } from "./sections/TopBar";
+import { DocsPage } from "./docs/DocsPage";
+import { docHref, type DocPageData } from "./docs/page";
+import { data } from "./data";
 import type { Page } from "./pages";
 
-export function App({ lang, page = "home" }: { lang: Lang; page?: Page }) {
+export function App({ lang, page = "home", doc }: { lang: Lang; page?: Page; doc?: DocPageData }) {
   return (
     <LangContext.Provider value={{ lang, t: translator(lang) }}>
-      <TopBar page={page} />
+      <TopBar page={page} hrefFor={doc && ((l) => docHref(data.base, l, doc.prefix, doc.slug))} />
       <main>
-        {page === "server" ? (
+        {page === "docs" && doc ? (
+          <DocsPage data={doc} />
+        ) : page === "server" ? (
           <ServerGuide />
         ) : (
           <>

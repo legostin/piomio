@@ -1,5 +1,5 @@
 // Builds the website into packages/site/dist: the live demo (packages/web, demo mode) at dist/demo/, the page
-// prerendered per language, Open Graph pictures, sitemap and robots.
+// prerendered per language, the docs (docs/guide, docs/versions), Open Graph pictures, sitemap and robots.
 //
 //   SITE_BASE    where the site lives: "/" with a domain (default), "/piomio/" on legostin.github.io
 //   SITE_ORIGIN  its address for canonical links (default: https://legostin.github.io, or siteConfig.siteUrl)
@@ -79,7 +79,7 @@ if (!existsSync(join(WEB, "dist-demo/demo.html"))) throw new Error("packages/web
 await build({ root: SITE, configFile: join(SITE, "vite.config.ts"), logLevel: "warn" });
 const ssrOut = join(WORK, "ssr");
 await build({ root: SITE, configFile: join(SITE, "vite.config.ts"), logLevel: "warn", build: { ssr: "src/entry-server.tsx", outDir: ssrOut, emptyOutDir: true, copyPublicDir: false } });
-await prerender({ dist: DIST, ssrEntry: join(ssrOut, "entry-server.js"), languages: siteConfig.languages, base, origin });
+await prerender({ dist: DIST, ssrEntry: join(ssrOut, "entry-server.js"), languages: siteConfig.languages, base, origin, release: release.version, repo: siteConfig.repo });
 rmSync(ssrOut, { recursive: true, force: true });
 
 // 4. The demo next to the page, the server installer (curl -fsSL <site>/install.sh | sh), the pictures for links, and

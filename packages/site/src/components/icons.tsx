@@ -204,6 +204,12 @@ export const Plug = (p: P) => (
   </Stroke>
 );
 
+export const Book = (p: P) => (
+  <Stroke {...p}>
+    <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+  </Stroke>
+);
+
 export const Layout = (p: P) => (
   <Stroke {...p}>
     <rect width="18" height="18" x="3" y="3" rx="2" />
