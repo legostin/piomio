@@ -3,7 +3,7 @@
 // removed, in either order, and when the hub starts (references left from before this existed).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MachineInfo } from "@piomio/shared";
@@ -18,17 +18,6 @@ import { Hub, loadConfig } from "../src/index.ts";
 const fixtures = join(import.meta.dirname, "fixtures");
 const machineKey = () => Buffer.alloc(32, 7).toString("base64url");
 const info = (hostname: string): MachineInfo => ({ os: "Windows 11 Pro", hostname, arch: "x64", nodeVersion: "v24.16.0", clis: [], allowedDirs: [] });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 describe("a computer paired again (machines)", () => {
   function setup() {
