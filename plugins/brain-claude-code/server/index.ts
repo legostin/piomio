@@ -1,4 +1,6 @@
-// Registers the "claude-code" brain (headless Claude Code on the user's subscription).
+// Registers the "claude-code" brain: the official Claude Code CLI, headless, signed in to the user's own Claude plan on
+// this computer (from the chat card, or a login it already had). The hub keeps no Claude credentials: Anthropic's
+// terms don't let an app collect or store subscription tokens, so there is no token setting.
 
 import type { PluginContext, PluginModule } from "@piomio/plugin-sdk";
 import { createClaudeCodeProvider, DEFAULT_CLAUDE_TOOLS } from "@piomio/brains-cli";
@@ -7,30 +9,10 @@ const plugin: PluginModule = {
   activate(ctx: PluginContext) {
     let settings = ctx.settings;
     ctx.onSettingsChange((s) => (settings = s));
-    let cached: { at: number; env: Record<string, string> } | undefined;
-
-    const authEnv = async (): Promise<Record<string, string>> => {
-      if (cached && Date.now() - cached.at < 60_000) return cached.env;
-      const ref = String(settings.tokenRef || "vault://claude_code_token");
-      let env: Record<string, string> = {};
-      try {
-        const f = await ctx.vault.get(ref, { reason: "Claude Code authentication" });
-        const token = f.value ?? f.token ?? f.password ?? Object.values(f)[0];
-        if (token) env = { CLAUDE_CODE_OAUTH_TOKEN: token.trim() };
-      } catch {
-        // No token in the vault (or vault sealed): fall back to the CLI's own login in HOME.
-      }
-      cached = { at: Date.now(), env };
-      return env;
-    };
-    // A token saved from the chat (or the vault opening) applies to the next probe and session right away.
-    ctx.events.on("vault.updated", () => (cached = undefined));
-    ctx.events.on("vault.state", () => (cached = undefined));
 
     ctx.brains.register(
       createClaudeCodeProvider({
         command: () => String(settings.command || "claude"),
-        authEnv,
         allowedTools: () => (Array.isArray(settings.allowedTools) && settings.allowedTools.length ? settings.allowedTools : DEFAULT_CLAUDE_TOOLS),
         stateDir: ctx.dataDir,
         log: (m) => ctx.log.info(m),

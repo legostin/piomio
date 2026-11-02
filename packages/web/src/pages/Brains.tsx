@@ -2,7 +2,7 @@
 // a hub that takes them, PIOMIO_API_KEYS).
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Brain, ChevronDown, LogIn, RefreshCw, TimerReset } from "lucide-react";
+import { Brain, LogIn, RefreshCw, TimerReset } from "lucide-react";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, relativeTime } from "../lib/format";
 import { hubEvents, session } from "../state/app";
@@ -149,16 +149,6 @@ export function BrainsPage() {
         <div className="grid gap-3 @3xl:grid-cols-2">
           <Card title="Claude Code">
             <BrainLoginCard brainRef="claude-code@local" bare />
-            <details className="group mt-3">
-              <summary className="flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-accent-text">
-                {t("brainLogin.claudeToken")} <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="mt-2">
-                <VaultGate>
-                  <PluginSetupCard pluginId="brain-claude-code" bare />
-                </VaultGate>
-              </div>
-            </details>
             <p className="mt-3 text-xs text-muted">{t("brains.claudeMachines")}</p>
           </Card>
           <Card title="Codex">

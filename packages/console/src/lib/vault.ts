@@ -38,7 +38,6 @@ export interface VaultTemplate {
 
 /** Quick-create presets; name and hint come from `vault.tpl.<id>.name` / `.hint`. */
 export const TEMPLATES: VaultTemplate[] = [
-  { id: "claude_code_token", placeholder: "sk-ant-oat01-…" },
   { id: "anthropic_api_key", placeholder: "sk-ant-api03-…" },
   { id: "openai_api_key", placeholder: "sk-…" },
   { id: "openrouter_api_key", placeholder: "sk-or-v1-…" },

@@ -76,6 +76,8 @@ import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
 const ENTRY_SIGNIN_MS = 30 * 60_000;
+/** Where earlier versions kept a Claude subscription token (forgetClaudeToken). */
+const OLD_CLAUDE_TOKEN = "claude_code_token";
 
 export class Hub {
   config: Config;
@@ -889,9 +891,23 @@ export class Hub {
     this.setupChats.sweep();
     this.setup.start();
     this.notifier.startDigestTimer();
+    this.forgetClaudeToken();
     for (const m of this.machines.list()) if (m.status === "online") void this.machines.pushSetup(m.id);
     // A new version since the last start: the default agent tells the person what changed.
     void announceUpdate(this).catch((e) => console.log(`[piomio] update note: ${e?.message ?? e}`));
+  }
+
+  /**
+   * A Claude subscription token an earlier version kept (vault://claude_code_token, from `claude setup-token`):
+   * Anthropic's terms don't let an app store one, so it is deleted once and the person told. Claude Code signs in on
+   * each computer itself. The leader does it; the deletion replicates.
+   */
+  forgetClaudeToken(): boolean {
+    if (!this.vault.getMeta(OLD_CLAUDE_TOKEN)) return false;
+    this.vault.remove(OLD_CLAUDE_TOKEN);
+    this.audit.append("core", "vault.remove", OLD_CLAUDE_TOKEN, { reason: "subscription tokens are not kept" });
+    void this.notifier.notify({ level: "notify", title: t("claudeToken.removedTitle"), body: t("claudeToken.removedBody") }).catch(() => {});
+    return true;
   }
 
   /**

@@ -120,20 +120,18 @@ export function SetupCardView({ state, refresh, bare }: { state: SetupState; ref
             {!b.installed && !b.canInstall && <div className="text-xs text-muted">{b.detail ?? t("brainSetup.notInstalled")}</div>}
           </div>
         ))}
-        <details className="group" open={!rows.length && state.apiKeys}>
-          <summary className="flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-accent-text">
-            {t(state.apiKeys ? "brainSetup.apiKeys" : "brainLogin.claudeToken")} <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-          </summary>
-          {/* One gate for both cards, so an absent vault is offered once, not twice. */}
-          <div className="mt-2">
-            <VaultGate>
-              <div className="flex flex-col gap-3">
-                <PluginSetupCard pluginId="brain-claude-code" bare />
-                {state.apiKeys && <PluginSetupCard pluginId="brain-api" bare />}
-              </div>
-            </VaultGate>
-          </div>
-        </details>
+        {state.apiKeys && (
+          <details className="group" open={!rows.length}>
+            <summary className="flex cursor-pointer list-none items-center gap-1 text-[13px] font-medium text-accent-text">
+              {t("brainSetup.apiKeys")} <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-2">
+              <VaultGate>
+                <PluginSetupCard pluginId="brain-api" bare />
+              </VaultGate>
+            </div>
+          </details>
+        )}
       </div>
       <div className="mt-3 flex items-center gap-2">
         <Button variant="ghost" size="sm" icon={<RefreshCw className="size-3.5" />} loading={busy} onClick={() => void check()}>

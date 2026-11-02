@@ -1,11 +1,7 @@
 {
   "name": "Claude Code",
-  "description": "Brain on a Claude subscription: runs Claude Code headless with Piomio tools.",
-  "settings.tokenRef.title": "Token (vault reference)",
-  "settings.tokenRef.description": "The output of `claude setup-token`, stored in the vault. If empty, the CLI's own login is used.",
+  "description": "Brain on your Claude plan: runs the official Claude Code CLI headless with Piomio tools, signed in by you on each computer.",
   "settings.command.title": "CLI command",
   "settings.allowedTools.title": "Claude Code built-in tools",
-  "settings.allowedTools.description": "Empty: the default set (Bash, files, web, tasks, skills and Piomio tools). On a Mac the shell runs in the sandbox and files outside the agent's folder are asked for: only the web, tasks, skills and Piomio tools from this list apply there.",
-  "setup.token.title": "Claude Code token",
-  "setup.token.hint": "Only if Claude Code is not signed in on this server: run `claude setup-token` on any computer with your subscription and paste the token here."
+  "settings.allowedTools.description": "Empty: the default set (Bash, files, web, tasks, skills and Piomio tools). On a Mac the shell runs in the sandbox and files outside the agent's folder are asked for: only the web, tasks, skills and Piomio tools from this list apply there."
 }

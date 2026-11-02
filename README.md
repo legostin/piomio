@@ -7,7 +7,7 @@
 <p align="center">
   <b>A small team of AI agents that lives on your own computers.</b><br>
   They go through your email, draft replies you send with one tap, and pick up a chore after you show it to them once.<br>
-  Free and open source, running on the Claude Code, Codex or Kimi Code plan you already pay for.
+  Free and open source, running on the plans you already pay for, through the official Claude Code, Codex and Kimi Code CLIs.
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 
 Piomio is a personal agent platform you run yourself. You get a small team of agents, each with a name, a face, a job and a memory, and you talk to them the way you would to colleagues. Quick things they answer on the spot. Longer work gets passed around as tasks, and they come back to you when it’s done.
 
-They think with the Claude Code, Codex or Kimi Code subscription you already have, and they run on your Mac, PC or server. Before they send or buy anything, they ask you. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots, except it lives on your own machine.
+They think through the official Claude Code, Codex and Kimi Code CLIs, signed in with the plan you already have, and they run on your Mac, PC or server. Before they send or buy anything, they ask you. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots, except it lives on your own machine.
 
 ## A day with the team
 
@@ -46,7 +46,7 @@ They think with the Claude Code, Codex or Kimi Code subscription you already hav
 | 🛡️&nbsp;**The email that asked too much** | A phishing email tells the agent to forward your invoices. Because the agent has just read outside mail, a new recipient has to get your yes. Keys go into a vault the model never sees. |
 | 🔌&nbsp;**A service in one sentence** | “Connect my Notion.” A card shows up in the chat and you sign in once. Notion, Linear and anything with an MCP server connect directly; Gmail, Google Calendar, Slack, GitHub and many more come through Composio, an outside service whose cloud sees that data. |
 | 👥&nbsp;**Three requests, one message** | The assistant splits them up. A teammate compares laptops while the reminder gets set and the trains are found, and each answer comes back as a reply to your message. |
-| 💻&nbsp;**Out of Claude Code, on to Codex** | An agent fixes a failing test on your MacBook through Claude Code. When that subscription hits its limit, it carries on with Codex. |
+| 💻&nbsp;**Out of Claude Code, on to Codex** | An agent fixes a failing test on your MacBook through Claude Code. When your Claude plan hits its limit, it carries on with Codex. |
 | 🎓&nbsp;**Show it a chore once** | Order water in the agents’ browser and talk as you go. The agent saves it as a skill, asks what it may press without you and up to what amount, then orders every Friday. |
 | 🗺️&nbsp;**A page instead of a wall of text** | “Make a page for Saturday’s walk.” You get an interactive page in the chat with the route, places with prices, the weather and photos. |
 | 📰&nbsp;**Your own news channel** | “Every morning, collect news about AI and electric cars.” An agent edits the channel and posts the gist, the numbers and a picture. |
@@ -91,7 +91,7 @@ It works out what the machine is, installs Piomio and asks you only what is your
 
 **On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub through a QR code, and approvals need Face ID.
 
-**On more computers.** Each one joins with a one-time code. The agents can then use its files, its own Claude Code or Codex, and its commands if the owner allows. See [Other computers](#other-computers).
+**On more computers.** Each one joins with a one-time code. The agents can then use its files, its own Claude Code or Codex (signed in there with your own account), and its commands if you allow them. See [Other computers](#other-computers).
 
 ## How to work with it
 
@@ -317,9 +317,7 @@ Then, as root, `ufw allow 8080/tcp` (and only 8080: the console now listens on e
 
 The card turns green once the brain is signed in. The login is kept on the server in `/data/home/agent`, so there is nothing to run in a terminal. The **Brains** page has the same buttons.
 
-Claude Code can also use a long-lived token instead: run `claude setup-token` on any computer with Claude Code and paste the token into the chat. It is stored in the vault as **`claude_code_token`** and the Claude Code brain picks it up.
-
-Each runs as its official CLI (`claude`, `codex`, `kimi` from `@moonshot-ai/kimi-code`), signed in with your own account; Piomio never takes or copies their tokens.
+Each runs as its official CLI (`claude`, `codex`, `kimi` from `@moonshot-ai/kimi-code`) and signs in on its maker's own page with your account: Piomio only hands the code to the CLI and never takes or copies its tokens. Each computer signs in on its own. Piomio does not take tokens from `claude setup-token` either: Anthropic's terms don't allow apps to store them, so a pasted one is removed from the message and kept nowhere.
 
 **API keys as brains** (the `api:*` brains, Codex with an OpenAI key, API keys for other machines' brains) are off unless the hub starts with `PIOMIO_API_KEYS=1`. Keys for everything else (web search, Telegram, speech-to-text) work either way.
 
@@ -555,3 +553,5 @@ To run the app from source without touching an installed Piomio: stage once (`no
 ## License
 
 [Apache-2.0](LICENSE)
+
+Piomio is an independent open-source project, not affiliated with or endorsed by Anthropic, OpenAI or Moonshot AI. Claude and Claude Code are trademarks of Anthropic; ChatGPT and Codex are trademarks of OpenAI; Kimi is a trademark of Moonshot AI. Piomio runs their official CLIs, which you sign in to with your own account, and each use stays under that provider's terms.

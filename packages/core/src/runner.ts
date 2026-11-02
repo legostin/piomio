@@ -290,7 +290,7 @@ export class SessionRunner {
     }
     // Secrets come out first: message hooks, the stored message and the model only see vault:// references.
     const cap = this.d.secrets.capture(text, conversationId, "user");
-    if (cap.stored.length || cap.withheld) opts.onCapture?.(cap);
+    if (cap.stored.length || cap.withheld || cap.refused) opts.onCapture?.(cap);
     text = cap.text;
     const hooked = await this.d.hooks.run("message.in", { conversationId, text, channel: opts.channel }, (p, r) =>
       r.block ? { blocked: r.block } : r.text !== undefined ? { ...p, text: r.text } : p,
@@ -299,6 +299,7 @@ export class SessionRunner {
     const parts: MessagePart[] = [...(text || !attachments.length ? [{ type: "text" as const, text }] : []), ...attachments];
     const msg = this.d.store.addMessage({ conversationId, role: "user", parts, status: "complete", channel: opts.channel });
     if (cap.withheld) this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "error", message: t("secrets.withheld") }], status: "complete" });
+    if (cap.refused) this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "error", message: t("secrets.refused") }], status: "complete" });
     if (hooked.blocked) {
       this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "error", message: t("message.blocked", { reason: hooked.blocked }) }], status: "complete" });
       return msg;

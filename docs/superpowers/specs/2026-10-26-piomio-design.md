@@ -212,7 +212,7 @@ type BrainEvent =
 
 Адаптеры MVP:
 
-- **`claude-code`** — `claude -p --output-format stream-json --verbose --input-format text`, `--mcp-config` (сервер `openbot` через stdio-мост), `--strict-mcp-config`, `--append-system-prompt`, `--resume <id>`, `--permission-mode dontAsk` с `--allowedTools` (встроенные файловые инструменты + `mcp__openbot__*`), `--setting-sources ""`. Аутентификация в контейнере — `CLAUDE_CODE_OAUTH_TOKEN` из vault (получается командой `claude setup-token`) или `ANTHROPIC_API_KEY`; на машине пользователя — его существующий логин.
+- **`claude-code`** — `claude -p --output-format stream-json --verbose --input-format text`, `--mcp-config` (сервер `openbot` через stdio-мост), `--strict-mcp-config`, `--append-system-prompt`, `--resume <id>`, `--permission-mode dontAsk` с `--allowedTools` (встроенные файловые инструменты + `mcp__openbot__*`), `--setting-sources ""`. Аутентификация — только собственный вход Claude Code на каждой машине (`claude auth login` из чата или уже существующий логин); токены подписки hub не принимает и не хранит: условия Anthropic запрещают приложениям собирать и хранить их.
 - **`codex`** — `codex exec --json` / `codex exec resume <id> --json`, MCP-сервер `openbot` через `-c mcp_servers.openbot.command=...`, песочница `workspace-write`. Аутентификация — логин ChatGPT на машине или `OPENAI_API_KEY`.
 - **`api`** — собственная петля: провайдеры `anthropic` (Messages API) и `openai` (Chat Completions; покрывает OpenAI, OpenRouter, Ollama, LM Studio, vLLM). Инструменты — из MCP-шлюза ядра.
 
