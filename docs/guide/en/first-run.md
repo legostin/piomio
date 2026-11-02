@@ -15,7 +15,7 @@ From then on the app's window signs itself in. You type the password only in ano
 
 ### On a server or from source
 
-Open the chat (on a server that's usually `http://localhost:8080` through the `ssh -L` line the installer printed). The **First run** form asks for the **Setup code** too. It proves you are the person who installed the hub, so nobody who finds the page first can claim it.
+Open the chat (on a server, the link the installer printed, which has the code in it, or `http://localhost:8080` through its `ssh -L` line). The **First run** form asks for the **Setup code** too. It proves you are the person who installed the hub, so nobody who finds the page first can claim it.
 
 Where the code is:
 
@@ -56,6 +56,8 @@ As soon as a brain works, the app opens on your assistant's chat and the assista
 2. **Its look.** A profile card shows up in the chat with its avatar and how proactive it is. Change them on the card, or just tell it.
 3. **How it talks to you.** Formal or casual, short or detailed answers, a character. What you say goes into its instructions.
 4. **Your team.** It asks who else should join right away and suggests three or four roles that would help you (a secretary, a programmer, a finance helper…), plus "nobody for now". For each one you pick, it shows a card with the new teammate's name and description, rewrites it when you correct it, and creates the agent on your yes.
+
+On a server whose link still waits for Tailscale's sign-in (you skipped it in the installer), the assistant starts with that: a card with **Sign in to Tailscale**, and the link once it answers. See [Access from anywhere](anywhere.md).
 
 Say "not now" to skip any of these. More about agents and teams: [Agents and the team](agents.md).
 

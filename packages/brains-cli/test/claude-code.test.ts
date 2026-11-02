@@ -390,7 +390,8 @@ describe("confined brains (BrainSessionOptions.confine)", () => {
     const after = (flag: string) => args[args.indexOf(flag) + 1];
     expect(after("--permission-mode")).toBe("acceptEdits");
     expect(after("--permission-prompt-tool")).toBe("mcp__piomio__native_permission");
-    expect(after("--allowedTools").split(",")).toEqual(["WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__piomio"]);
+    // WebFetch asks the hub, which reviews an address that could carry data out of a tainted session.
+    expect(after("--allowedTools").split(",")).toEqual(["WebSearch", "TodoWrite", "Task", "Skill", "mcp__piomio"]);
     const settings = JSON.parse(readFileSync(after("--settings"), "utf8"));
     expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: true, filesystem: { denyRead: confine.denyRead, allowRead: confine.allowRead }, network: { allowedDomains: [] } });
     // Unconfined, as before.

@@ -686,6 +686,8 @@ export class TelegramBot {
     const mediaOnly = media.length > 0 && !(msg.text ?? "").trim() && !header && !footer && !buttons.length;
     const chunks = mediaOnly ? [] : splitMarkdown(msg.text ?? "", TELEGRAM_LIMIT - 96 - htmlToPlain(footer).length - htmlToPlain(header).length);
     if (!chunks.length && !mediaOnly) chunks.push("");
+    // Telegram's servers fetch a previewed link as the message arrives: only the one the hub cleared, in its own chunk.
+    const previewAt = msg.preview ? chunks.findIndex((c) => c.includes(msg.preview!)) : -1;
     let lastId: number | undefined;
     for (let i = 0; i < chunks.length; i++) {
       let html: string;
@@ -701,7 +703,7 @@ export class TelegramBot {
       const sent = await this.sendHtml(chatId, html, {
         buttons: last ? buttons : undefined,
         silent: msg.silent,
-        preview: msg.kind === "reply",
+        preview: i === previewAt ? msg.preview : undefined,
       });
       lastId = sent?.message_id;
     }
@@ -815,7 +817,8 @@ export class TelegramBot {
     }
   }
 
-  private async sendHtml(chatId: number, html: string, opts: { buttons?: InlineButton[][]; silent?: boolean; preview?: boolean } = {}): Promise<TgMessage | undefined> {
+  /** `preview`: the one link Telegram may draw a preview of (its servers fetch it); without it, none. */
+  private async sendHtml(chatId: number, html: string, opts: { buttons?: InlineButton[][]; silent?: boolean; preview?: string } = {}): Promise<TgMessage | undefined> {
     const api = this.api;
     if (!api) throw new Error(this.t("status.notConnected"));
     const params: Record<string, unknown> = {
@@ -823,7 +826,7 @@ export class TelegramBot {
       text: html,
       parse_mode: "HTML",
       disable_notification: opts.silent || undefined,
-      link_preview_options: opts.preview ? undefined : { is_disabled: true },
+      link_preview_options: opts.preview ? { url: opts.preview } : { is_disabled: true },
       reply_markup: opts.buttons?.length ? { inline_keyboard: opts.buttons } : undefined,
     };
     try {

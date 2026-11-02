@@ -4,11 +4,11 @@ You are a coding agent (Claude Code, Codex, Kimi Code or similar) and the person
 
 ## Rules
 
-- Download only from `https://piomio.io` and `https://github.com/legostin/piomio` (and, if a CLI is missing, its official installer named below).
+- You need the internet. Download only from `https://piomio.io` and `https://github.com/legostin/piomio` (and, if a CLI is missing, its official installer named below). If a download fails because your sandbox has no network, ask the person for permission to run it with network access; don't stop or work around it. Codex that says it can't ask: tell the person to choose "Ask for approval" in Codex's `/permissions`, then try again.
 - Never ask for, read out, type or store a password, token or API key. The person chooses Piomio's password in Piomio's own window or page; keys go into Piomio's encrypted vault through its chat later.
 - Never copy a CLI's sign-in (`~/.claude*`, `~/.codex`, `~/.kimi`, keychain items) to another user or machine. Whoever runs Piomio signs in as themselves.
 - Never delete or move Piomio's data: `~/Library/Application Support/Piomio` or `.../Owlbot` (macOS), `%LOCALAPPDATA%\Piomio` (Windows), `~/.local/share/piomio` (Linux). Reinstalling and updating keep it.
-- Ask before you use `sudo` or root, replace an installed Piomio, or change a firewall. Don't make the chat reachable from the network: it stays on `localhost`, and "access from anywhere" in Piomio's chat gives it a private HTTPS link later.
+- Ask before you use `sudo` or root, replace an installed Piomio, or change a firewall. Don't open Piomio's ports to the network: the chat stays on `localhost`, and its link from anywhere (through Tailscale, which the person signs in to) is the way in from outside.
 - If a step fails, read the error, try the fix this guide gives, and otherwise tell the person what happened in plain words. Don't improvise around a security check.
 
 ## 1. Look at the machine
@@ -24,7 +24,7 @@ Already installed? Don't reinstall. Make sure it runs (open the app, or `systemc
 ## 2. Ask one question: which way
 
 - **A new Piomio here** (most people): this machine becomes the person's Piomio. Chats, agents and memory live here.
-- **A computer of the Piomio they already have**: their Piomio stays where it is, and this machine joins it so agents can work here. They need an invite: in their Piomio's chat they say "connect a computer" and get a one-time link `https://<hub>/join/<code>` (it works for an hour). Their Piomio must be reachable from here: on a home computer that means "turn on access from anywhere" in its chat first.
+- **A computer of the Piomio they already have**: their Piomio stays where it is, and this machine joins it so agents can work here. They need an invite: in their Piomio's chat they say "connect a computer" and get a one-time link `https://<hub>/join/<code>` (it works for an hour). For a Linux server the card's **Linux server** button shows the whole command with the link in it, which they can paste to you. Their Piomio must be reachable from here: on a home computer that means "turn on access from anywhere" in its chat first.
 
 ## 3a. macOS (13.5 or later, Apple silicon or Intel)
 
@@ -78,7 +78,13 @@ A computer of their Piomio (`PIOMIO_NAME` is what it's called in their Machines 
 curl -fsSL https://piomio.io/install.sh | PIOMIO_NAME=<name> sh -s -- "<invite link>"
 ```
 
-The installer prints the setup code, the `ssh -L` line that opens the chat, and the brains it found. Keep that output for the last step.
+For a new Piomio the installer prints the setup code and the brains it found, then Piomio's link from anywhere: Piomio starts with it on, and it needs the person to sign in to Tailscale (a free account is enough). Your output is not a terminal, so the installer doesn't wait: it prints Tailscale's sign-in page (`https://login.tailscale.com/a/…`) and the `ssh -L` line that opens the chat without Tailscale. Give the person the sign-in page; if Tailscale then asks to allow Funnel, they do that too. Once they have signed in, this prints the link (with the setup code in it), waiting until it answers:
+
+```sh
+sudo -iu piomio piomio link --wait   # Piomio runs as you: piomio link --wait
+```
+
+If they'd rather not use Tailscale, the `ssh -L` line is the way in; the assistant in Piomio's chat offers the sign-in again later.
 
 **Sign in to a brain** as the user Piomio runs as (`sudo -iu piomio` when it is `piomio`; skip if Piomio runs as you and you are signed in). The person does the sign-in, since it opens their account; give them the commands for the CLI they use:
 
@@ -93,7 +99,7 @@ Piomio sees a new sign-in within a minute; no restart. Check it: `systemctl --us
 End with a short summary: what you installed and where, what they still have to do, and how to open the chat:
 
 - Mac or PC, a new Piomio: the Piomio window is open; they pick a password there, and the assistant in the chat takes them through the rest (Telegram, other computers, getting to know them). The chat is also at http://localhost:41780 on this computer.
-- A server with a new Piomio: on their own computer they run the `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 <user>@<server>` line the installer printed and keep it running, open http://localhost:8080, enter the setup code and pick a password. Later "turn on access from anywhere" in the chat gives a permanent private link with no tunnel.
+- A server with a new Piomio: they open the link `piomio link` printed, `https://piomio.<tailnet>.ts.net/#setup=<code>`, on any phone or computer and pick a password; the assistant in the chat takes them through the rest. Without Tailscale: on their own computer they run the `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 <user>@<server>` line the installer printed and keep it running, open http://localhost:8080, enter the setup code and pick a password.
 - A computer of their Piomio: it shows up in the Machines list of their Piomio; they decide there what agents may do on it.
 
 More: the docs at https://piomio.io/en/docs/ (each page also as Markdown: https://piomio.io/en/docs/server.md, …; the list is in https://piomio.io/llms.txt), the server guide at https://piomio.io/en/server/ and the README at https://github.com/legostin/piomio.

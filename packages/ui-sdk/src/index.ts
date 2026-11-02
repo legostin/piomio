@@ -302,7 +302,9 @@ export interface PiomioUIRuntime {
   api: HubApi;
   /**
    * Where the page loads a picture from: the page may only load images from the hub, so an http(s) address goes
-   * through the hub's image proxy. Undefined for what cannot be shown.
+   * through the hub's image proxy. Undefined for what cannot be shown. The proxy fetches a picture an agent's words
+   * or tools put up only once the hub decided it carries no data out; one it never saw (a site's icon) it fetches for
+   * a plugin's UI as asked.
    */
   mediaSrc(src: string): string | undefined;
   /** Interface language (same as ui.i18n.locale). */

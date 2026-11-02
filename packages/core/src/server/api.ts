@@ -16,7 +16,7 @@ import { applyThinking } from "../thinking.ts";
 import { pipeToLeader } from "./forward.ts";
 import { attachmentDisposition, HttpError, safeFile, sendFile } from "./http.ts";
 import { UpdateError } from "../self-update.ts";
-import { imageFileName, MediaError } from "../media.ts";
+import { imageFileName, MediaError, parseImageUrl } from "../media.ts";
 import { entryRef, googleScopes, listCatalog, listIntegrations, logoFile } from "../integrations.ts";
 import { callbackParams } from "../connections.ts";
 import { machineHubUrl, qrSvg } from "../pairing.ts";
@@ -716,16 +716,41 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       .header("x-content-type-options", "nosniff")
       .send(data);
   const mediaFailure = (e: unknown) => (e instanceof MediaError ? new HttpError(e.status, e.key) : e);
+  /**
+   * What the proxy may fetch (policy/pictures.ts): a picture the hub decided to show; for a plugin's own UI (a site's
+   * icon in the browser) also one it never decided. Otherwise only a copy fetched before, which sends nothing out.
+   */
+  const picture = async (url: unknown, plugin: boolean) => {
+    if (!parseImageUrl(url)) throw new MediaError(400, "media.badUrl");
+    const state = hub.pictures.state(url);
+    if (state === "shown" || (plugin && state === undefined)) return hub.media.image(url);
+    const copy = hub.media.cachedImage(url);
+    if (copy) return copy;
+    throw new MediaError(403, "media.held");
+  };
   api.get("/api/media", async (req, reply) => {
-    const q = req.query as { url?: unknown; download?: unknown };
+    const q = req.query as { url?: unknown; download?: unknown; from?: unknown };
     try {
-      const r = await hub.media.image(q.url);
+      const r = await picture(q.url, q.from === "plugin");
       // The viewer's download button: the picture saved under its own name.
       if (q.download === "1") reply.header("content-disposition", attachmentDisposition(imageFileName(String(q.url), r.type)));
       return sendImage(reply, r.data, r.type, 24 * 3600);
     } catch (e) {
       throw mediaFailure(e);
     }
+  });
+  // A picture that did not load: held (the chat offers Show) or just unavailable.
+  api.get("/api/media/state", async (req) => {
+    const url = (req.query as { url?: unknown }).url;
+    if (!parseImageUrl(url)) throw new HttpError(400, "media.badUrl");
+    return { held: hub.pictures.state(url) !== "shown" };
+  });
+  // The person asked to see a held picture: from now on the proxy fetches it.
+  api.post("/api/media/show", async (req) => {
+    const url = (req.body as { url?: unknown } | undefined)?.url;
+    if (!hub.pictures.show(url)) throw new HttpError(400, "media.badUrl");
+    hub.audit.append("user", "media.show", parseImageUrl(url)!.hostname, { url });
+    return { ok: true };
   });
   api.get("/api/map/tiles/:z/:x/:y", async (req, reply) => {
     const { z, x, y } = req.params as { z: string; x: string; y: string };

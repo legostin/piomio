@@ -24,6 +24,9 @@ import type { ApprovalService } from "./approvals.ts";
 import { detailOfTool, stepOfTool, type MachineActivityFeed } from "./activity.ts";
 import { needOf, route, skillOfGoal, type Route } from "./model-router.ts";
 import type { EgressProxy } from "./egress.ts";
+import { urlsIn, type EgressGiven, type EgressGuard } from "./policy/egress.ts";
+import { markdownPictures, type Pictures } from "./policy/pictures.ts";
+import { previewOf } from "./policy/previews.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
 import { buildSystemPrompt, goalPrompt, taskEnding } from "./prompt.ts";
 import { humanFailure } from "./notifier.ts";
@@ -55,6 +58,10 @@ export interface RunnerDeps {
   bus: EventBus;
   redactor: Redactor;
   gateway: ToolGateway;
+  /** What a tainted session may open on the web without a review: the brains' own fetches and inputs feed it (policy/egress.ts). */
+  egressGuard?: EgressGuard;
+  /** Which pictures the hub may fetch when the person sees them: the replies' words decide theirs (policy/pictures.ts). */
+  pictures?: Pictures;
   approvals: ApprovalService;
   egress: EgressProxy;
   /** Claude Code-format plugin dirs to pass to Claude Code sessions. */
@@ -196,6 +203,8 @@ const BRAINS_CHANGED_KEY = "brainsChangedAt";
 const MAX_TURN_CONTEXT = 12_000;
 /** Workspace images a channel gets inline with one reply, in all. */
 const MAX_INLINE_MEDIA_BYTES = 40 * 1024 * 1024;
+/** Words before a text delta read again for its pictures: an image whose address the delta finishes (2048 at most). */
+const PICTURE_OVERLAP = 4200;
 /** A task whose brain broke its turn off tries again this many times. */
 const MAX_BROKEN_RETRIES = 3;
 
@@ -329,6 +338,8 @@ export class SessionRunner {
     );
     const attachments = opts.attachments ?? [];
     const parts: MessagePart[] = [...(text || !attachments.length ? [{ type: "text" as const, text }] : []), ...attachments];
+    // The person's own pictures are theirs to show.
+    if (text) this.d.pictures?.trust(markdownPictures(text));
     const msg = this.d.store.addMessage({ conversationId, role: "user", parts, status: "complete", channel: opts.channel });
     if (cap.withheld) this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "error", message: t("secrets.withheld") }], status: "complete" });
     if (cap.refused) this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "error", message: t("secrets.refused") }], status: "complete" });
@@ -1872,8 +1883,8 @@ export class SessionRunner {
    * Where a finished reply goes besides the web UI: back to the channel the message came from; or, in the default
    * agent's dialog, to every channel, so the user follows the main agent on the phone too (setting channelMirror).
    */
-  /** Returns true when the reply went to every channel (the mirror). */
-  private async deliver(conv: Conversation, text: string, opts: TurnOpts, messageId?: string): Promise<boolean> {
+  /** Returns true when the reply went to every channel (the mirror). `row`: the session that wrote it, for its preview. */
+  private async deliver(conv: Conversation, text: string, opts: TurnOpts, messageId?: string, row?: SessionRow): Promise<boolean> {
     const ch = opts.replyChannel;
     const toChannel = !!ch && ch !== WEB_CHANNEL;
     // Typed in the web UI, or a turn nobody typed (a task finished, a system note): only the default agent's dialog is mirrored.
@@ -1883,10 +1894,18 @@ export class SessionRunner {
     const media = await this.replyMedia(messageId);
     if (!text && !media.length) return !toChannel;
     const path = conv.kind === "main" ? `agent/${encodeURIComponent(conv.agentId)}` : conv.taskId ? `tasks/${encodeURIComponent(conv.taskId)}` : `chat/${encodeURIComponent(conv.id)}`;
-    const reply: OutboundMessage = { kind: "reply", text, conversationId: conv.id, link: `${this.d.config.publicUrl}/${path}`, ...(media.length ? { media } : {}) };
+    const preview = row && text ? this.previewFor(row, text) : undefined;
+    const reply: OutboundMessage = { kind: "reply", text, conversationId: conv.id, link: `${this.d.config.publicUrl}/${path}`, ...(media.length ? { media } : {}), ...(preview ? { preview } : {}) };
     if (toChannel) await this.d.channels.send(ch, reply);
     else await this.d.channels.broadcast(opts.quote ? { ...reply, quote: opts.quote } : reply);
     return !toChannel;
+  }
+
+  /** The link a channel may draw a preview of for a session's reply: one that carries nothing out (policy/previews.ts). */
+  private previewFor(row: SessionRow, text: string): string | undefined {
+    // The hub's own web tools mark the stored session, not this turn's copy of it.
+    const tainted = row.tainted || !!this.d.store.getSession(row.id)?.tainted;
+    return previewOf(text, { id: row.id, tainted }, this.d.egressGuard, () => this.d.gateway.egressGiven(row));
   }
 
   /** Blocks plugins add before a turn's input (turn.context hook), or undefined. Never fails the turn. */
@@ -1992,7 +2011,8 @@ export class SessionRunner {
       for (const it of p.items) {
         const caption = it.caption ? { caption: it.caption } : {};
         if (/^https?:\/\//i.test(it.src)) {
-          out.push({ kind: "image", url: it.src, ...caption });
+          // The channel's servers fetch it by its address: only a picture the hub may fetch itself.
+          if (!this.d.pictures || this.d.pictures.state(it.src) === "shown") out.push({ kind: "image", url: it.src, ...caption });
           continue;
         }
         if (!it.src.startsWith("file:")) continue;
@@ -2155,9 +2175,9 @@ export class SessionRunner {
         // among themselves: the phone gets the outcome, not that.
         const chatter = !opts.replyChannel && opts.quote === undefined && this.wroteToTeammate(r.messageId);
         if (conv.kind !== "group" && !chatter) {
-          const broadcast = await this.deliver(conv, r.answer ?? r.text, opts, r.messageId);
+          const broadcast = await this.deliver(conv, r.answer ?? r.text, opts, r.messageId, row!);
           // Messages from other channels joined the turn: those channels get the reply too (unless all of them did).
-          if (!broadcast) for (const ch of r.channels ?? []) if (ch !== opts.replyChannel) await this.deliver(conv, r.answer ?? r.text, { replyChannel: ch }, r.messageId);
+          if (!broadcast) for (const ch of r.channels ?? []) if (ch !== opts.replyChannel) await this.deliver(conv, r.answer ?? r.text, { replyChannel: ch }, r.messageId, row!);
         }
         return r;
       } finally {
@@ -2218,6 +2238,22 @@ export class SessionRunner {
     let resumeToken: string | undefined;
     let awaitingApproval = false;
     let tokens = 0;
+    /** The brain's own web calls this turn, by id: their results are outside content. */
+    const sourceCalls = new Set<string>();
+    /** This step's first web calls were made before anything from outside reached the session (policy/egress.ts). */
+    let opening = false;
+    /** Pictures of this turn's words already decided, and what the person gave the session (policy/pictures.ts). */
+    const pictured = new Set<string>();
+    let given: EgressGiven | undefined;
+    const decidePictures = (text: string, added: number) => {
+      if (!this.d.pictures) return;
+      const urls = markdownPictures(text.slice(-(added + PICTURE_OVERLAP))).filter((u) => !pictured.has(u));
+      if (!urls.length) return;
+      for (const u of urls) pictured.add(u);
+      // The hub's own web tools mark the stored session, not this turn's copy of it.
+      const tainted = row.tainted || !!this.d.store.getSession(row.id)?.tainted;
+      this.d.pictures.decide({ id: row.id, tainted }, urls, () => (given ??= this.d.gateway.egressGiven(row)));
+    };
 
     const current = () => this.d.store.getMessage(msg.id)?.parts ?? parts;
     const flush = (force = false) => {
@@ -2251,8 +2287,11 @@ export class SessionRunner {
           produced = true;
           fullText += delta;
           const last = parts[parts.length - 1];
-          if (last && last.type === "text") parts[parts.length - 1] = { type: "text", text: last.text + delta };
-          else parts.push({ type: "text", text: delta });
+          const text = last && last.type === "text" ? last.text + delta : delta;
+          if (last && last.type === "text") parts[parts.length - 1] = { type: "text", text };
+          else parts.push({ type: "text", text });
+          // Before any client sees the words: a picture in them is fetched only once the hub has decided about it.
+          decidePictures(text, delta.length);
           this.d.bus.emit("message.delta", { id: msg.id, conversationId: conv.id, delta });
           activity?.step(turnKey, "writing");
           flush();
@@ -2262,7 +2301,17 @@ export class SessionRunner {
           produced = true;
           parts.push({ type: "tool_call", id: e.id, name: e.name, input: this.d.redactor.value(e.input) });
           // The brain's own tools (its shell, files, web) never pass the gateway: the security log gets them here.
-          if (!this.d.gateway.has(e.name)) this.d.audit.append(`agent:${agent.id}`, "brain.tool", e.name, { sessionId: row.id, input: truncateInput(this.d.redactor.value(e.input)) });
+          const own = !this.d.gateway.has(e.name);
+          if (own) this.d.audit.append(`agent:${agent.id}`, "brain.tool", e.name, { sessionId: row.id, input: truncateInput(this.d.redactor.value(e.input)) });
+          // What the brain's own tools wrote and opened, for what its session may open later (policy/egress.ts).
+          if (own && NATIVE_SOURCE_TOOLS.test(e.name)) {
+            sourceCalls.add(e.id);
+            // Chosen before anything from outside reached the session: the addresses are the agent's own pick.
+            if (!row.tainted || opening) {
+              this.d.egressGuard?.opened(row.id, urlsIn(e.input));
+              opening = true;
+            }
+          } else if (own) this.d.egressGuard?.wrote(row.id, e.input);
           if (NATIVE_SOURCE_TOOLS.test(e.name) && !row.tainted) {
             this.d.store.updateSession(row.id, { tainted: true });
             row.tainted = true;
@@ -2273,6 +2322,8 @@ export class SessionRunner {
         }
         case "tool_result": {
           const out = this.d.redactor.text(e.output);
+          opening = false;
+          if (sourceCalls.has(e.id)) this.d.egressGuard?.read(row.id, out);
           if (/awaiting_approval/.test(out)) awaitingApproval = true;
           parts.push({ type: "tool_result", id: e.id, output: truncate(out, 4000), isError: e.isError });
           activity?.step(turnKey, "thinking");

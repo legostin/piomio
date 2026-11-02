@@ -8,24 +8,25 @@ On its own, the hub opens only where it runs: the desktop app on `localhost`, a 
 
 ## Turn it on
 
-Say "turn on access from anywhere" in the chat: the assistant shows its card. The same card is in **Settings** → **Plugins**, under **Communication**: **Access from anywhere**. The **Devices** page and the card for connecting a device have a **Set it up** button that leads there too.
+A hub installed on a server with `install.sh` starts with it on: the installer shows Tailscale's sign-in page and then the link ([On a Linux server](server.md#through-the-link)), and if you skip that, the assistant offers it first in the chat. Elsewhere, say "turn on access from anywhere" in the chat: the assistant shows its card. The same card is in **Settings** → **Plugins**, under **Communication**: **Access from anywhere**. The **Devices** page and the card for connecting a device have a **Set it up** button that leads there too.
 
 1. Press **Turn on**. The card says **Starting the Tailscale node…**
 2. **Sign in to Tailscale.** A free account (Google, Apple, GitHub or Microsoft) is enough; a new account gets a new tailnet. The `piomio` node joins it.
 3. **Allow Funnel.** Tailscale asks the tailnet's admin once, so the link opens from the internet.
-4. The card shows the link, a copy button and **QR code** for opening it on a phone, and the Tailscale account it runs under.
+4. Tailscale issues the link's certificate on its first visit, which takes up to a minute, so until the link answers from the internet the card says it is preparing it. Then it shows the link, a copy button and **QR code** for opening it on a phone, and the Tailscale account it runs under. A chat waiting for it hears that it works.
 
-Turning it on needs a Piomio password, which every hub has after its first-run setup. If your tailnet makes new devices wait for approval, the card says Tailscale is waiting for the admin to approve the `piomio` machine (admin console → Machines).
+Turning it on from the card needs a Piomio password, which every hub has after its first-run setup. If your tailnet makes new devices wait for approval, the card says Tailscale is waiting for the admin to approve the `piomio` machine (admin console → Machines).
 
 ## What goes through the link
 
 - **The web UI.** Sign in with your Piomio password. Passkeys belong to the computer's own address, so through the link it is always the password.
+- **A new server's first-run setup**, with the setup code (the installer puts it in the link it prints). Until the first password is set nobody can do anything there without that code, and wrong codes count toward the same limits as wrong passwords.
 - **The iPhone app**, away from home. Phones reach the hub at the same name on port `8443`, where they see the hub's own certificate they pinned when pairing. A phone paired before the link existed learns it the next time it connects. See [The iPhone app](phone.md).
 - **Your other computers.** While the hub's own address works only on its computer, invite links for new computers point at the link, and `piomio-node` stays connected through it. Brains on those computers reach the hub's tools through the link with their own session tokens. See [Machines and other computers](machines.md).
 
 Never through the link:
 
-- the first-run setup (the setup code and the first password) and the desktop app's own sign-in;
+- the desktop app's own sign-in;
 - the security console with approvals, the vault, rules and the audit: it stays on the computer;
 - plugin webhooks, and the pages a sign-in returns to (Google's, an MCP service's): when one doesn't come back, the card asks you to paste the address from the browser's address bar instead.
 

