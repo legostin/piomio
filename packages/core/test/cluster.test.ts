@@ -281,7 +281,12 @@ describe.skipIf(process.platform === "win32")("a leader whose computer sleeps", 
     await until(() => macRole() === "leader" && !b.cluster.leads(), "the lead back on the mac", 60_000);
     expect(Date.now() - woke).toBeGreaterThanOrEqual(awakeBeforeLead - 2_000);
     expect(b.audit.list({ action: "cluster.*" }).map((e) => e.action).reverse()).toEqual(["cluster.leader", "cluster.standby"]);
-    expect(await mac.ask("switches")).toEqual([
+    // The mac records the switch once its main-only work has started; the vps sees it lead from its heartbeat before that.
+    const switches = await until(async () => {
+      const s = await mac!.ask<unknown[]>("switches");
+      return s.length >= 2 ? s : undefined;
+    }, "the mac recording its switch");
+    expect(switches).toEqual([
       { action: "cluster.standby", why: "another replica led while this one slept" },
       { action: "cluster.leader", why: "no replica leads" },
     ]);
