@@ -29,6 +29,7 @@ import { Team } from "./team.ts";
 import { roadRoute } from "./routing.ts";
 import { UserLocations } from "./user-location.ts";
 import { announceUpdate } from "./updates.ts";
+import { OFFERS_KEY, offerNote, pendingOffers } from "./plugins/offers.ts";
 import { clearRolledBack, confirmStarted, HubUpdates, type StartState } from "./self-update.ts";
 import { FEED_RUN_TOOLS, Feeds } from "./feeds.ts";
 import { SetupChats } from "./setup-chats.ts";
@@ -268,6 +269,10 @@ export class Hub {
     this.bus.on("machine.updated", (m: { id?: string; info?: MachineInfo } | undefined) => m?.id && this.updates.machineChanged(m.id, m.info));
     // The same computer paired again: what named its removed record follows it.
     this.bus.on("machine.replaced", (e: { from: string; to: string }) => this.machineReplaced(e.from, e.to));
+    // The intro ends after the hub started leading on a new hub: the plugin offers follow it.
+    this.bus.on("settings.updated", (e: { keys?: string[] } | undefined) => {
+      if (e?.keys?.includes("setup")) this.offerPlugins();
+    });
     this.devices = new DeviceRegistry({ db: this.db, bus: this.bus, audit: this.audit, invites: this.invites });
     this.locations = new UserLocations(this.settings, (id) => !!this.devices.get(id));
     this.secrets = new SecretIntake({ db: this.db, bus: this.bus, audit: this.audit, vault: this.vault, plugins: () => this.plugins });
@@ -982,8 +987,24 @@ export class Hub {
     this.notifier.startDigestTimer();
     this.forgetClaudeToken();
     for (const m of this.machines.list()) if (m.status === "online") void this.machines.pushSetup(m.id);
-    // A new version since the last start: the default agent tells the person what changed.
-    void announceUpdate(this).catch((e) => console.log(`[piomio] update note: ${e?.message ?? e}`));
+    // A new version since the last start: the default agent tells the person what changed, then offers what came new.
+    void announceUpdate(this)
+      .catch((e) => console.log(`[piomio] update note: ${e?.message ?? e}`))
+      .finally(() => this.offerPlugins());
+  }
+
+  /**
+   * Built-in plugins that ship off with an offer (Pio): the default agent puts them to the person once, after the
+   * intro. The ids offered are the leader's to write; ids of what was offered now.
+   */
+  offerPlugins(): string[] {
+    if (!this.leading || this.stopping || this.setup.firstRun() || this.setup.introLeft().length) return [];
+    const offered = this.settings.getKey<string[]>(OFFERS_KEY, []);
+    const due = pendingOffers(this.plugins.list(), Array.isArray(offered) ? offered : []);
+    if (!due.length) return [];
+    this.settings.setKey(OFFERS_KEY, [...offered, ...due.map((o) => o.id)]);
+    this.tellDefaultAgent(offerNote(due));
+    return due.map((o) => o.id);
   }
 
   /**

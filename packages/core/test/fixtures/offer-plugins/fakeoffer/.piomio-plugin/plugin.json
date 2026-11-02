@@ -1,0 +1,7 @@
+{
+  "id": "fakeoffer",
+  "name": "Fake offer",
+  "defaultEnabled": false,
+  "offer": "It shows a friendly owl over every window.",
+  "permissions": {}
+}

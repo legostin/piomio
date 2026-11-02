@@ -139,6 +139,11 @@ export const PiomioManifestSchema = z.object({
   builtin: z.boolean().default(false),
   /** False: a built-in plugin ships turned off and waits in the catalog until the person turns it on. */
   defaultEnabled: z.boolean().default(true),
+  /**
+   * A built-in plugin that ships off: what the default agent tells the person once to offer it (English, for the
+   * model: what it does, what it needs). core/src/plugins/offers.ts.
+   */
+  offer: z.string().max(2000).optional(),
 });
 
 export type PiomioManifest = z.infer<typeof PiomioManifestSchema>;
