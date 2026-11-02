@@ -1,5 +1,6 @@
 // The server guide (/<lang>/server/): the hub on a Linux server, or the server as a computer of the hub you have,
-// with install.sh; signing in to a CLI there; opening the chat; why not by the server's IP; what to check when stuck.
+// with install.sh; signing in to a CLI there; opening the chat; why not by the server's IP; what to check when stuck;
+// Docker, for the strongest isolation.
 // The README's "On a server, step by step" says the same.
 
 import type { ReactNode } from "react";
@@ -91,7 +92,7 @@ export function ServerGuide() {
         <h1 className="mt-3 font-display text-[clamp(2.1rem,4.6vw,3.4rem)] leading-[1.04] font-extrabold tracking-[-0.025em] text-balance">{t("server.title")}</h1>
         <p className="mt-5 text-[18px] leading-relaxed text-fg-2 text-pretty">{t("server.lead")}</p>
         <p className="mt-4 text-[15px] leading-relaxed text-muted text-pretty">
-          <Rich text={t("server.needs", { docker: `${REPO}#on-a-server-docker` })} />
+          <Rich text={t("server.needs", { docker: "#docker" })} />
         </p>
       </header>
 
@@ -185,9 +186,18 @@ export function ServerGuide() {
             </details>
           ))}
         </div>
-        <p className="mt-10 text-[15px] leading-relaxed text-muted text-pretty">
-          <Rich text={t("server.docker", { docker: `${REPO}#on-a-server-docker` })} />
-        </p>
+      </Part>
+
+      <Part id="docker" title={t("server.docker.title")}>
+        <div className="mt-6 flex flex-col gap-4 text-[16px] leading-relaxed text-fg-2 text-pretty">
+          <p>
+            <Rich text={t("server.docker.text")} />
+          </p>
+          <CopyBlock code={`git clone ${REPO}.git && cd piomio\ndocker compose up -d\ndocker compose logs piomio | grep -A1 "Piomio:"`} />
+          <p>
+            <Rich text={t("server.docker.more", { env: `${REPO}/blob/main/.env.example` })} />
+          </p>
+        </div>
       </Part>
     </article>
   );

@@ -331,11 +331,12 @@ export const FAQ = [1, 2, 3, 4, 5, 6, 7] as const;
 
 export function Install() {
   const { lang, t } = useI18n();
-  const [tab, setTab] = useState<"mac" | "win" | "server">("mac");
-  const tabs: Array<["mac" | "win" | "server", ReactNode, MessageKey]> = [
+  const [tab, setTab] = useState<"mac" | "win" | "server" | "agent">("mac");
+  const tabs: Array<["mac" | "win" | "server" | "agent", ReactNode, MessageKey]> = [
     ["mac", <Apple size={16} />, "install.tab.mac"],
     ["win", <Windows size={15} />, "install.tab.win"],
     ["server", <Server size={16} />, "install.tab.server"],
+    ["agent", <Brain size={16} />, "install.tab.agent"],
   ];
   const steps = (os: "mac" | "win") => (
     <ol className="flex flex-col gap-3">
@@ -360,28 +361,34 @@ export function Install() {
                 role="tab"
                 aria-selected={tab === id}
                 onClick={() => setTab(id)}
-                className={`inline-flex flex-1 items-center justify-center gap-2 rounded-full px-3 py-2 text-[14px] font-semibold transition-all ${tab === id ? "bg-surface text-fg shadow-[var(--shadow)]" : "text-muted hover:text-fg"}`}
+                className={`inline-flex flex-1 items-center justify-center gap-2 rounded-full px-2 py-2 text-[13.5px] font-semibold whitespace-nowrap transition-all sm:px-3 sm:text-[14px] ${tab === id ? "bg-surface text-fg shadow-[var(--shadow)]" : "text-muted hover:text-fg"}`}
               >
-                {icon}
+                {/* Four tabs fit a phone by their names alone. */}
+                <span className="hidden sm:contents">{icon}</span>
                 {t(label)}
               </button>
             ))}
           </div>
           <div className="mt-7" role="tabpanel">
-            {tab === "server" ? (
+            {tab === "agent" ? (
+              // The person's own Claude Code, Codex or Kimi Code installs Piomio where it runs, by the agents' guide (public/setup.md).
+              <div className="flex flex-col gap-4">
+                <p className="text-[16px] text-fg-2">{t("install.agent.lead")}</p>
+                <CopyBlock code={t("install.agent.prompt", { guide: siteConfig.setupGuide })} />
+                <p className="text-[14px] leading-relaxed text-muted">{t("install.agent.note")}</p>
+                <a href={siteConfig.setupGuide} className="self-start text-[14px] font-semibold text-accent-text underline-offset-4 hover:underline">
+                  {t("install.agent.guide")}
+                </a>
+              </div>
+            ) : tab === "server" ? (
               <div className="flex flex-col gap-4">
                 <p className="text-[16px] text-fg-2">{t("install.server.lead")}</p>
                 <CopyBlock code={`curl -fsSL ${siteConfig.installScript} | sh`} />
                 <p className="text-[14px] leading-relaxed text-muted">{t("install.server.note")}</p>
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-                  <a href={`${data.base}${lang}/server/`} className="candy inline-flex items-center gap-2 rounded-full px-5 py-3 text-[15px] font-semibold">
-                    {t("install.server.guide")}
-                    <ArrowRight size={16} />
-                  </a>
-                  <a href={`https://github.com/${siteConfig.repo}#on-a-server-docker`} className="text-[14px] font-semibold text-accent-text underline-offset-4 hover:underline">
-                    {t("install.server.docker")}
-                  </a>
-                </div>
+                <a href={`${data.base}${lang}/server/`} className="candy inline-flex items-center gap-2 self-start rounded-full px-5 py-3 text-[15px] font-semibold">
+                  {t("install.server.guide")}
+                  <ArrowRight size={16} />
+                </a>
               </div>
             ) : (
               <div className="flex flex-col gap-6">

@@ -293,7 +293,11 @@
   "install.server.lead": "On a Linux server, one command as root:",
   "install.server.note": "It prints the setup code and the line that opens the chat on your computer. The server can also join the hub on your Mac as one of its computers.",
   "install.server.guide": "Step-by-step guide",
-  "install.server.docker": "Docker",
+  "install.tab.agent": "With AI",
+  "install.agent.lead": "Already use Claude Code, Codex or Kimi Code? Paste this into it on the computer or server where Piomio should run:",
+  "install.agent.prompt": "Install Piomio on this computer and set it up for me. Follow {guide} step by step. Ask me whenever a decision is mine, and never ask me for passwords or keys. At the end, tell me how to open the chat.",
+  "install.agent.note": "It works out what this machine is, installs Piomio and asks you only what is yours to decide. On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in.",
+  "install.agent.guide": "What it will do",
 
   "server.meta.title": "Piomio on a server: install, sign in, open the chat",
   "server.meta.description": "One command installs Piomio on a Linux server, as the hub itself or as a computer of the hub on your Mac. Sign in to your own Claude Code, Codex or Kimi Code there and open the chat safely.",
@@ -359,7 +363,9 @@
   "server.trouble.a3": "Open the user’s shell with `sudo -iu piomio`: the installer set it up so that `systemctl --user` and `journalctl --user` work there.",
   "server.trouble.q4": "The chat doesn’t open on localhost:8080",
   "server.trouble.a4": "The `ssh -L` line has to keep running while you use the chat. On the server, `sudo -iu piomio`, then `systemctl --user status piomio` and `journalctl --user -u piomio -n 50` show whether Piomio runs and what stops it.",
-  "server.docker": "Prefer Docker? The image runs brains and plugins as separate users and can block their network at the kernel: [see the README]({docker}).",
+  "server.docker.title": "In Docker",
+  "server.docker.text": "The image runs brains and plugins as separate users with their own folders and can block their network at the kernel: the strongest isolation. On a server with Docker and Git:",
+  "server.docker.more": "Compose pulls the ready image `ghcr.io/legostin/piomio`, and the last line prints the setup code. The chat opens the same way, through the `ssh -L` line above. Settings go in `.env` next to `docker-compose.yml` ([.env.example]({env}) lists each one). To update: `git pull && docker compose pull && docker compose up -d`.",
 
   "footer.tagline": "A team of AI agents that lives on your own computers.",
   "footer.github": "GitHub",

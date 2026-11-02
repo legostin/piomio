@@ -85,6 +85,7 @@ Piomio is a self-hosted personal agent platform: a team of AI agents with names 
 - [Releases](${repo}/releases): installers for macOS and Windows
 - [Website](${data.origin}${data.base}en/): live demo, features, FAQ ([Russian](${data.origin}${data.base}ru/))
 - [On a server](${data.origin}${data.base}en/server/): the hub on a Linux server or the server as a computer of an existing hub, signing in to a CLI there, opening the chat ([Russian](${data.origin}${data.base}ru/server/))
+- [Setup for agents](${siteConfig.setupGuide}): step-by-step instructions for a coding agent asked to install and set up Piomio on the machine it runs on (macOS, Windows, a Linux server)
 
 ## Install on a server
 
@@ -94,6 +95,6 @@ On Linux with systemd (x64 or arm64), as root:
 curl -fsSL ${siteConfig.installScript} | sh
 \`\`\`
 
-It creates the user \`piomio\` without sudo and runs the hub as that user's systemd service. Sign in to Claude Code, Codex or Kimi Code as that user (\`sudo -iu piomio\`); the hub uses that sign-in as it is. The chat listens on 127.0.0.1:8080: open it through \`ssh -N -L 8080:localhost:8080 root@<server>\` at http://localhost:8080 with the setup code the installer printed. With an invite link from an existing hub (\`curl -fsSL ${siteConfig.installScript} | sh -s -- https://<hub>/join/<code>\`) the server becomes a computer of that hub instead. Docker: ${repo}#on-a-server-docker
+It creates the user \`piomio\` without sudo and runs the hub as that user's systemd service. Sign in to Claude Code, Codex or Kimi Code as that user (\`sudo -iu piomio\`); the hub uses that sign-in as it is. The chat listens on 127.0.0.1:8080: open it through \`ssh -N -L 8080:localhost:8080 root@<server>\` at http://localhost:8080 with the setup code the installer printed. With an invite link from an existing hub (\`curl -fsSL ${siteConfig.installScript} | sh -s -- https://<hub>/join/<code>\`) the server becomes a computer of that hub instead. Docker: ${data.origin}${data.base}en/server/#docker
 `;
 }

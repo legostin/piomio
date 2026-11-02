@@ -10,6 +10,8 @@ export const siteConfig = {
   siteUrl: "",
   /** The server installer (packaging/linux/install.sh, published by the site's build), as the README and the hub's invite page give it. */
   installScript: "https://piomio.io/install.sh",
+  /** What an agent follows to install Piomio for the person (public/setup.md), named in the prompt the site and the README give. */
+  setupGuide: "https://piomio.io/setup.md",
   languages: ["en", "ru"] as const,
 };
 

@@ -79,7 +79,15 @@ From there the assistant walks you through the rest in the chat, one thing at a 
 curl -fsSL https://piomio.io/install.sh | sh
 ```
 
-It makes a user `piomio` for the hub and its agents and prints the setup code and the `ssh -L` line that opens the chat on your computer. Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead. Step by step: [On a server](#on-a-server), also [on the site](https://piomio.io/en/server/). Prefer Docker? See [In Docker](#on-a-server-docker).
+It makes a user `piomio` for the hub and its agents and prints the setup code and the `ssh -L` line that opens the chat on your computer. Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead. Step by step: [On a server](#on-a-server), also [on the site](https://piomio.io/en/server/). Prefer Docker? See [In Docker](https://piomio.io/en/server/#docker).
+
+**With your AI.** Already use Claude Code, Codex or Kimi Code? Paste this into it on the computer or server where Piomio should run:
+
+```text
+Install Piomio on this computer and set it up for me. Follow https://piomio.io/setup.md step by step. Ask me whenever a decision is mine, and never ask me for passwords or keys. At the end, tell me how to open the chat.
+```
+
+It works out what the machine is, installs Piomio and asks you only what is yours to decide ([what it will do](https://piomio.io/setup.md)). On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in.
 
 **On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub through a QR code, and approvals need Face ID.
 
@@ -198,7 +206,7 @@ Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example)
 <details>
 <summary><b>On a server, step by step</b></summary>
 
-A server stays on, so your agents keep working while your computer sleeps. You need Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like; on Alpine and other musl systems, use [Docker](#on-a-server-docker)) and SSH access as root. The same guide is [on the site](https://piomio.io/en/server/).
+A server stays on, so your agents keep working while your computer sleeps. You need Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like; on Alpine and other musl systems, use [Docker](https://piomio.io/en/server/#docker)) and SSH access as root. The same guide is [on the site](https://piomio.io/en/server/).
 
 There are two ways to use a server:
 
@@ -242,7 +250,7 @@ Commands, after `sudo -iu piomio`:
 
 Files: the app in `~/.local/lib/piomio` (`piomio` in `~/.local/bin`), the data in `~/.local/share/piomio`, settings in `~/.config/piomio/env` ([the variables](#environment-variables), one per line). The chat (`8080`) and the console (`8081`) open on `127.0.0.1`; the phones' port is `8082`.
 
-Without Docker the hub, the plugins and the CLI brains run as one user: the user without sudo is the wall, not separate Unix users and a kernel-level network block. For the strongest isolation, use [Docker](#on-a-server-docker).
+Without Docker the hub, the plugins and the CLI brains run as one user: the user without sudo is the wall, not separate Unix users and a kernel-level network block. For the strongest isolation, use [Docker](https://piomio.io/en/server/#docker).
 
 <a id="server-computer"></a>
 #### A computer of your hub
