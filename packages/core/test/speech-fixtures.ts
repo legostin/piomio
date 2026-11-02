@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import type { VoiceModules } from "../src/speech/backend.ts";
+import { STT_MODELS, VOICES, type ModelSpec, type RuntimePackage, type SpeechSources } from "../src/speech/catalog.ts";
 
 export const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 export const sri = (b: Buffer) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
@@ -44,6 +45,29 @@ export function fileServer(files: Map<string, Buffer>): Promise<{ url: string; s
     setTimeout(() => res.end(body.subarray(Math.floor(body.length / 2))), 5);
   });
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ url: `http://127.0.0.1:${(server.address() as any).port}`, server, hits })));
+}
+
+/**
+ * The catalog with small archives on a fake server: two runtime packages, the voices and speech-to-text models named
+ * (the others keep their real pins and are not served).
+ */
+export async function fakeSources(dir: string, voiceIds: string[] = ["piper-ru-dmitri", "piper-en-ryan"], sttIds: string[] = ["giga-am-v3-ru", "parakeet-v3"]) {
+  const files = new Map<string, Buffer>();
+  const runtime: RuntimePackage[] = (["sherpa-onnx-node", "piper-phonemize-node"] as const).map((name) => {
+    const tgz = npmTarball(dir, name, "9.9.9");
+    files.set(`/${name}/-/${name}-9.9.9.tgz`, tgz);
+    return { name, version: "9.9.9", size: tgz.length, integrity: sri(tgz) };
+  });
+  const model = <T extends ModelSpec>(m: T): T => {
+    const a = modelArchive(dir, m.asset.replace(/\.tar\.bz2$/, ""), m.files);
+    files.set(`/${m.tag}/${m.asset}`, a);
+    return { ...m, size: a.length, sha256: sha256(a) };
+  };
+  const voices = VOICES.map((v) => (voiceIds.includes(v.id) ? model(v) : v));
+  const stt = STT_MODELS.map((m) => (sttIds.includes(m.id) ? model(m) : m));
+  const srv = await fileServer(files);
+  const sources: SpeechSources = { registry: srv.url, releases: srv.url, runtime, voices, stt };
+  return { srv, sources, files };
 }
 
 export interface FakeCalls {

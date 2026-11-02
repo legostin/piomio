@@ -1,10 +1,11 @@
 // Core settings (GET/PATCH /api/settings) plus settings sections contributed by UI plugins.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, LogOut, Power, RotateCcw, Save } from "lucide-react";
-import type { Locale } from "@piomio/shared";
+import { Download, ExternalLink, LogOut, Power, RotateCcw, Save } from "lucide-react";
+import type { Locale, SpeechStatus, VoiceInfo } from "@piomio/shared";
 import { LOCALE_NAMES } from "@piomio/shared/i18n";
 import { api, errorText } from "../lib/api";
+import { fileSize } from "../lib/format";
 import { desktopAction, desktopApp } from "../lib/desktop";
 import { useStore } from "../lib/store";
 import { agents, ensureAgents, hubEvents, logout, refreshBootstrap, session } from "../state/app";
@@ -30,10 +31,12 @@ interface CoreSettings {
   language: Locale;
   /** Speech to text for voice messages. */
   transcription: Transcription;
+  /** The local engine's voice for reading aloud, and its speed. */
+  voice: { voice?: string; speed?: number };
 }
 
 interface Transcription {
-  provider: "auto" | "openai" | "groq" | "custom" | "off";
+  provider: "auto" | "openai" | "groq" | "custom" | "local" | "off";
   model?: string;
   baseUrl?: string;
   keyRef?: string;
@@ -41,6 +44,7 @@ interface Transcription {
 
 const VOICE_PROVIDERS: Array<{ id: Transcription["provider"]; label: MessageKey }> = [
   { id: "auto", label: "settings.voice.auto" },
+  { id: "local", label: "settings.voice.local" },
   { id: "groq", label: "settings.voice.groq" },
   { id: "openai", label: "settings.voice.openai" },
   { id: "custom", label: "settings.voice.custom" },
@@ -66,11 +70,17 @@ export function SettingsPage() {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [voiceEngine, setVoiceEngine] = useState<{ label: string; model: string } | null>();
+  const [speech, setSpeech] = useState<SpeechStatus | null>(null);
 
   const loadVoiceEngine = () =>
     void api.get<{ engine: { label: string; model: string } | null }>("/api/transcription").then(
       (x) => setVoiceEngine(x.engine),
       () => setVoiceEngine(undefined),
+    );
+  const loadSpeech = () =>
+    void api.get<SpeechStatus>("/api/speech").then(
+      (x) => setSpeech(x),
+      () => setSpeech(null),
     );
   const load = async () => {
     setError(undefined);
@@ -79,6 +89,7 @@ export function SettingsPage() {
       setOrig(r);
       setForm(r);
       loadVoiceEngine();
+      loadSpeech();
       setNums({
         notifyRatePerHour: String(r.notifyRatePerHour),
         brainConcurrency: String(r.brainConcurrency),
@@ -97,6 +108,14 @@ export function SettingsPage() {
     ensureAgents();
     return hubEvents.on((e) => {
       if (e.type === "settings.updated" && !dirty.current) void load();
+      if (e.type === "speech.status") {
+        // While a download runs only its progress changes; after it, the texts are read again in this page's language.
+        if (e.status.downloading) setSpeech((s) => (s ? { ...s, runtime: e.status.runtime, downloading: e.status.downloading, error: undefined } : s));
+        else {
+          loadSpeech();
+          loadVoiceEngine();
+        }
+      }
     });
   }, []);
 
@@ -289,7 +308,7 @@ export function SettingsPage() {
                 ))}
               </Select>
             </Field>
-            {form.transcription.provider !== "off" && form.transcription.provider !== "auto" && (
+            {form.transcription.provider !== "off" && form.transcription.provider !== "auto" && form.transcription.provider !== "local" && (
               <Field label={t("settings.voice.model")} hint={form.transcription.provider === "custom" ? undefined : t("settings.voice.modelHint")}>
                 <Input value={form.transcription.model ?? ""} onChange={(e) => set("transcription", { ...form.transcription, model: e.target.value })} placeholder={form.transcription.provider === "groq" ? "whisper-large-v3-turbo" : form.transcription.provider === "openai" ? "gpt-4o-mini-transcribe" : "Systran/faster-whisper-small"} />
               </Field>
@@ -305,6 +324,7 @@ export function SettingsPage() {
               </>
             )}
           </div>
+          {speech && <LocalSpeech speech={speech} provider={form.transcription.provider} value={form.voice ?? {}} onChange={(v) => set("voice", v)} onStatus={setSpeech} />}
         </Card>
 
         {pending.error && <ErrorNote>{pending.error}</ErrorNote>}
@@ -354,5 +374,101 @@ export function SettingsPage() {
         <div className="flex justify-end pb-4">{saveBar}</div>
       </div>
     </Page>
+  );
+}
+
+const SPEEDS = [0.75, 1, 1.25, 1.5];
+
+/**
+ * The hub's local speech engine: local speech-to-text when it is the provider, and the voice answers are read aloud
+ * with. Downloads start at once (Install) and show their progress; the voice and speed are saved with the page.
+ */
+function LocalSpeech({
+  speech,
+  provider,
+  value,
+  onChange,
+  onStatus,
+}: {
+  speech: SpeechStatus;
+  provider: Transcription["provider"];
+  value: CoreSettings["voice"];
+  onChange: (v: CoreSettings["voice"]) => void;
+  onStatus: (s: SpeechStatus) => void;
+}) {
+  const [asked, setAsked] = useState<{ voice?: string; stt?: boolean }>();
+  const install = async (body: { voice?: string; stt?: boolean }) => {
+    setAsked(body);
+    try {
+      onStatus(await api.post<SpeechStatus>("/api/speech/install", body));
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const voiceId = value.voice ?? speech.voice;
+  const voice = speech.voices.find((v) => v.id === voiceId);
+  const speed = value.speed ?? speech.speed;
+  const busy = !!speech.downloading;
+  const stt = speech.stt.local;
+  const itemName = (item: string) => (item === "runtime" ? t("settings.voice.item.runtime") : (speech.voices.find((v) => v.id === item)?.name ?? t("settings.voice.item.stt")));
+  const d = speech.downloading;
+  const percent = d && d.total ? Math.min(100, Math.round((d.received / d.total) * 100)) : 0;
+  const optionText = (v: VoiceInfo) => [v.name, LOCALE_NAMES[v.lang as Locale] ?? v.lang, v.installed ? t("settings.voice.installed") : fileSize(v.size)].join(" · ");
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-hairline pt-4">
+      {provider === "local" && !stt.installed && d?.item !== stt.model && (
+        <InstallRow text={t("settings.voice.localMissing", { size: fileSize(stt.size) })} disabled={busy} onInstall={() => void install({ stt: true })} />
+      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label={t("settings.voice.speaker")} hint={voice && voice.license !== "CC0" ? (voice.license === "unknown" ? t("settings.voice.licenseUnknown") : t("settings.voice.license", { license: voice.license })) : t("settings.voice.speakerHint")}>
+          <Select value={voiceId} onChange={(e) => onChange({ ...value, voice: e.target.value })}>
+            {speech.voices.map((v) => (
+              <option key={v.id} value={v.id}>
+                {optionText(v)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label={t("settings.voice.speed")}>
+          <Select value={String(speed)} onChange={(e) => onChange({ ...value, speed: Number(e.target.value) })}>
+            {[...new Set([...SPEEDS, speed])]
+              .sort((a, b) => a - b)
+              .map((n) => (
+                <option key={n} value={String(n)}>
+                  {t("settings.voice.speedValue", { n })}
+                </option>
+              ))}
+          </Select>
+        </Field>
+      </div>
+      {voice && (!voice.installed || speech.runtime !== "ready") && d?.item !== voice.id && (
+        <InstallRow
+          text={speech.runtime === "ready" ? t("settings.voice.speakerMissing", { size: fileSize(voice.size) }) : t("settings.voice.engineMissing", { size: fileSize(voice.size) })}
+          disabled={busy}
+          onInstall={() => void install({ voice: voice.id })}
+        />
+      )}
+      {d && (
+        <div className="flex flex-col gap-1.5" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-label={itemName(d.item)}>
+          <span className="text-xs text-muted">{t("settings.voice.downloading", { item: itemName(d.item), done: fileSize(d.received), total: fileSize(d.total) })}</span>
+          <span className="h-1 overflow-hidden rounded-full bg-border">
+            <span className="block h-full rounded-full bg-accent transition-[width] duration-200 ease-out" style={{ width: `${Math.max(3, percent)}%` }} />
+          </span>
+        </div>
+      )}
+      {speech.error && !d && <ErrorNote onRetry={asked ? () => void install(asked) : undefined}>{speech.error}</ErrorNote>}
+    </div>
+  );
+}
+
+function InstallRow({ text, disabled, onInstall }: { text: string; disabled: boolean; onInstall: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-sm">
+      <span className="min-w-0 flex-1 text-muted">{text}</span>
+      <Button size="sm" icon={<Download className="size-4" />} onClick={onInstall} disabled={disabled}>
+        {t("settings.voice.install")}
+      </Button>
+    </div>
   );
 }

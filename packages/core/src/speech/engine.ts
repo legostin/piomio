@@ -63,6 +63,8 @@ export class SpeechEngine implements LocalSpeechToText {
   private lastEmit = 0;
   private emitTimer?: NodeJS.Timeout;
   private backend?: Backend;
+  /** The modules the backend was made with (none: the worker). */
+  private backendFor?: () => VoiceModules;
   private stopped = new AbortController();
 
   constructor(d: SpeechEngineDeps) {
@@ -185,12 +187,20 @@ export class SpeechEngine implements LocalSpeechToText {
     const items: Item[] = [...(this.runtimeReady() ? [] : [{ id: "runtime" }]), ...specs.filter((s) => !this.modelReady(s)).map((s) => ({ id: s.id, spec: s }))];
     const fresh = items.filter((i) => !this.queue.some((q) => q.id === i.id));
     if (fresh.length) {
-      if (!this.running) this.failure = undefined;
+      if (!this.running) {
+        this.failure = undefined;
+        // The answer already shows the first download, at 0.
+        this.current = { item: fresh[0].id, received: 0, total: this.itemSize(fresh[0]) };
+      }
       this.queue.push(...fresh);
       this.running ??= this.run().catch((e) => this.d.log?.(`[speech] install stopped: ${e?.message ?? e}`));
       this.changed();
     }
     return this.status(locale);
+  }
+
+  private itemSize(item: Item): number {
+    return item.spec?.size ?? (this.sources.runtime ?? []).reduce((n, p) => n + p.size, 0);
   }
 
   /** Waits for the downloads in progress (tests, shutdown). */
@@ -205,8 +215,7 @@ export class SpeechEngine implements LocalSpeechToText {
       mkdirSync(join(this.root, "models"), { recursive: true });
       while (this.queue.length) {
         const item = this.queue[0];
-        const total = item.spec?.size ?? (this.sources.runtime ?? []).reduce((n, p) => n + p.size, 0);
-        this.current = { item: item.id, received: 0, total };
+        this.current = { item: item.id, received: 0, total: this.itemSize(item) };
         this.changed();
         const progress = (p: { received: number; total: number }) => {
           this.current = { item: item.id, ...p };
@@ -261,7 +270,9 @@ export class SpeechEngine implements LocalSpeechToText {
   }
 
   private engine(): Backend {
-    if (this.backend) return this.backend;
+    if (this.backend && this.backendFor === this.modules) return this.backend;
+    this.backend?.stop();
+    this.backendFor = this.modules;
     if (this.modules) {
       const b = new SherpaBackend(this.modules);
       this.backend = {

@@ -21,6 +21,7 @@ import { entryRef, googleScopes, listCatalog, listIntegrations, logoFile } from 
 import { callbackParams } from "../connections.ts";
 import { machineHubUrl, qrSvg } from "../pairing.ts";
 import { attachmentFromPath, discardAttachment, formatSize, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveAttachment, type AttachmentPart } from "../attachments.ts";
+import { MAX_TRANSCRIBE_BYTES, TranscribeError } from "../transcribe.ts";
 
 export interface ApiOptions {
   kind: "web" | "device";
@@ -673,6 +674,42 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   api.get("/api/transcription", async () => {
     const e = hub.transcriber.engine();
     return { engine: e ? { label: e.label, model: e.model } : null };
+  });
+
+  // ----- the local speech engine (speech/engine.ts): voices and speech to text, downloaded on demand -----
+  api.get("/api/speech", async (req) => hub.speech.status(requestLocale(req)));
+  // Downloads go on in the background: progress comes as the realtime event speech.status.
+  api.post("/api/speech/install", async (req) => {
+    const b = (req.body ?? {}) as { voice?: unknown; stt?: unknown };
+    const s = hub.speech.install({ voice: b.voice, stt: b.stt === true }, requestLocale(req));
+    hub.audit.append("user", "speech.install", undefined, { voice: b.voice ?? null, stt: b.stt === true });
+    return s;
+  });
+  // The words of the text (Markdown dropped, at most 1000 characters) as one WAV; 409 until the voice is installed.
+  api.post("/api/speech/say", async (req, reply) => {
+    const b = (req.body ?? {}) as { text?: unknown; voice?: unknown; speed?: unknown };
+    const wav = await hub.speech.say(String(b.text ?? ""), { voice: b.voice, speed: b.speed });
+    return reply.header("content-type", "audio/wav").header("cache-control", "no-store").send(wav);
+  });
+  // A phrase the overlay heard (a 16 kHz mono WAV): its words, with whatever speech-to-text is set up.
+  await api.register(async (up) => {
+    // Signed in before a 25 MB body is read, not after.
+    up.addHook("onRequest", opts.authenticate);
+    up.addContentTypeParser(["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave", "application/octet-stream"], { parseAs: "buffer", bodyLimit: MAX_TRANSCRIBE_BYTES }, (_req, body, done) =>
+      done(null, body),
+    );
+    up.setErrorHandler((err: any) => {
+      throw err?.code === "FST_ERR_CTP_BODY_TOO_LARGE" ? new HttpError(413, "speech.tooLarge") : err;
+    });
+    up.post("/api/speech/transcribe", { bodyLimit: MAX_TRANSCRIBE_BYTES }, async (req) => {
+      if (!hub.transcriber.engine()) throw new HttpError(503, "speech.noEngine");
+      if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(415, "speech.notWav");
+      try {
+        return { text: await hub.transcriber.transcribeBuffer(req.body, "audio/wav", "phrase.wav") };
+      } catch (e) {
+        throw e instanceof TranscribeError ? new HttpError(502, "speech.transcribeFailed", { reason: e.message }) : e;
+      }
+    });
   });
 
   // ----- notifications, approvals (count only; resolving happens in the console) -----

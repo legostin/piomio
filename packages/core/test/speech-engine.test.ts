@@ -7,13 +7,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SpeechStatus, TranscriptionProvider } from "@piomio/shared";
 import { segments } from "../src/speech/backend.ts";
-import { STT_MODELS, VOICES, type RuntimePackage, type SpeechSources } from "../src/speech/catalog.ts";
+import { STT_MODELS, VOICES } from "../src/speech/catalog.ts";
 import { SpeechEngine } from "../src/speech/engine.ts";
 import { cleanVoice } from "../src/speech/settings.ts";
 import { speakable } from "../src/speech/text.ts";
 import { encodeWav, parseWav } from "../src/speech/wav.ts";
 import { pickEngine, Transcriber } from "../src/transcribe.ts";
-import { fakeModules, fileServer, modelArchive, npmTarball, sha256, sri } from "./speech-fixtures.ts";
+import { fakeModules, fakeSources, sri } from "./speech-fixtures.ts";
 
 describe("text for speaking", () => {
   it("keeps the words of Markdown and drops the rest", () => {
@@ -65,26 +65,6 @@ describe("long audio in pieces", () => {
     expect(segments(new Float32Array(0), rate)).toEqual([[0, 0]]);
   });
 });
-
-/** Sources made of small archives on a fake server: two runtime packages, Dmitri, Ryan and GigaAM. */
-async function fakeSources(dir: string) {
-  const files = new Map<string, Buffer>();
-  const runtime: RuntimePackage[] = (["sherpa-onnx-node", "piper-phonemize-node"] as const).map((name) => {
-    const tgz = npmTarball(dir, name, "9.9.9");
-    files.set(`/${name}/-/${name}-9.9.9.tgz`, tgz);
-    return { name, version: "9.9.9", size: tgz.length, integrity: sri(tgz) };
-  });
-  const model = <T extends { asset: string; files: string[]; tag: string }>(m: T): T & { size: number; sha256: string } => {
-    const a = modelArchive(dir, m.asset.replace(/\.tar\.bz2$/, ""), m.files);
-    files.set(`/${m.tag}/${m.asset}`, a);
-    return { ...m, size: a.length, sha256: sha256(a) };
-  };
-  const voices = VOICES.map((v) => (v.id === "piper-ru-dmitri" || v.id === "piper-en-ryan" ? model(v) : v));
-  const stt = STT_MODELS.map((m) => (m.id === "giga-am-v3-ru" ? model(m) : m));
-  const srv = await fileServer(files);
-  const sources: SpeechSources = { registry: srv.url, releases: srv.url, runtime, voices, stt };
-  return { srv, sources, files };
-}
 
 describe("the local speech engine", () => {
   let dir: string;
