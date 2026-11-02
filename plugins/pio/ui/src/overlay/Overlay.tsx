@@ -376,7 +376,11 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     if (p) setPerms(p);
     if (p && !p.accessibility) return setNote({ text: t("overlay.perm.accessibility"), open: "accessibility" });
     const asked = [...lines].reverse().find((l) => l.me)?.text;
-    const ok = await desk.controlBegin(asked ?? t("overlay.controlHint")).catch(() => false);
+    const ok = await desk.controlBegin(asked ?? t("overlay.controlHint")).catch((e: unknown) => {
+      // The app refuses without the Accessibility permission (macOS).
+      if (/accessibility/i.test(String(e))) setNote({ text: t("overlay.perm.accessibility"), open: "accessibility" });
+      return false;
+    });
     if (ok) setSw((s) => ({ ...s, control: true }));
   };
 
