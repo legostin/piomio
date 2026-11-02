@@ -1036,9 +1036,12 @@ describe("browser plugin behind the hub egress proxy", () => {
         res.writeHead(r.statusCode ?? 502, r.headers);
         r.pipe(res);
       });
+      up.on("error", () => res.destroy());
       req.pipe(up);
     });
     proxy.on("connect", (req, socket: Socket, head) => {
+      // As in core's egress.ts: Chromium may reset a socket it got a 407 on, and an unheard error fails the run.
+      socket.on("error", () => {});
       const auth = req.headers["proxy-authorization"] as string | undefined;
       seen.push({ method: "CONNECT", url: req.url ?? "", auth });
       if (!authorized(auth)) {

@@ -1,6 +1,7 @@
-# A push to main that changes what ships releases a new version by itself: the patch version goes up (the root
-# package.json and package-lock.json's two root versions), the commit "Piomio X.Y.Z" lands on main with the tag vX.Y.Z,
-# and release.yml publishes the installers and the server image.
+# A push to main that changes what ships releases a new version by itself once its checks pass (checks.yml: the types
+# and the tests): the patch version goes up (the root package.json and package-lock.json's two root versions), the
+# commit "Piomio X.Y.Z" lands on main with the tag vX.Y.Z, and release.yml publishes the installers and the server image.
+# A push whose checks fail releases nothing.
 # What doesn't ship releases nothing: the site, the docs, Markdown at the root, tests and test helpers, and the
 # workflows that build none of it (see ships() below). Neither does a push that raised the version itself (a release
 # made by hand). Run this workflow by hand to release a minor or major version.
@@ -45,7 +46,7 @@ jobs:
           ships() {
             case "$1" in
               packages/site/*|packages/testkit/*|docs/*) return 1 ;;
-              .github/workflows/site.yml|.github/workflows/release-on-push.yml) return 1 ;;
+              .github/workflows/site.yml|.github/workflows/release-on-push.yml|.github/workflows/checks.yml) return 1 ;;
               .github/workflows/*) return 0 ;;
               .github/*|*/test/*|*.test.ts|*.test.tsx) return 1 ;;
               */*) return 0 ;;
@@ -69,9 +70,15 @@ jobs:
           echo "$files"
           release false
 
+  # Every push to main is checked, whether it releases or not.
+  checks:
+    uses: ./.github/workflows/checks.yml
+    permissions:
+      contents: read
+
   release:
-    needs: check
-    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.check.outputs.release == 'true') }}
+    needs: [check, checks]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.check.outputs.release == 'true') }}
     runs-on: ubuntu-latest
     concurrency:
       group: release

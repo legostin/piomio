@@ -138,12 +138,12 @@ describe("front desk (integration)", () => {
     expect(shown.parts).toEqual([{ type: "task", taskId: child.id }, { type: "approval", approvalId: a.id, summary: "Run: ps", status: "pending" }]);
     hub.approvals.resolve(a.id, "approve", { via: "console" });
     await until(() => (card()?.parts.find((p) => p.type === "approval") as any)?.status === "approved", "the answer in the dialog");
-    // A task the person started from the Tasks page has no dialog to show it in.
+    // A task the person started from the Tasks page has no dialog to show it in. (The dialog itself keeps getting
+    // messages meanwhile: these tasks run, and their results come back to it.)
     const own = hub.store.createTask({ agentId: "desk", title: "Mine", goal: "z", createdBy: "user", background: false });
-    const before = hub.store.listMessages(dialog, { limit: 50 }).length;
-    hub.approvals.create({ sessionId: "s", conversationId: own.conversationId, taskId: own.id, agentId: "desk", tool: "Bash", input: {}, summary: "Run: ls", effect: "external", tainted: false });
+    const b = hub.approvals.create({ sessionId: "s", conversationId: own.conversationId, taskId: own.id, agentId: "desk", tool: "Bash", input: {}, summary: "Run: ls", effect: "external", tainted: false });
     await sleep(100);
-    expect(hub.store.listMessages(dialog, { limit: 50 }).length).toBe(before);
+    expect(hub.store.listMessages(dialog, { limit: 50 }).some((m) => m.parts.some((p) => p.type === "approval" && p.approvalId === b.id))).toBe(false);
   });
 
   it("shows a card asked outside a turn as a message of its own, with its answer", async () => {
