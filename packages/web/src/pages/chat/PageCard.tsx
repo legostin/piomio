@@ -9,6 +9,7 @@ import { ChevronRight, LayoutTemplate, X } from "lucide-react";
 import type { PageView } from "@piomio/shared";
 import { useStore } from "../../lib/store";
 import { mediaSrc } from "../../lib/media";
+import { QuietImg } from "../../components/picture";
 import { native } from "../../lib/native";
 import { sendMessage } from "../../state/app";
 import { ensurePages, pages } from "../../state/pages";
@@ -21,6 +22,7 @@ const LINK = /^(https?:|mailto:|tel:)/i;
 export function PageCard({ pageId, conversationId }: { pageId: string; conversationId: string }) {
   const list = useStore(pages);
   const [open, setOpen] = useState(false);
+  const [noCover, setNoCover] = useState(false);
   useEffect(() => ensurePages(), []);
   const page = list?.find((p) => p.id === pageId);
   if (!list) return <div className="my-2 h-48 max-w-md animate-pulse rounded-2xl bg-surface-2" />;
@@ -33,8 +35,8 @@ export function PageCard({ pageId, conversationId }: { pageId: string; conversat
         onClick={() => setOpen(true)}
         className="group my-2 block w-full max-w-full overflow-hidden rounded-2xl border border-border bg-surface text-left shadow-card transition hover:border-fg/20 sm:max-w-md"
       >
-        {cover ? (
-          <img src={cover} alt="" loading="lazy" className="aspect-[16/9] w-full object-cover transition duration-500 group-hover:scale-[1.02]" />
+        {cover && !noCover ? (
+          <QuietImg src={cover} alt="" loading="lazy" onFail={() => setNoCover(true)} className="aspect-[16/9] w-full object-cover transition duration-500 group-hover:scale-[1.02]" />
         ) : (
           <span className="flex aspect-[16/7] w-full items-center justify-center bg-gradient-to-br from-accent-soft via-surface-2 to-surface text-accent-text">
             <LayoutTemplate className="size-8" strokeWidth={1.5} />

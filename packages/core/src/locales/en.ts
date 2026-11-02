@@ -292,6 +292,7 @@ export default {
   "media.unavailable": "The image could not be loaded",
   "media.badTile": "No such map tile",
   "media.tileUnavailable": "The map tile could not be loaded",
+  "media.held": "This picture is held: its address could carry data from the chat to that site. Show it from the chat",
   "build.daemonMissing": "The node daemon is not built: run npm run build",
   "build.webMissing": "The web interface is not built. Run <code>npm run build</code>.",
   "build.consoleMissing": "The security console is not built. Run npm run build.",

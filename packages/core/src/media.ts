@@ -345,6 +345,16 @@ export class MediaService {
     });
   }
 
+  /** An external image the proxy fetched before, fresh or not, without going out again; undefined when it has none. */
+  cachedImage(raw: unknown): { data: Buffer; type: string } | undefined {
+    const url = parseImageUrl(raw);
+    if (!url) return undefined;
+    const key = createHash("sha256").update(url.href).digest("hex");
+    const cached = this.media.get(key);
+    const type = this.media.get(`${key}.type`)?.data.toString("utf8");
+    return cached && type ? { data: cached.data, type } : undefined;
+  }
+
   /** One OpenStreetMap tile, fetched on demand (never in bulk), two connections at most, cached for 30 days. */
   tile(z: unknown, x: unknown, y: unknown): Promise<Buffer> {
     const t = parseTile(z, x, y);

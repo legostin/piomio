@@ -291,6 +291,7 @@ export default {
   "media.unavailable": "Не удалось загрузить изображение",
   "media.badTile": "Такого фрагмента карты нет",
   "media.tileUnavailable": "Не удалось загрузить фрагмент карты",
+  "media.held": "Картинка придержана: её адрес может унести данные из чата на тот сайт. Покажите её из чата",
   "build.daemonMissing": "Сборка демона не найдена: выполните npm run build",
   "build.webMissing": "Веб-интерфейс не собран. Выполните <code>npm run build</code>.",
   "build.consoleMissing": "Пульт не собран. Выполните npm run build.",

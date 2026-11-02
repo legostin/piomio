@@ -111,7 +111,10 @@ export async function registerPages(app: FastifyInstance, hub: Hub): Promise<voi
     p.get("/p/:id/:token/img", async (req, reply) => {
       page(req);
       try {
-        const r = await hub.media.image((req.query as { url?: string }).url);
+        // A page runs its own code: what it asks for is fetched, except a picture the hub held (policy/pictures.ts).
+        const url = (req.query as { url?: string }).url;
+        const r = hub.pictures.state(url) === "held" ? hub.media.cachedImage(url) : await hub.media.image(url);
+        if (!r) throw new HttpError(403, "media.held");
         return image(reply, r.data, r.type, 24 * 3600);
       } catch (e) {
         throw media(e);

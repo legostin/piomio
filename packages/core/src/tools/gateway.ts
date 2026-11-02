@@ -14,6 +14,7 @@ import { BACKGROUND_ALWAYS_ALLOWED, decide, SKILL_RUN_TOOLS } from "../policy/en
 import { checkAsked, type AskedCheck, type PersonWords } from "../policy/asked.ts";
 import type { AutoMode } from "../policy/auto.ts";
 import { urlsIn, type EgressGiven, type EgressGuard } from "../policy/egress.ts";
+import { picturesIn, type Pictures } from "../policy/pictures.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { HUB_TOOL_PREFIX, HUB_TOOLS_FOR_EVERY_AGENT, OWN_CARD_TOOLS } from "./hub-tools.ts";
 
@@ -44,6 +45,8 @@ export interface GatewayDeps {
   machineName?: (id: string) => string;
   /** What a tainted session may open on the web without a review (policy/egress.ts). */
   egress?: EgressGuard;
+  /** Which pictures the hub may fetch when the person sees them (policy/pictures.ts). */
+  pictures?: Pictures;
 }
 
 /** How far back the person's words count as asking for an action (ToolSpec.asked): this request, not last week's. */
@@ -145,6 +148,8 @@ export class ToolGateway {
     const urls = tool.source && tool.effect !== "external" ? urlsIn(input) : [];
     const egress = s.tainted && urls.length ? this.d.egress?.check(s.id, urls, () => this.egressGiven(s)) : undefined;
     if (!s.tainted && urls.length) this.d.egress?.opened(s.id, urls);
+    // Pictures the call would put in front of the person, decided before its own input counts as the agent's writing.
+    this.d.pictures?.decide(s, picturesIn(input), () => this.egressGiven(s));
     // The CLI's question carries its own tool's input: native_permission records it once it is answered.
     if (name !== NATIVE_PERMISSION_TOOL) this.d.egress?.wrote(s.id, input);
     const policy = decide(

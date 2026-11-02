@@ -24,7 +24,8 @@ import type { ApprovalService } from "./approvals.ts";
 import { detailOfTool, stepOfTool, type MachineActivityFeed } from "./activity.ts";
 import { needOf, route, skillOfGoal, type Route } from "./model-router.ts";
 import type { EgressProxy } from "./egress.ts";
-import { urlsIn, type EgressGuard } from "./policy/egress.ts";
+import { urlsIn, type EgressGiven, type EgressGuard } from "./policy/egress.ts";
+import { markdownPictures, type Pictures } from "./policy/pictures.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
 import { buildSystemPrompt, goalPrompt, taskEnding } from "./prompt.ts";
 import { humanFailure } from "./notifier.ts";
@@ -57,6 +58,8 @@ export interface RunnerDeps {
   gateway: ToolGateway;
   /** What a tainted session may open on the web without a review: the brains' own fetches and inputs feed it (policy/egress.ts). */
   egressGuard?: EgressGuard;
+  /** Which pictures the hub may fetch when the person sees them: the replies' words decide theirs (policy/pictures.ts). */
+  pictures?: Pictures;
   approvals: ApprovalService;
   egress: EgressProxy;
   /** Claude Code-format plugin dirs to pass to Claude Code sessions. */
@@ -189,6 +192,8 @@ const BRAINS_CHANGED_KEY = "brainsChangedAt";
 const MAX_TURN_CONTEXT = 12_000;
 /** Workspace images a channel gets inline with one reply, in all. */
 const MAX_INLINE_MEDIA_BYTES = 40 * 1024 * 1024;
+/** Words before a text delta read again for its pictures: an image whose address the delta finishes (2048 at most). */
+const PICTURE_OVERLAP = 4200;
 
 export class SessionRunner {
   d: RunnerDeps;
@@ -300,6 +305,8 @@ export class SessionRunner {
     );
     const attachments = opts.attachments ?? [];
     const parts: MessagePart[] = [...(text || !attachments.length ? [{ type: "text" as const, text }] : []), ...attachments];
+    // The person's own pictures are theirs to show.
+    if (text) this.d.pictures?.trust(markdownPictures(text));
     const msg = this.d.store.addMessage({ conversationId, role: "user", parts, status: "complete", channel: opts.channel });
     if (cap.withheld) this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "error", message: t("secrets.withheld") }], status: "complete" });
     if (cap.refused) this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "error", message: t("secrets.refused") }], status: "complete" });
@@ -1896,7 +1903,8 @@ export class SessionRunner {
       for (const it of p.items) {
         const caption = it.caption ? { caption: it.caption } : {};
         if (/^https?:\/\//i.test(it.src)) {
-          out.push({ kind: "image", url: it.src, ...caption });
+          // The channel's servers fetch it by its address: only a picture the hub may fetch itself.
+          if (!this.d.pictures || this.d.pictures.state(it.src) === "shown") out.push({ kind: "image", url: it.src, ...caption });
           continue;
         }
         if (!it.src.startsWith("file:")) continue;
@@ -2120,6 +2128,18 @@ export class SessionRunner {
     const sourceCalls = new Set<string>();
     /** This step's first web calls were made before anything from outside reached the session (policy/egress.ts). */
     let opening = false;
+    /** Pictures of this turn's words already decided, and what the person gave the session (policy/pictures.ts). */
+    const pictured = new Set<string>();
+    let given: EgressGiven | undefined;
+    const decidePictures = (text: string, added: number) => {
+      if (!this.d.pictures) return;
+      const urls = markdownPictures(text.slice(-(added + PICTURE_OVERLAP))).filter((u) => !pictured.has(u));
+      if (!urls.length) return;
+      for (const u of urls) pictured.add(u);
+      // The hub's own web tools mark the stored session, not this turn's copy of it.
+      const tainted = row.tainted || !!this.d.store.getSession(row.id)?.tainted;
+      this.d.pictures.decide({ id: row.id, tainted }, urls, () => (given ??= this.d.gateway.egressGiven(row)));
+    };
 
     const current = () => this.d.store.getMessage(msg.id)?.parts ?? parts;
     const flush = (force = false) => {
@@ -2153,8 +2173,11 @@ export class SessionRunner {
           produced = true;
           fullText += delta;
           const last = parts[parts.length - 1];
-          if (last && last.type === "text") parts[parts.length - 1] = { type: "text", text: last.text + delta };
-          else parts.push({ type: "text", text: delta });
+          const text = last && last.type === "text" ? last.text + delta : delta;
+          if (last && last.type === "text") parts[parts.length - 1] = { type: "text", text };
+          else parts.push({ type: "text", text });
+          // Before any client sees the words: a picture in them is fetched only once the hub has decided about it.
+          decidePictures(text, delta.length);
           this.d.bus.emit("message.delta", { id: msg.id, conversationId: conv.id, delta });
           activity?.step(turnKey, "writing");
           flush();

@@ -1,6 +1,6 @@
 // Markdown renderer for messages. Raw HTML is never rendered: HTML nodes are turned into plain text.
 
-import { memo, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ImageIcon, Lock } from "lucide-react";
@@ -11,6 +11,7 @@ import { openViewer } from "../state/viewer";
 import { remarkUserText } from "../lib/user-markdown";
 import { openOutside } from "../lib/native";
 import { CopyButton, cx } from "./ui";
+import { PictureGate } from "./picture";
 
 type MdNode = { type: string; value?: string; children?: MdNode[] };
 
@@ -32,21 +33,39 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
-/** A picture in the words: it opens the media viewer on itself. */
+/** A picture in the words: it opens the media viewer on itself; held by the hub, it waits for Show; gone, it is a link. */
 function MdImage({ src, shown, alt }: { src: string; shown: string; alt?: string }) {
-  const key = `md:${shown}`;
-  const open = (e: { preventDefault(): void }) => {
-    // A picture inside a link opens here rather than following the link (the viewer links the original).
-    e.preventDefault();
-    openViewer(
-      { kind: "list", items: [{ key, kind: "image", src: shown, name: alt || undefined, download: imageDownload(src), original: /^https?:\/\//i.test(src.trim()) ? src.trim() : undefined }] },
-      key,
-    );
-  };
+  const [broken, setBroken] = useState(false);
+  if (broken) return <ImageLink src={src} alt={alt} />;
   return (
-    <button type="button" data-media-key={key} onClick={open} aria-label={alt || t("message.images.open")} className="my-2 inline-block max-w-full cursor-zoom-in overflow-hidden rounded-xl border border-border align-top">
-      <img src={shown} alt={alt ?? ""} className="block max-h-96 max-w-full" loading="lazy" decoding="async" />
-    </button>
+    <PictureGate src={shown}>
+      {(loaded, failed) => {
+        const key = `md:${loaded}`;
+        const open = (e: { preventDefault(): void }) => {
+          // A picture inside a link opens here rather than following the link (the viewer links the original).
+          e.preventDefault();
+          openViewer(
+            { kind: "list", items: [{ key, kind: "image", src: loaded, name: alt || undefined, download: imageDownload(src), original: /^https?:\/\//i.test(src.trim()) ? src.trim() : undefined }] },
+            key,
+          );
+        };
+        return (
+          <button type="button" data-media-key={key} onClick={open} aria-label={alt || t("message.images.open")} className="my-2 inline-block max-w-full cursor-zoom-in overflow-hidden rounded-xl border border-border align-top">
+            <img src={loaded} alt={alt ?? ""} className="block max-h-96 max-w-full" loading="lazy" decoding="async" onError={() => void failed().then((held) => setBroken(!held))} />
+          </button>
+        );
+      }}
+    </PictureGate>
+  );
+}
+
+/** A picture that cannot be shown here: a link to it. */
+function ImageLink({ src, alt }: { src: string; alt?: string }) {
+  return (
+    <a href={src} target="_blank" rel="noopener noreferrer nofollow" onClick={(e) => openOutside(e, src)} className="inline-flex items-center gap-1">
+      <ImageIcon className="inline size-4" />
+      {alt || t("common.image")}
+    </a>
   );
 }
 
@@ -57,18 +76,12 @@ const components: Components = {
       {children}
     </a>
   ),
-  // The page CSP loads images from the hub only (img-src 'self' data: blob:): web images come through its proxy.
-  // Anything else (another scheme, a relative path) stays a link.
+  // The page CSP loads images from the hub only (img-src 'self' data: blob:): web images come through its proxy, which
+  // fetches only what the hub decided to show. Anything else (another scheme, another hub route) stays a link.
   img: ({ src, alt }) => {
     const s = typeof src === "string" ? src : "";
     const shown = s ? mediaSrc(s) : undefined;
-    if (shown) return <MdImage src={s} shown={shown} alt={alt} />;
-    return (
-      <a href={s} target="_blank" rel="noopener noreferrer nofollow" onClick={(e) => openOutside(e, s)} className="inline-flex items-center gap-1">
-        <ImageIcon className="inline size-4" />
-        {alt || t("common.image")}
-      </a>
-    );
+    return shown ? <MdImage src={s} shown={shown} alt={alt} /> : <ImageLink src={s} alt={alt} />;
   },
   pre: ({ children }) => (
     <div className="group relative">

