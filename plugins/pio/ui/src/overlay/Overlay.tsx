@@ -21,10 +21,8 @@ const WATCH_MS = 2_000;
 /** How long a line of Pio's stays beside the face. */
 const LINE_MS = 12_000;
 const SWITCHES = "pio.switches";
-/** What the engine and a speech-to-text model weigh, besides the voice (shown before the download). */
-const RUNTIME_BYTES = 36e6;
-const STT_BYTES: Record<string, number> = { ru: 170e6 };
-const STT_OTHER_BYTES = 490e6;
+/** What the engine weighs (sherpa-onnx and the phonemizer), shown before the download with the voice and the model. */
+const RUNTIME_BYTES = 20e6;
 
 interface Line {
   id: string;
@@ -92,6 +90,8 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const [speech, setSpeech] = useState<SpeechStatus>();
   const [note, setNote] = useState<{ text: string; open?: "screen" | "accessibility" | "microphone" }>();
   const [listen, setListen] = useState<ListenMode>("name");
+  /** Speech-to-text answered that it has no engine: the local one is offered with the voice. */
+  const [sttMissing, setSttMissing] = useState(false);
   const [side, setSide] = useState(sideOf);
   const api = useMemo(() => new SpeechApi(ui), [ui]);
   // What the event handlers read now (they are set up once).
@@ -130,7 +130,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
       const words = forPio(text, live.current.listen, { keyHeld: held, now: Date.now(), followUntil: live.current.followUntil });
       if (words) await ask(words);
     } catch (e) {
-      if (e instanceof HttpError && (e.status === 503 || e.status === 409)) setNote({ text: t("overlay.voice.noStt") });
+      if (e instanceof HttpError && (e.status === 503 || e.status === 409)) setSttMissing(true);
     }
   };
 
@@ -400,8 +400,9 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
 
   const face: Face = sw.control ? "driving" : speaking ? "speaking" : hearing ? "hearing" : thinking ? "thinking" : sw.voice ? "listening" : sw.watching ? "watching" : "idle";
   const voice = speech?.voices.find((v) => v.id === speech.voice);
-  const needsVoice = sw.voice && speech && (speech.runtime !== "ready" || !voice?.installed || !speech.stt.local.installed);
-  const voiceBytes = (speech?.runtime === "ready" ? 0 : RUNTIME_BYTES) + (voice && !voice.installed ? voice.size : 0) + (speech && !speech.stt.local.installed ? (STT_BYTES[ui.i18n.locale] ?? STT_OTHER_BYTES) : 0);
+  const sttNeeded = sttMissing && !speech?.stt.local.installed;
+  const needsVoice = sw.voice && speech && (speech.runtime !== "ready" || !voice?.installed || sttNeeded);
+  const voiceBytes = (speech?.runtime === "ready" ? 0 : RUNTIME_BYTES) + (voice && !voice.installed ? voice.size : 0) + (speech && !speech.stt.local.installed ? speech.stt.local.size : 0);
   const progress = speech?.downloading && speech.downloading.total > 0 ? Math.round((speech.downloading.received / speech.downloading.total) * 100) : undefined;
 
   return (
@@ -438,6 +439,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
               onToggle={() => void toggleControl()}
             />
             {sw.watching && perms && !perms.screen && <Note text={t("overlay.perm.screen")} action={t("overlay.perm.open")} onAction={() => void desk.openSettings("screen")} />}
+            {sttNeeded && !needsVoice && <Note text={t("overlay.voice.noStt")} />}
             {needsVoice &&
               (speech.runtime === "failed" ? (
                 <Note text={t("overlay.voice.failed", { error: speech.error ?? "" })} action={t("overlay.voice.installButton")} onAction={() => void api.install({ voice: speech.voice, stt: true }).then(setSpeech, () => {})} />

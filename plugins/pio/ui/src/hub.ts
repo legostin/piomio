@@ -1,4 +1,4 @@
-// The hub's speech API for Pio's window (spec "Voice"): raw WAV in, WAV out, which the JSON helpers of @piomio/ui do
+// The hub's speech API for Pio's window (spec "Voice"; SpeechStatus as in @piomio/shared): raw WAV in, WAV out, which the JSON helpers of @piomio/ui do
 // not carry, so these calls send the session's CSRF token themselves.
 
 import type { PiomioUI } from "@piomio/ui";
@@ -17,8 +17,9 @@ export interface SpeechStatus {
   runtime: "missing" | "downloading" | "ready" | "failed";
   error?: string;
   voice: string;
+  speed: number;
   voices: VoiceInfo[];
-  stt: { provider: string; local: { model: string; installed: boolean } };
+  stt: { provider: string; local: { model: string; installed: boolean; size: number } };
   downloading?: { item: string; received: number; total: number };
 }
 
