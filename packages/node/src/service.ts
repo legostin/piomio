@@ -3,7 +3,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import type { MachineUsage, NodeSetup, RpcPeer } from "@piomio/shared";
-import type { FileSync } from "@piomio/replica";
+import { pieceServer, type FileSync, type PieceRequest } from "@piomio/replica";
 import type { PolicyStore } from "./policy.ts";
 import type { BrainHost } from "./brains.ts";
 import type { GuardOptions } from "./guard.ts";
@@ -123,11 +123,8 @@ export class NodeService {
       if (!this.files) return { changes: [], cursor: Number(p?.cursor) || 0, more: false };
       return this.files.changesSince(Number(p?.cursor) || 0, Math.min(Number(p?.limit) || 500, 2_000));
     });
-    peer.handle("files.read", async (p: { root?: string; path?: string; sha?: string }) => {
-      if (!this.files || p?.root !== "workspaces") return null;
-      const b = await this.files.read("workspaces", String(p.path ?? ""), String(p.sha ?? ""));
-      return b ? Buffer.from(b).toString("base64") : null;
-    });
+    const serve = pieceServer(async (_root, path, sha) => this.files?.read("workspaces", path, sha));
+    peer.handle("files.read", (p: PieceRequest) => (this.files && p?.root === "workspaces" ? serve(p) : null));
     peer.handle("exec.run", this.wrap("exec.run", (p: any) => execRun(p ?? {}, policy(), this.guard, this.children)));
     peer.handle("fs.read", this.wrap("fs.read", (p: any) => fsRead(p ?? {}, policy(), this.guard)));
     peer.handle("fs.write", this.wrap("fs.write", (p: any) => fsWrite(p ?? {}, policy(), this.guard)));

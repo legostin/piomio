@@ -1,7 +1,7 @@
 // Composition root for `piomio-node run` (also used by tests).
 
 import { join } from "node:path";
-import { FileSync } from "@piomio/replica";
+import { FileSync, readInPieces, type PieceAnswer } from "@piomio/replica";
 import { loadConfig, loadKey, saveHubUrls, type NodeConfig } from "./home.ts";
 import { PolicyStore } from "./policy.ts";
 import { BrainHost, type BrainHostOptions } from "./brains.ts";
@@ -101,10 +101,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     void files
       .syncFrom(hubName, {
         changesSince: (cursor, limit) => peer.request("files.changes", { cursor, limit }, { timeoutMs: 60_000 }),
-        read: async (root, path, sha) => {
-          const b = await peer.request<string | null>("files.read", { root, path, sha }, { timeoutMs: 300_000 });
-          return b ? new Uint8Array(Buffer.from(b, "base64")) : undefined;
-        },
+        read: (root, path, sha) => readInPieces((q) => peer.request<PieceAnswer>("files.read", q, { timeoutMs: 120_000 }), root, path, sha),
       })
       .catch((e) => o.log(`files: ${e?.message ?? e}`))
       .finally(() => (pulling = false));

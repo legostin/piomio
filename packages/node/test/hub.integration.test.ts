@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -248,6 +249,24 @@ describe("remote brain session", () => {
     await until(() => !hub.brains.list().some((b) => b.ref === `claude-code@${machineId}`), 15_000, "claude-code to be unregistered");
     await expect(hub.machines.call(machineId, "brain.create", { brainId: "claude-code", opts: opts("sess_x", "a/b") })).rejects.toThrow(/disabled/);
   });
+});
+
+describe("the shared workspaces folder", () => {
+  // Bigger than the hub's 4 MB and the node's 16 MB WebSocket frames: a whole-file answer closed the socket.
+  it("carries a 20 MB file both ways without dropping the connection", async () => {
+    const lost = () => logs.filter((l) => /lost the connection|unreachable/i.test(l)).length;
+    const before = lost();
+    const toNode = randomBytes(20 * 1024 * 1024);
+    mkdirSync(join(root, "hub-data", "workspaces", "big"), { recursive: true });
+    writeFileSync(join(root, "hub-data", "workspaces", "big", "from-hub.bin"), toNode);
+    const onNode = join(workspace, "big", "from-hub.bin");
+    await until(() => existsSync(onNode) && readFileSync(onNode).equals(toNode), 60_000, "the hub's file on the node");
+    const toHub = randomBytes(20 * 1024 * 1024);
+    writeFileSync(join(workspace, "big", "from-node.bin"), toHub);
+    const onHub = join(root, "hub-data", "workspaces", "big", "from-node.bin");
+    await until(() => existsSync(onHub) && readFileSync(onHub).equals(toHub), 60_000, "the node's file on the hub");
+    expect(lost()).toBe(before);
+  }, 150_000);
 });
 
 describe("a CLI signed in after the daemon started", () => {
