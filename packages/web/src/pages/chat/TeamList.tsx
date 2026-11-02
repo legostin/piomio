@@ -70,9 +70,10 @@ function MemberRow({
           running={running ? t("team.working") : undefined}
           preview={preview}
           pinned={member?.pinned !== undefined && !agent.archived}
+          menuOpen={menu.openFor === agent.id}
         />
       </Link>
-      <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="inset-y-0 right-2 my-auto" />
+      <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="top-0.5 right-2" />
     </div>
   );
 }
@@ -117,7 +118,10 @@ function DefaultAgentCard({ agent, member, active, menu, onNavigate }: { agent: 
   );
 }
 
-/** The always-on companion (Pio): a small row above the team with what it is doing on the computer now. */
+/**
+ * The always-on companion (Pio): a compact row above the team, its face on the same line as the others', what it is
+ * doing on the computer as a dot on the face and a word after its name.
+ */
 function CompanionRow({ agent, member, active, menu, onNavigate }: { agent: AgentDef; member?: TeamMember; active: boolean; menu: AgentMenuApi; onNavigate?: () => void }) {
   const unread = member?.unread ?? 0;
   const running = !!member?.running;
@@ -131,20 +135,26 @@ function CompanionRow({ agent, member, active, menu, onNavigate }: { agent: Agen
         onClick={onNavigate}
         aria-current={active ? "page" : undefined}
         title={agent.description || undefined}
-        className={cx("press flex items-center gap-2.5 rounded-full py-1 pr-9 pl-1", active ? "bg-surface shadow-card" : menu.openFor === agent.id ? "bg-surface/55" : "hover:bg-surface/55", NO_CALLOUT)}
+        className={cx("press flex items-center gap-3 rounded-2xl px-2.5 py-1.5", active ? "bg-surface shadow-card" : menu.openFor === agent.id ? "bg-surface/55" : "hover:bg-surface/55", NO_CALLOUT)}
         {...triggers}
       >
-        <AgentAvatar avatar={agent.avatar} id={agent.id} name={agent.name} size={28} running={running} />
-        <span className={cx("min-w-0 flex-1 truncate text-[13px]", unread ? "font-semibold" : "font-medium")}>{agent.name}</span>
-        {state && (
-          <span className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-accent-text">
-            {presence && <span className="size-1.5 animate-pulse rounded-full bg-accent" aria-hidden />}
-            {state}
+        <span className="flex w-[38px] shrink-0 justify-center">
+          <span className="relative">
+            <AgentAvatar avatar={agent.avatar} id={agent.id} name={agent.name} size={30} running={running} />
+            {presence && <span className={cx("absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-accent ring-2", active ? "ring-surface" : "ring-canvas")} aria-hidden />}
+          </span>
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13.5px]">
+          <span className={unread ? "font-semibold" : "font-medium"}>{agent.name}</span>
+          {state && <span className="text-muted"> · {state}</span>}
+        </span>
+        {unread > 0 && (
+          <span className="transition-opacity group-hover/agent:opacity-0">
+            <UnreadBadge n={unread} />
           </span>
         )}
-        {unread > 0 && <UnreadBadge n={unread} />}
       </Link>
-      <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="inset-y-0 right-1.5 my-auto" />
+      <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="inset-y-0 right-2 my-auto" />
     </div>
   );
 }
@@ -170,13 +180,26 @@ function rowClass(active: boolean): string {
   );
 }
 
-/** Name and time, then the last line (or what is happening now) and what is unread. */
-function RowText({ title, time, unread, running, preview, pinned }: { title: string; time?: string; unread: number; running?: string; preview: string; pinned?: boolean }) {
+/**
+ * Name and time, then the last line (or what is happening now) and what is unread. In a row with a menu the time gives
+ * way to the menu's button on hover (`menuOpen`: while the menu is open too).
+ */
+function RowText({ title, time, unread, running, preview, pinned, menuOpen }: { title: string; time?: string; unread: number; running?: string; preview: string; pinned?: boolean; menuOpen?: boolean }) {
   return (
     <span className="min-w-0 flex-1">
       <span className="flex items-baseline gap-2">
         <span className={cx("min-w-0 flex-1 truncate text-[14px]", unread ? "font-semibold" : "font-medium")}>{title}</span>
-        {time && <span className={cx("shrink-0 text-[11px] tabular-nums", unread ? "font-medium text-accent-text" : "text-muted")}>{time}</span>}
+        {time && (
+          <span
+            className={cx(
+              "shrink-0 text-[11px] tabular-nums transition-opacity",
+              unread ? "font-medium text-accent-text" : "text-muted",
+              menuOpen === undefined ? undefined : menuOpen ? "opacity-0" : "group-hover/agent:opacity-0 group-has-[:focus-visible]/agent:opacity-0",
+            )}
+          >
+            {time}
+          </span>
+        )}
       </span>
       <span className="mt-0.5 flex items-center gap-2">
         {running ? (

@@ -347,6 +347,15 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     );
   }, [mode]);
 
+  // What Pio said and the person saw here (the card, a line beside the face) is read: no unread count for it in Piomio.
+  const readUpTo = useRef("");
+  useEffect(() => {
+    const last = [...lines].reverse().find((l) => !l.me);
+    if (!conv || !last || mode === "bubble" || readUpTo.current === last.id) return;
+    readUpTo.current = last.id;
+    void ui.api.post(`/api/conversations/${encodeURIComponent(conv)}/read`, {}).catch(() => {});
+  }, [mode, lines, conv]);
+
   // Pio's line beside the face for a while.
   useEffect(() => {
     if (!popup) return;

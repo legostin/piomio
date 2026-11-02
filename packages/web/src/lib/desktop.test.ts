@@ -25,7 +25,7 @@ describe("desktop app links", () => {
   });
 
   it("marks where a window without a title bar is dragged from", () => {
-    const mac = { scheme: "piomio", test: false, overlayTitleBar: true };
+    const mac = { scheme: "piomio", test: false, overlayTitleBar: true, pio: false };
     expect(dragRegion(false, mac)).toEqual({ "data-tauri-drag-region": "" });
     expect(dragRegion(true, mac)).toEqual({ "data-tauri-drag-region": "deep" });
     expect(dragRegion(true, { ...mac, overlayTitleBar: false })).toEqual({});
