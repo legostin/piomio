@@ -1,7 +1,8 @@
 // Scriptable brain for core integration tests.
 // "CALL <tool> <json>" calls a hub tool over MCP; "LIMIT" makes brain `fake` hit its limit; "PROMPT?" echoes the instructions.
 // Group chats: "HANDOFF <id>" on the last line replies "over to @<id>"; "ECHO?" anywhere echoes the turn's "[...]" lines;
-// "SLOW" at the end of the last line keeps the turn going until it is interrupted (or 5 s pass), "BRIEF" for 0.8 s.
+// "SLOW" at the end of the last line keeps the turn going until it is interrupted (or 5 s pass), "BRIEF" for 0.8 s;
+// "CRASH" there breaks the turn off after a first word, the way a brain whose process died does.
 // Brain `fake` takes input into such a turn (steer): the turn then ends with "fake also heard: <its last line>";
 // `fake2` cannot steer, so the hub sends it as the next turn.
 // "TIME?" answers with the turn's "[Now: …]" line (or "none"); a turn with files answers with their paths and the note.
@@ -148,6 +149,12 @@ export default {
             }
             // A task's first turn ends with the hub's "When you are done…" line: its goal counts as the last line.
             const last = lastLine(turn.text.replace(/\n+When you are done[^\n]*\s*$/, ""));
+            // Its process dies mid-turn, after a first word.
+            if (last.endsWith("CRASH")) {
+              yield { type: "text", delta: `${id} started` };
+              yield { type: "error", message: "RPC peer closed", fatal: true };
+              return;
+            }
             if (last.endsWith("SLOW") || last.endsWith("BRIEF")) {
               yield { type: "text", delta: `${id} is thinking` };
               await new Promise<void>((resolve) => {

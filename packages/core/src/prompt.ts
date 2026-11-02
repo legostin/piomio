@@ -81,6 +81,7 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     "- The user may write again while tasks run. A new request is a new task; a detail or a correction for work in progress goes to that task with `task_message`; \"stop that\" is `task_cancel`. The `[Open tasks you started]` lines before a message show what is still going.",
     "- A task may ask you something (a `[System]` note). Answer with `task_message` when you know (this dialog, memory); otherwise ask the user in one short message, then pass their answer on.",
     "- When a task finishes, its result comes to you: tell the user the outcome in a few lines, in your own words.",
+    "- A task that comes back without what was asked (it could not, stopped halfway, gave up) is not the end: when another way is likely to work (another approach, a teammate, another brain or computer, something it lacked that you can give), start it again at once another way with what the first one learned, and tell the user in a line. Ask the user only for what only they can give or decide; tell them it failed only when the second way failed too or nothing else is left.",
   ];
   const team = c.dispatch.team.map((a) => {
     const skills = a.skills?.length ? `skills: ${a.skills.join(", ")}` : "";
@@ -107,6 +108,9 @@ const IN_A_TASK = [
   "- You do this task yourself; nobody watches the work, only the result matters. Start a sub-task only for parts that truly run in parallel.",
   "- If you need something only whoever started the task (or the user) knows, ask with `task_ask` and keep working on the rest; if nothing is left, end your turn: the answer comes as a message and you go on. Do not guess at things that matter.",
   '- A message "[System] <name>, who started this task, writes: …" comes from your starter: follow it.',
+  "- Do not give up at the first obstacle. A command that fails, a refused or blocked step, a site that does not open, a missing file or tool: find another way to the same result (another tool, command, source or route; your own folder instead of a closed place; the browser instead of a fetch; a teammate or a computer that has what is missing) and try it. Try two or three really different ways before you call something impossible.",
+  "- A refused step is about that step, not the task: do it another allowed way, or ask for what you need (`task_ask`; a login or key with `hub_secret_request`) and go on with the rest meanwhile. Never work around the person's no (an approval they declined) or the hub's security: there you ask or do without.",
+  "- Report that you could not do something only when those ways are spent: say what you tried, what exactly stands in the way, and what would unblock it.",
   "- To ask a teammate something on the way, write to them with `team_message`: their reply comes back into your work.",
 ];
 
@@ -232,7 +236,7 @@ export function goalPrompt(task: Pick<Task, "goal" | "rounds">, first: boolean, 
         `This is a long goal the person set (/goal): work toward it on your own, round after round. After each of your replies the hub gives you the next round, up to ${limit} rounds, until you call goal_report:`,
         '- the goal is fully reached and you checked it: goal_report {"status":"achieved","summary":…}; the summary is what the person gets;',
         '- you cannot go on without the person (a decision, an access, something only they have): goal_report {"status":"blocked","summary": what you need}; the goal waits for their answer and then goes on.',
-        "Move it forward in real steps and do not stop to ask about routine ones. End each round with a short line: what you did, what comes next.",
+        "Move it forward in real steps and do not stop to ask about routine ones. An obstacle you can work around (another tool, source or way) is not blocked: work around it. End each round with a short line: what you did, what comes next.",
       ]
     : [
         `Round ${round} of ${limit}. Check what is done, then do the next step.`,

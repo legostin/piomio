@@ -377,7 +377,10 @@ export function registerCoreTools(d: CoreToolDeps): void {
       },
     },
     async (i, ctx) => {
-      const r = await d.tasks.message(String(i.taskId), String(i.text), { agentId: ctx.agentId, conversationId: ctx.conversationId, taskId: ctx.taskId, tainted: ctx.tainted });
+      // A brain that calls it before loading its schema guesses the name: "message" or "note" is the text.
+      const body = [i.text, i.message, i.note].find((v) => typeof v === "string" && v.trim());
+      if (!body) return text("Nothing sent: give `text`, what the task should know or do.", true);
+      const r = await d.tasks.message(String(i.taskId), String(body), { agentId: ctx.agentId, conversationId: ctx.conversationId, taskId: ctx.taskId, tainted: ctx.tainted });
       return text(r.text, !r.ok);
     },
   );

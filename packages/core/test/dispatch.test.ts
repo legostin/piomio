@@ -193,6 +193,26 @@ describe("agents as entry points (integration)", () => {
     expect(done.result).toContain("writes: skip the docs");
   });
 
+  it("takes a clarification sent as `message`, and sends nothing empty", async () => {
+    const c = (await web.req("GET", "/api/bootstrap")).mainConversationId as string;
+    await idle(c);
+    await say(c, `CALL task_delegate {"title":"Guessed field","goal":"look around SLOW"}`);
+    const id = await startedTask(c, "Guessed field");
+    const tc = (await task(id)).conversationId;
+    await until(async () => (await messages(tc)).some((m) => m.role === "assistant" && textOf(m).includes("fake is thinking")), "the task at work");
+    await idle(c);
+    await say(c, `CALL task_message {"taskId":"${id}"}`);
+    await idle(c);
+    expect(textOf((await messages(c)).filter((m) => m.role === "assistant").at(-1)!)).toMatch(/Nothing sent: give `text`/);
+    expect((await messages(tc)).some((m) => textOf(m).includes("writes: undefined"))).toBe(false);
+    await say(c, `CALL task_message {"taskId":"${id}","message":"use the second way"}`);
+    const done = await until(async () => {
+      const t = await task(id);
+      return t.status === "done" ? t : undefined;
+    }, "the task to finish", 8000);
+    expect(done.result).toContain("writes: use the second way");
+  });
+
   it("places a task on a computer, or says which computers there are", async () => {
     const c = (await web.req("GET", "/api/bootstrap")).mainConversationId as string;
     await idle(c);
@@ -238,9 +258,14 @@ describe("agents as entry points (integration)", () => {
     expect(dialog).toContain("two requests in one message are two tasks");
     expect(dialog).toContain("- coder: Coder — Writes code (on: Studio)");
     expect(dialog).toContain("- m1: Studio (offline when this session started)");
+    // A task back without its result is tried again another way before the user hears it failed.
+    expect(dialog).toContain("start it again at once another way");
     const inTask = buildSystemPrompt({ ...base, task: { id: "t1", title: "x", createdBy: "agent" } as Task });
     expect(inTask).not.toContain("## How you work");
     expect(inTask).toContain("`task_ask`");
+    // An obstacle is a reason to try another way; the person's no is not one to work around.
+    expect(inTask).toContain("Try two or three really different ways");
+    expect(inTask).toContain("Never work around the person's no");
   });
 
   it("keeps what an agent with its own files makes in its folder, not on the person's Desktop", () => {
