@@ -8,14 +8,18 @@ import { activeSlide, mediaSrc } from "../../lib/media";
 import { partKey } from "../../lib/gallery";
 import { openViewer } from "../../state/viewer";
 import { cx } from "../../components/ui";
+import { PictureGate } from "../../components/picture";
 import { t } from "../../i18n";
 
 type Shown = ImageItem & { url: string; key: string };
 
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** An image that fades in once loaded, with a quiet placeholder while it loads and when it cannot. */
-function Picture({ src, alt, fit, className }: { src: string; alt: string; fit: "contain" | "cover"; className?: string }) {
+/**
+ * An image that fades in once loaded, with a quiet placeholder while it loads and when it cannot. `failed` (from a
+ * PictureGate) says whether the hub held it: then the gate shows the Show line instead.
+ */
+function Picture({ src, alt, fit, className, failed }: { src: string; alt: string; fit: "contain" | "cover"; className?: string; failed?: () => Promise<boolean> }) {
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const img = useRef<HTMLImageElement>(null);
   useEffect(() => {
@@ -41,7 +45,7 @@ function Picture({ src, alt, fit, className }: { src: string; alt: string; fit: 
         decoding="async"
         draggable={false}
         onLoad={() => setState("ok")}
-        onError={() => setState("error")}
+        onError={() => void (failed?.() ?? Promise.resolve(false)).then((held) => !held && setState("error"))}
         className={cx(
           "block transition-opacity duration-300 ease-out",
           fit === "cover" ? "h-full w-full object-cover" : "max-h-[420px] w-auto max-w-full object-contain",
@@ -55,9 +59,13 @@ function Picture({ src, alt, fit, className }: { src: string; alt: string; fit: 
 function SingleImage({ item, onOpen }: { item: Shown; onOpen: () => void }) {
   return (
     <figure className="inline-flex max-w-full flex-col overflow-hidden rounded-[22px] border border-hairline bg-surface shadow-card sm:max-w-md">
-      <button type="button" data-media-key={item.key} onClick={onOpen} aria-label={item.alt || item.caption || t("message.images.open")} className="group block cursor-zoom-in overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-accent">
-        <Picture src={item.url} alt={item.alt ?? item.caption ?? ""} fit="contain" className="transition-transform duration-300 ease-out group-hover:scale-[1.01]" />
-      </button>
+      <PictureGate src={item.url} className="m-2">
+        {(src, failed) => (
+          <button type="button" data-media-key={item.key} onClick={onOpen} aria-label={item.alt || item.caption || t("message.images.open")} className="group block cursor-zoom-in overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-accent">
+            <Picture src={src} alt={item.alt ?? item.caption ?? ""} fit="contain" failed={failed} className="transition-transform duration-300 ease-out group-hover:scale-[1.01]" />
+          </button>
+        )}
+      </PictureGate>
       {item.caption && <figcaption className="px-3.5 py-2.5 text-[13px] leading-snug text-muted">{item.caption}</figcaption>}
     </figure>
   );
@@ -121,15 +129,19 @@ function Carousel({ items, onOpen }: { items: Shown[]; onOpen: (i: number) => vo
         >
           {items.map((it, i) => (
             <figure key={`${i}-${it.src}`} className="w-[82%] shrink-0 snap-start sm:w-[68%]" aria-roledescription="slide" aria-label={t("message.images.slide", { n: i + 1, total: items.length })}>
-              <button
-                type="button"
-                data-media-key={it.key}
-                onClick={() => onOpen(i)}
-                aria-label={it.alt || it.caption || t("message.images.open")}
-                className="group block w-full cursor-zoom-in overflow-hidden rounded-[20px] border border-hairline bg-surface shadow-card outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              >
-                <Picture src={it.url} alt={it.alt ?? it.caption ?? ""} fit="cover" className="aspect-[4/3] w-full transition-transform duration-300 ease-out group-hover:scale-[1.015]" />
-              </button>
+              <PictureGate src={it.url} className="aspect-[4/3] w-full justify-center">
+                {(src, failed) => (
+                  <button
+                    type="button"
+                    data-media-key={it.key}
+                    onClick={() => onOpen(i)}
+                    aria-label={it.alt || it.caption || t("message.images.open")}
+                    className="group block w-full cursor-zoom-in overflow-hidden rounded-[20px] border border-hairline bg-surface shadow-card outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  >
+                    <Picture src={src} alt={it.alt ?? it.caption ?? ""} fit="cover" failed={failed} className="aspect-[4/3] w-full transition-transform duration-300 ease-out group-hover:scale-[1.015]" />
+                  </button>
+                )}
+              </PictureGate>
               {it.caption && <figcaption className="mt-1.5 truncate px-1 text-[13px] text-muted" title={it.caption}>{it.caption}</figcaption>}
             </figure>
           ))}

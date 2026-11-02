@@ -20,5 +20,7 @@
   "setup.tavily.title": "Tavily API key",
   "setup.tavily.hint": "Optional: search tuned for agents. Get a key on app.tavily.com.",
   "integration.summary": "Web search, reading pages and RSS feeds; Brave or Tavily keys are optional, DuckDuckGo works without one",
-  "integration.example": "What is new in the world today?"
+  "integration.example": "What is new in the world today?",
+  "approval.fetch": "Open {url}",
+  "approval.rss": "Read the feed {url}"
 }

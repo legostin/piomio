@@ -11,6 +11,7 @@ import { errorText } from "../../lib/api";
 import { formatTime } from "../../lib/format";
 import { cadenceOf, dayKey } from "../../lib/feeds";
 import { mediaSrc } from "../../lib/media";
+import { QuietImg } from "../../components/picture";
 import { agents, ensureAgents } from "../../state/app";
 import { ensureFeeds, feedPosts, feeds, loadPosts, markFeedRead, runFeed } from "../../state/feeds";
 import { askInChat } from "../../state/ask";
@@ -31,11 +32,13 @@ const CADENCE_LABEL = {
 /** One news item: its picture, the title (the link), the gist, the source and the time. */
 export function PostCard({ post }: { post: FeedPost }) {
   const img = post.image ? mediaSrc(post.image) : undefined;
+  // Held by the hub (its address could carry data out) or gone: the post goes on without it.
+  const [noImg, setNoImg] = useState(false);
   return (
     <article className="overflow-hidden rounded-[22px] border border-hairline bg-surface shadow-card">
-      {img && (
+      {img && !noImg && (
         <a href={post.url ?? post.image} target="_blank" rel="noopener noreferrer" className="group block overflow-hidden">
-          <img src={img} alt="" loading="lazy" className="aspect-[16/9] w-full bg-surface-2 object-cover transition-transform duration-500 ease-out group-hover:scale-[1.02]" />
+          <QuietImg src={img} alt="" loading="lazy" onFail={() => setNoImg(true)} className="aspect-[16/9] w-full bg-surface-2 object-cover transition-transform duration-500 ease-out group-hover:scale-[1.02]" />
         </a>
       )}
       <div className="min-w-0 px-4 pt-3.5 pb-3">

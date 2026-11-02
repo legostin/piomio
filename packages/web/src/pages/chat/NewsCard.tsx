@@ -7,6 +7,7 @@ import type { MessagePart } from "@piomio/shared";
 import { useStore } from "../../lib/store";
 import { feedPath } from "../../lib/feeds";
 import { mediaSrc } from "../../lib/media";
+import { QuietImg } from "../../components/picture";
 import { shortTime } from "../../lib/format";
 import { feeds } from "../../state/feeds";
 import { t } from "../../i18n";
@@ -43,7 +44,7 @@ export function NewsCard({ part }: { part: NewsPart }) {
                 {item.text && <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-muted">{item.text.replace(/[*_`#>]/g, "")}</p>}
                 {meta && <div className="mt-1 text-[11.5px] font-medium text-muted/80">{meta}</div>}
               </div>
-              {img && <img src={img} alt="" loading="lazy" className="size-[68px] shrink-0 rounded-[14px] object-cover shadow-[inset_0_0_0_1px_rgb(0_0_0/0.06)]" />}
+              {img && <QuietImg src={img} alt="" loading="lazy" className="size-[68px] shrink-0 rounded-[14px] object-cover shadow-[inset_0_0_0_1px_rgb(0_0_0/0.06)]" />}
             </>
           );
           return (

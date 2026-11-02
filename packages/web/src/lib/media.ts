@@ -10,12 +10,44 @@ export function isLocalSrc(src: string): boolean {
   return (src.startsWith("/") && !src.startsWith("//")) || src.startsWith("data:image/") || src.startsWith("blob:");
 }
 
-/** The address the page loads an image part's `src` from, or undefined when it cannot be shown. */
+const proxied = (url: string) => `/api/media?url=${encodeURIComponent(url)}`;
+
+/**
+ * The address the page loads an image part's `src` from, or undefined when it cannot be shown. The proxy fetches only
+ * pictures the hub decided to show (policy/pictures.ts on the hub). A path is read as the browser will request it
+ * ("/./p/…" is "/p/…"): only workspace files load as they are, the proxy in its own form; other hub routes do not
+ * (a page's image route would fetch for an agent's words).
+ */
 export function mediaSrc(src: string): string | undefined {
   const s = src.trim();
   if (s.startsWith("file:")) return s.length > 5 ? `/api/files?path=${encodeURIComponent(s.slice(5))}` : undefined;
-  if (/^https?:\/\//i.test(s)) return `/api/media?url=${encodeURIComponent(s)}`;
-  return isLocalSrc(s) ? s : undefined;
+  if (/^https?:\/\//i.test(s)) return proxied(s);
+  if (s.startsWith("data:image/") || s.startsWith("blob:")) return s;
+  if (!isLocalSrc(s)) return undefined;
+  let u: URL;
+  try {
+    u = new URL(s, "http://hub.invalid");
+  } catch {
+    return undefined;
+  }
+  if (u.host !== "hub.invalid") return undefined;
+  if (u.pathname === "/api/files") return u.pathname + u.search;
+  const url = u.pathname === "/api/media" ? u.searchParams.get("url") : null;
+  return url && /^https?:\/\//i.test(url.trim()) ? proxied(url.trim()) : undefined;
+}
+
+/** For plugins' own UI (`@piomio/ui`): their pictures (a site's icon) load also when the hub never decided about them. */
+export function pluginMediaSrc(src: string): string | undefined {
+  const s = src.trim();
+  if (/^https?:\/\//i.test(s)) return `${proxied(s)}&from=plugin`;
+  return s.startsWith("file:") ? mediaSrc(s) : isLocalSrc(s) ? s : undefined;
+}
+
+/** The web address a proxied picture stands for, or undefined for any other source. */
+export function proxiedUrl(shown: string): string | undefined {
+  if (!shown.startsWith("/api/media?")) return undefined;
+  const url = new URLSearchParams(shown.slice("/api/media?".length)).get("url");
+  return url && /^https?:\/\//i.test(url) ? url : undefined;
 }
 
 /** The same place on openstreetmap.org, with a marker. */

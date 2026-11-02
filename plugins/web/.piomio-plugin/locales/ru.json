@@ -20,5 +20,7 @@
   "setup.tavily.title": "API-ключ Tavily",
   "setup.tavily.hint": "Необязательно: поиск, заточенный под агентов. Ключ — на app.tavily.com.",
   "integration.summary": "Поиск в интернете, чтение страниц и RSS-лент; ключи Brave или Tavily по желанию, DuckDuckGo работает без ключа",
-  "integration.example": "Что нового в мире сегодня?"
+  "integration.example": "Что нового в мире сегодня?",
+  "approval.fetch": "Открыть {url}",
+  "approval.rss": "Прочитать ленту {url}"
 }

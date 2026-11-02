@@ -256,6 +256,8 @@ export function registerTools(ctx: PluginContext, mgr: BrowserManager): void {
         return parts.join("\n");
       });
     },
+    // A card shows only when the address may carry data out of a tainted session (the hub's policy/egress.ts).
+    { approvalSummary: "%approval.open%" },
   );
 
   reg(
@@ -483,6 +485,8 @@ export function registerTools(ctx: PluginContext, mgr: BrowserManager): void {
         }
       });
     },
+    // A card shows only when the address may carry data out of a tainted session (the hub's policy/egress.ts).
+    { approvalSummary: "%approval.tabs%" },
   );
 
   reg(
@@ -717,6 +721,8 @@ export function registerTools(ctx: PluginContext, mgr: BrowserManager): void {
         return deliverDownload(ctx, call, rec.path, rec.name, rec.size);
       });
     },
+    // A card shows only when the address may carry data out of a tainted session (the hub's policy/egress.ts).
+    { approvalSummary: "%approval.download%" },
   );
 
   // ---------- history ----------

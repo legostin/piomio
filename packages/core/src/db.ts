@@ -133,6 +133,8 @@ const MIGRATIONS: string[] = [
   `alter table tasks add column rounds integer not null default 0;`,
   // Why auto mode stopped an action (Approval.auto, JSON; docs/superpowers/specs/2026-11-02-auto-mode-design.md).
   `alter table approvals add column auto text;`,
+  // What the hub may fetch when a chat shows a picture (policy/pictures.ts): "shown" or "held", per address.
+  `create table pictures(url text primary key, state text not null, at text not null);`,
 ];
 
 /**
