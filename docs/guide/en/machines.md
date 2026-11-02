@@ -148,10 +148,10 @@ How it behaves:
 
 ## Updates
 
-A computer running `piomio-node` older than the hub shows **Update** on its row in the **Machines** block and in the phone's **Hub** tab. Pressed, it gets the hub's own version over its connection and restarts in a few seconds. A computer connected through the Piomio app updates with the app. More in [Updates](updates.md).
+A computer running `piomio-node` older than the hub shows **Update** on its row in the **Machines** block and in the phone's **Hub** tab. Pressed, it gets the hub's own version over its connection and restarts in a few seconds. A computer connected through the Piomio app updates with the app; an app older than 0.2.7 can't update itself, so install the current one on that computer from [piomio.io](https://piomio.io). Agents know which Piomio each computer runs and say when one is older than the hub. More in [Updates](updates.md).
 
 ## Remove a computer
 
-In **Settings** → **Machines**, press **Disconnect** on its card and confirm. Its key is revoked and the daemon can't connect again; to bring the computer back, connect it anew. In the chat, "disconnect my old laptop" does the same, after your approval.
+In **Settings** → **Machines**, press **Disconnect** on its card and confirm. Its key is revoked and the daemon can't connect again; to bring the computer back, connect it anew. Connected anew, it takes its old record's place (the hub knows it by its host name), whether you connect it before or after removing the old one: agents that thought with its brains or were bound to it, tasks waiting for it and the team's rules for where work goes move to it. In the chat, "disconnect my old laptop" does the same, after your approval.
 
 On the computer itself: a server's `piomio-node uninstall` removes the service (the key and the policy stay in `~/.piomio-node`). In the desktop app, **Reset Piomio…** in the icon's menu also removes this computer's connection to a hub.

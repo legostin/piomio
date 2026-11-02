@@ -5,8 +5,8 @@
 import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, basename } from "node:path";
 import { stringify as toYaml } from "yaml";
-import type { AgentDef, Locale } from "@piomio/shared";
-import { normalizeLocale, parseAvatar, parseFrontmatter, parseThinking } from "@piomio/shared";
+import type { AgentDef, AgentThinking, Locale } from "@piomio/shared";
+import { formatBrainRef, normalizeLocale, parseAvatar, parseBrainRef, parseFrontmatter, parseThinking, sameBrain } from "@piomio/shared";
 import type { AgentsState } from "./agents-state.ts";
 
 export const DEFAULT_BRAINS = ["claude-code@local", "codex@local", "kimi@local", "api:*"];
@@ -67,6 +67,24 @@ export function patchAgent(prev: AgentDef, patch: Partial<AgentDef>, locale: Loc
   const { name, description, ...rest } = patch;
   const edited = { ...tr, ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}) };
   return { ...prev, ...rest, i18n: { ...prev.i18n, [locale]: edited } };
+}
+
+/** A brain ref on computer `from` put on `to`; any other as it was. */
+export function brainMoved(ref: string, from: string, to: string): string {
+  const r = parseBrainRef(ref);
+  return r.machineId === from ? formatBrainRef({ ...r, machineId: to }) : ref;
+}
+
+/**
+ * The agent with what named computer `from` (its brains there, the brain a kind of work prefers, its computers) on
+ * `to` instead, each brain kept once; undefined when nothing did (machines.ts successor: the same computer paired again).
+ */
+export function agentMoved(a: AgentDef, from: string, to: string): AgentDef | undefined {
+  const brains = a.brains.map((b) => brainMoved(b, from, to)).filter((b, i, all) => all.findIndex((x) => sameBrain(x, b)) === i);
+  const thinking = a.thinking && (Object.fromEntries(Object.entries(a.thinking).map(([k, c]) => [k, c?.brain ? { ...c, brain: brainMoved(c.brain, from, to) } : c])) as AgentThinking);
+  const machines = a.machines && [...new Set(a.machines.map((m) => (m === from ? to : m)))];
+  const moved = { ...a, brains, ...(thinking ? { thinking } : {}), ...(machines ? { machines } : {}) };
+  return JSON.stringify(moved) === JSON.stringify(a) ? undefined : moved;
 }
 
 export function agentName(a: AgentDef, locale: Locale): string {

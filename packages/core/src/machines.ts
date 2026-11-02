@@ -14,6 +14,7 @@ import { hubLocale, LocalizedError } from "./i18n.ts";
 import { InviteRegistry } from "./invites.ts";
 import type { MachineSetups } from "./machine-setup.ts";
 import type { Cluster } from "./cluster.ts";
+import { compareVersions } from "./updates.ts";
 
 export const NODE_AUTH_PREFIX = "piomio-node-auth:";
 
@@ -36,6 +37,8 @@ export class MachineHub {
   setups?: MachineSetups;
   /** Only the leading replica sets machines up and shares their workspaces (cluster.ts). */
   cluster?: Cluster;
+  /** This hub's version: machine_list says which computers run an older Piomio. */
+  version?: string;
   private peers = new Map<string, RpcPeer>();
   private fileTimers = new Map<string, NodeJS.Timeout>();
   /** When each machine's connection was last heard from (pings, hellos). */
@@ -97,7 +100,29 @@ export class MachineHub {
     const m = this.get(id)!;
     this.bus.emit("machine.updated", m);
     this.invites.joined(p.code, "machine", m.name);
+    for (const r of this.replaced()) if (r.to === id) this.bus.emit("machine.replaced", r);
     return m;
+  }
+
+  /**
+   * The computer a removed record was: one paired again gets a new id (a new key), so the live machine with its
+   * hostname paired after it, the newest if there are several. Undefined for a record still paired.
+   */
+  successor(id: string): string | undefined {
+    const host = (r: any) => json<MachineInfo | undefined>(r.info, undefined)?.hostname?.toLowerCase();
+    const old = this.db.prepare("select * from machines where id = ? and revoked = 1").get(id) as any;
+    if (!old || !host(old)) return undefined;
+    const rows = this.db.prepare("select * from machines where revoked = 0 and created_at > ? order by created_at desc").all(old.created_at) as any[];
+    return rows.find((r) => host(r) === host(old))?.id;
+  }
+
+  /** Every removed record with the machine that took its place. */
+  replaced(): Array<{ from: string; to: string }> {
+    const rows = this.db.prepare("select id from machines where revoked = 1 order by created_at").all() as Array<{ id: string }>;
+    return rows.flatMap((r) => {
+      const to = this.successor(r.id);
+      return to ? [{ from: r.id, to }] : [];
+    });
   }
 
   list(): Machine[] {
@@ -130,6 +155,8 @@ export class MachineHub {
     this.peers.get(id)?.close();
     this.audit.append("user", "machine.revoke", id);
     this.bus.emit("machine.updated", { id, status: "offline", revoked: true });
+    const to = this.successor(id);
+    if (to) this.bus.emit("machine.replaced", { from: id, to });
   }
 
   /** Handle a node's WebSocket: challenge → signature → RPC. */
@@ -276,6 +303,11 @@ export class MachineHub {
       }
     };
     const machineProp = { type: "string", description: "Machine id or name (see machine_list)" };
+    // A daemon from before 0.2.5 does not say its version.
+    const app = (i: MachineInfo) => {
+      const older = !!this.version && (!i.version || compareVersions(this.version, i.version) > 0);
+      return `, Piomio ${i.version ?? "from before 0.2.5"}${older ? ` (older than this hub's ${this.version}: ask the user to install the current Piomio on that computer)` : ""}`;
+    };
 
     registry.register(
       { name: "machine_list", owner: "core", effect: "read", description: "List the user's connected computers: status, OS, brains (subscriptions) and allowed directories.", inputSchema: { type: "object", properties: {} } },
@@ -284,7 +316,7 @@ export class MachineHub {
         if (!ms.length) return text("No machines are paired. The user can connect a computer on the Machines page.");
         return text(
           ms
-            .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}${m.info.gpus?.length ? `, GPU: ${m.info.gpus.join(", ")}` : ""}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}` : ""}`)
+            .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}${m.info.gpus?.length ? `, GPU: ${m.info.gpus.join(", ")}` : ""}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}${app(m.info)}` : ""}`)
             .join("\n"),
         );
       }),
