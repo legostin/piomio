@@ -164,6 +164,8 @@ export const CORE_METHODS = [
   "connections.token", // an access token of the hub's connection the plugin's integration uses (e.g. Google)
   "conversations.tell", // a note for an agent that it answers: wakes the task, else the dialog (the default agent's when none)
   "speech.transcribe", // the words of a short audio clip (base64), with the hub's speech-to-text; { check: true } says if one is set up
+  "speech.status", // the hub's local speech engine: SpeechStatus (voices, speech-to-text, what is installed and downloading)
+  "speech.install", // { voice?, stt? }: start downloading the local engine's runtime, a voice and/or speech-to-text; SpeechStatus
 ] as const;
 export type CoreMethod = (typeof CORE_METHODS)[number];
 

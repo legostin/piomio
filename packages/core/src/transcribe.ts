@@ -1,11 +1,14 @@
 // Speech to text for voice messages: an OpenAI-compatible POST <base>/audio/transcriptions (OpenAI, Groq, or the
-// user's own server, e.g. a local whisper). The hub calls it itself, so API keys never leave the core. Errors are
-// English text for the model.
+// user's own server, e.g. a local whisper), or the hub's own local engine (speech/engine.ts, WAV only). The hub calls
+// it itself, so API keys never leave the core. Errors are English text for the model.
 
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import type { TranscriptionProvider } from "@piomio/shared";
+import type { LocalSpeechToText } from "./speech/engine.ts";
+import { isWav, parseWav } from "./speech/wav.ts";
 
-export type TranscriptionProvider = "auto" | "openai" | "groq" | "custom" | "off";
+export type { TranscriptionProvider };
 
 export interface TranscriptionSettings {
   provider: TranscriptionProvider;
@@ -18,7 +21,10 @@ export interface TranscriptionSettings {
 }
 
 export const DEFAULT_TRANSCRIPTION: TranscriptionSettings = { provider: "auto" };
-export const TRANSCRIPTION_PROVIDERS: readonly TranscriptionProvider[] = ["auto", "openai", "groq", "custom", "off"];
+export const TRANSCRIPTION_PROVIDERS: readonly TranscriptionProvider[] = ["auto", "openai", "groq", "custom", "local", "off"];
+
+/** The local engine's name where a service's would be (it is the library's, so it needs no translation). */
+export const LOCAL_ENGINE_LABEL = "sherpa-onnx";
 
 /** The hosted services and the vault ids of their keys. */
 export const HOSTED = {
@@ -34,15 +40,22 @@ const TIMEOUT_MS = 120_000;
 
 export interface Engine {
   label: string;
-  baseUrl: string;
+  /** Where the service is; none for the local engine. */
+  baseUrl?: string;
   model: string;
   keyRef?: string;
+  /** The hub's own engine (speech/engine.ts) hears it. */
+  local?: true;
 }
 
 export class TranscribeError extends Error {}
 
-/** The service that transcribes, or undefined when none is set up. `hasSecret` says whether the open vault holds an id. */
-export function pickEngine(s: TranscriptionSettings, hasSecret: (id: string) => boolean): Engine | undefined {
+/**
+ * The service that transcribes, or undefined when none is set up. `hasSecret` says whether the open vault holds an id;
+ * `localModel` is the local engine's model when it is installed. "auto" takes OpenAI, then Groq, then the local engine.
+ */
+export function pickEngine(s: TranscriptionSettings, hasSecret: (id: string) => boolean, localModel?: string): Engine | undefined {
+  const local: Engine | undefined = localModel ? { label: LOCAL_ENGINE_LABEL, model: localModel, local: true } : undefined;
   const hosted = (p: keyof typeof HOSTED): Engine | undefined =>
     hasSecret(HOSTED[p].key) ? { label: HOSTED[p].label, baseUrl: HOSTED[p].baseUrl, model: (s.provider === p && s.model) || HOSTED[p].model, keyRef: `vault://${HOSTED[p].key}` } : undefined;
   switch (s.provider) {
@@ -51,6 +64,8 @@ export function pickEngine(s: TranscriptionSettings, hasSecret: (id: string) => 
     case "openai":
     case "groq":
       return hosted(s.provider);
+    case "local":
+      return local;
     case "custom": {
       if (!s.baseUrl || !s.model) return undefined;
       let label = s.baseUrl;
@@ -62,7 +77,7 @@ export function pickEngine(s: TranscriptionSettings, hasSecret: (id: string) => 
       return { label, baseUrl: s.baseUrl, model: s.model, ...(s.keyRef ? { keyRef: s.keyRef } : {}) };
     }
     default:
-      return hosted("openai") ?? hosted("groq");
+      return hosted("openai") ?? hosted("groq") ?? local;
   }
 }
 
@@ -122,21 +137,32 @@ export interface TranscriberDeps {
 
 export class Transcriber {
   private d: TranscriberDeps;
+  /** The hub's local speech engine (provider "local", and "auto" when no key is there). */
+  local?: LocalSpeechToText;
   constructor(d: TranscriberDeps) {
     this.d = d;
   }
 
   engine(): Engine | undefined {
-    return pickEngine(this.d.settings() ?? DEFAULT_TRANSCRIPTION, this.d.hasSecret);
+    return pickEngine(this.d.settings() ?? DEFAULT_TRANSCRIPTION, this.d.hasSecret, this.local?.sttReady());
   }
 
   /** The words of an audio file; throws TranscribeError with the reason. */
   async transcribe(file: string, mimeType?: string): Promise<string> {
-    const e = this.engine();
-    if (!e) throw new TranscribeError("no speech-to-text is set up");
+    if (!this.engine()) throw new TranscribeError("no speech-to-text is set up");
     const st = await stat(file).catch(() => undefined);
     if (!st?.isFile()) throw new TranscribeError("the audio file is missing");
     if (st.size > MAX_TRANSCRIBE_BYTES) throw new TranscribeError("the audio is larger than 25 MB");
+    return this.transcribeBuffer(await readFile(file), mimeType, basename(file));
+  }
+
+  /** The words of a recording in memory (`name`: its file name, if it has one); throws TranscribeError with the reason. */
+  async transcribeBuffer(data: Buffer, mimeType?: string, name = "audio"): Promise<string> {
+    const e = this.engine();
+    if (!e) throw new TranscribeError("no speech-to-text is set up");
+    if (!data.length) throw new TranscribeError("the audio is empty");
+    if (data.length > MAX_TRANSCRIBE_BYTES) throw new TranscribeError("the audio is larger than 25 MB");
+    if (e.local) return this.hearLocally(data, mimeType);
     let key: string | undefined;
     if (e.keyRef) {
       try {
@@ -146,12 +172,12 @@ export class Transcriber {
       }
     }
     const form = new FormData();
-    form.append("file", new Blob([await readFile(file)], { type: mimeType ?? "application/octet-stream" }), uploadName(file, mimeType));
+    form.append("file", new Blob([new Uint8Array(data)], { type: mimeType ?? "application/octet-stream" }), uploadName(name, mimeType));
     form.append("model", e.model);
     form.append("response_format", "json");
     let res: Response;
     try {
-      res = await fetch(`${e.baseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
+      res = await fetch(`${(e.baseUrl ?? "").replace(/\/+$/, "")}/audio/transcriptions`, {
         method: "POST",
         headers: key ? { authorization: `Bearer ${key}` } : {},
         body: form,
@@ -167,5 +193,25 @@ export class Transcriber {
     }
     if (typeof body?.text !== "string") throw new TranscribeError(`${e.label} gave no text`);
     return body.text.trim();
+  }
+
+  /** The local engine reads WAV only: the hub has no decoder for Ogg, M4A or WebM. */
+  private async hearLocally(data: Buffer, mimeType?: string): Promise<string> {
+    if (!this.local) throw new TranscribeError("no speech-to-text is set up");
+    if (!isWav(data))
+      throw new TranscribeError(
+        `the local engine reads WAV; this recording is ${mimeType ?? "in another format"}. For other formats set up OpenAI or Groq speech-to-text (a key in the vault)`,
+      );
+    let wave;
+    try {
+      wave = parseWav(data);
+    } catch (err: any) {
+      throw new TranscribeError(`the recording cannot be read: ${err?.message ?? err}`);
+    }
+    try {
+      return (await this.local.recognize(wave.samples, wave.sampleRate)).trim();
+    } catch (err: any) {
+      throw new TranscribeError(`the local engine failed: ${err?.message ?? err}`);
+    }
   }
 }

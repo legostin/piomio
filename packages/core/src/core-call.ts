@@ -1,7 +1,6 @@
 // Core API exposed to plugins (each method must be granted in the plugin's permissions.core).
 
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import type { AttachmentKind, CoreMethod } from "@piomio/shared";
 import { parseBrainRef } from "@piomio/shared";
@@ -93,15 +92,16 @@ export function createCoreCall(hub: Hub) {
         if (!data.length) throw new Error("no audio");
         if (data.length > MAX_TRANSCRIBE_BYTES) throw new Error("the audio is larger than 25 MB");
         const mimeType = typeof p.mimeType === "string" && p.mimeType ? p.mimeType.slice(0, 100) : undefined;
-        const dir = mkdtempSync(join(tmpdir(), "piomio-speech-"));
-        try {
-          // The services go by the extension: "audio.webm" for audio/webm;codecs=opus.
-          const file = join(dir, uploadName("clip", mimeType?.split(";")[0].trim()));
-          writeFileSync(file, data, { mode: 0o600 });
-          return { text: await hub.transcriber.transcribe(file, mimeType) };
-        } finally {
-          rmSync(dir, { recursive: true, force: true });
-        }
+        // The services go by the extension: "audio.webm" for audio/webm;codecs=opus.
+        return { text: await hub.transcriber.transcribeBuffer(data, mimeType, uploadName("clip", mimeType?.split(";")[0].trim())) };
+      }
+      // The hub's local speech engine (speech/engine.ts): what is installed and downloading; downloads in the background.
+      case "speech.status":
+        return hub.speech.status();
+      case "speech.install": {
+        const r = hub.speech.install({ voice: p.voice, stt: p.stt });
+        hub.audit.append(`plugin:${pluginId}`, "speech.install", undefined, { voice: p.voice ?? null, stt: p.stt === true });
+        return r;
       }
       case "tasks.create": {
         const agentId = p.agentId ?? hub.settings.get().defaultAgent;

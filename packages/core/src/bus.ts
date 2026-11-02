@@ -1,6 +1,6 @@
 // In-process event bus. Web clients and plugin subscribers are attached by the server and plugin host.
 
-import type { AgentDraft, BrainLoginState, DeviceNetwork, Feed, FeedPost, GroupChat, InviteUsed, MachineActivity, PageView, RemoteView, ReplicaState, TeamMember, UiEvent } from "@piomio/shared";
+import type { AgentDraft, BrainLoginState, DeviceNetwork, Feed, FeedPost, GroupChat, InviteUsed, MachineActivity, PageView, RemoteView, ReplicaState, SpeechStatus, TeamMember, UiEvent } from "@piomio/shared";
 
 export type BusEvents = {
   "message.created": any;
@@ -67,6 +67,8 @@ export type BusEvents = {
   "invite.used": InviteUsed;
   /** Access from anywhere changed state (remote.ts). */
   "remote.updated": RemoteView;
+  /** The local speech engine changed: installed, a download's progress (≤ 4 a second), settings (speech/engine.ts). */
+  "speech.status": SpeechStatus;
   "plugin.event": { pluginId: string; channel: string; payload: unknown };
 };
 
@@ -146,6 +148,9 @@ export function toUiEvent(name: string, payload: any): UiEvent | null {
       return { type: name, data: payload } as UiEvent;
     case "vault.state":
       return { type: "vault.state", data: payload } as UiEvent;
+    // The voice overlay reads `status`; `data` keeps the other events' shape.
+    case "speech.status":
+      return { type: "speech.status", status: payload, data: payload };
     default:
       return null;
   }

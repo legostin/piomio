@@ -70,6 +70,8 @@ import { MediaService } from "./media.ts";
 import { Connections } from "./connections.ts";
 import { entryRef } from "./integrations.ts";
 import { cleanTranscription, Transcriber } from "./transcribe.ts";
+import { SpeechEngine } from "./speech/engine.ts";
+import { cleanVoice } from "./speech/settings.ts";
 import { RemoteAccess, remoteStatusFile } from "./remote.ts";
 import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
@@ -158,6 +160,8 @@ export class Hub {
   media: MediaService;
   connections: Connections;
   transcriber: Transcriber;
+  /** The local speech engine: voices and speech to text, downloaded on demand (speech/engine.ts). */
+  speech: SpeechEngine;
   /** Access from anywhere: the hub's Tailscale node and its link (remote.ts). */
   remote: RemoteAccess;
   /** The link's gateways on loopback: the web UI and the phones, behind the node. */
@@ -279,6 +283,20 @@ export class Hub {
       settings: () => this.settings.get().transcription,
       hasSecret: (id) => this.vault.state() === "unlocked" && !!this.vault.getMeta(id),
       secret: (ref) => this.vault.access(ref, { actor: "core:transcription" }).value ?? "",
+    });
+    this.speech = new SpeechEngine({
+      dataDir: config.dataDir,
+      language: () => this.settings.get().language,
+      voice: () => this.settings.get().voice,
+      sttProvider: () => this.settings.get().transcription?.provider ?? "auto",
+      emit: (status) => this.bus.emit("speech.status", status),
+      log: (line) => console.log(line),
+    });
+    // Without a key (or with provider "local") voice messages go to the local engine once it is installed.
+    this.transcriber.local = this.speech;
+    this.bus.on("settings.updated", (e) => {
+      const keys = (e as { keys?: unknown }).keys;
+      if (Array.isArray(keys) && keys.some((k) => k === "voice" || k === "transcription" || k === "language")) this.speech.changed();
     });
     this.runner = new SessionRunner({
       config,
@@ -522,6 +540,11 @@ export class Hub {
       const t = cleanTranscription(p.transcription);
       if (typeof t === "string") throw new LocalizedError("settings.badTranscription", { reason: t }, 400);
       p.transcription = t;
+    }
+    if ("voice" in p) {
+      const v = cleanVoice(p.voice, this.speech.sources.voices);
+      if (typeof v === "string") throw new LocalizedError("settings.badVoice", { reason: v }, 400);
+      p.voice = v;
     }
     const before = this.settings.get().language;
     this.audit.append(actor, "settings.update", undefined, { keys: Object.keys(p) });
@@ -1103,6 +1126,7 @@ export class Hub {
     this.feeds.stop();
     this.setup.stop();
     await this.runner.stop();
+    this.speech.stop();
     this.machines.closeAll();
     this.activity.close();
     await this.plugins.stopAll();
