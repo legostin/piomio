@@ -122,8 +122,8 @@ describe("agents as entry points (integration)", () => {
   it("lets a message written while the agent works join its turn, answered after it", async () => {
     const c = (await web.req("GET", "/api/bootstrap")).mainConversationId as string;
     await say(c, "check the build SLOW");
-    await until(() => hub.runner.isRunning(c), "the turn to start");
-    await sleep(200);
+    // At work: its brain has begun to answer (a turn that is still starting its brain gets the message as the next turn).
+    await until(async () => (await messages(c)).some((m) => m.role === "assistant" && textOf(m).includes("fake is thinking")), "the agent at work");
     await say(c, "and the tests too");
     await idle(c);
     const ms = (await messages(c)).filter((m) => m.role !== "system");
@@ -181,8 +181,8 @@ describe("agents as entry points (integration)", () => {
     await idle(c);
     await say(c, `CALL task_delegate {"title":"Long check","goal":"look around SLOW"}`);
     const id = await startedTask(c, "Long check");
-    await until(async () => (await task(id)).status === "running" && hub.runner.isRunning((await task(id)).conversationId), "the task to work");
-    await sleep(200);
+    const tc = (await task(id)).conversationId;
+    await until(async () => (await messages(tc)).some((m) => m.role === "assistant" && textOf(m).includes("fake is thinking")), "the task at work");
     await idle(c);
     await say(c, `CALL task_message {"taskId":"${id}","text":"skip the docs"}`);
     const done = await until(async () => {

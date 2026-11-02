@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  againAfterNavigation,
   decideHeadless,
   filenameFromDisposition,
   findChrome,
@@ -144,6 +145,26 @@ describe("files", () => {
     expect(filenameFromDisposition(`attachment; filename="a b.txt"`)).toBe("a b.txt");
     expect(filenameFromDisposition(`attachment; filename*=UTF-8''%D0%BE%D1%82%D1%87%D1%91%D1%82.txt`)).toBe("отчёт.txt");
     expect(filenameFromDisposition(undefined)).toBeUndefined();
+  });
+});
+
+describe("reading a page that navigates", () => {
+  const gone = () => Promise.reject(new Error("page.evaluate: Execution context was destroyed, most likely because of a navigation"));
+
+  it("reads the new document once the navigation has loaded it", async () => {
+    const calls: string[] = [];
+    let first = true;
+    const read = () => (calls.push("read"), first ? ((first = false), gone()) : Promise.resolve("the new page"));
+    expect(await againAfterNavigation(read, async () => void calls.push("settle"))).toBe("the new page");
+    expect(calls).toEqual(["read", "settle", "read"]);
+  });
+
+  it("tries once more only, and passes other errors on", async () => {
+    await expect(againAfterNavigation(gone, async () => {})).rejects.toThrow(/Execution context was destroyed/);
+    let reads = 0;
+    const broken = () => (reads++, Promise.reject(new Error("the page is not responding")));
+    await expect(againAfterNavigation(broken, async () => {})).rejects.toThrow("the page is not responding");
+    expect(reads).toBe(1);
   });
 });
 

@@ -1,5 +1,6 @@
 # A version tag (v0.2.0, the root package.json's version) builds and checks the desktop installers (desktop.yml) and
-# publishes them as that version's release.
+# publishes them as that version's release. Nothing is published unless the tagged commit passes the checks
+# (checks.yml: the types and the tests).
 # Hubs of the version hand the installers out at /download/desktop/<os> (packages/core/src/server/join-page.ts), so
 # the asset names must stay what packaging/desktop/build.mjs makes. Its latest.json is what installed apps check for
 # updates (packages/desktop/src-tauri/src/update.rs). release-on-push.yml starts it on the tag it makes, since a tag
@@ -30,6 +31,13 @@ jobs:
           v=$(node -p "require('./package.json').version")
           if [ "v$v" != "$GITHUB_REF_NAME" ]; then echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; fi
 
+  checks:
+    needs: version
+    uses: ./.github/workflows/checks.yml
+    permissions:
+      contents: read
+
+  # The installers build alongside the checks; the release waits for both.
   installers:
     needs: version
     uses: ./.github/workflows/desktop.yml
@@ -37,7 +45,7 @@ jobs:
     secrets: inherit
 
   publish:
-    needs: installers
+    needs: [installers, checks]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

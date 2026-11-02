@@ -130,9 +130,10 @@ describe("the hub's commands (integration)", () => {
   const command = async (conversationId: string, text: string): Promise<MessagePart[]> => {
     const before = (await messages(conversationId)).filter((m) => m.role === "system").length;
     await say(conversationId, text);
+    // The first system message after it: what the command started may already have said more (a goal's question).
     return until(async () => {
       const sys = (await messages(conversationId)).filter((m) => m.role === "system");
-      return sys.length > before ? sys.at(-1)!.parts : undefined;
+      return sys.length > before ? sys[before]!.parts : undefined;
     }, `the answer to ${text}`);
   };
   const taskOf = (parts: MessagePart[]): string => {

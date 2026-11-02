@@ -1,0 +1,32 @@
+# The checks a change passes before it ships: the types (npm run typecheck) and the tests (npm test).
+# Pull requests and pushes to other branches run them here. On main nothing is released untested:
+# release-on-push.yml runs them before it raises the version, and release.yml runs them on the version tag before it
+# publishes the installers (a push that landed meanwhile goes into that release too).
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+  # release-on-push.yml and release.yml wait for these checks.
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # The browser plugin's tests drive Playwright's Chromium, with the system libraries it needs.
+      - run: npx playwright install --with-deps chromium
+      - run: npm test

@@ -15,6 +15,7 @@ import { Learning } from "./learning.ts";
 import { pageCall } from "./page-script.ts";
 import { CHECK_PASSING_RE, PAGE_RULES, type FocusInfo } from "./safety.ts";
 import {
+  againAfterNavigation,
   cut,
   decideHeadless,
   findChrome,
@@ -849,7 +850,10 @@ export class BrowserManager {
 
   async evalIn<T = any>(frame: Frame, op: string, args: Record<string, unknown> = {}, timeoutMs = 5000): Promise<T> {
     const full = { rules: PAGE_RULES, seq: this.refSeq, ...args };
-    const r = (await withTimeout(frame.evaluate(pageCall(op, full)), timeoutMs, "the page is not responding")) as any;
+    const r = (await againAfterNavigation(
+      () => withTimeout(frame.evaluate(pageCall(op, full)), timeoutMs, "the page is not responding"),
+      () => frame.waitForLoadState("domcontentloaded", { timeout: timeoutMs }),
+    )) as any;
     if (r && typeof r === "object" && typeof r.seq === "number" && r.seq > this.refSeq) this.refSeq = r.seq;
     return r as T;
   }
