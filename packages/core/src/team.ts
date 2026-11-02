@@ -35,6 +35,9 @@ export function previewText(m: Message): string {
   return truncate(text, PREVIEW_CHARS);
 }
 
+/** A companion's live state lasts this long unless its plugin says it again. */
+export const PRESENCE_TTL_MS = 90_000;
+
 export class Team {
   private store: Store;
   private agents: { list(): Array<{ id: string }> };
@@ -43,8 +46,8 @@ export class Team {
   private isRunning: (conversationId: string) => boolean;
   private floor: (conversationId: string) => string[];
   private pending = new Set<string>();
-  /** The always-on companion's live state, by agent (set by its plugin; never stored). */
-  private presences = new Map<string, AgentPresence>();
+  /** The always-on companion's live state, by agent (set by its plugin; never stored), and when it lapses. */
+  private presences = new Map<string, { presence: AgentPresence; lapse: ReturnType<typeof setTimeout> }>();
 
   constructor(d: {
     store: Store;
@@ -94,18 +97,25 @@ export class Team {
     return this.store.listGroups().map((c) => this.groupOf(c));
   }
 
-  /** What the agent is doing on the person's computer now (undefined: nothing), pushed to clients at once. */
-  setPresence(agentId: string, presence: AgentPresence | undefined): void {
-    if (this.presences.get(agentId) === presence) return;
-    if (presence) this.presences.set(agentId, presence);
-    else this.presences.delete(agentId);
-    this.changed(this.store.agentConversation(agentId).id);
+  /**
+   * What the agent is doing on the person's computer now (undefined: nothing), pushed to clients at once. It lapses
+   * after `ttlMs` unless set again: a plugin that stopped does not leave its agent "watching".
+   */
+  setPresence(agentId: string, presence: AgentPresence | undefined, ttlMs = PRESENCE_TTL_MS): void {
+    const was = this.presences.get(agentId);
+    if (was) clearTimeout(was.lapse);
+    if (presence) {
+      const lapse = setTimeout(() => this.setPresence(agentId, undefined), ttlMs);
+      lapse.unref?.();
+      this.presences.set(agentId, { presence, lapse });
+    } else this.presences.delete(agentId);
+    if (was?.presence !== presence) this.changed(this.store.agentConversation(agentId).id);
   }
 
   memberOf(conv: Conversation): TeamMember {
     const last = this.lastMessage(conv.id);
     const pin = this.pinned().indexOf(conv.agentId);
-    const presence = this.presences.get(conv.agentId);
+    const presence = this.presences.get(conv.agentId)?.presence;
     return {
       agentId: conv.agentId,
       conversationId: conv.id,

@@ -13,6 +13,7 @@ import { AGENT, registerTools } from "./tools.ts";
 import { GAPS, looked, nextWatch, type WatchState } from "./watch.ts";
 
 const TICK_MS = 5_000;
+const PRESENCE_EVERY_MS = 30_000;
 const PREFS_KEY = "prefs";
 
 /** What a Pio window sends (ui plugin.send). */
@@ -35,10 +36,13 @@ const plugin: PluginModule = {
     let conversationId: string | undefined;
     let presence: AgentPresence | undefined;
 
+    // The hub forgets it after a minute and a half: said again on every change and every half minute.
+    let presenceAt = 0;
     const showPresence = () => {
       const now = bodies.presence();
-      if (now === presence) return;
+      if (now === presence && (!now || Date.now() - presenceAt < PRESENCE_EVERY_MS)) return;
       presence = now;
+      presenceAt = Date.now();
       ctx.core.call("agents.presence", { agentId: AGENT, presence: now ?? null }).catch((e) => ctx.log.warn(`presence: ${(e as Error).message}`));
     };
 

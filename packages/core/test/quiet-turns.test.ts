@@ -121,4 +121,10 @@ describe("quiet looks and the companion", () => {
     await expect(call("owl", "agents.presence", { agentId: "desk", presence: "watching" })).rejects.toThrow(/not an agent of this plugin/);
     await expect(call("owl", "agents.presence", { agentId: "pio", presence: "dancing" })).rejects.toThrow(/presence must be/);
   });
+
+  it("forgets the companion's state when its plugin stops saying it", async () => {
+    hub.team.setPresence("pio", "driving", 100);
+    expect(hub.team.member("pio").presence).toBe("driving");
+    await until(() => hub.team.member("pio").presence === undefined, "the state to lapse");
+  });
 });
