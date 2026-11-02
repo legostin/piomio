@@ -1,7 +1,7 @@
 // The Pio window's ears and mouth, the parts that need no browser: phrases cut from the mic, which of them are for
 // Pio, the WAV the hub reads, what of a reply is said out loud, and where a click of a look lands on the screen.
 import { describe, expect, it } from "vitest";
-import { forPio, FOLLOW_MS, namesPio } from "../ui/src/voice/gate.ts";
+import { asksToLook, forPio, FOLLOW_MS, namesPio } from "../ui/src/voice/gate.ts";
 import { speakable } from "../ui/src/voice/speakable.ts";
 import { Vad, type VadEvent } from "../ui/src/voice/vad.ts";
 import { downsample, encodeWav } from "../ui/src/voice/wav.ts";
@@ -63,6 +63,24 @@ describe("which words are for Pio", () => {
     expect(forPio("мы выпили пиво", "name", at)).toBeUndefined();
     expect(namesPio("Opioid crisis")).toBe(false);
   });
+  it("wakes on its name at the start, however it was heard", () => {
+    expect(forPio("Pio, погляди, что не так с этим графиком", "name", at)).toBe("погляди, что не так с этим графиком");
+    expect(forPio("Пиу, привет", "name", at)).toBe("привет");
+    expect(forPio("Окей, Пио! Открой почту", "name", at)).toBe("Открой почту");
+    expect(namesPio("Био, ты тут?")).toBe(true);
+    expect(namesPio("биология интересная")).toBe(false);
+  });
+
+  it("knows when the words ask to look at the screen", () => {
+    expect(asksToLook("погляди, что не так с этим графиком")).toBe(true);
+    expect(asksToLook("что тут написано?")).toBe(true);
+    expect(asksToLook("исправь ошибку в этой формуле")).toBe(true);
+    expect(asksToLook("what's wrong with this chart?")).toBe(true);
+    expect(asksToLook("look at the sidebar")).toBe(true);
+    expect(asksToLook("напомни купить молоко")).toBe(false);
+    expect(asksToLook("это важно, запиши")).toBe(false);
+  });
+
   it("takes an answer right after Pio spoke, and what is said with the key held", () => {
     expect(forPio("да, давай", "name", { ...at, followUntil: at.now + FOLLOW_MS })).toBe("да, давай");
     expect(forPio("да, давай", "name", at)).toBeUndefined();

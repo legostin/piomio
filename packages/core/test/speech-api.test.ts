@@ -54,7 +54,7 @@ describe("speech API", () => {
     base = config.publicUrl;
     expect((await call("POST", "/api/auth/setup", { token: hub.auth.setupToken, password: "speech-api-pass-1" })).status).toBe(200);
     csrf = (await call("GET", "/api/bootstrap")).json.csrf;
-    fake = await fakeSources(dir, ["piper-en-ryan", "piper-en-amy"], ["parakeet-v3"]);
+    fake = await fakeSources(dir, ["piper-en-ryan", "piper-en-amy", "piper-ru-dmitri"], ["parakeet-v3", "giga-am-v3-ru"]);
   });
 
   afterAll(async () => {
@@ -156,5 +156,21 @@ describe("speech API", () => {
       /^Refused: a custom speech-to-text server/,
     );
     expect(hub.settings.get().transcription).toEqual({ provider: "local" });
+  });
+
+  it("installs the speech-to-text model for the person's language on a hub set to another one", async () => {
+    // Pio's window asks for the model of the language the person speaks (an English hub here, a Russian speaker).
+    await call("POST", "/api/speech/install", { voice: "piper-ru-dmitri", stt: "ru" });
+    await hub.speech.settled();
+    const s = (await call("GET", "/api/speech")).json as SpeechStatus;
+    expect(s.stt.models.find((m) => m.id === "giga-am-v3-ru")!.installed).toBe(true);
+    expect(s.voices.find((v) => v.id === "piper-ru-dmitri")!.installed).toBe(true);
+    // Both models are here: a phrase marked Russian is heard with GigaAM.
+    const f = fakeModules("привет, Пио");
+    hub.speech.modules = () => f.modules;
+    const wav = encodeWav(new Float32Array(16000).fill(0.1), 16000);
+    const r = await fetch(`${base}/api/speech/transcribe?lang=ru`, { method: "POST", headers: { "content-type": "audio/wav", origin: base, cookie, "x-csrf": csrf }, body: wav });
+    expect(await r.json()).toEqual({ text: "привет, Пио" });
+    expect(f.calls.recognizer.at(-1).modelConfig.nemoCtc.model).toMatch(/giga-am-v3-ru/);
   });
 });

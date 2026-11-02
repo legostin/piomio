@@ -7,9 +7,26 @@ export type ListenMode = "name" | "key" | "all";
 /** After Pio spoke, the person's next words are an answer for this long. */
 export const FOLLOW_MS = 20_000;
 
-// Pio as speech-to-text writes it: Пио, Пиo, Пиа, Пью, Pio, Pia, Peo, Pío.
-const NAME = /(?<![\p{L}\p{N}])(?:пио|пиo|пиа|пью|pio|pia|peo|pío)(?![\p{L}\p{N}])/iu;
-const LEADING = /^\s*(?:(?:эй|слушай|hey|ok|okay|ок)[\s,]+)?(?:пио|пиo|пиа|пью|pio|pia|peo|pío)(?![\p{L}\p{N}])[\s,.!:—-]*/iu;
+// Pio as speech-to-text writes it: Пио, Пиа, Пиу, Пью, Пиё, Био, Pio, Pia, Peo, Pío, Bio (the wake phrase: "Пио, …").
+const SPELLINGS = "пио|пиo|пиа|пиу|пью|пиё|пийо|био|pio|pia|peo|pío|pyo|bio";
+const NAME = new RegExp(`(?<![\\p{L}\\p{N}])(?:${SPELLINGS})(?![\\p{L}\\p{N}])`, "iu");
+const LEADING = new RegExp(`^\\s*(?:(?:эй|слушай|hey|ok|okay|ок|окей)[\\s,]+)?(?:${SPELLINGS})(?![\\p{L}\\p{N}])[\\s,.!?:—-]*`, "iu");
+
+// Asking Pio to look at what is on the screen ("погляди, что не так с этим графиком"): the window goes with the words.
+const LOOK = new RegExp(
+  [
+    "посмотр|погляд|глянь|гляну|взгля|видишь|увидь",
+    "на экран|что тут|что здесь|что у меня|вот это|вот тут|вот здесь",
+    "(?:с |на |в |по )?(?:этим|этот|этой|эту|этого|этом|эта|это) (?:график|диаграм|таблиц|текст|код|файл|окн|слайд|документ|сайт|страниц|письм|картинк|фото|ошибк|формул|схем|макет|дизайн)",
+    "\\blook\\b|\\bsee (?:this|that|here)\\b|on (?:my|the) screen|what's (?:this|here|wrong)|\\bthis (?:chart|graph|code|page|text|window|screen|error|table|slide|file|design)",
+  ].join("|"),
+  "iu",
+);
+
+/** The words ask Pio to look at the screen. */
+export function asksToLook(text: string): boolean {
+  return LOOK.test(text);
+}
 
 export function namesPio(text: string): boolean {
   return NAME.test(text);

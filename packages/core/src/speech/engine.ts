@@ -32,8 +32,8 @@ export interface SpeechEngineDeps {
 export interface LocalSpeechToText {
   /** The local model that hears the hub language, when it and the runtime are installed. */
   sttReady(): string | undefined;
-  /** The words in 16-bit-or-float mono samples (any rate; the overlay sends 16 kHz). */
-  recognize(samples: Float32Array, sampleRate: number): Promise<string>;
+  /** The words in 16-bit-or-float mono samples (any rate; the overlay sends 16 kHz); `lang`: the speaker's language. */
+  recognize(samples: Float32Array, sampleRate: number, lang?: string): Promise<string>;
 }
 
 interface Backend {
@@ -278,9 +278,13 @@ export class SpeechEngine implements LocalSpeechToText {
     return this.engine().say({ dir: this.modelDir(v), model: v.model, espeak: v.espeak }, words, speed);
   }
 
-  /** The words in mono samples, with the hub language's local model; throws when it is not installed. */
-  async recognize(samples: Float32Array, sampleRate: number): Promise<string> {
-    const m = this.sttModel();
+  /**
+   * The words in mono samples, with the local model in use, or the one for `lang` (the speaker's language) when that
+   * is installed; throws when none is.
+   */
+  async recognize(samples: Float32Array, sampleRate: number, lang?: string): Promise<string> {
+    const theirs = lang ? defaultSttModel(lang, this.sources.stt) : undefined;
+    const m = theirs && this.modelReady(theirs) ? theirs : this.sttModel();
     if (!this.runtimeReady() || !this.modelReady(m)) throw new LocalizedError("speech.sttNotInstalled", undefined, 409);
     if (!samples.length) return "";
     return this.engine().recognize({ dir: this.modelDir(m), kind: m.kind, files: m.files }, samples, sampleRate);

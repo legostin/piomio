@@ -119,7 +119,7 @@ export function createCoreCall(hub: Hub) {
         return hub.speech.status();
       case "speech.install": {
         const r = hub.speech.install({ voice: p.voice, stt: p.stt });
-        hub.audit.append(`plugin:${pluginId}`, "speech.install", undefined, { voice: p.voice ?? null, stt: p.stt === true });
+        hub.audit.append(`plugin:${pluginId}`, "speech.install", undefined, { voice: p.voice ?? null, stt: p.stt ?? null });
         return r;
       }
       case "tasks.create": {

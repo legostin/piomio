@@ -681,8 +681,10 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   // Downloads go on in the background: progress comes as the realtime event speech.status.
   api.post("/api/speech/install", async (req) => {
     const b = (req.body ?? {}) as { voice?: unknown; stt?: unknown };
-    const s = hub.speech.install({ voice: b.voice, stt: b.stt === true }, requestLocale(req));
-    hub.audit.append("user", "speech.install", undefined, { voice: b.voice ?? null, stt: b.stt === true });
+    // stt: true (the model in use), a model id or a language code (Pio asks for the person's language's model).
+    const stt = b.stt === true || (typeof b.stt === "string" && /^[a-z0-9.-]{2,40}$/i.test(b.stt)) ? b.stt : undefined;
+    const s = hub.speech.install({ voice: b.voice, stt }, requestLocale(req));
+    hub.audit.append("user", "speech.install", undefined, { voice: b.voice ?? null, stt: stt ?? null });
     return s;
   });
   // The words of the text (Markdown dropped, at most 1000 characters) as one WAV; 409 until the voice is installed.
@@ -705,7 +707,9 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       if (!hub.transcriber.engine()) throw new HttpError(503, "speech.noEngine");
       if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(415, "speech.notWav");
       try {
-        return { text: await hub.transcriber.transcribeBuffer(req.body, "audio/wav", "phrase.wav") };
+        // ?lang=ru: the speaker's language (Pio's window knows it), heard with that language's local model.
+        const lang = (req.query as { lang?: unknown }).lang;
+        return { text: await hub.transcriber.transcribeBuffer(req.body, "audio/wav", "phrase.wav", typeof lang === "string" && /^[a-z]{2,3}$/.test(lang) ? lang : undefined) };
       } catch (e) {
         throw e instanceof TranscribeError ? new HttpError(502, "speech.transcribeFailed", { reason: e.message }) : e;
       }

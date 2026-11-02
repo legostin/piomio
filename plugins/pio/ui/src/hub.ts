@@ -71,9 +71,22 @@ export class SpeechApi {
     return this.ui.api.post<SpeechStatus>("/api/speech/install", o);
   }
 
-  async transcribe(wav: Uint8Array): Promise<string> {
-    const r = await this.send("/api/speech/transcribe", new Blob([wav as BlobPart], { type: "audio/wav" }), "audio/wav");
+  /** `lang`: the speaker's language (the hub hears it with that language's local model when it has one). */
+  async transcribe(wav: Uint8Array, lang?: string): Promise<string> {
+    const r = await this.send(`/api/speech/transcribe${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`, new Blob([wav as BlobPart], { type: "audio/wav" }), "audio/wav");
     return String((await r.json())?.text ?? "");
+  }
+
+  /** Whether the hub has any speech-to-text (a key's service or the local engine). */
+  async canHear(): Promise<boolean> {
+    return !!(await this.ui.api.get<{ engine: unknown }>("/api/transcription")).engine;
+  }
+
+  /** A file for the next message in a conversation: its path for the message's `attachments`. */
+  async attach(conversationId: string, bytes: Uint8Array, name: string, type: string): Promise<string> {
+    const q = new URLSearchParams({ name, type });
+    const r = await this.send(`/api/conversations/${encodeURIComponent(conversationId)}/attachments?${q}`, new Blob([bytes as BlobPart], { type }), type);
+    return String((await r.json())?.path ?? "");
   }
 
   async say(text: string, voice?: string): Promise<ArrayBuffer> {

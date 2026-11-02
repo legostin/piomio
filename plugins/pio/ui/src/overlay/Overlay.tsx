@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { Message, PiomioUI, UiEvent } from "@piomio/ui";
 import { desk, desktopOf, onDesktop, toScreen, type Capture } from "../desktop.ts";
 import { HttpError, SpeechApi, type SpeechStatus } from "../hub.ts";
-import { FOLLOW_MS, forPio, type ListenMode } from "../voice/gate.ts";
+import { asksToLook, FOLLOW_MS, forPio, type ListenMode } from "../voice/gate.ts";
 import { Mic } from "../voice/mic.ts";
 import { Speaker } from "../voice/speaker.ts";
 import { speakable } from "../voice/speakable.ts";
@@ -98,7 +98,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const [side, setSide] = useState(sideOf);
   const api = useMemo(() => new SpeechApi(ui), [ui]);
   // What the event handlers read now (they are set up once).
-  const live = useRef({ conv, sw, listen, speech, followUntil: 0, keyHeld: false, lastCap: undefined as Capture | undefined, spoken: new Set<string>() });
+  const live = useRef({ conv, sw, listen, speech, lang: ui.i18n.locale as string, followUntil: 0, keyHeld: false, lastCap: undefined as Capture | undefined, spoken: new Set<string>() });
   Object.assign(live.current, { conv, sw, listen, speech });
 
   const speaker = useMemo(
@@ -112,14 +112,31 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   );
   const mic = useMemo(() => new Mic((wav, held) => void heard(wav, held), setHearing), []);
 
-  /** Something the person said or typed for Pio: into its chat. */
+  /** A picture of the person's window for a message that asks Pio to look (the asking is the consent). */
+  const windowShot = async (c: string): Promise<string[]> => {
+    try {
+      const cap = await desk.capture("window");
+      live.current.lastCap = cap;
+      const bin = atob(cap.jpeg);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const path = await api.attach(c, bytes, `screen-${new Date().toISOString().slice(11, 19).replace(/:/g, "-")}.jpg`, "image/jpeg");
+      return path ? [path] : [];
+    } catch {
+      // No Screen Recording permission, or not in the desktop app: the words go alone, Pio can still look itself.
+      return [];
+    }
+  };
+
+  /** Something the person said or typed for Pio: into its chat (with their window when they ask it to look). */
   const ask = async (text: string) => {
     const c = live.current.conv;
     if (!c) return setNote({ text: t("overlay.noChat") });
     speaker.stop();
     setThinking(true);
     try {
-      await ui.api.post(`/api/conversations/${encodeURIComponent(c)}/messages`, { text });
+      const attachments = asksToLook(text) ? await windowShot(c) : [];
+      await ui.api.post(`/api/conversations/${encodeURIComponent(c)}/messages`, { text, ...(attachments.length ? { attachments } : {}) });
     } catch (e) {
       setThinking(false);
       setNote({ text: t("overlay.error", { error: e instanceof Error ? e.message : String(e) }) });
@@ -129,7 +146,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   /** A phrase from the mic: its words, if they are for Pio. */
   const heard = async (wav: Uint8Array, held: boolean) => {
     try {
-      const text = await api.transcribe(wav);
+      const text = await api.transcribe(wav, live.current.lang);
       const words = forPio(text, live.current.listen, { keyHeld: held, now: Date.now(), followUntil: live.current.followUntil });
       if (words) await ask(words);
     } catch (e) {
@@ -270,6 +287,8 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   useEffect(() => {
     if (!sw.voice) return;
     void api.status().then(setSpeech, () => {});
+    // Nothing turns speech into words yet: the download is offered right away, not after a first phrase fails.
+    void api.canHear().then((ok) => !ok && setSttMissing(true), () => {});
     mic.start().catch((e: unknown) => {
       const insecure = e instanceof Error && e.message === "insecure";
       setNote(insecure ? { text: t("overlay.voice.insecure") } : { text: t("overlay.voice.noMic"), open: "microphone" });
@@ -418,6 +437,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     lines.filter((l) => l.me).map((l) => l.text),
     ui.i18n.locale,
   );
+  live.current.lang = lang;
   const voice = speech ? voiceFor(lang, speech.voices, speech.voice, false) : undefined;
   const hears = speech?.stt.models?.find((m) => m.langs.length === 1 && m.langs[0] === lang) ?? speech?.stt.models?.find((m) => m.langs.includes(lang));
   const sttNeeded = sttMissing && !!hears && !hears.installed;

@@ -156,13 +156,16 @@ export class Transcriber {
     return this.transcribeBuffer(await readFile(file), mimeType, basename(file));
   }
 
-  /** The words of a recording in memory (`name`: its file name, if it has one); throws TranscribeError with the reason. */
-  async transcribeBuffer(data: Buffer, mimeType?: string, name = "audio"): Promise<string> {
+  /**
+   * The words of a recording in memory (`name`: its file name, if it has one); throws TranscribeError with the reason.
+   * `lang`: the language the speaker uses, when known (the local engine then hears with that language's model).
+   */
+  async transcribeBuffer(data: Buffer, mimeType?: string, name = "audio", lang?: string): Promise<string> {
     const e = this.engine();
     if (!e) throw new TranscribeError("no speech-to-text is set up");
     if (!data.length) throw new TranscribeError("the audio is empty");
     if (data.length > MAX_TRANSCRIBE_BYTES) throw new TranscribeError("the audio is larger than 25 MB");
-    if (e.local) return this.hearLocally(data, mimeType);
+    if (e.local) return this.hearLocally(data, mimeType, lang);
     let key: string | undefined;
     if (e.keyRef) {
       try {
@@ -196,7 +199,7 @@ export class Transcriber {
   }
 
   /** The local engine reads WAV only: the hub has no decoder for Ogg, M4A or WebM. */
-  private async hearLocally(data: Buffer, mimeType?: string): Promise<string> {
+  private async hearLocally(data: Buffer, mimeType?: string, lang?: string): Promise<string> {
     if (!this.local) throw new TranscribeError("no speech-to-text is set up");
     if (!isWav(data))
       throw new TranscribeError(
@@ -209,7 +212,7 @@ export class Transcriber {
       throw new TranscribeError(`the recording cannot be read: ${err?.message ?? err}`);
     }
     try {
-      return (await this.local.recognize(wave.samples, wave.sampleRate)).trim();
+      return (await this.local.recognize(wave.samples, wave.sampleRate, lang)).trim();
     } catch (err: any) {
       throw new TranscribeError(`the local engine failed: ${err?.message ?? err}`);
     }

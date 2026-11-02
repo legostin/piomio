@@ -41,8 +41,9 @@ When Pio says something while the card is closed, its line pops out next to the 
 ## What Pio sees
 
 With **Work together** on, Pio knows the active app and window title before each answer, and the windows before it.
-When you point at something ("what's wrong here?", "что тут?"), Pio takes a picture of the active window and looks at
-it. The picture is used for that answer only and is not saved.
+When you ask Pio to look ("Pio, look what's wrong with this chart", "what's here?"), the face sends a picture of your
+active window with your words, so Pio sees what you mean at once; otherwise Pio takes the picture itself when it needs
+one. The picture goes with that message into Pio's chat (its files, like any photo you send), nowhere else.
 
 Now and then Pio takes a quiet look on its own: when you settled in a new window, or after you worked in one window for
 a while. It speaks up only when it has something truly useful to say (a mistake, a faster way, something from memory
@@ -69,7 +70,7 @@ voice.
 
 Pio does not answer everything it hears. By default it answers:
 
-- what you say after its name: "Pio, what's this error?";
+- what you say after its name, the wake phrase: "Pio, what's wrong with this chart?";
 - what you say while holding **⌥Space** (Alt+Space on Windows), name or not;
 - your answer right after it spoke (for 20 seconds).
 
