@@ -98,6 +98,8 @@ piomio-node policy    # path and contents of policy.json
 
 ### Linux (systemd, пользовательская служба)
 
+На сервере всё это делает `curl -fsSL https://piomio.io/install.sh | sh -s -- <ссылка-приглашение>` (свой Node, `piomio-node.mjs` хаба, этот юнит), а обновления потом приходят с хаба. Вручную:
+
 `~/.config/systemd/user/piomio-node.service`:
 
 ```ini

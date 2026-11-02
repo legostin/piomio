@@ -5,14 +5,17 @@ import { data } from "../data";
 import { useI18n } from "../i18n";
 import { GitHub, OwlMark, Star } from "../components/icons";
 import { DownloadButton } from "../components/Download";
+import { pagePath, type Page } from "../pages";
 
-export function TopBar() {
+export function TopBar({ page = "home" }: { page?: Page }) {
   const { lang, t } = useI18n();
+  // On another page the landing page's parts are links back to it.
+  const home = page === "home" ? "" : `${data.base}${lang}/`;
   const links: Array<[string, string]> = [
-    ["#demo", t("nav.demo")],
-    ["#features", t("nav.features")],
-    ["#security", t("nav.security")],
-    ["#faq", t("nav.faq")],
+    [`${home}#demo`, t("nav.demo")],
+    [`${home}#features`, t("nav.features")],
+    [`${home}#security`, t("nav.security")],
+    [`${home}#faq`, t("nav.faq")],
   ];
   return (
     <header className="sticky top-0 z-40 border-b border-hairline bg-[var(--glass)] backdrop-blur-xl backdrop-saturate-150">
@@ -33,7 +36,7 @@ export function TopBar() {
             {siteConfig.languages.map((l) => (
               <a
                 key={l}
-                href={`${data.base}${l}/`}
+                href={`${data.base}${l}/${pagePath(page)}`}
                 hrefLang={l}
                 lang={l}
                 aria-current={l === lang ? "page" : undefined}

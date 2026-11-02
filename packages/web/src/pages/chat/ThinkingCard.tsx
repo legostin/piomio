@@ -11,7 +11,7 @@ import { describeThinking, ensureThinking, setThinking, thinking } from "../../s
 import { toast } from "../../state/toast";
 import { cx, Spinner } from "../../components/ui";
 import { t } from "../../i18n";
-import { PRESETS } from "./BrainPicker";
+import { PRESETS } from "./ThinkingMenu";
 
 const KIND_ICONS = { chat: MessageCircle, task: ListChecks, feed: Newspaper, schedule: CalendarClock } as const;
 

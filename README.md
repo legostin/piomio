@@ -7,7 +7,7 @@
 <p align="center">
   <b>A small team of AI agents that lives on your own computers.</b><br>
   They go through your email, draft replies you send with one tap, and pick up a chore after you show it to them once.<br>
-  Free and open source, running on the Claude or ChatGPT plan you already pay for, through the official Claude Code and Codex CLIs.
+  Free and open source, running on the plans you already pay for, through the official Claude Code, Codex and Kimi Code CLIs.
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 
 Piomio is a personal agent platform you run yourself. You get a small team of agents, each with a name, a face, a job and a memory, and you talk to them the way you would to colleagues. Quick things they answer on the spot. Longer work gets passed around as tasks, and they come back to you when it’s done.
 
-They think through the official Claude Code and Codex CLIs, signed in with the Claude or ChatGPT plan you already have, or with an API key, and they run on your Mac, PC or server. Before they send or buy anything, they ask you. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots, except it lives on your own machine.
+They think through the official Claude Code, Codex and Kimi Code CLIs, signed in with the plan you already have, and they run on your Mac, PC or server. Before they send or buy anything, they ask you. Think of it as an open-source alternative to Grok, Meta Muse and OpenAI Dots, except it lives on your own machine.
 
 ## A day with the team
 
@@ -69,19 +69,25 @@ They think through the official Claude Code and Codex CLIs, signed in with the C
 
 1. Download Piomio from the [latest release](https://github.com/legostin/piomio/releases/latest): `piomio-<version>.dmg` for macOS 13.5 or later (Apple silicon and Intel), `piomio-setup-<version>-x64.exe` for Windows 10 and 11.
 2. Open it, choose **A new Piomio on this computer** and pick a password.
-3. In the chat, press **Sign in** on Claude Code or Codex (your subscription), or paste an API key.
+3. In the chat, press **Sign in** on Claude Code, Codex or Kimi Code (your subscription).
 
 From there the assistant walks you through the rest in the chat, one thing at a time: Telegram, a backup brain, other computers, and getting to know you.
 
-**On a server.** One Docker image:
+**On a server.** One command on Linux (x64 or arm64), as root:
 
 ```bash
-git clone https://github.com/legostin/piomio.git && cd piomio
-docker compose up -d
-docker compose logs piomio | grep -A1 "Piomio:"
+curl -fsSL https://piomio.io/install.sh | sh
 ```
 
-Open http://localhost:8080, enter the setup code from the logs and pick a password. On a remote server, connect from your computer first with `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server`, or open the hub on the server's address: see [On a server](#on-a-server).
+It makes a user `piomio` for the hub and its agents and prints the setup code and the `ssh -L` line that opens the chat on your computer. Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead. Step by step: [On a server](#on-a-server), also [on the site](https://piomio.io/en/server/). Prefer Docker? See [In Docker](https://piomio.io/en/server/#docker).
+
+**With your AI.** Already use Claude Code, Codex or Kimi Code? Paste this into it on the computer or server where Piomio should run:
+
+```text
+Install Piomio on this computer and set it up for me. Follow https://piomio.io/setup.md step by step. Ask me whenever a decision is mine, and never ask me for passwords or keys. At the end, tell me how to open the chat.
+```
+
+It works out what the machine is, installs Piomio and asks you only what is yours to decide ([what it will do](https://piomio.io/setup.md)). On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in.
 
 **On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub through a QR code, and approvals need Face ID.
 
@@ -102,7 +108,7 @@ Open http://localhost:8080, enter the setup code from the logs and pick a passwo
 flowchart LR
   you(["You"]) --- apps["Desktop app · Web · iPhone · Telegram"]
   apps --- hub["Piomio hub<br/>on your computer or server"]
-  hub --- brains["Brains<br/>Claude Code · Codex · API keys"]
+  hub --- brains["Brains<br/>Claude Code · Codex · Kimi Code"]
   hub --- team["Your agents<br/>a name, a face, a job"]
   hub --- tools["Plugins and MCP<br/>browser · mail · calendar · pages · channels"]
   hub --- machines["Your other computers"]
@@ -163,14 +169,16 @@ Claude Code and Codex: if one is already installed and signed in on the computer
 
 To start from scratch, choose **Reset Piomio…** in the icon's menu. The app lists what goes: chats, agents, memory, the vault with your secrets, plugins, settings, this computer's connection to a hub and the start-at-login entry. Once you confirm, it deletes all of it and either offers the first-run setup again or quits. Your Claude Code and Codex sign-ins stay: they belong to those tools, not to Piomio.
 
-Your data stays in `%LOCALAPPDATA%\Piomio` (Windows) or `~/Library/Application Support/Piomio` (macOS); upgrading keeps it (an install from when Piomio was called Owlbot keeps its `Owlbot` folder). To upgrade on macOS, drag the new Piomio to Applications and replace the old one. To uninstall, use **Settings → Apps** on Windows (it asks before deleting your data) or move Piomio from Applications to the Trash on macOS (the data stays; to remove it too, first choose **Reset Piomio… → Delete and quit** in the icon's menu). The hub listens on `http://localhost:41780` (console `:41781`, egress proxy `:41789`), away from ports other tools tend to hold (8080, OpenClaw's 18789); another port goes into `desktop.json` in the data folder as `{"port": 19000}`. It is reachable from this computer only; for your phone, see [Phone](#phone).
+**Updates come on a button.** When a release is out, this computer's row in **Machines** shows **Update** and the assistant offers it in the chat (or just say "update Piomio"); the icon's menu has it too. The app downloads the release, checks its signature, restarts with it and is back in a minute or two, and the assistant tells you what changed.
+
+Your data stays in `%LOCALAPPDATA%\Piomio` (Windows) or `~/Library/Application Support/Piomio` (macOS); updating keeps it (an install from when Piomio was called Owlbot keeps its `Owlbot` folder). To uninstall, use **Settings → Apps** on Windows (it asks before deleting your data) or move Piomio from Applications to the Trash on macOS (the data stays; to remove it too, first choose **Reset Piomio… → Delete and quit** in the icon's menu). The hub listens on `http://localhost:41780` (console `:41781`, egress proxy `:41789`), away from ports other tools tend to hold (8080, OpenClaw's 18789); another port goes into `desktop.json` in the data folder as `{"port": 19000}`. It is reachable from this computer only; for your phone, see [Phone](#phone).
 
 The desktop version runs the hub, plugins and CLI brains as your own user: the Docker image's separate Unix users and its kernel-level network block are not there. For the strongest isolation, run Piomio in Docker.
 
-The app is not signed yet. Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. If macOS refuses to open it, choose **Open Anyway** in **System Settings → Privacy & Security** (on macOS 13 and 14, Control-clicking the app and choosing **Open** works too).
+The Mac app is signed and notarized by Apple. The Windows one is not signed yet, so SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
 
-<a id="on-a-server"></a>
-#### On a server (Docker)
+<a id="on-a-server-docker"></a>
+#### In Docker
 
 ```bash
 git clone https://github.com/legostin/piomio.git && cd piomio
@@ -187,10 +195,104 @@ docker compose logs piomio | grep -A1 "Piomio:"
 - After the setup, [access from anywhere](#access-from-anywhere) gives the hub an HTTPS link of its own: one button in the chat.
 
 1. Open http://localhost:8080 (or your address), enter the **setup code** from the logs and choose a password. Your browser's language becomes the hub language (see [Languages](#languages)).
-2. Until a brain works, the chat shows a setup card: sign Claude Code or Codex in with your subscription (on a desktop install the hub can install a missing CLI first), or give an API key (see below). Whatever you write meanwhile is answered as soon as a brain is connected.
+2. Until a brain works, the chat shows a setup card: sign Claude Code, Codex or Kimi Code in with your subscription (on a desktop install the hub can install a missing CLI first), or, on a hub started with `PIOMIO_API_KEYS=1`, give an API key (see below). Whatever you write meanwhile is answered as soon as a brain is connected.
 3. Then the assistant leads the rest of the setup in the chat, one step at a time and only when you agree: Telegram, a backup brain, other computers, and getting to know you. Say "not now" to skip a step, "let's continue the setup" to come back to it. When something needs a key or a token, the assistant shows a secure field in the chat: the value goes straight into the encrypted vault and the model only ever sees `vault://id`. You can also just paste a token into a message: the hub recognises known formats, takes it out of the message and stores it.
 
 Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example) lists each one with an example, [Environment variables](#environment-variables) has the defaults. Everything is stored in the `piomio-data` volume (`/data`): the database, the vault, workspaces, CLI logins and plugins.
+
+</details>
+
+<a id="on-a-server"></a>
+<details>
+<summary><b>On a server, step by step</b></summary>
+
+A server stays on, so your agents keep working while your computer sleeps. You need Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like; on Alpine and other musl systems, use [Docker](https://piomio.io/en/server/#docker)) and SSH access as root. The same guide is [on the site](https://piomio.io/en/server/).
+
+There are two ways to use a server:
+
+- **[The hub on the server](#server-hub).** The server is your Piomio: chats, agents, memory and the vault live there. You open it in a browser, the phone app or the desktop app.
+- **[A computer of your hub](#server-computer).** Your hub stays on your Mac or PC, and the server joins it: agents run commands there, use its files and think with its Claude Code or Codex. The chats stay on your computer, so while it sleeps, the server waits.
+
+<a id="server-hub"></a>
+#### The hub on the server
+
+1. **Install.** Connect to the server over SSH as root and run:
+   ```bash
+   curl -fsSL https://piomio.io/install.sh | sh
+   ```
+   It creates the user `piomio` without sudo, installs the libraries the agents' browser needs and starts Piomio, with its own Node, as that user's systemd service. At the end it prints the setup code, the line that opens the chat on your computer, and the brains it found. Running it again updates Piomio. (Run as an ordinary user, it installs for that user; then leave out `sudo -iu piomio` below.)
+2. **Sign in to a brain.** Agents think with the CLI that the user `piomio` is signed in to, on your own plan: the hub runs as that user, with its home and the PATH of its login shell, and copies nothing. Sign in yourself, as that user. Codex, for example:
+   ```bash
+   sudo -iu piomio
+   curl -fsSL https://chatgpt.com/codex/install.sh | sh
+   codex login --device-auth
+   ```
+   Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`, then `claude`. Kimi Code: `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`, then `kimi` and `/login`. Piomio finds the sign-in within a minute, no restart needed. You can also skip this step and press **Sign in** in the chat later: it installs a missing CLI first.
+3. **Open the chat.** It listens only on the server itself. On your computer, run the line the installer printed and keep it running:
+   ```bash
+   ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 root@<server-ip>
+   ```
+   Then open http://localhost:8080, enter the setup code and choose a password. The assistant takes you through the rest in the chat. Lost the code? `sudo -iu piomio cat ~/.local/share/piomio/setup-code`.
+4. **Reach it from anywhere.** Say "turn on access from anywhere" in the chat and sign in to Tailscale with a free account. The hub gets a permanent link like `https://piomio.<your-tailnet>.ts.net`: any browser, the phone app and your other computers reach it there, with no tunnel and no open ports. See [Access from anywhere](#access-from-anywhere).
+5. **Update with a button.** When a release is out, the server's row in **Machines** shows **Update**, and the assistant offers it in the chat (or say "update the server"). The hub downloads the release, checks its signature (the key the desktop app's updates are signed with), makes sure the new version starts, keeps a copy of the database, restarts and is back in about a minute. If the new version doesn't start three times, it goes back to the previous one with the database as it was, and says so in the chat. Computers joined with `piomio-node` get the same **Update** when they run an older version than the hub (a `piomio-node.mjs` from before this feature doesn't say its version: download it again once).
+
+Commands, after `sudo -iu piomio`:
+
+| Command | |
+|---|---|
+| `piomio version` | the installed version |
+| `piomio backup` | a copy of the database, the vault, agents and plugins in `~/.local/share/piomio/backups` |
+| `piomio reset-password <new>` | a new password for the chat |
+| `piomio devices pair` | a QR code for the phone app, right in the terminal |
+| `systemctl --user restart piomio` | a restart, for example after a change in `~/.config/piomio/env` |
+| `journalctl --user -u piomio -f` | the log |
+| `piomio uninstall` | removes the app and the service; the data stays in `~/.local/share/piomio` |
+
+Files: the app in `~/.local/lib/piomio` (`piomio` in `~/.local/bin`), the data in `~/.local/share/piomio`, settings in `~/.config/piomio/env` ([the variables](#environment-variables), one per line). The chat (`8080`) and the console (`8081`) open on `127.0.0.1`; the phones' port is `8082`.
+
+Without Docker the hub, the plugins and the CLI brains run as one user: the user without sudo is the wall, not separate Unix users and a kernel-level network block. For the strongest isolation, use [Docker](https://piomio.io/en/server/#docker).
+
+<a id="server-computer"></a>
+#### A computer of your hub
+
+1. **Let the server reach your hub.** A hub on a Mac or PC at home opens only there until you turn on [access from anywhere](#access-from-anywhere): say "turn on access from anywhere" in its chat. If you skip this, the assistant offers it when you ask to connect a computer.
+2. **Get an invite.** Say "connect a computer" in the chat and press the button on the card. You get a one-time link that works for an hour, like `https://piomio.<your-tailnet>.ts.net/join/AB12CD34`. Open it: under **Server without a screen** the page shows the next command with your link already in it.
+3. **Run it on the server as root:**
+   ```bash
+   curl -fsSL https://piomio.io/install.sh | PIOMIO_NAME=vps sh -s -- https://piomio.<your-tailnet>.ts.net/join/<code>
+   ```
+   It creates the user `piomio`, puts Node.js (from nodejs.org) and the hub's `piomio-node` in `~/.local/lib/piomio-node` and keeps them connected as the systemd user service `piomio-node`. `PIOMIO_NAME` is what the computer is called in **Machines**; without it, the server's host name.
+4. **Sign in to a brain**, the same way as for a hub: `sudo -iu piomio`, then sign in to Codex, Claude Code or Kimi Code. They become the brains `codex@vps`, `claude-code@vps` and `kimi@vps`, and the hub sees a sign-in within a minute.
+5. **Decide what agents may do there.** The server decides that, in `~/.piomio-node/policy.json` ([the policy](packages/node/README.md)): by default agents work only in `~/piomio-workspace`, and running commands is off. A change takes effect by itself. Newer versions of `piomio-node` come from the hub: its row in **Machines** shows **Update** when it's behind.
+
+Commands, after `sudo -iu piomio`: `piomio-node status` (whether it's paired, its policy, its CLIs and whether the hub answers), `journalctl --user -u piomio-node -f` (the log) and `piomio-node uninstall` (removes the service; the key and the policy stay; remove the computer in **Machines** too).
+
+<a id="server-address"></a>
+#### Why not just the server's IP address?
+
+Piomio opens the chat only on `127.0.0.1`, on purpose:
+
+- The chat (port 8080) speaks plain HTTP. Over the internet your password and session would travel unencrypted, and bots find an open port within minutes.
+- Passkeys work only over HTTPS or on `localhost`, so `http://<ip>:8080` can't use them.
+- Port 8081 is the security console: rules, the vault, the audit. It should never face the internet.
+
+The safe ways in are the SSH tunnel, [access from anywhere](#access-from-anywhere), or [your own domain with HTTPS in front](#your-own-proxy). The phones' port 8082 is HTTPS with the hub's own certificate, which the app pins from the QR code, so that one is fine to open: `ufw allow 8082/tcp`.
+
+If you still want the bare address, with plain HTTP and no passkeys, put this in `~/.config/piomio/env`:
+
+```
+PIOMIO_HOST=0.0.0.0
+PIOMIO_PUBLIC_URL=http://<server-ip>:8080
+```
+
+Then, as root, `ufw allow 8080/tcp` (and only 8080: the console now listens on every address too, so 8081 stays closed), and as `piomio`, `systemctl --user restart piomio`. Without `PIOMIO_PUBLIC_URL` the hub refuses every address but `localhost`.
+
+#### If something goes wrong
+
+- **The installer can't reach the hub.** The invite link has to open from the server: try `curl -I <link>` there. A hub at home needs access from anywhere turned on. Each link works once and for an hour, so ask for a new one.
+- **A brain is signed in, but Piomio doesn't see it.** It has to be signed in as the user Piomio runs as, `piomio`, not as root. Check with `sudo -iu piomio`, then `codex login status` or `claude auth status`.
+- **`systemctl --user` can't connect to the bus.** Open the user's shell with `sudo -iu piomio`: the installer set it up so that `systemctl --user` and `journalctl --user` work there.
+- **The chat doesn't open on localhost:8080.** The `ssh -L` line has to keep running while you use the chat. On the server, `sudo -iu piomio`, then `systemctl --user status piomio` and `journalctl --user -u piomio -n 50` show whether Piomio runs and what stops it.
 
 </details>
 
@@ -208,16 +310,18 @@ Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example)
 <details>
 <summary><b>Connecting brains and API keys</b></summary>
 
-**Claude Code (Claude Pro/Max subscription) and Codex (ChatGPT subscription)** sign in from the chat. Press **Sign in** next to the brain on the setup card, or ask the assistant ("connect Codex"): a card shows the sign-in page to open.
+**Claude Code (Claude Pro/Max subscription), Codex (ChatGPT subscription) and Kimi Code (Kimi membership)** sign in from the chat. Press **Sign in** next to the brain on the setup card, or ask the assistant ("connect Kimi"): a card shows the sign-in page to open.
 
-- **Codex:** enter the one-time code from the card on that page.
+- **Codex** and **Kimi Code:** enter the one-time code from the card on that page.
 - **Claude Code:** sign in, copy the code the page shows and paste it into the card (not into the chat).
 
 The card turns green once the brain is signed in. The login is kept on the server in `/data/home/agent`, so there is nothing to run in a terminal. The **Brains** page has the same buttons.
 
-This is the CLI's own sign-in, on Anthropic's or OpenAI's page: Piomio only hands the code to the CLI and never holds your Claude or ChatGPT credentials. Each computer signs in on its own. Piomio does not take tokens from `claude setup-token`: Anthropic's terms don't allow apps to store them, so a pasted one is removed from the message and kept nowhere.
+Each runs as its official CLI (`claude`, `codex`, `kimi` from `@moonshot-ai/kimi-code`) and signs in on its maker's own page with your account: Piomio only hands the code to the CLI and never takes or copies its tokens. Each computer signs in on its own. Piomio does not take tokens from `claude setup-token` either: Anthropic's terms don't allow apps to store them, so a pasted one is removed from the message and kept nowhere.
 
-**API keys** (fallback brains, web search): ask the assistant ("connect Brave search") or paste the key into the chat. They are stored in the vault under these ids:
+**API keys as brains** (the `api:*` brains, Codex with an OpenAI key, API keys for other machines' brains) are off unless the hub starts with `PIOMIO_API_KEYS=1`. Keys for everything else (web search, Telegram, speech-to-text) work either way.
+
+**API keys** (fallback brains with `PIOMIO_API_KEYS=1`, web search): ask the assistant ("connect Brave search") or paste the key into the chat. They are stored in the vault under these ids:
 
 | id | Used for |
 |---|---|
@@ -276,14 +380,18 @@ Piomio signs in with its own Google client. To use your own instead, create one 
 <details>
 <summary><b>Other computers</b></summary>
 
-1. On the **Machines** page, connect a new machine to get a one-time code (valid for 10 minutes).
-2. On the other computer (it only needs Node.js 24.5+), download the daemon from the hub and pair the machine:
+1. Ask the assistant to connect a computer. It gives a one-time link, valid for an hour. A Mac or PC opens it in the Piomio app.
+2. A Linux server (systemd, x64 or arm64) joins with one command, which the link's page shows:
+   ```bash
+   curl -fsSL https://piomio.io/install.sh | sh -s -- https://your-hub-url/join/<code>
+   ```
+   Step by step: [A computer of your hub](#server-computer). It puts the hub's own `piomio-node`, with Node from nodejs.org, in `~/.local/lib/piomio-node` and keeps it running as the systemd user service `piomio-node`. Run as root, it makes the user `piomio` for it, as for a hub. `PIOMIO_NAME=<name>` names the computer; `piomio-node uninstall` removes it (the key and the policy stay). Elsewhere, with Node.js 24.5+:
    ```bash
    curl -fsSLo piomio-node.mjs https://your-hub-url/download/piomio-node.mjs
-   node piomio-node.mjs pair https://your-hub-url <code> --name laptop
+   node piomio-node.mjs pair https://your-hub-url/join/<code> --name laptop
    node piomio-node.mjs run
    ```
-3. The node appears in the list. Its local Claude Code and Codex become the brains `claude-code@<machine>` and `codex@<machine>`. What the agent may do on the machine (folders, commands, brains) is decided in `~/.piomio-node/policy.json` on that machine; commands are off by default. Running the daemon as a service with systemd, launchd or Task Scheduler is covered in [packages/node/README.md](packages/node/README.md).
+3. The computer appears in **Machines**. Its Claude Code, Codex and Kimi Code become the brains `claude-code@<machine>`, `codex@<machine>` and `kimi@<machine>`, signed in as they are there; one signed in later is found within a minute. What the agent may do on the machine (folders, commands, brains) is decided by the machine's owner in `~/.piomio-node/policy.json`; commands are off by default. Running the daemon as a service with launchd or Task Scheduler is covered in [packages/node/README.md](packages/node/README.md).
 
 Under the team in the sidebar (and in the phone app's **Hub** tab) every machine shows whether it is online and, while agents work there, who works on what and what they are doing right now: running a command, reading or editing files, on the web, writing, or waiting for your approval. A row opens that chat or task.
 
@@ -374,7 +482,7 @@ docker exec piomio piomio-entrypoint audit-verify
 <details>
 <summary><b>Environment variables</b></summary>
 
-On a server they go in `.env` next to `docker-compose.yml` ([.env.example](.env.example) has them with examples). The first two are read by `docker-compose.yml` itself.
+In Docker they go in `.env` next to `docker-compose.yml` ([.env.example](.env.example) has them with examples). The first two are read by `docker-compose.yml` itself. A server install reads them from `~/.config/piomio/env`.
 
 | Variable | Default | |
 |---|---|---|
@@ -394,7 +502,10 @@ On a server they go in `.env` next to `docker-compose.yml` ([.env.example](.env.
 | `PIOMIO_DEVICES` | — | `0` closes the phones' port on the network: phones then reach the hub only through the link |
 | `PIOMIO_DEVICE_URLS` | detected | addresses for the pairing QR, comma-separated, ahead of the detected ones |
 | `PIOMIO_DATA_DIR` | `.data/` (`/data` in the image) | data directory |
-| `PIOMIO_INSTALL_CLIS` | — (`1` in the desktop installers) | `1` lets **Sign in** install a missing Claude Code or Codex into `<data>/tools` |
+| `PIOMIO_INSTALL_CLIS` | — (`1` in the desktop installers and on a server install) | `1` lets **Sign in** install a missing Claude Code, Codex or Kimi Code into `<data>/tools`, and reads the PATH of the user's login shell |
+| `PIOMIO_INSTALL_ROOT` | — (`~/.local/lib/piomio` on a server install) | where `install.sh` put the hub: such a hub updates itself on the **Update** button |
+| `PIOMIO_UPDATE_URL` | GitHub's latest release | another release to update from (a local check): in the shape of GitHub's `releases/latest` for a server install, a `latest.json` for the desktop app |
+| `PIOMIO_API_KEYS` | — | `1` lets agents think through plain API keys: the `api:*` brains, Codex with an OpenAI key, API keys for other machines' brains; set it alike on every replica |
 | `PIOMIO_GOOGLE_CLIENT_ID`, `PIOMIO_GOOGLE_CLIENT_SECRET` | Piomio's client | your own Google OAuth client (type Desktop app) for Google integrations |
 | `PIOMIO_TAILNET_BIN` | `packages/tailnet/bin/<platform>-<arch>/piomio-tailnet` | the hub's Tailscale node for access from anywhere |
 | `PIOMIO_TAILNET_HOSTNAME` | `piomio` | the node's name in your tailnet: the link's first label |
@@ -443,4 +554,4 @@ To run the app from source without touching an installed Piomio: stage once (`no
 
 [Apache-2.0](LICENSE)
 
-Piomio is an independent open-source project, not affiliated with or endorsed by Anthropic or OpenAI. Claude and Claude Code are trademarks of Anthropic; ChatGPT and Codex are trademarks of OpenAI. Piomio runs their official CLIs, which you sign in to with your own account, and each use stays under that provider's terms.
+Piomio is an independent open-source project, not affiliated with or endorsed by Anthropic, OpenAI or Moonshot AI. Claude and Claude Code are trademarks of Anthropic; ChatGPT and Codex are trademarks of OpenAI; Kimi is a trademark of Moonshot AI. Piomio runs their official CLIs, which you sign in to with your own account, and each use stays under that provider's terms.

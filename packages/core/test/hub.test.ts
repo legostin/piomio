@@ -402,7 +402,7 @@ describe("hub (integration)", () => {
     }
   });
 
-  it("gives each agent its own dialog, keeps it when the agent leaves", async () => {
+  it("gives each agent its own dialog, which goes when the agent is deleted", async () => {
     await web.req("PUT", "/api/agents/scout", { name: "Scout", description: "Looks around", brains: ["fake@local"], prompt: "Look around." });
     const scout = ((await web.req("GET", "/api/team")) as any[]).find((m) => m.agentId === "scout");
     expect(scout.conversationId).not.toBe(conv);
@@ -419,14 +419,15 @@ describe("hub (integration)", () => {
     expect((await lastReply(scout.conversationId, /fake heard: hi scout/)).agentId).toBe("scout");
     expect((await web.raw("PATCH", `/api/conversations/${scout.conversationId}`, { agentId: "assistant" })).status).toBe(400);
 
-    // "/" follows the default agent; deleting it falls back to the assistant.
+    // "/" follows the default agent; deleting it needs a successor, who takes "/".
     await web.req("PATCH", "/api/settings", { defaultAgent: "scout" });
     expect((await web.req("GET", "/api/bootstrap")).mainConversationId).toBe(scout.conversationId);
-    await web.req("DELETE", "/api/agents/scout");
+    expect((await web.raw("DELETE", "/api/agents/scout")).status).toBe(400);
+    await web.req("DELETE", "/api/agents/scout?successor=assistant");
     expect((await web.req("GET", "/api/settings")).defaultAgent).toBe("assistant");
     expect((await web.req("GET", "/api/bootstrap")).mainConversationId).toBe(conv);
     expect(((await web.req("GET", "/api/team")) as any[]).some((m) => m.agentId === "scout")).toBe(false);
-    expect(((await web.req("GET", `/api/conversations/${scout.conversationId}/messages`)) as any[]).length).toBeGreaterThan(0);
+    expect(hub.store.getConversation(scout.conversationId)).toBeUndefined();
   });
 
   it("delivers a schedule's report as the agent's own message", async () => {

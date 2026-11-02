@@ -64,6 +64,7 @@
   "error.tooManyRedirects": "Слишком много перенаправлений: {url}",
   "error.dailyLimit": "Дневной лимит запусков ({max}) исчерпан",
   "error.previousRunning": "Предыдущий запуск ещё не завершён",
+  "error.agentArchived": "Агент в архиве",
   "error.notFound": "Триггер {id} не найден",
   "error.unknownAgent": "Неизвестный агент \"{id}\". Доступны: {available}",
   "error.unknownMachine": "Нет компьютера \"{machine}\". Компьютеры: {available}",

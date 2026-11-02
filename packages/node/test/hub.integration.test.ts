@@ -4,8 +4,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -247,6 +248,57 @@ describe("remote brain session", () => {
     editPolicy((p) => (p.brains["claude-code"].enabled = false));
     await until(() => !hub.brains.list().some((b) => b.ref === `claude-code@${machineId}`), 15_000, "claude-code to be unregistered");
     await expect(hub.machines.call(machineId, "brain.create", { brainId: "claude-code", opts: opts("sess_x", "a/b") })).rejects.toThrow(/disabled/);
+  });
+});
+
+describe("the shared workspaces folder", () => {
+  // Bigger than the hub's 4 MB and the node's 16 MB WebSocket frames: a whole-file answer closed the socket.
+  it("carries a 20 MB file both ways without dropping the connection", async () => {
+    const lost = () => logs.filter((l) => /lost the connection|unreachable/i.test(l)).length;
+    const before = lost();
+    const toNode = randomBytes(20 * 1024 * 1024);
+    mkdirSync(join(root, "hub-data", "workspaces", "big"), { recursive: true });
+    writeFileSync(join(root, "hub-data", "workspaces", "big", "from-hub.bin"), toNode);
+    const onNode = join(workspace, "big", "from-hub.bin");
+    await until(() => existsSync(onNode) && readFileSync(onNode).equals(toNode), 60_000, "the hub's file on the node");
+    const toHub = randomBytes(20 * 1024 * 1024);
+    writeFileSync(join(workspace, "big", "from-node.bin"), toHub);
+    const onHub = join(root, "hub-data", "workspaces", "big", "from-node.bin");
+    await until(() => existsSync(onHub) && readFileSync(onHub).equals(toHub), 60_000, "the node's file on the hub");
+    expect(lost()).toBe(before);
+  }, 150_000);
+});
+
+describe("a CLI signed in after the daemon started", () => {
+  it("reaches the hub by itself while nothing here was signed in", async () => {
+    const home2 = join(root, "node-home-2");
+    const user2 = join(root, "user-2");
+    // The fake Claude Code is signed in once HOME/.claude/.credentials.json exists, as after `claude` over SSH.
+    const oldHome = process.env.HOME;
+    process.env.HOME = user2;
+    let d2: NodeDaemon | undefined;
+    try {
+      new PolicyStore(home2, { userHome: user2 });
+      const file = join(home2, "policy.json");
+      const p = JSON.parse(readFileSync(file, "utf8"));
+      p.brains["claude-code"].command = FAKE_CLAUDE;
+      p.brains.codex.command = join(root, "no-such-codex-cli");
+      p.brains.kimi.command = join(root, "no-such-kimi-cli");
+      writeFileSync(file, JSON.stringify(p, null, 2));
+      const { code } = hub.machines.createPairingCode();
+      const { machineId: id } = await pair({ home: home2, hubUrl: hub.config.publicUrl, code, name: "later-box" });
+      d2 = createNodeDaemon({ home: home2, userHome: user2, log: () => {}, brainRecheckMs: 200, minBackoffMs: 100, maxBackoffMs: 500 });
+      d2.client.start();
+      await d2.client.waitOnline(15_000);
+      const signedIn = () => hub.machines.list().find((m) => m.id === id)?.info?.clis.find((c) => c.brainId === "claude-code")?.authenticated;
+      expect(signedIn()).toBe(false);
+      mkdirSync(join(user2, ".claude"), { recursive: true });
+      writeFileSync(join(user2, ".claude", ".credentials.json"), "{}");
+      await until(() => signedIn(), 15_000, "the sign-in to reach the hub");
+    } finally {
+      await d2?.stop();
+      process.env.HOME = oldHome;
+    }
   });
 });
 

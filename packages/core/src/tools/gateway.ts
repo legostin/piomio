@@ -12,8 +12,9 @@ import type { Redactor } from "../vault/redact.ts";
 import type { Settings } from "../settings.ts";
 import { BACKGROUND_ALWAYS_ALLOWED, decide, SKILL_RUN_TOOLS } from "../policy/engine.ts";
 import { checkAsked, type AskedCheck, type PersonWords } from "../policy/asked.ts";
+import type { AutoMode } from "../policy/auto.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
-import { HUB_TOOL_PREFIX, HUB_TOOLS_FOR_EVERY_AGENT } from "./hub-tools.ts";
+import { HUB_TOOL_PREFIX, HUB_TOOLS_FOR_EVERY_AGENT, OWN_CARD_TOOLS } from "./hub-tools.ts";
 
 export interface AgentLookup {
   get(id: string): AgentDef | undefined;
@@ -36,6 +37,10 @@ export interface GatewayDeps {
   localize?: (owner: string, text: string) => string;
   /** The hub's skills: a background task following a taught one (Task.skill) may click and type (PolicyInput.skillRun). */
   skills?: { get(name: string): { taught: boolean } | undefined };
+  /** Auto mode: decides what would ask the person, when the settings say so (policy/auto.ts). */
+  auto?: AutoMode;
+  /** A machine's name for the reviewer ("local" is this hub's). */
+  machineName?: (id: string) => string;
 }
 
 /** How far back the person's words count as asking for an action (ToolSpec.asked): this request, not last week's. */
@@ -154,13 +159,31 @@ export class ToolGateway {
         };
       }
       const summary = this.summarize(tool, input);
+      const safe = this.d.redactor.value(input);
+      // The person allowed this very call after auto mode had stopped it.
+      const want = JSON.stringify(safe);
+      if (this.d.approvals.takeAllowance(s.id, name, (stored) => JSON.stringify(stored) === want)) return this.execute(s, tool, input, { ...ctx, approved: true });
+      // Auto mode decides instead of a card, except for the tools that always show the person their own.
+      if (this.d.auto && settings.approvalMode !== "ask" && !OWN_CARD_TOOLS.has(name)) {
+        const where = { sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, workspace: ctx.workspace, machine: this.d.machineName?.(ctx.machineId) ?? ctx.machineId, brain: parseBrainRef(s.brainRef).brainId };
+        const verdict = await this.d.auto.decide({ tool: name, input: safe, summary, kind: "tool", effect: tool.effect, why: policy.reason }, where);
+        if (verdict.decision === "allow") return this.execute(s, tool, input, { ...ctx, reviewed: true });
+        if (verdict.decision === "block") {
+          const blocked = this.d.approvals.block({ sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, tool: name, input: safe, summary, effect: tool.effect, tainted: s.tainted, auto: { rule: verdict.rule, reason: verdict.reason } });
+          return {
+            content: [{ type: "text", text: `Auto mode stopped this: [${verdict.rule}] ${verdict.reason} Find another way that fits what the person asked, or ask them in your reply.` }],
+            isError: true,
+            _meta: { status: "denied", approvalId: blocked.id },
+          };
+        }
+      }
       const approval = this.d.approvals.create({
         sessionId: s.id,
         conversationId: s.conversationId,
         taskId: s.taskId,
         agentId: s.agentId,
         tool: name,
-        input: this.d.redactor.value(input),
+        input: safe,
         summary,
         effect: tool.effect,
         tainted: s.tainted,
@@ -187,6 +210,7 @@ export class ToolGateway {
           _meta: { status: "awaiting_approval", approvalId: approval.id },
         };
       }
+      this.d.auto?.personSaidYes(s.id);
       const result = await this.execute(s, tool, input, { ...ctx, approved: true });
       this.d.approvals.markExecuted(approval.id, result);
       return result;
@@ -224,7 +248,7 @@ export class ToolGateway {
    * What the person wrote and sent lately where the session works: its dialog, or the one its task was started from.
    * Only their own messages: a teammate's (agentId set) or a task's goal is not the person speaking.
    */
-  private personWords(s: SessionRow): PersonWords {
+  personWords(s: Pick<SessionRow, "conversationId" | "taskId">): PersonWords {
     const where = new Set<string>();
     const conv = this.d.store.getConversation(s.conversationId);
     if (conv && conv.kind !== "task" && !conv.taskId) where.add(conv.id);

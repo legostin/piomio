@@ -200,6 +200,13 @@ export class Feeds {
     return this.get(id)!;
   }
 
+  /** A deleted agent's channels pass to `to` (the default agent). */
+  handOver(from: string, to: string): void {
+    const ids = (this.d.db.prepare("select id from feeds where agent_id = ?").all(from) as Array<{ id: string }>).map((r) => r.id);
+    this.d.db.prepare("update feeds set agent_id = ?, updated_at = ? where agent_id = ?").run(to, nowIso(), from);
+    for (const id of ids) this.changed(id);
+  }
+
   delete(id: string): void {
     if (!this.row(id)) throw new LocalizedError("feed.notFound", undefined, 404);
     this.d.db.prepare("delete from feed_posts where feed_id = ?").run(id);
@@ -326,7 +333,8 @@ export class Feeds {
       }
       if (Date.parse(r.next_run_at) > now.getTime() || this.settle(r.id, r.next_run_at)) continue;
       try {
-        if (!this.running(r.id)) this.run(r.id);
+        // An editor in the archive sleeps: the channel waits for its next time.
+        if (!this.running(r.id) && !this.d.agents.isArchived(r.agent_id)) this.run(r.id);
       } catch (e) {
         console.error(`[feeds] ${r.id}: ${(e as Error).message}`);
       }

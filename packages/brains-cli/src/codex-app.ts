@@ -3,6 +3,7 @@
 
 import type { BrainEvent, BrainTurn } from "@piomio/shared";
 import { EventQueue, runLines, type RunningProcess } from "./proc.ts";
+import type { HubAnswer } from "./hub-permission.ts";
 
 /** Codex's v2 notifications as BrainEvents. Pure: easy to test with recorded frames. */
 export class CodexAppParser {
@@ -167,35 +168,48 @@ export interface AppServerSetup {
   sandbox: string;
   threadId?: string;
   /** Ask the hub about what the sandbox would not let through; without it every approval is declined. */
-  ask?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
+  ask?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>;
+  /** Thread settings in place of `sandbox`: a permission profile chosen by `-c default_permissions` (codex.ts). */
+  profile?: boolean;
+  /** A bare thread: kept nowhere, the hub's instructions in place of AGENTS.md (BrainSessionOptions.bare). */
+  bare?: { instructions: string };
 }
 
 type Pending = { resolve: (v: any) => void; reject: (e: any) => void };
 
-/** The answer to one of Codex's approval requests, asking `ask` (the hub) what it is about. */
-export async function approvalAnswer(method: string, params: Record<string, any>, ask?: (tool: string, input: Record<string, unknown>) => Promise<boolean>): Promise<unknown> {
+/**
+ * The answer to one of Codex's approval requests, asking `ask` (the hub) what it is about. Codex's answers have no
+ * room for why not: `denied` gets the hub's reason, for the turn to hear it otherwise.
+ */
+export async function approvalAnswer(method: string, params: Record<string, any>, ask?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>, denied?: (why: string) => void): Promise<unknown> {
+  const hub = async (tool: string, input: Record<string, unknown>): Promise<boolean> => {
+    if (!ask) return false;
+    const a = await ask(tool, input);
+    if (!a.allow && a.message) denied?.(a.message);
+    return a.allow;
+  };
   const command = Array.isArray(params.command) ? params.command.join(" ") : typeof params.command === "string" ? params.command : "";
   const net = params.networkApprovalContext && typeof params.networkApprovalContext === "object" ? { host: params.networkApprovalContext.host } : undefined;
   switch (method) {
     case "item/commandExecution/requestApproval": {
-      const yes = !!ask && (await ask("codex.command", { command, cwd: params.cwd, reason: params.reason, ...(net ? { network: net } : {}) }));
+      const yes = await hub("codex.command", { command, cwd: params.cwd, reason: params.reason, ...(net ? { network: net } : {}) });
       return { decision: yes ? "accept" : "decline" };
     }
     case "item/fileChange/requestApproval": {
-      const yes = !!ask && (await ask("codex.fileChange", { grantRoot: params.grantRoot, reason: params.reason }));
+      const yes = await hub("codex.fileChange", { grantRoot: params.grantRoot, reason: params.reason });
       return { decision: yes ? "accept" : "decline" };
     }
     case "item/permissions/requestApproval": {
       const wanted = (params.permissions ?? {}) as { network?: unknown; fileSystem?: unknown };
-      const yes = !!ask && (await ask("codex.permissions", { reason: params.reason, permissions: wanted }));
+      const yes = await hub("codex.permissions", { reason: params.reason, permissions: wanted });
       return { permissions: yes ? { ...(wanted.network ? { network: wanted.network } : {}), ...(wanted.fileSystem ? { fileSystem: wanted.fileSystem } : {}) } : {}, scope: "turn" };
     }
     case "execCommandApproval": {
-      const yes = !!ask && (await ask("codex.command", { command, cwd: params.cwd, reason: params.reason }));
+      const yes = await hub("codex.command", { command, cwd: params.cwd, reason: params.reason });
       return { decision: yes ? "approved" : { denied: { rejection: "The person did not allow it." } } };
     }
     case "applyPatchApproval": {
-      const yes = !!ask && (await ask("codex.fileChange", { grantRoot: params.grantRoot, reason: params.reason }));
+      const yes = await hub("codex.fileChange", { grantRoot: params.grantRoot, reason: params.reason });
       return { decision: yes ? "approved" : { denied: { rejection: "The person did not allow it." } } };
     }
     default:
@@ -263,7 +277,12 @@ export class CodexAppTurn {
         return;
       }
       // Confined, the hub decides (and may ask the person); otherwise approval_policy is "never" and this is a no.
-      void approvalAnswer(m.method, m.params ?? {}, this.s.ask).then((result) => this.proc?.write(`${JSON.stringify({ id: m.id, result })}\n`));
+      let why: string | undefined;
+      void approvalAnswer(m.method, m.params ?? {}, this.s.ask, (w) => (why = w)).then((result) => {
+        this.proc?.write(`${JSON.stringify({ id: m.id, result })}\n`);
+        // The reason joins the turn as the next thing the agent reads.
+        if (why) void this.steer({ text: `[System] ${why}` });
+      });
       return;
     }
     if (m.method === "thread/started" && m.params?.thread?.id) this.threadId = m.params.thread.id;
@@ -303,13 +322,22 @@ export class CodexAppTurn {
         throw new AppServerUnsupported(exit ? proc.stderr().trim().split("\n").slice(-3).join("\n") : "codex app-server did not answer");
       }
       this.notify("initialized");
-      const thread = { cwd: this.s.cwd, approvalPolicy: this.s.ask ? "on-request" : "never", sandbox: this.s.sandbox, ...(this.s.model ? { model: this.s.model } : {}) };
+      // A `sandbox` here would win over the permission profile the config chose.
+      const thread = {
+        cwd: this.s.cwd,
+        approvalPolicy: this.s.ask ? "on-request" : "never",
+        ...(this.s.profile ? {} : { sandbox: this.s.sandbox }),
+        ...(this.s.model ? { model: this.s.model } : {}),
+        ...(this.s.bare ? { ephemeral: true, baseInstructions: this.s.bare.instructions } : {}),
+      };
       let r: any;
       if (this.threadId) r = await this.request("thread/resume", { threadId: this.threadId, ...thread }).catch(() => undefined);
       // The thread to resume is gone: a fresh one, which starts from the hub's recap when it sent one.
       if (!r && this.threadId && turn.recap) turn = { ...turn, text: `${turn.recap}\n\n---\n${turn.text}` };
       if (!r) r = await this.request("thread/start", thread);
       this.threadId = r?.thread?.id ?? this.threadId;
+      // The profile closes what no agent may read; a Codex that ran without it would see the whole computer.
+      if (this.s.profile && r?.sandbox?.type === "dangerFullAccess") throw new Error("Codex did not take the hub's permission profile: the turn was not started");
       // The model the thread answers with (its default when none was asked for).
       const model = typeof r?.model === "string" && r.model ? r.model : this.s.model;
       if (model) this.events.push({ type: "model", model });

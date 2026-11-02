@@ -26,9 +26,9 @@ describe("desktop sign-in tickets", () => {
   it("reads the app's lines and stops when the pipe closes", async () => {
     const input = new PassThrough();
     const seen: string[] = [];
-    readDesktopCommands(input, { stop: () => seen.push("stop"), ticket: (t) => seen.push(`ticket ${t}`) });
-    input.write(`ticket ${ticket}\nnoise\nstop\n`);
+    readDesktopCommands(input, { stop: () => seen.push("stop"), ticket: (t) => seen.push(`ticket ${t}`), updateFailed: (why) => seen.push(`failed: ${why}`) });
+    input.write(`ticket ${ticket}\nnoise\nupdate-failed error sending request for url (https://github.com/…)\nstop\n`);
     input.end();
-    await vi.waitFor(() => expect(seen).toEqual([`ticket ${ticket}`, "stop", "stop"]));
+    await vi.waitFor(() => expect(seen).toEqual([`ticket ${ticket}`, "failed: error sending request for url (https://github.com/…)", "stop", "stop"]));
   });
 });

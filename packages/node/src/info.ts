@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { arch, hostname, release, version } from "node:os";
 import type { MachineInfo } from "@piomio/shared";
 import type { Policy } from "./policy.ts";
+import { PIOMIO_VERSION, selfFile } from "./version.ts";
 
 export function osName(): string {
   try {
@@ -30,6 +31,8 @@ export function machineInfo(policy: Policy, clis: MachineInfo["clis"]): MachineI
     hostname: hostname(),
     arch: arch(),
     nodeVersion: process.version,
+    version: PIOMIO_VERSION,
+    selfUpdate: !!selfFile(),
     clis,
     allowedDirs: [...policy.allowedDirs],
   };

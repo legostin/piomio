@@ -24,7 +24,8 @@ import { hubLocale, t, tFor } from "../i18n.ts";
 import { listIntegrations } from "../integrations.ts";
 import type { InstallPreview } from "../plugins/host.ts";
 import { ruleMatches } from "../policy/engine.ts";
-import { inviteUrl, machineHubUrl } from "../pairing.ts";
+import { hubName, inviteUrl, machineHubUrl } from "../pairing.ts";
+import { UpdateError } from "../self-update.ts";
 import { isSetupStep, SETUP_STEPS } from "../setup.ts";
 import { sanitizeToolName } from "./registry.ts";
 import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, skillSaveSummary } from "../taught-skills.ts";
@@ -34,14 +35,16 @@ import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 export const HUB_TOOL_PREFIX = "hub_";
 
 /** Settings the assistant may change on request. Everything else is refused with a pointer to the settings panel. */
-export const AGENT_SETTABLE = ["timezone", "defaultAgent", "language", "quietHours", "digestTimes", "notifyRatePerHour", "brainConcurrency", "channelMirror"] as const;
+export const AGENT_SETTABLE = ["timezone", "defaultAgent", "language", "quietHours", "digestTimes", "notifyRatePerHour", "brainConcurrency", "channelMirror", "approvalMode"] as const;
 
 const SECRET_KEY = /key|token|secret|password/i;
 
 /** Tools that only put a card in front of the user, who then decides: fine even after outside content was read. */
 const CARDS = new Set(["secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
-const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save"]);
+const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete"]);
+/** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. */
+export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n));
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
 export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign"];
 
@@ -88,7 +91,7 @@ function profilePatch(i: Record<string, unknown>): Partial<AgentDef> | string {
   return patch;
 }
 
-const BRAIN_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
+const BRAIN_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", kimi: "Kimi Code" };
 
 /** The setup card: the machine, each brain with its sign-in or keys and models with prices, and the limit. */
 function describeSetup(machine: string, s: MachineSettings): string {
@@ -109,6 +112,9 @@ function describeSetup(machine: string, s: MachineSettings): string {
 }
 
 export function registerHubTools(hub: Hub): void {
+  // Model access through API keys (the API brain, key mode of machines) exists only on a hub started with
+  // PIOMIO_API_KEYS=1 (Config.apiKeys): without it the tools speak of sign-ins alone.
+  const keys = hub.config.apiKeys;
   /** `describe`: the approval card's text from the call's real input (what exactly changes), instead of the summary template. */
   const reg = (
     spec: Omit<ToolDescriptor, "owner" | "name"> & { name: string },
@@ -127,8 +133,9 @@ export function registerHubTools(hub: Hub): void {
     hub.tools.register(
       descriptor,
       async (input, ctx) => {
-        // After outside content a change runs only with the person's yes: on its card, or their "always allow" rule.
-        if (guarded && ctx.tainted && !ctx.approved) {
+        // After outside content a change runs only with a yes: the person's on its card or by their "always allow"
+        // rule, or auto mode's reviewer's.
+        if (guarded && ctx.tainted && !ctx.approved && !ctx.reviewed) {
           return text(
             "Refused: this conversation has read outside content, so each change of the hub needs the person's yes on its approval card, " +
               "and this call had none. Tell the person what you want to change and why.",
@@ -157,17 +164,43 @@ export function registerHubTools(hub: Hub): void {
       description:
         `Change hub settings when the user asks. Allowed keys: ${AGENT_SETTABLE.join(", ")}. ` +
         'Shapes: timezone "Europe/Berlin"; language "en"|"ru"; quietHours {enabled, start:"23:00", end:"08:00"}; digestTimes ["09:00","19:00"]; notifyRatePerHour number; brainConcurrency number; defaultAgent agent id; ' +
-        "channelMirror true|false (the default agent's replies to messages typed in the web UI also go to Telegram). " +
-        "Network allowlists and approval behaviour can only be changed by the user in the settings panel.",
+        "channelMirror true|false (the default agent's replies to messages typed in the web UI also go to Telegram); " +
+        'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card). ' +
+        "Network allowlists can only be changed by the user in the settings panel.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
     },
-    (i) => {
+    async (i, ctx) => {
       const patch = (i.patch && typeof i.patch === "object" ? i.patch : {}) as Record<string, unknown>;
       const refused = Object.keys(patch).filter((k) => !(AGENT_SETTABLE as readonly string[]).includes(k));
       if (refused.length) return text(`Refused: ${refused.join(", ")} can only be changed by the user in the settings panel (gear icon → Settings).`, true);
       if (!Object.keys(patch).length) return text("Nothing to change.", true);
       const err = validateSettings(patch);
       if (err) return text(err, true);
+      // Asking the person more needs no yes; letting a reviewer decide instead of them does, on a card.
+      if (patch.approvalMode === "auto" && hub.settings.get().approvalMode === "ask" && !ctx.approved) {
+        const approval = hub.approvals.create({
+          sessionId: ctx.sessionId,
+          conversationId: ctx.conversationId,
+          taskId: ctx.taskId,
+          agentId: ctx.agentId,
+          tool: HUB_TOOL_PREFIX + "settings_update",
+          input: i,
+          summary: t("settings.autoModeCard"),
+          effect: "external",
+          tainted: ctx.tainted,
+        });
+        const outcome = await hub.approvals.wait(approval.id, Math.max(120_000, hub.settings.get().approvalInlineWaitSec * 1000));
+        if (outcome === "timeout") {
+          try {
+            hub.approvals.resolve(approval.id, "deny", { via: "timeout" });
+          } catch {
+            /* already answered */
+          }
+          return text("The person did not answer the card in time: auto mode stays off.", true);
+        }
+        if (outcome !== "approved") return text("The person declined: auto mode stays off.", true);
+        hub.approvals.markExecuted(approval.id, text("Auto mode is on."));
+      }
       const next = hub.updateSettings(patch, "agent");
       return text(`Settings updated: ${Object.keys(patch).map((k) => `${k}=${JSON.stringify((next as any)[k])}`).join(", ")}`);
     },
@@ -180,13 +213,14 @@ export function registerHubTools(hub: Hub): void {
       name: "agents_list",
       effect: "read",
       description:
-        "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative, the skills given to them (not counting the whole team's) and which one is the default.",
+        "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative, the skills given to them (not counting the whole team's), which one is the default, which are pinned and which sleep in the archive.",
       inputSchema: obj({}),
     },
     () => {
       const def = hub.settings.get().defaultAgent;
+      const { pinned } = hub.agentsState.get();
       return json(
-        hub.agents.list().map((a) => ({
+        hub.agents.all().map((a) => ({
           id: a.id,
           name: a.name,
           description: a.description,
@@ -199,6 +233,8 @@ export function registerHubTools(hub: Hub): void {
           skills: hub.skills.ownOf(a.id),
           source: a.source,
           default: a.id === def,
+          ...(pinned.includes(a.id) ? { pinned: true } : {}),
+          ...(hub.agents.isArchived(a.id) ? { archived: true } : {}),
         })),
       );
     },
@@ -244,14 +280,110 @@ export function registerHubTools(hub: Hub): void {
     },
   );
 
+  /** Archiving and deleting agents is the default agent's job: another one is told whom to ask. */
+  const onlyDefault = (ctx: ToolCallContext): ToolResult | undefined => {
+    const def = hub.settings.get().defaultAgent;
+    if (ctx.agentId === def) return undefined;
+    const name = hub.agents.get(def) ? agentName(hub.agents.get(def)!, hubLocale()) : def;
+    return text(`Only the default agent (${name}) archives and deletes agents. Tell the person to ask it in its chat, or to use the agent's menu in the list.`, true);
+  };
+  /** The default agent's place goes to `successor` when it is the one leaving; the error says what to do without one. */
+  const successorOf = (id: string, successor: unknown): { successor?: string } | ToolResult => {
+    if (id !== hub.settings.get().defaultAgent) return {};
+    const next = typeof successor === "string" ? hub.agents.get(successor) : undefined;
+    if (next && next.id !== id && !hub.agents.isArchived(next.id)) return { successor: next.id };
+    const others = hub.agents.list().filter((a) => a.id !== id);
+    return text(
+      others.length
+        ? `${id} is the default agent: pass successor, the agent that takes its place. Ask the person which one (the team: ${others.map((a) => `${a.id} (${agentName(a, hubLocale())})`).join(", ")}).`
+        : `${id} is the default agent and the team has nobody else: make the new default agent with hub_agent_draft first, then pass it as successor.`,
+      true,
+    );
+  };
+
   reg(
-    { name: "agent_delete", effect: "local-write", description: "Delete an agent the user created (built-in agents return to their defaults).", inputSchema: obj({ id: { type: "string" } }, ["id"]) },
+    {
+      name: "agent_delete",
+      effect: "local-write",
+      description:
+        "Delete an agent for good when the person asks: its dialog, tasks and schedules go with it (to keep them, hub_agent_archive instead); channels it edited pass to the default agent. " +
+        "The person always confirms on a card, whatever their rules say. You may delete yourself (the default agent) only with successor: an agent of the team that becomes the default.",
+      inputSchema: obj({ id: { type: "string" }, successor: { type: "string", description: "Only when deleting the default agent: who takes its place" } }, ["id"]),
+    },
+    async (i, ctx) => {
+      const refused = onlyDefault(ctx);
+      if (refused) return refused;
+      const id = String(i.id);
+      const agent = hub.agents.get(id);
+      if (!agent) return text(`No agent ${id}.`, true);
+      const next = successorOf(id, i.successor);
+      if ("content" in next) return next;
+      // Never on a rule or the person's words in passing: a deleted agent does not come back, so they confirm each time.
+      if (!ctx.approved) {
+        const name = agentName(agent, hubLocale());
+        const heir = next.successor ? agentName(hub.agents.get(next.successor)!, hubLocale()) : undefined;
+        const approval = hub.approvals.create({
+          sessionId: ctx.sessionId,
+          conversationId: ctx.conversationId,
+          taskId: ctx.taskId,
+          agentId: ctx.agentId,
+          tool: HUB_TOOL_PREFIX + "agent_delete",
+          input: i,
+          summary: heir ? t("agent.deleteCardSuccessor", { name, successor: heir }) : t("agent.deleteCard", { name }),
+          effect: "external",
+          tainted: ctx.tainted,
+        });
+        const outcome = await hub.approvals.wait(approval.id, Math.max(120_000, hub.settings.get().approvalInlineWaitSec * 1000));
+        if (outcome === "timeout") {
+          try {
+            hub.approvals.resolve(approval.id, "deny", { via: "timeout" });
+          } catch {
+            /* already answered */
+          }
+          return text("The person did not answer the card in time: nothing was deleted.", true);
+        }
+        if (outcome !== "approved") return text("The person declined: nothing was deleted.", true);
+        hub.approvals.markExecuted(approval.id, text(`Agent ${id} deleted.`));
+      }
+      const { defaultAgent } = hub.deleteAgent(id, next, "agent");
+      return text(`Agent ${id} deleted${next.successor ? `; ${defaultAgent} is the default agent now` : ""}.`);
+    },
+  );
+
+  reg(
+    {
+      name: "agent_archive",
+      effect: "local-write",
+      description:
+        "Put an agent to sleep in the archive when the person asks (archived: true), or bring it back (archived: false). Asleep, it is out of the team list, its schedules and channels do not run " +
+        "and nobody can write to it; its dialog, memory and settings stay. Archiving the default agent (you) needs successor: an agent of the team that becomes the default.",
+      inputSchema: obj({ id: { type: "string" }, archived: { type: "boolean" }, successor: { type: "string" } }, ["id", "archived"]),
+    },
     (i, ctx) => {
+      const refused = onlyDefault(ctx);
+      if (refused) return refused;
       const id = String(i.id);
       if (!hub.agents.get(id)) return text(`No agent ${id}.`, true);
-      if (id === ctx.agentId) return text("You cannot delete yourself; the user can do it in the settings panel.", true);
-      hub.removeAgent(id, "agent");
-      return text(`Agent ${id} deleted.`);
+      const archived = i.archived !== false;
+      const next = archived ? successorOf(id, i.successor) : {};
+      if ("content" in next) return next;
+      const { defaultAgent } = hub.archiveAgent(id, archived, next, "agent");
+      return text(archived ? `${id} is asleep in the archive${next.successor ? `; ${defaultAgent} is the default agent now` : ""}.` : `${id} is back on the team.`);
+    },
+  );
+
+  reg(
+    {
+      name: "agent_pin",
+      effect: "local-write",
+      description: "Pin an agent to the top of the person's list (under the default agent), or unpin it, when they ask.",
+      inputSchema: obj({ id: { type: "string" }, pinned: { type: "boolean" } }, ["id", "pinned"]),
+    },
+    (i) => {
+      const id = String(i.id);
+      if (!hub.agents.get(id)) return text(`No agent ${id}.`, true);
+      hub.pinAgent(id, i.pinned !== false, "agent");
+      return text(i.pinned !== false ? `${id} is pinned.` : `${id} is unpinned.`);
     },
   );
 
@@ -303,7 +435,7 @@ export function registerHubTools(hub: Hub): void {
   // ---------- brains ----------
 
   reg(
-    { name: "brains_list", effect: "read", description: "List brains (Claude Code, Codex, API providers on the hub and on machines) with availability, login state and rate limits.", inputSchema: obj({}) },
+    { name: "brains_list", effect: "read", description: `List brains (Claude Code, Codex, Kimi Code${keys ? ", API providers" : ""} on the hub and on machines) with availability, login state and rate limits.`, inputSchema: obj({}) },
     async () => {
       const limits = new Map((hub.db.prepare("select brain_ref, until from brain_limits").all() as any[]).map((r) => [r.brain_ref, r.until]));
       const out = await Promise.all(
@@ -318,7 +450,7 @@ export function registerHubTools(hub: Hub): void {
   );
 
   reg(
-    { name: "brain_check", effect: "read", description: "Re-check one brain now (after the user logged in or added a key).", inputSchema: obj({ ref: { type: "string" } }, ["ref"]) },
+    { name: "brain_check", effect: "read", description: `Re-check one brain now (after the user signed in${keys ? " or added a key" : ""}).`, inputSchema: obj({ ref: { type: "string" } }, ["ref"]) },
     async (i) => {
       const ref = formatBrainRef(parseBrainRef(String(i.ref)));
       if (!hub.brains.has(ref)) return text(`Brain ${ref} is not connected. See hub_brains_list.`, true);
@@ -509,8 +641,10 @@ export function registerHubTools(hub: Hub): void {
       })
       .join("\n");
     const limit = v.settings.limit ? `$${v.settings.limit.usd} per ${v.settings.limit.period}` : "none";
+    const head = `Machine ${name} (${machineId}).\nBrains:\n${brains || "- not set: each CLI uses its own sign-in on that machine, any model"}\n`;
+    if (!keys) return `${head}Each brain works on its own sign-in on that machine (API keys are off on this hub).`;
     return (
-      `Machine ${name} (${machineId}).\nBrains:\n${brains || "- not set: each CLI uses its own sign-in on that machine, any model"}\n` +
+      head +
       `Spend limit: ${limit}; spent since ${v.spent.since}: $${v.spent.usd.toFixed(2)}.\nKeys in the vault: ${v.keys.length ? v.keys.join(", ") : "none"} ` +
       `(providers: ${KEY_PROVIDERS.map((p) => `${p.id} → ${p.wire === "openai" ? "codex" : "claude-code"}, vault ${p.vaultId}`).join("; ")}).`
     );
@@ -520,9 +654,10 @@ export function registerHubTools(hub: Hub): void {
     {
       name: "machine_setup_get",
       effect: "read",
-      description:
-        "What a connected computer's brains may use: subscription or API key from the vault, the allowed models with prices, the spend limit and what it spent. " +
-        "Call it before machine_setup_set.",
+      description: keys
+        ? "What a connected computer's brains may use: subscription or API key from the vault, the allowed models with prices, the spend limit and what it spent. " +
+          "Call it before machine_setup_set."
+        : "What a connected computer's brains may use: each runs on its own sign-in there, with the allowed models. Call it before machine_setup_set.",
       inputSchema: obj({ machine: { type: "string", description: "Machine id or name" } }, ["machine"]),
     },
     (i) => {
@@ -537,8 +672,10 @@ export function registerHubTools(hub: Hub): void {
       name: "machine_setup_set",
       effect: "external",
       approvalSummary: "%machines.setupApproval%",
-      description:
-        "Set what a connected computer's CLI brains may use (replaces its whole setup; read machine_setup_get first and keep what the person did not ask to change). " +
+      description: !keys
+        ? "Set which models a connected computer's CLI brains (claude-code, codex) may use (replaces its whole setup; read machine_setup_get first and keep what the person did not ask to change). " +
+          "Each runs on its own sign-in on that machine: auth \"subscription\" (key mode is off on this hub). Needs the person's approval."
+        : "Set what a connected computer's CLI brains may use (replaces its whole setup; read machine_setup_get first and keep what the person did not ask to change). " +
         "Per brain (claude-code, codex): auth \"subscription\" (the CLI's own sign-in on that machine) or \"key\" (provider keys from the hub's vault reach that machine's memory only, through its gateway, which also enforces the models and the limit). " +
         "Claude Code takes providers anthropic, deepseek, moonshot, zhipu; Codex takes openai. In key mode list the allowed models, each with its provider and price in dollars per million input/output tokens " +
         "(look the price up on the provider's site if you do not know it); a model the CLI asks for off the list becomes the cheapest allowed one. A missing key: ask for it with secret_request under the provider's vault id. " +
@@ -555,7 +692,7 @@ export function registerHubTools(hub: Hub): void {
                 {
                   type: "object",
                   properties: {
-                    auth: { type: "string", enum: ["subscription", "key"] },
+                    auth: { type: "string", enum: keys ? ["subscription", "key"] : ["subscription"] },
                     providers: { type: "array", items: { type: "string" } },
                     models: {
                       type: "array",
@@ -594,10 +731,52 @@ export function registerHubTools(hub: Hub): void {
         .filter((p) => !hub.setups.view(m.id).keys.includes(p));
       return text(`${setupText(m.id)}${missing.length ? `\nNo key yet for: ${missing.join(", ")}. Ask for it with secret_request (vault id ${missing.map((p) => keyProvider(p)?.vaultId).join(", ")}).` : ""}`);
     },
-    (i) => describeSetup(String(i.machine ?? ""), normalizeSettings({ brains: i.brains, limit: i.limit })),
+    (i) => describeSetup(String(i.machine ?? ""), normalizeSettings({ brains: i.brains, limit: i.limit }, keys)),
   );
 
   // ---------- the cluster: hub replicas ----------
+
+  reg(
+    {
+      name: "machine_update",
+      effect: "local-write",
+      description:
+        "Update Piomio on a machine. \"local\" (the default) is this hub. When it runs in the desktop app, the app downloads its update, restarts with it " +
+        "and is back in a minute or two. When it was installed on a server with install.sh, it downloads the new release, checks it, restarts and is back " +
+        "in about a minute, and goes back to the old version by itself if the new one does not start. A paired machine " +
+        "(id or name) gets this hub's version of its program and restarts in a few seconds. The machines block shows the same Update button.",
+      inputSchema: obj({ machine: { type: "string", description: '"local" for this hub, else a machine\'s id or name' } }),
+    },
+    async (i) => {
+      const asked = String(i.machine ?? "").trim() || "local";
+      const local = asked === "local" || asked.toLowerCase() === hubName().toLowerCase();
+      const m = local ? undefined : hub.machines.find(asked);
+      if (!local && !m) return text(`No machine ${asked}. See machine_list.`, true);
+      const name = m?.name ?? "This hub";
+      try {
+        const r = await hub.updates.update(m?.id ?? "local");
+        return text(
+          !local
+            ? `${name} is updating to ${r.version}: it restarts and comes back online in a few seconds.`
+            : hub.updates.kind === "desktop"
+              ? `The Piomio app is updating to ${r.version}: it downloads the update, then restarts with it (this conversation pauses for a minute or two). If it can't, it stays on ${hub.config.version} and says so.`
+              : `Updating this hub to Piomio ${r.version}: it downloads and checks the release, then restarts (this conversation pauses for about a minute). If something fails it stays on ${hub.config.version} and says so.`,
+        );
+      } catch (e: any) {
+        if (!(e instanceof UpdateError)) return text(`The update failed: ${e?.message ?? e}`, true);
+        const why: Record<string, string> = {
+          notInstalled:
+            "This hub runs neither in the desktop app nor from the server installer (it runs in Docker or from the source code), so it can't update itself from here: Docker updates with `docker compose pull && docker compose up -d`, the source code with `git pull`.",
+          upToDate: `${name} already runs the latest version (${e.version}).`,
+          unknown: `No machine ${asked}.`,
+          offline: `${name} is offline; it can be updated once it is back.`,
+          notSelf: `${name} runs inside the Piomio app on that computer, which updates it from its tray menu.`,
+          noBundle: "This hub has no machine program to send (packages/node/dist/piomio-node.mjs is missing).",
+        };
+        return text(why[e.reason] ?? e.message, e.reason !== "upToDate");
+      }
+    },
+  );
 
   reg(
     {
@@ -1121,12 +1300,12 @@ export function registerHubTools(hub: Hub): void {
       name: "brain_login",
       effect: "local-write",
       description:
-        "Sign a CLI brain (Claude Code, Codex) in to the user's subscription from this chat: shows a card with the sign-in page, the one-time code and live status, " +
-        "and runs the CLI's own login on the hub. Use it whenever the user wants to connect or re-connect Claude Code or Codex; never give them terminal commands for it. " +
-        "API brains use keys instead (hub_plugin_setup brain-api).",
+        "Sign a CLI brain (Claude Code, Codex, Kimi Code) in to the user's subscription from this chat: shows a card with the sign-in page, the one-time code and live status, " +
+        "and runs the CLI's own login on the hub. Use it whenever the user wants to connect or re-connect Claude Code, Codex or Kimi Code; never give them terminal commands for it." +
+        (keys ? " API brains use keys instead (hub_plugin_setup brain-api)." : ""),
       inputSchema: obj(
         {
-          ref: { type: "string", description: "Brain ref, e.g. codex@local or claude-code@local (see hub_brains_list)" },
+          ref: { type: "string", description: "Brain ref, e.g. codex@local, claude-code@local or kimi@local (see hub_brains_list)" },
           again: { type: "boolean", description: "Sign in again even though the brain is already signed in" },
         },
         ["ref"],
@@ -1135,7 +1314,9 @@ export function registerHubTools(hub: Hub): void {
     async (i, ctx) => {
       const ref = formatBrainRef(parseBrainRef(String(i.ref ?? "")));
       if (!hub.brains.has(ref)) return text(`Brain ${ref} is not connected. See hub_brains_list.`, true);
-      if (!hub.brainLogins.supported(ref)) return text(`${ref} cannot sign in from the chat (brains on the user's computers sign in there; API brains use keys: hub_plugin_setup brain-api).`, true);
+      if (!hub.brainLogins.supported(ref)) {
+        return text(`${ref} cannot sign in from the chat (brains on the user's computers sign in there${keys ? "; API brains use keys: hub_plugin_setup brain-api" : ""}).`, true);
+      }
       hub.brains.invalidate(ref);
       const probe = await hub.brains.probe(ref, 0);
       hub.runner.attachPart(ctx.conversationId, { type: "brain_login", ref });
@@ -1332,6 +1513,7 @@ function validateSettings(p: Record<string, unknown>): string | undefined {
   }
   if ("digestTimes" in p && (!Array.isArray(p.digestTimes) || !p.digestTimes.every(hhmm))) return 'digestTimes must be a list of "HH:MM".';
   if ("channelMirror" in p && typeof p.channelMirror !== "boolean") return "channelMirror must be true or false.";
+  if ("approvalMode" in p && p.approvalMode !== "auto" && p.approvalMode !== "ask") return 'approvalMode must be "auto" or "ask".';
   for (const [k, min, max] of [["notifyRatePerHour", 0, 100], ["brainConcurrency", 1, 16]] as const) {
     if (k in p && (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max)) return `${k} must be a whole number from ${min} to ${max}.`;
   }

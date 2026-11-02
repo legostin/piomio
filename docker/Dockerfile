@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Harness CLIs used as brains (they run as the unprivileged "agent" user).
-RUN npm install -g --no-audit --no-fund @anthropic-ai/claude-code @openai/codex && npm cache clean --force
+RUN npm install -g --no-audit --no-fund @anthropic-ai/claude-code @openai/codex @moonshot-ai/kimi-code && npm cache clean --force
 
 # Users: hub = piomio; brain CLIs = agent (shares the piomio group for workspaces); other plugins = plugin.
 RUN groupadd -r piomio && useradd -r -m -d /home/piomio -g piomio -s /bin/bash piomio \

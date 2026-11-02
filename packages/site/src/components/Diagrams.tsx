@@ -45,7 +45,7 @@ export function BrainsDiagram() {
         <Down />
         <Node icon={<Brain size={18} />} title="Codex" sub={t("diagram.brains.subscription")} tone="live" />
         <Down />
-        <Node icon={<Brain size={18} />} title={t("diagram.brains.api")} sub={t("diagram.brains.backup")} />
+        <Node icon={<Brain size={18} />} title="Kimi Code" sub={t("diagram.brains.backup")} />
         <p className="mt-3 text-[13px] leading-snug text-muted">{t("diagram.brains.back")}</p>
       </div>
       <div className="flex flex-col">

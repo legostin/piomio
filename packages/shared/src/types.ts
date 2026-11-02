@@ -106,6 +106,11 @@ export interface ToolCallContext {
   tainted: boolean;
   /** The user approved this call: on its approval card, or ahead of time with an "always allow" rule. */
   approved?: boolean;
+  /**
+   * Auto mode's reviewer allowed this call instead of a card (core/src/policy/auto.ts): enough for a change after
+   * outside content, never for a card that is always the person's (a tool's own).
+   */
+  reviewed?: boolean;
   background: boolean;
   workspace: string;
   machineId: string;
@@ -134,7 +139,8 @@ export interface Rule {
   createdVia: "console" | "telegram" | "approval" | "chat" | "skill";
 }
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "executed" | "failed";
+/** "blocked": auto mode stopped the action (policy/auto.ts); the person may still allow it once. */
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "executed" | "failed" | "blocked";
 
 /**
  * What an approval asks, for the card to say it plainly in the viewer's language: a command, a file to read or
@@ -149,8 +155,17 @@ export interface ApprovalAsk {
   host?: string;
 }
 
-/** "request": the person asked for the action in their own words (ToolSpec.asked), so nobody was asked again. */
-export type ApprovalVia = "console" | "telegram" | "device" | "web" | "rule" | "timeout" | "request";
+/**
+ * "request": the person asked for the action in their own words (ToolSpec.asked), so nobody was asked again.
+ * "auto": auto mode's reviewer decided (policy/auto.ts).
+ */
+export type ApprovalVia = "console" | "telegram" | "device" | "web" | "rule" | "timeout" | "request" | "auto";
+
+/** Why auto mode stopped an action: the rule it broke and one sentence in the person's language. */
+export interface AutoBlock {
+  rule: string;
+  reason: string;
+}
 
 export interface Approval {
   id: string;
@@ -169,6 +184,8 @@ export interface Approval {
   createdAt: ISODate;
   resolvedAt?: ISODate;
   resolvedVia?: ApprovalVia;
+  /** Auto mode stopped it (status "blocked", or "approved" once the person allowed it anyway). */
+  auto?: AutoBlock;
 }
 
 // ---------- Secrets entered in the chat ----------
@@ -240,8 +257,11 @@ export type MessagePart =
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
-  /** `asked`: the person asked for it in their own words (ToolSpec.asked): a quiet line, not a card. */
-  | { type: "approval"; approvalId: string; summary: string; status: ApprovalStatus; ask?: ApprovalAsk; asked?: boolean }
+  /**
+   * `asked`: the person asked for it in their own words (ToolSpec.asked): a quiet line, not a card. `auto`: auto mode
+   * stopped it: a quiet line with its reason and "Allow", not a card.
+   */
+  | { type: "approval"; approvalId: string; summary: string; status: ApprovalStatus; ask?: ApprovalAsk; asked?: boolean; auto?: AutoBlock }
   /**
    * Something an agent or the hub tells the person. `kind` says how it reads: a report or a digest is the agent
    * speaking (with `caption`, and `sources` under a digest), an alert or a question a card (`feedbackable`: a check's,
@@ -259,6 +279,8 @@ export type MessagePart =
       feedbackable?: boolean;
     }
   | { type: "error"; message: string }
+  /** A line from the hub itself, for the person (a command's answer or hint): quiet, not the agent speaking. */
+  | { type: "note"; text: string }
   /** A file the user sent (or a plugin attached): `path` is relative to the workspaces root, `size` in bytes. */
   | { type: "attachment"; path: string; name: string; mimeType?: string; size?: number; kind?: AttachmentKind; durationSec?: number; transcript?: string }
   /** A secret the user types into the chat card; the value goes straight to the vault and never into the conversation. */
@@ -297,8 +319,13 @@ export type MessagePart =
   | { type: "choices"; options: string[]; chosen?: number }
   /** A channel's live card in the chat: its state and buttons (open, gather now, how often, pause, delete). */
   | { type: "feed"; feedId: string }
-  /** How an agent thinks for each kind of work (AgentDef.thinking): a live card with a preset per kind. */
-  | { type: "thinking"; agentId: string }
+  /**
+   * How an agent thinks for each kind of work (AgentDef.thinking): a live card with a preset per kind. `focus`: only
+   * that part of its chats' choice, as the header picker shows it (the /brain and /effort commands).
+   */
+  | { type: "thinking"; agentId: string; focus?: "brain" | "effort" }
+  /** The /archive command's card: archive the agent (in the default agent's chat, after picking who takes over), then Restore. */
+  | { type: "agent_archive"; agentId: string }
   /** A page the agent made (page_create, page_show): its card, which opens the page full screen. */
   | { type: "page"; pageId: string }
   /**
@@ -452,6 +479,8 @@ export interface TeamMember {
   running: boolean;
   /** Messages from the agent (or the system) the user has not seen yet. */
   unread: number;
+  /** Pinned to the top of the list (under the default agent): its place among the pinned, 0 first. */
+  pinned?: number;
 }
 
 /** A group chat as the sidebar shows it, kept current by "group.updated". */
@@ -501,8 +530,13 @@ export interface Task {
   resumeAt?: ISODate;
   /** A question the task asked whoever started it (task_ask), until it gets an answer. */
   question?: string;
-  /** "message": a thread between two agents of the team (team_message); it reads like a conversation, not a job. */
-  kind?: "message";
+  /**
+   * "message": a thread between two agents of the team (team_message); it reads like a conversation, not a job.
+   * "goal": a long goal (the /goal command): it keeps going round after round until the agent reports it reached.
+   */
+  kind?: "message" | "goal";
+  /** A goal's rounds so far (kind "goal"): it pauses every GOAL_ROUNDS of them. */
+  rounds?: number;
   /** A thread's other side (kind "message"): the teammate who wrote. `agentId` is the one answering. */
   from?: string;
   /** Started or messaged from a session that had read outside content: its sessions are marked the same way. */
@@ -596,6 +630,11 @@ export interface AgentDef {
   source: "builtin" | "user" | string;
   /** Colour + shape picked when the agent was created; the UI derives one from the id when absent. */
   avatar?: AgentAvatar;
+  /**
+   * In the archive, asleep: out of the team list, its schedules and channels do not run, teammates do not see it; its
+   * dialog, memory and settings stay. Set by the hub when it lists agents (agents-state.ts), not stored in the file.
+   */
+  archived?: boolean;
   /** Translated name / description shown in the UI ("i18n: { ru: { name: … } }" in the frontmatter). */
   i18n?: Partial<Record<Locale, { name?: string; description?: string }>>;
 }
@@ -735,6 +774,8 @@ export interface SetupState {
    */
   starting: boolean;
   vault: "absent" | "locked" | "open";
+  /** Model access through API keys is on (PIOMIO_API_KEYS=1): the card may offer keys besides signing in. */
+  apiKeys: boolean;
   telegram: boolean;
   machines: number;
   done: SetupStep[];
@@ -783,6 +824,12 @@ export interface BrainSessionOptions {
    * commands and changing files is work for a task (task_delegate), so the dialog never waits on it.
    */
   frontDesk?: boolean;
+  /**
+   * A session with no tools at all (no hub tools, shell, files, skills or plugins, none of the person's own settings
+   * or hooks): it only answers in text, with `systemPrompt` as its whole instructions, and keeps nothing afterwards.
+   * Auto mode's reviewer (core/src/policy/reviewer.ts); only Claude Code supports it.
+   */
+  bare?: boolean;
 }
 
 export type BrainEvent =
@@ -941,6 +988,10 @@ export interface MachineInfo {
   clis: Array<{ brainId: string } & ProbeResult>;
   allowedDirs: string[];
   nodeVersion: string;
+  /** Piomio's version of the machine's daemon (piomio-node.mjs); older daemons don't say. */
+  version?: string;
+  /** It runs from the single-file download, not inside the desktop app, and can replace itself (`node.update`). */
+  selfUpdate?: boolean;
 }
 
 export interface Machine {
@@ -993,6 +1044,10 @@ export interface MachineActivity {
   name: string;
   online: boolean;
   work: MachineWork[];
+  /** The version an "Update" on this machine would bring: a newer release for a server's hub, the hub's for a node. */
+  update?: string;
+  /** That update is under way. */
+  updating?: boolean;
 }
 
 // ---------- Machines: brain setup, keys and spend (docs/superpowers/specs/2026-10-30-cluster-design.md) ----------

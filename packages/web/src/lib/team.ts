@@ -1,23 +1,54 @@
-// The team in the sidebar: order, and the route of each agent's dialog.
+// The team in the sidebar: order, the agent's menu, and the route of each agent's dialog.
 
 import type { AgentDef, TeamMember } from "@piomio/shared";
 
 export interface TeamEntry {
-  agent: Pick<AgentDef, "id" | "name">;
+  agent: Pick<AgentDef, "id" | "name" | "archived">;
   member?: TeamMember;
 }
 
-/** The default agent first, then whoever talked last; agents with an empty dialog by name. */
+/**
+ * The default agent first, then the pinned in their order, then whoever talked last; agents with an empty dialog by
+ * name. Archived agents are not on the team list.
+ */
 export function teamOrder<E extends TeamEntry>(entries: E[], defaultAgent: string | undefined): E[] {
   const activity = (e: TeamEntry) => (e.member?.lastMessage ? e.member.lastActivityAt : "");
-  return entries.slice().sort((a, b) => {
-    if (a.agent.id === defaultAgent) return -1;
-    if (b.agent.id === defaultAgent) return 1;
-    const x = activity(a);
-    const y = activity(b);
-    if (x !== y) return x < y ? 1 : -1;
-    return a.agent.name.localeCompare(b.agent.name);
-  });
+  const pin = (e: TeamEntry) => e.member?.pinned ?? Infinity;
+  return entries
+    .filter((e) => !e.agent.archived)
+    .sort((a, b) => {
+      if (a.agent.id === defaultAgent) return -1;
+      if (b.agent.id === defaultAgent) return 1;
+      if (pin(a) !== pin(b)) return pin(a) < pin(b) ? -1 : 1;
+      const x = activity(a);
+      const y = activity(b);
+      if (x !== y) return x < y ? 1 : -1;
+      return a.agent.name.localeCompare(b.agent.name);
+    });
+}
+
+/** What the agent's menu offers (right click, a long press, "⋯"), in the order shown. */
+export type AgentMenuAction = "pin" | "unpin" | "unread" | "read" | "default" | "settings" | "archive" | "restore" | "delete";
+
+export function agentMenuActions(o: { isDefault: boolean; archived?: boolean; pinned?: boolean; unread: number; hasMessages: boolean }): AgentMenuAction[] {
+  if (o.archived) return ["restore", "delete"];
+  const out: AgentMenuAction[] = [];
+  // The default agent is always on top: nothing to pin, nothing to make default.
+  if (!o.isDefault) out.push(o.pinned ? "unpin" : "pin");
+  if (o.unread > 0) out.push("read");
+  else if (o.hasMessages) out.push("unread");
+  if (!o.isDefault) out.push("default");
+  out.push("settings", "archive", "delete");
+  return out;
+}
+
+/** Who can take the default agent's place: the active agents other than it, in the team's order. */
+export function successorsOf<A extends Pick<AgentDef, "id" | "name" | "archived">>(agentId: string, agents: A[], members: TeamMember[] = []): A[] {
+  const byAgent = new Map(members.map((m) => [m.agentId, m]));
+  return teamOrder(
+    agents.filter((a) => a.id !== agentId).map((agent) => ({ agent, member: byAgent.get(agent.id) })),
+    undefined,
+  ).map((e) => e.agent);
 }
 
 /** The route of an agent's dialog: "/" for the default agent. */

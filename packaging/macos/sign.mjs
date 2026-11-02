@@ -22,8 +22,9 @@ export function installerIdentity() {
   return process.env.APPLE_INSTALLER_IDENTITY || "";
 }
 
-function notaryAuth() {
-  const e = process.env;
+const NOTARY = ["APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID", "APPLE_API_KEY", "APPLE_API_ISSUER", "APPLE_API_KEY_PATH"];
+
+function notaryAuth(e = process.env) {
   if (e.APPLE_API_KEY && e.APPLE_API_ISSUER && e.APPLE_API_KEY_PATH) return ["--key", e.APPLE_API_KEY_PATH, "--key-id", e.APPLE_API_KEY, "--issuer", e.APPLE_API_ISSUER];
   if (e.APPLE_ID && e.APPLE_PASSWORD && e.APPLE_TEAM_ID) return ["--apple-id", e.APPLE_ID, "--password", e.APPLE_PASSWORD, "--team-id", e.APPLE_TEAM_ID];
   return null;
@@ -31,6 +32,16 @@ function notaryAuth() {
 
 export function canNotarize() {
   return !!notaryAuth();
+}
+
+/**
+ * The environment for `tauri build`. Tauri notarizes as soon as it finds the notary variables, even empty ones (a CI
+ * run without the secrets) and even for an ad hoc app, and then fails; so empty APPLE_* variables go, and the notary
+ * ones too unless the app is signed and the sign-in is complete.
+ */
+export function tauriEnv(env, identity) {
+  const notarizes = !!identity && !!notaryAuth(env);
+  return Object.fromEntries(Object.entries(env).filter(([k, v]) => !k.startsWith("APPLE_") || (!!v && (notarizes || !NOTARY.includes(k)))));
 }
 
 const THIN = new Set(["feedface", "feedfacf", "cefaedfe", "cffaedfe"]);

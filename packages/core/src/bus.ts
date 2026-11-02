@@ -36,6 +36,8 @@ export type BusEvents = {
   "plugins.updated": Record<string, never>;
   "brains.updated": Record<string, never>;
   "agents.updated": Record<string, never>;
+  /** An agent was deleted for good: plugins drop what they keep for it (the triggers plugin, its schedules). */
+  "agent.removed": { agentId: string };
   /** Skills came or went, or who has one changed (skills.ts SkillHolders). */
   "skills.updated": Record<string, never>;
   /** A new agent's draft in the chat changed (or became the agent). */
@@ -54,6 +56,8 @@ export type BusEvents = {
   "replica.synced": { tables: string[] };
   /** What every machine is doing now (activity.ts). */
   "machines.activity": MachineActivity[];
+  /** An update came on offer for this hub or a machine, started or ended (self-update.ts). */
+  "updates.changed": Record<string, never>;
   /** A phone paired, was renamed or revoked: listeners re-read the list. */
   "device.updated": { id: string };
   "devices.network": DeviceNetwork;

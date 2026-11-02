@@ -4,7 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
-import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
+import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
 import { confinement } from "./native-permissions.ts";
 import { NATIVE_PERMISSION_TOOL } from "./tools/native-permission.ts";
 import type { Config } from "./config.ts";
@@ -25,7 +25,7 @@ import { detailOfTool, stepOfTool, type MachineActivityFeed } from "./activity.t
 import { needOf, route, skillOfGoal, type Route } from "./model-router.ts";
 import type { EgressProxy } from "./egress.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
-import { buildSystemPrompt, taskEnding } from "./prompt.ts";
+import { buildSystemPrompt, goalPrompt, taskEnding } from "./prompt.ts";
 import { humanFailure } from "./notifier.ts";
 import { agentName } from "./agents.ts";
 import { hubLocale, LocalizedError, t } from "./i18n.ts";
@@ -80,6 +80,11 @@ export interface RunnerDeps {
    * next turn reopens it, resuming the same conversation: a CLI brain reads the tool list only when it starts.
    */
   toolNames?: () => string;
+  /**
+   * The hub's own commands (commands.ts, set by the hub): "/task …", "/brain" are answered before the model sees the
+   * message; "done" when nothing more is to happen, else the prompt the turn gets instead of the person's words.
+   */
+  commands?: { run(conv: Conversation, text: string, opts: { channel?: string }): Promise<{ done: true } | { prompt: string } | undefined> };
 }
 
 /** What the web UI passes as the channel of a typed message (not a registered channel). */
@@ -211,10 +216,13 @@ export class SessionRunner {
   private groupEpoch = new Map<string, number>();
   /** Group chats: `${conversationId}|${agentId}` -> user messages up to this moment were shown to the member. */
   private groupSeen = new Map<string, string>();
+  /** Goals whose agent called goal_report "achieved" in the turn running now: the summary, their result. */
+  private reached = new Map<string, string>();
 
   constructor(deps: RunnerDeps) {
     this.d = deps;
     deps.approvals.onDeferredApproved = (a) => this.onDeferredApproved(a);
+    deps.approvals.onBlockedAllowed = (a) => this.onBlockedAllowed(a);
     deps.approvals.onDeferredDenied = (a) => this.onDeferredDenied(a);
     deps.bus.on("approval.created", (a: Approval) => this.attachApprovalPart(a));
     deps.bus.on("approval.asked", (a: Approval) => this.attachApprovalPart(a));
@@ -276,6 +284,10 @@ export class SessionRunner {
   ): Promise<Message> {
     const conv = this.d.store.getConversation(conversationId);
     if (!conv) throw new LocalizedError("conversation.notFound");
+    // An agent in the archive sleeps: its dialog takes nothing until it comes back.
+    if (conv.kind !== "group" && this.d.agents.isArchived(conv.agentId)) {
+      throw new LocalizedError("agent.archivedChat", { name: this.agentLabel(conv.agentId) }, 409);
+    }
     // Secrets come out first: message hooks, the stored message and the model only see vault:// references.
     const cap = this.d.secrets.capture(text, conversationId, "user");
     if (cap.stored.length || cap.withheld || cap.refused) opts.onCapture?.(cap);
@@ -295,7 +307,10 @@ export class SessionRunner {
     // Just the answer to a secret card whose tool call is still waiting: that call carries on, no new turn.
     if (cap.answered?.waited && text.trim() === `vault://${cap.answered.request.vaultId}`) return msg;
     const note = captureNote(cap);
-    const expanded = this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
+    // The hub's own commands ("/brain", "/task …") are answered here; "/schedule …" goes on as a request to the agent.
+    const command = await this.d.commands?.run(conv, hooked.payload.text, { channel: opts.channel });
+    if (command && "done" in command) return msg;
+    const expanded = command?.prompt ?? this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
     const prompt = [opts.context?.trim(), note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
     // From the web UI: the user's words travel with a mirrored reply, so the phone shows the exchange.
     const fromWeb = !opts.channel || opts.channel === WEB_CHANNEL;
@@ -318,7 +333,9 @@ export class SessionRunner {
       })();
       return msg;
     }
-    // Written on a task's page: the task carries on with it (its status, result and report follow).
+    // Written on a task's page: the task carries on with it (its status, result and report follow). A goal waiting for
+    // the person has its answer: it goes on round after round.
+    if (task?.kind === "goal" && task.question) this.d.store.updateTask(task.id, { question: undefined });
     if (task) {
       void (async () => this.wakeTask(task, prompt, { ...reply, fromUser: true, ...(attachments.length ? await this.transcribeParts(msg.id, attachments) : {}) }))();
       return msg;
@@ -416,12 +433,12 @@ export class SessionRunner {
 
   // ---------- group chats ----------
 
-  /** A group's members that are still on the team, in order (the lead first), with their names. */
+  /** A group's members that are still on the team (not deleted, not asleep in the archive), in order (the lead first), with their names. */
   private groupMembers(conv: Conversation): Array<{ id: string; name: string }> {
     const out: Array<{ id: string; name: string }> = [];
     for (const id of conv.members ?? [conv.agentId]) {
       const a = this.d.agents.get(id);
-      if (a) out.push({ id, name: agentName(a, hubLocale()) });
+      if (a && !this.d.agents.isArchived(id)) out.push({ id, name: agentName(a, hubLocale()) });
     }
     return out;
   }
@@ -662,6 +679,15 @@ export class SessionRunner {
     return task;
   }
 
+  /** The agent goes to sleep or leaves: the turn in its dialog stops and its unfinished tasks are cancelled. */
+  stopAgent(agentId: string): void {
+    this.interrupt(this.d.store.agentConversation(agentId).id);
+    const open = this.d.store.db
+      .prepare("select id from tasks where agent_id = ? and status in ('queued', 'running', 'paused', 'waiting_approval', 'waiting_input', 'interrupted')")
+      .all(agentId) as Array<{ id: string }>;
+    for (const t of open) this.cancelTask(t.id);
+  }
+
   cancelTask(id: string): Task | undefined {
     const t = this.d.store.getTask(id);
     if (!t) return undefined;
@@ -726,6 +752,11 @@ export class SessionRunner {
     if (!fresh || !["queued", "paused"].includes(fresh.status)) return;
     const agent = this.d.agents.get(fresh.agentId);
     const conv = this.d.store.getConversation(fresh.conversationId);
+    // Asleep in the archive: the task waits for nobody (archiving cancels them; this one came after).
+    if (agent && this.d.agents.isArchived(agent.id)) {
+      this.d.store.updateTask(fresh.id, { status: "cancelled", error: t("task.agentArchived") });
+      return;
+    }
     if (!agent || !conv) {
       this.d.store.updateTask(fresh.id, { status: "failed", error: t("task.missingAgent") });
       // The digest's writer cannot run: the hub sends the card now, not after the writer's time is up.
@@ -762,7 +793,9 @@ export class SessionRunner {
         : [`Message from your teammate ${sender!.name} (agent "${sender!.id}"). Your reply goes back to them automatically.`, "", fresh.goal, ...notes.flatMap((n) => ["", n])].join("\n");
     const prompt = sender
       ? thread()
-      : resumed
+      : fresh.kind === "goal"
+        ? goalPrompt(fresh, !resumed, goalLimit(fresh.rounds ?? 0))
+        : resumed
         ? "Continue working on the task from where you stopped."
         : [
             `Task: ${fresh.title}`,
@@ -779,8 +812,13 @@ export class SessionRunner {
 
   /** Where a task stands after a turn: waiting (a limit, an approval, the answer to its question), failed, or done and reported. */
   private async afterTaskTurn(taskId: string, r: TurnResult): Promise<void> {
-    const cur = this.d.store.getTask(taskId);
-    if (!cur || cur.status === "cancelled") return;
+    let cur = this.d.store.getTask(taskId);
+    if (!cur || cur.status === "cancelled") {
+      this.reached.delete(taskId);
+      return;
+    }
+    // A goal the person paused stays paused, also when the pause cut its turn off.
+    if (cur.kind === "goal" && cur.status === "paused" && !cur.resumeAt) return;
     if (r.limited) {
       this.d.store.updateTask(cur.id, {
         status: "paused",
@@ -789,7 +827,9 @@ export class SessionRunner {
       });
       return;
     }
+    if (cur.kind === "goal") cur = this.d.store.updateTask(cur.id, { rounds: (cur.rounds ?? 0) + 1 }) ?? cur;
     if (r.error && !r.text) {
+      this.reached.delete(cur.id);
       this.d.store.updateTask(cur.id, { status: "failed", error: r.error });
       // A teammate who cannot answer tells the sender, not the user.
       if (cur.kind === "message") {
@@ -818,9 +858,63 @@ export class SessionRunner {
       this.d.store.updateTask(cur.id, { status: "waiting_input", result: r.text || cur.result, error: undefined });
       return;
     }
+    if (cur.kind === "goal") {
+      const summary = this.reached.get(cur.id);
+      this.reached.delete(cur.id);
+      if (summary === undefined) return this.nextGoalRound(cur, r);
+      this.d.store.updateTask(cur.id, { status: "done", result: summary.trim() || r.answer || r.text, error: undefined });
+      await this.reportTaskDone(this.d.store.getTask(cur.id)!);
+      return;
+    }
     // A thread's reply, a report and the digest are what the person reads: the final answer, without the narration.
     this.d.store.updateTask(cur.id, { status: "done", result: cur.kind === "message" || cur.deliver ? r.answer || r.text : r.text, error: undefined });
     await this.reportTaskDone(this.d.store.getTask(cur.id)!);
+  }
+
+  /** A goal not reached yet: its next round, or, every GOAL_ROUNDS of them, a pause the person hears about. */
+  private async nextGoalRound(goal: Task, r: TurnResult): Promise<void> {
+    const rounds = goal.rounds ?? 0;
+    if (rounds % GOAL_ROUNDS !== 0) {
+      this.d.store.updateTask(goal.id, { status: "queued", result: r.answer || r.text || goal.result, error: undefined });
+      setImmediate(() => this.scheduleTasks());
+      return;
+    }
+    this.d.store.updateTask(goal.id, { status: "paused", result: r.answer || r.text || goal.result, error: t("goal.roundsUsed", { n: rounds }) });
+    await this.d.notifier.notify({
+      level: "notify",
+      title: t("notify.goalPausedTitle", { title: goal.title }),
+      body: t("notify.goalPausedBody", { n: rounds, more: GOAL_ROUNDS }),
+      agentId: goal.agentId,
+      taskId: goal.id,
+    });
+  }
+
+  /** goal_report: the goal is reached (it ends, the summary its result) or needs the person (asked as task_ask asks). */
+  async reportGoal(taskId: string, status: "achieved" | "blocked", summary: string): Promise<{ ok: boolean; text: string }> {
+    const task = this.d.store.getTask(taskId);
+    if (task?.kind !== "goal") return { ok: false, text: "goal_report works only inside a goal (a task the person started with /goal). Here, just finish your reply." };
+    if (status === "blocked") return this.askStarter(taskId, summary);
+    this.reached.set(taskId, summary);
+    return { ok: true, text: "Noted: the goal is reached. End your turn now; your summary goes to the person." };
+  }
+
+  /** The person's /goal pause: the goal stops where it is (its turn too) until /goal resume. */
+  pauseGoal(taskId: string): Task | undefined {
+    const g = this.d.store.getTask(taskId);
+    if (g?.kind !== "goal") return undefined;
+    const paused = this.d.store.updateTask(g.id, { status: "paused", resumeAt: undefined });
+    this.interrupt(g.conversationId);
+    return paused;
+  }
+
+  /** /goal resume: the next round; one that paused at its rounds gets GOAL_ROUNDS more. A goal that is going stays as it is. */
+  resumeGoal(taskId: string): Task | undefined {
+    const g = this.d.store.getTask(taskId);
+    if (g?.kind !== "goal") return undefined;
+    if (g.status !== "paused" && g.status !== "interrupted") return g;
+    const r = this.d.store.updateTask(g.id, { status: "queued", resumeAt: undefined, error: undefined });
+    setImmediate(() => this.scheduleTasks());
+    return r;
   }
 
   /**
@@ -1226,6 +1320,29 @@ export class SessionRunner {
     }
   }
 
+  /**
+   * The person allowed an action auto mode had stopped: the agent hears it may run that very call again (it goes
+   * through once, ApprovalService.takeAllowance). A task waits for it no more than for any note.
+   */
+  private async onBlockedAllowed(a: Approval): Promise<void> {
+    const conv = this.d.store.getConversation(a.conversationId);
+    if (!conv) return;
+    const note = `[System] The user allowed the action auto mode stopped: “${a.summary}”. If you still need it, run exactly the same call again: it goes through this once.`;
+    const task = a.taskId ? this.d.store.getTask(a.taskId) : undefined;
+    if (await this.steerInto(conv.id, note)) return;
+    this.d.store.addMessage({ conversationId: conv.id, role: "system", parts: [{ type: "text", text: note }], status: "complete", taskId: a.taskId });
+    if (task?.status === "cancelled") return;
+    if (task && !["running", "queued"].includes(task.status)) {
+      this.d.store.updateTask(task.id, { status: "running" });
+      void this.enqueue(conv.id, async () => {
+        const r = await this.runTurn(conv, note, { task });
+        await this.afterTaskTurn(task.id, r);
+      });
+    } else if (!task) {
+      void this.enqueue(conv.id, () => this.runTurn(conv, note, conv.kind === "group" ? { agentId: a.agentId } : {}));
+    }
+  }
+
   private async onDeferredDenied(a: Approval): Promise<void> {
     const conv = this.d.store.getConversation(a.conversationId);
     if (!conv) return;
@@ -1236,9 +1353,19 @@ export class SessionRunner {
   }
 
   private attachApprovalPart(a: Approval): void {
-    // One the person asked for in their own words is a quiet line of what was done, never a card to answer.
+    // One the person asked for in their own words is a quiet line of what was done, never a card to answer; so is
+    // one auto mode stopped (with its reason and "Allow").
     const asked = a.resolvedVia === "request";
-    const part: MessagePart = { type: "approval", approvalId: a.id, summary: a.summary, status: asked ? a.status : "pending", ...(a.ask ? { ask: a.ask } : {}), ...(asked ? { asked: true } : {}) };
+    const quiet = asked || a.status === "blocked";
+    const part: MessagePart = {
+      type: "approval",
+      approvalId: a.id,
+      summary: a.summary,
+      status: quiet ? a.status : "pending",
+      ...(a.ask ? { ask: a.ask } : {}),
+      ...(asked ? { asked: true } : {}),
+      ...(a.auto ? { auto: a.auto } : {}),
+    };
     const msgId = this.streamingMessage.get(a.conversationId);
     const m = msgId ? this.d.store.getMessage(msgId) : undefined;
     if (m) this.d.store.updateMessage(m.id, { parts: [...m.parts, part] });
@@ -1249,7 +1376,7 @@ export class SessionRunner {
     }
     // A task's question for the person also shows where the person is: in the dialog that started it, under the
     // task's line, so they answer without opening the task. A quiet line has nothing to answer: it stays in the task.
-    const dialog = asked ? undefined : this.starterDialog(a.taskId);
+    const dialog = quiet ? undefined : this.starterDialog(a.taskId);
     if (dialog) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId: a.taskId! }, part], status: "complete" });
   }
 
@@ -1443,7 +1570,8 @@ export class SessionRunner {
     const skills = this.d.skills.forAgent(agent, task?.skill);
     let skillsDir: string | undefined;
     if (local && ref.brainId === "claude-code") skillsDir = join(workspace, ".claude", "skills");
-    if (local && ref.brainId === "codex") skillsDir = join(workspace, ".agents", "skills");
+    // Codex and Kimi Code both read a project's skills from .agents/skills.
+    if (local && (ref.brainId === "codex" || ref.brainId === "kimi")) skillsDir = join(workspace, ".agents", "skills");
     if (skillsDir) this.d.skills.materialize(skillsDir, skills);
 
     const hook = await this.d.hooks.run("session.start", { sessionId: row.id, agentId: agent.id, conversationId: conv.id, taskId: task?.id, background }, (p) => p);
@@ -1819,7 +1947,7 @@ export class SessionRunner {
         // Still waiting after a few seconds: whoever started it hears that the agent is busy and will get to it.
         if (waits === 1 && task?.createdBy === "agent") void this.tellStarter(task, this.queuedNote(task));
         await this.brainFreed(waits++ ? 30_000 : 3_000);
-        if (task && this.d.store.getTask(task.id)?.status === "cancelled") return { text: "", error: t("chat.cannotStart", { agent: agentName(agent, hubLocale()), reason: reasons.join("; ") }), awaitingApproval: false };
+        if (task && this.d.store.getTask(task.id)?.status === "cancelled") return { text: "", error: t(this.d.config.apiKeys ? "chat.cannotStart" : "chat.cannotStartPlans", { agent: agentName(agent, hubLocale()), reason: reasons.join("; ") }), awaitingApproval: false };
         attempt--;
         continue;
       }
@@ -1845,7 +1973,7 @@ export class SessionRunner {
         const allLimited = earliestReset && usable.length === 0 && hard === 0;
         const message = allLimited
           ? t("chat.allLimited", { time: this.formatTime(earliestReset!) })
-          : t("chat.cannotStart", { agent: agentName(agent, hubLocale()), reason: why });
+          : t(this.d.config.apiKeys ? "chat.cannotStart" : "chat.cannotStartPlans", { agent: agentName(agent, hubLocale()), reason: why });
         this.d.store.addMessage({ conversationId: conv.id, role: "system", parts: [{ type: "error", message }], status: "complete", taskId: task?.id });
         return { text: "", error: message, ...(setupOnly && !allLimited ? { errorCode: "no-brain" as const } : {}), limited: allLimited ? { resetAt: earliestReset } : undefined, awaitingApproval: false };
       }

@@ -1,7 +1,8 @@
-// Stages the app tree both desktop installers ship: the hub's runtime files, production node_modules and the official
-// Node runtime (checked against the release's SHASUMS256.txt).
-//   node packaging/desktop/stage.mjs --target win-x64|darwin [--skip-build]
-// Output: dist/desktop/stage-<target>/app (Windows: runtime/node.exe; macOS: runtime/arm64 and runtime/x64).
+// Stages the app tree the desktop installers and the Linux server archives ship: the hub's runtime files, production
+// node_modules and the official Node runtime (checked against the release's SHASUMS256.txt).
+//   node packaging/desktop/stage.mjs --target win-x64|darwin|linux-x64|linux-arm64 [--skip-build]
+// Output: dist/desktop/stage-<target>/app (Windows: runtime/node.exe; macOS: runtime/arm64 and runtime/x64; Linux:
+// runtime/bin/node and packaging/linux, see packaging/linux/build.mjs).
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,7 +16,7 @@ export const NODE_VERSION = process.env.NODE_VERSION || "24.16.0";
 export const VERSION = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
 
 /** The hub's Tailscale node (packages/tailnet, Go) for every architecture the target runs on. */
-export const TAILNET_TARGETS = { "win-x64": ["win32-x64"], darwin: ["darwin-arm64", "darwin-x64"] };
+export const TAILNET_TARGETS = { "win-x64": ["win32-x64"], darwin: ["darwin-arm64", "darwin-x64"], "linux-x64": ["linux-x64"], "linux-arm64": ["linux-arm64"] };
 
 const NODE_DISTS = {
   "win-x64": [{ file: `node-v${NODE_VERSION}-win-x64.zip`, into: "runtime" }],
@@ -23,6 +24,8 @@ const NODE_DISTS = {
     { file: `node-v${NODE_VERSION}-darwin-arm64.tar.gz`, into: "runtime/arm64" },
     { file: `node-v${NODE_VERSION}-darwin-x64.tar.gz`, into: "runtime/x64" },
   ],
+  "linux-x64": [{ file: `node-v${NODE_VERSION}-linux-x64.tar.gz`, into: "runtime" }],
+  "linux-arm64": [{ file: `node-v${NODE_VERSION}-linux-arm64.tar.gz`, into: "runtime" }],
 };
 
 /** What runs in an installed app; tests, sources of the built UIs and dev configs stay behind. */
@@ -147,7 +150,7 @@ export function removeDanglingLinks(dir) {
 }
 
 export async function stage({ target, skipBuild = false }) {
-  if (!NODE_DISTS[target]) throw new Error(`unknown target ${target} (win-x64 or darwin)`);
+  if (!NODE_DISTS[target]) throw new Error(`unknown target ${target} (${Object.keys(NODE_DISTS).join(", ")})`);
   if (!skipBuild) {
     npm(["run", "build"], { cwd: ROOT });
     run(process.execPath, [join(ROOT, "scripts", "build-tailnet.mjs"), ...TAILNET_TARGETS[target].flatMap((t) => ["--target", t])], { cwd: ROOT });
@@ -160,6 +163,7 @@ export async function stage({ target, skipBuild = false }) {
   for (const f of ["package.json", "package-lock.json"]) cpSync(join(ROOT, f), join(app, f));
   for (const d of ["agents", "packages", "plugins", "integrations"]) cpSync(join(ROOT, d), join(app, d), { recursive: true, filter: wanted });
   for (const f of ["launch.mjs", "resolve.mjs"]) cpSync(join(ROOT, "packaging", "desktop", f), join(app, "packaging", "desktop", f));
+  if (target.startsWith("linux-")) for (const f of ["start.mjs", "piomio", "install.sh"]) cpSync(join(ROOT, "packaging", "linux", f), join(app, "packaging", "linux", f));
   for (const need of ["packages/web/dist/index.html", "packages/console/dist/index.html", "packages/pages-kit/dist/kit.js", "packages/node/dist/piomio-node.mjs"]) {
     if (!existsSync(join(app, need))) throw new Error(`${need} is missing: run npm run build`);
   }

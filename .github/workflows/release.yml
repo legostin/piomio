@@ -2,7 +2,7 @@
 # publishes them as that version's release, and publishes the server image under the version (docker.yml).
 # Hubs of the version hand the installers out at /download/desktop/<os> (packages/core/src/server/join-page.ts), so
 # the asset names must stay what packaging/desktop/build.mjs makes. Its latest.json is what installed apps check for
-# updates (packages/desktop/src-tauri/src/update.rs). release-question.yml starts it on the tag it makes, since a tag
+# updates (packages/desktop/src-tauri/src/update.rs). release-on-push.yml starts it on the tag it makes, since a tag
 # pushed with the workflow token triggers nothing by itself.
 name: release
 
@@ -13,6 +13,12 @@ on:
 
 permissions:
   contents: write
+
+# Releases come out one at a time in the order of their tags (release-on-push.yml can make a new one while the last is
+# still building), so the newest ends up as GitHub's latest release, the image's latest tag and the latest.json
+# installed apps update from. A newer tag waiting replaces an older one waiting: it holds all of the older one's changes.
+concurrency:
+  group: release-build
 
 jobs:
   version:
@@ -57,6 +63,9 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           test -f "dist/piomio-setup-$v-x64.exe"
           test -f "dist/piomio-$v.dmg"
+          # The server install: the archives with their checksums for install.sh and signatures for the hubs' updates.
+          for a in x64 arm64; do for f in "" .sha256 .sig; do test -f "dist/piomio-$v-linux-$a.tar.gz$f"; done; done
+          cp packaging/linux/install.sh dist/install.sh
           node packaging/desktop/latest-json.mjs dist "$v" "$GITHUB_REPOSITORY"
           ls -l dist
       - name: Publish the release

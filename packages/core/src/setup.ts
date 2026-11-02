@@ -54,6 +54,8 @@ interface Held {
 }
 
 export interface SetupDeps {
+  /** Config.apiKeys: the card may offer keys. */
+  apiKeys: boolean;
   brains: BrainRegistry;
   agents: AgentRegistry;
   settings: Settings;
@@ -135,13 +137,17 @@ export class SetupGuide {
     return this.saved().intro ? [...SETUP_STEPS] : SETUP_STEPS.filter((s) => !INTRO_STEPS.includes(s));
   }
 
-  /** The agent's brains on this hub ("api:*" as each provider), as the setup card shows them. */
+  /**
+   * The agent's brains on this hub ("api:*" as each provider), then the hub's other CLIs that sign in from the chat
+   * (the agent falls back to them, and a brain added after the agent was made shows up here), as the setup card shows them.
+   */
   private async brains(agentId: string): Promise<SetupBrain[]> {
     const agent = this.d.agents.get(agentId);
     if (!agent) return [];
     const listed = new Map(this.d.brains.list().map((b) => [b.ref, b]));
+    const others = [...listed.values()].filter((b) => b.login && parseBrainRef(b.ref).machineId === "local").map((b) => b.ref);
     const out: SetupBrain[] = [];
-    for (const raw of expandBrains(agent.brains, [...listed.keys()])) {
+    for (const raw of new Set([...expandBrains(agent.brains, [...listed.keys()]), ...others])) {
       const parsed = parseBrainRef(raw);
       if (parsed.machineId !== "local") continue;
       const ref = formatBrainRef(parsed);
@@ -199,6 +205,7 @@ export class SetupGuide {
       firstRun: !saved.kickoffDone,
       starting: !this.started,
       vault: vaultState === "uninitialized" ? "absent" : vaultState === "sealed" ? "locked" : "open",
+      apiKeys: this.d.apiKeys,
       telegram,
       machines,
       done,

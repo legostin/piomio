@@ -228,6 +228,15 @@ const FRONT_DESK_DENIED = ["Bash", "BashOutput", "KillShell", "Write", "Edit", "
 const CONFINED_ALLOWED = /^(WebFetch|WebSearch|TodoWrite|Task|Agent|Skill|ToolSearch|mcp__piomio)$/;
 
 /**
+ * The hub's own tools are always allowed: they act on the hub, which gates them itself, and without them don't-ask mode
+ * denies every card, delegation and report. A list saved before the rename names the server mcp__owlbot, which is gone.
+ */
+function withHubTools(tools: string[]): string[] {
+  const kept = tools.filter((x) => !/^mcp__owlbot(__|$)/.test(x));
+  return kept.includes("mcp__piomio") ? kept : [...kept, "mcp__piomio"];
+}
+
+/**
  * Claude Code's sandbox for a confined session (macOS Seatbelt): commands write in the workspace and the temp folders,
  * read anything but `denyRead` (except `allowRead`), and reach no network; one that needs more retries outside the
  * sandbox, which the permission tool decides. No sandbox, no session: it never falls back to running unsandboxed.
@@ -340,18 +349,19 @@ class ClaudeCodeSession implements BrainSessionImpl {
     writePrivate(tokenFile, opts.mcp.token);
     writePrivate(
       join(this.dir, "mcp.json"),
-      JSON.stringify({ mcpServers: { piomio: { type: "stdio", command, args, env: { PIOMIO_URL: opts.mcp.url, PIOMIO_TOKEN_FILE: tokenFile } } } }),
+      JSON.stringify({ mcpServers: opts.bare ? {} : { piomio: { type: "stdio", command, args, env: { PIOMIO_URL: opts.mcp.url, PIOMIO_TOKEN_FILE: tokenFile } } } }),
     );
     writePrivate(join(this.dir, "prompt.md"), opts.systemPrompt);
     if (opts.confine) writePrivate(join(this.dir, "settings.json"), JSON.stringify(sandboxSettings(opts.confine)));
   }
 
   private args(caps: ClaudeCaps): string[] {
+    if (this.o.bare) return this.bareArgs(caps);
     const confine = this.o.confine;
     // Confined: the shell runs in the sandbox, edits are accepted inside the workspace, and everything else (reading
     // the person's files, writing elsewhere, a command outside the sandbox) goes to the hub's permission tool. No bare
     // allow rule may open the file tools or Bash, or it would answer for the hub.
-    const all = this.p.allowedTools?.() ?? DEFAULT_CLAUDE_TOOLS;
+    const all = withHubTools(this.p.allowedTools?.() ?? DEFAULT_CLAUDE_TOOLS);
     const tools = (confine ? all.filter((x) => CONFINED_ALLOWED.test(x)) : all).filter((x) => !this.o.frontDesk || !FRONT_DESK_DENIED.includes(x));
     const mode = confine
       ? ["--permission-mode", "acceptEdits", "--permission-prompt-tool", `mcp__piomio__${confine.permissionTool}`, "--settings", join(this.dir, "settings.json")]
@@ -382,6 +392,36 @@ class ClaudeCodeSession implements BrainSessionImpl {
     if (caps.snapshot) a.push("--system-prompt-snapshot", "off");
     if (this.resumeId) a.push("--resume", this.resumeId);
     for (const d of this.o.claudePluginDirs ?? []) a.push("--plugin-dir", d);
+    return a;
+  }
+
+  /**
+   * A session that only answers (BrainSessionOptions.bare): no tools, no MCP server, the prompt as the whole system
+   * prompt, only the (empty) folder's own settings, so none of the person's hooks or plugins, and nothing saved.
+   */
+  private bareArgs(caps: ClaudeCaps): string[] {
+    const a = [
+      "-p",
+      "--input-format",
+      "stream-json",
+      // The turn knows its input was taken from the echo (ClaudeStreamParser.replays).
+      "--replay-user-messages",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--tools",
+      "",
+      "--strict-mcp-config",
+      "--mcp-config",
+      join(this.dir, "mcp.json"),
+      "--system-prompt-file",
+      join(this.dir, "prompt.md"),
+      "--setting-sources",
+      "project",
+      "--no-session-persistence",
+    ];
+    if (this.o.model) a.push("--model", this.o.model);
+    if (this.o.effort && caps.efforts?.includes(this.o.effort)) a.push("--effort", this.o.effort);
     return a;
   }
 

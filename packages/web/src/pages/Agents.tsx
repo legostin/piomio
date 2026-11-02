@@ -1,18 +1,19 @@
-// Agents: list, edit, delete. New agents are made in the chat with the default agent ("Add agent").
+// Agents: list, edit, delete. New agents are made in the chat with the default agent ("Add agent"). Deleting asks
+// as the agent's menu in the team list does (chat/AgentMenu.tsx): the default agent's successor first, then a confirmation.
 
 import { useEffect, useState } from "react";
-import { useLocation } from "wouter";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import type { AgentAvatar as AgentAvatarValue, AgentDef, Computer } from "@piomio/shared";
 import { AVATAR_COLORS, AVATAR_PALETTE, AVATAR_SHAPES, defaultAvatar } from "@piomio/shared/avatar";
 import { useStore } from "../lib/store";
 import { api, errorText } from "../lib/api";
-import { agentForPath } from "../lib/team";
-import { agents, hubEvents, refreshAgents, session } from "../state/app";
+import { agents, hubEvents, refreshAgents } from "../state/app";
 import { activeBrain, brainName, brainReady, brains, brainStatus, ensureBrains, findBrain, normalizeBrainRef } from "../state/brains";
 import { addAgent, clearPanelIntent, panel } from "../state/panel";
 import { toast } from "../state/toast";
-import { t, tRich, type MessageKey } from "../i18n";
+import { t, type MessageKey } from "../i18n";
+import { archiveAgent } from "../state/agentActions";
+import { useAgentMenu } from "./chat/AgentMenu";
 import { AgentAvatar } from "../components/AgentAvatar";
 import { Badge, Button, cx, EmptyState, ErrorNote, Field, IconButton, Input, Loading, Modal, Page, TagInput, Textarea } from "../components/ui";
 
@@ -49,11 +50,9 @@ export function AgentsPage() {
   useEffect(() => ensureBrains(), []);
   const computers = useComputers();
   const p = useStore(panel);
-  const s = useStore(session);
-  const [loc, navigate] = useLocation();
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<AgentDef | null>(null);
-  const [deleting, setDeleting] = useState<AgentDef | null>(null);
+  const menu = useAgentMenu();
   // Each agent's own skills: the ones given to it, not the whole team's.
   const [own, setOwn] = useState<Record<string, string[]>>({});
 
@@ -118,6 +117,7 @@ export function AgentsPage() {
             <div className="mt-3 flex flex-wrap gap-1.5">
               <Badge tone="info">{t("agents.initiativeBadge", { level: a.initiative })}</Badge>
               <Badge>{SOURCE[a.source] ? t(SOURCE[a.source]) : a.source}</Badge>
+              {a.archived && <Badge tone="warning">{t("agents.archived")}</Badge>}
               {a.model && <Badge>{a.model}</Badge>}
               {(() => {
                 const on = activeBrain(a.brains, brainList);
@@ -142,9 +142,21 @@ export function AgentsPage() {
               </div>
             ) : null}
             <div className="mt-auto flex justify-end gap-1 pt-3">
-              {a.source === "user" && (
-                <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleting(a)}>
-                  {t("common.delete")}
+              <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => menu.requestDelete(a)}>
+                {t("common.delete")}
+              </Button>
+              {a.archived && (
+                <Button
+                  size="sm"
+                  icon={<ArchiveRestore className="size-3.5" />}
+                  onClick={() =>
+                    archiveAgent(a.id, false).then(
+                      () => toast(t("agentMenu.restored", { name: a.name }), "success"),
+                      (e) => toast(errorText(e), "error"),
+                    )
+                  }
+                >
+                  {t("agentMenu.restore")}
                 </Button>
               )}
               <Button size="sm" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(a)}>
@@ -156,36 +168,7 @@ export function AgentsPage() {
       </div>
 
       {editing && <AgentEditor agent={editing} onClose={() => setEditing(null)} />}
-      <Modal
-        open={!!deleting}
-        onClose={() => setDeleting(null)}
-        title={t("agents.deleteTitle")}
-        footer={
-          <>
-            <Button onClick={() => setDeleting(null)}>{t("common.cancel")}</Button>
-            <Button
-              variant="danger"
-              onClick={async () => {
-                const a = deleting!;
-                setDeleting(null);
-                try {
-                  await api.del(`/api/agents/${encodeURIComponent(a.id)}`);
-                  toast(t("agents.deleted", { name: a.name }), "success");
-                  // Its dialog stays on the hub, but it is no longer on the team: leave it.
-                  if (agentForPath(loc, s?.defaultAgent) === a.id) navigate("/");
-                  await refreshAgents();
-                } catch (e) {
-                  toast(errorText(e), "error");
-                }
-              }}
-            >
-              {t("common.delete")}
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm">{tRich("agents.deleteText", { file: <code className="font-mono">{deleting?.id}.md</code> })}</p>
-      </Modal>
+      {menu.element}
     </Page>
   );
 }

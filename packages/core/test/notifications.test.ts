@@ -29,7 +29,9 @@ describe("notification storage", () => {
       alter table notifications drop column digest_id; alter table notifications drop column superseded_by;
       alter table tasks drop column deliver;
       drop table skill_agents;
-      update schema_version set v = v - 2;`);
+      alter table tasks drop column rounds;
+      alter table approvals drop column auto;
+      update schema_version set v = v - 4;`);
     const ins = old.prepare("insert into notifications(id, level, title, body, created_at, delivered_at) values (?,?,?,?,?,?)");
     ins.run("n1", "notify", "A", "a", "2026-10-30T10:00:00.000Z", "2026-10-30T10:00:01.000Z");
     ins.run("n2", "digest", "B", "b", "2026-10-30T11:00:00.000Z", null);

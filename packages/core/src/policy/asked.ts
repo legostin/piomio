@@ -77,6 +77,17 @@ export interface AskedCheck {
  * Do the person's words (`input.asked`, checked against what they wrote lately) ask for this very call? Pure: the
  * gateway gathers what the person wrote.
  */
+/** Words of paying, ordering, booking or signing up in a text (a control's label, a card's line): always the person's. */
+export function moneyIn(text: string): boolean {
+  return MONEY.test(words(text).join(" "));
+}
+
+/** Words of sending something to people or publishing it in a text. */
+export function sendsOrPublishes(text: string): boolean {
+  const said = words(text).join(" ");
+  return KINDS.send.test(said) || KINDS.publish.test(said);
+}
+
 export function checkAsked(spec: AskedSpec, input: unknown, person: PersonWords): AskedCheck {
   const no = (reason: string): AskedCheck => ({ ok: false, reason });
   const field = (name: string | undefined) => (name && input && typeof input === "object" ? (input as Record<string, unknown>)[name] : undefined);

@@ -26,13 +26,15 @@ if (mode === "hang") setInterval(() => {}, 1000);
 describe("brain CLI installs", () => {
   it("knows where each official package puts its binary", () => {
     const mac = cliToolSpecs("darwin", "arm64", false);
-    expect(mac.map((t) => t.brainId)).toEqual(["claude-code", "codex"]);
+    expect(mac.map((t) => t.brainId)).toEqual(["claude-code", "codex", "kimi"]);
+    // Kimi Code is a Node script: its npm link, which the brain runs with the hub's Node.
+    expect(mac[2]).toMatchObject({ pkg: "@moonshot-ai/kimi-code", dirs: [".bin"] });
     expect(mac[0].dirs).toEqual(["@anthropic-ai/claude-code-darwin-arm64"]);
     expect(mac[1].dirs[0]).toBe("@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin");
     expect(cliToolSpecs("linux", "x64", true)[0].dirs).toEqual(["@anthropic-ai/claude-code-linux-x64-musl"]);
     expect(cliToolSpecs("win32", "x64", false)[1].dirs[0]).toBe("@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin");
-    // No Codex build for this platform: only Claude Code is offered.
-    expect(cliToolSpecs("freebsd", "x64", false).map((t) => t.brainId)).toEqual(["claude-code"]);
+    // No Codex build for this platform: Claude Code and Kimi Code are offered.
+    expect(cliToolSpecs("freebsd", "x64", false).map((t) => t.brainId)).toEqual(["claude-code", "kimi"]);
   });
 
   it("offers nothing when installs are off (Docker, user isolation)", () => {

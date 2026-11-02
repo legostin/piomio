@@ -13,8 +13,16 @@ import type { PluginHost, PluginRecord } from "./plugins/host.ts";
 import { VAULT_ID } from "./vault/service.ts";
 import { LocalizedError, hubLocale, localizePluginValue, tFor } from "./i18n.ts";
 
-/** Well-known token formats that no plugin declares (MCP servers, CLIs). Whole-token matches only. */
+/**
+ * Well-known token formats that no plugin declares (MCP servers, CLIs), and model providers' keys, which the API
+ * brain declares but which must not reach the model when it is not loaded (Config.apiKeys). Whole-token matches only.
+ */
 const KNOWN: Array<{ vault: string; pattern: RegExp }> = [
+  { vault: "anthropic_api_key", pattern: /^sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}$/ },
+  { vault: "openrouter_api_key", pattern: /^sk-or-v1-[A-Za-z0-9]{20,}$/ },
+  { vault: "openai_api_key", pattern: /^sk-(?!ant-|or-)[A-Za-z0-9_-]{20,}$/ },
+  { vault: "xai_api_key", pattern: /^xai-[A-Za-z0-9]{20,}$/ },
+  { vault: "groq_api_key", pattern: /^gsk_[A-Za-z0-9]{20,}$/ },
   { vault: "github_token", pattern: /^(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,})$/ },
   { vault: "gitlab_token", pattern: /^glpat-[A-Za-z0-9_-]{20,}$/ },
   { vault: "slack_token", pattern: /^xox[abposr]-[A-Za-z0-9-]{10,}$/ },

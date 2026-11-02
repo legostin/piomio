@@ -15,6 +15,7 @@ import { draftPatch } from "../agent-drafts.ts";
 import { applyThinking } from "../thinking.ts";
 import { pipeToLeader } from "./forward.ts";
 import { attachmentDisposition, HttpError, safeFile, sendFile } from "./http.ts";
+import { UpdateError } from "../self-update.ts";
 import { imageFileName, MediaError } from "../media.ts";
 import { entryRef, googleScopes, listCatalog, listIntegrations, logoFile } from "../integrations.ts";
 import { callbackParams } from "../connections.ts";
@@ -50,6 +51,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       language: s.language,
       locales: LOCALES,
       vaultState: hub.vault.state(),
+      // Model access through API keys (PIOMIO_API_KEYS=1): the brain pages may offer keys.
+      apiKeys: cfg.apiKeys,
       // A new hub: the app shows only the setup card until a brain works, then the assistant opens the intro.
       firstRun: hub.setup.firstRun(),
       pendingApprovals: hub.approvals.pendingCount(),
@@ -109,6 +112,15 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const unread = hub.notifier.unreadCount();
     hub.team.markRead(id, typeof at === "string" ? at : undefined);
     // Reading the chat reads what the Inbox holds from it: the badges follow when the count moved.
+    hub.notifier.inboxChanged(unread);
+    return { ok: true };
+  });
+  // "Mark unread" in the agent's menu: its last message counts as unread again until the dialog is read.
+  api.post("/api/conversations/:id/unread", async (req) => {
+    const id = (req.params as any).id as string;
+    if (!hub.store.getConversation(id)) throw new HttpError(404, "conversation.notFound");
+    const unread = hub.notifier.unreadCount();
+    hub.team.markUnread(id);
     hub.notifier.inboxChanged(unread);
     return { ok: true };
   });
@@ -257,9 +269,10 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   api.post("/api/tasks/:id/retry", async (req) => hub.runner.retryTask((req.params as any).id) ?? { error: "not found" });
 
   // ----- agents -----
+  // The team and the archive: archived agents carry `archived` (their dialog still opens, to bring them back).
   api.get("/api/agents", async (req) => {
     const locale = requestLocale(req);
-    return hub.agents.list().map((a) => localizedAgent(a, locale));
+    return hub.agents.all().map((a) => ({ ...localizedAgent(a, locale), ...(hub.agents.isArchived(a.id) ? { archived: true } : {}) }));
   });
   api.put("/api/agents/:id", async (req) => {
     const id = (req.params as any).id as string;
@@ -270,8 +283,18 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const agent: AgentDef = b.markdown ? agentFromMarkdown(id, b.markdown, "user") : { ...patchAgent(base, b, requestLocale(req)), id, source: "user" };
     return hub.saveAgent(agent, "user");
   });
+  // The agent's menu in the list (web, desktop, phone). The default agent leaves only with a successor in its place.
   api.delete("/api/agents/:id", async (req) => {
-    hub.removeAgent((req.params as any).id as string, "user");
+    const successor = (req.query as { successor?: string }).successor;
+    return { ok: true, ...hub.deleteAgent((req.params as any).id as string, { successor: successor || undefined }, "user") };
+  });
+  api.post("/api/agents/:id/archive", async (req) => {
+    const b = (req.body ?? {}) as { archived?: unknown; successor?: unknown };
+    const successor = typeof b.successor === "string" && b.successor ? b.successor : undefined;
+    return { ok: true, ...hub.archiveAgent((req.params as any).id as string, b.archived !== false, { successor }, "user") };
+  });
+  api.post("/api/agents/:id/pin", async (req) => {
+    hub.pinAgent((req.params as any).id as string, (req.body as { pinned?: unknown } | undefined)?.pinned !== false, "user");
     return { ok: true };
   });
   // How the agent thinks for each kind of work: the header picker, the chat card and the phone.
@@ -320,6 +343,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const refs = new Map<string, { ref: string; label: string; host?: string; login?: boolean }>();
     for (const b of listed) refs.set(b.ref, { ref: b.ref, label: b.label, host: b.host, login: b.login });
     for (const a of hub.agents.list()) for (const r of a.brains) {
+      // "api:*" stands for the providers listed above, not for a brain of its own.
+      if (r.includes(":*")) continue;
       const key = formatBrainRef(parseBrainRef(r));
       if (!refs.has(key)) refs.set(key, { ref: key, label: key });
     }
@@ -448,7 +473,12 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const held = hub.skills.holders?.all() ?? new Map<string, string[]>();
     return hub.skills.list().map((s) => ({ ...s, agents: held.get(s.name) ?? [] }));
   });
-  api.get("/api/commands", async () => hub.skills.listCommands().map((c) => ({ name: c.name, description: c.description, source: c.source })));
+  // The hub's own commands first, then the skills' (one named like a hub command is the hub's).
+  api.get("/api/commands", async (req) => {
+    const own = hub.commands.list(requestLocale(req));
+    const names = new Set(own.map((c) => c.name));
+    return [...own, ...hub.skills.listCommands().filter((c) => !names.has(c.name)).map((c) => ({ name: c.name, description: c.description, source: c.source }))];
+  });
   api.get("/api/channels", async () => Promise.all(hub.channels.list().map(async (c) => ({ ...c, ...(await hub.channels.status(c.id)) }))));
 
   // ----- machines -----
@@ -469,6 +499,15 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   // One link connects a computer or a phone (invites.ts); a phone's chat may invite a computer too.
   api.post("/api/invites", async () => hub.createInvite());
   api.delete("/api/invites/:code", async (req) => ({ ok: hub.invites.revoke((req.params as { code: string }).code) }));
+  // "Update" on a machine's row: this hub's own update on a server install ("local"), or a machine's daemon.
+  api.post("/api/machines/:id/update", async (req) => {
+    try {
+      return await hub.updates.update((req.params as { id: string }).id);
+    } catch (e) {
+      if (e instanceof UpdateError) throw new HttpError(409, `update.${e.reason}`, { version: e.version ?? "" });
+      throw e;
+    }
+  });
   api.patch("/api/machines/:id", async (req) => hub.machines.rename((req.params as any).id, String((req.body as any)?.name ?? "")));
   api.delete("/api/machines/:id", async (req) => {
     hub.machines.revoke((req.params as any).id);

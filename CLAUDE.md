@@ -18,7 +18,7 @@ Self-hosted personal agent platform. Spec: `docs/superpowers/specs/2026-10-26-pi
   English is the source of truth and the fallback; `packages/core/test/i18n.test.ts` checks every catalog for parity.
 - Text for the model (tool results, tool descriptions, system notes, agent prompts), code and comments is English and not translated.
 - Secrets never go into settings, env files or prompts: store them in the vault and pass `vault://<id>` references.
-- Releases: every push to main asks in Actions whether to release (`.github/workflows/release-question.yml`, environment `release`); a yes raises the patch version, tags it and publishes the installers and the server image `ghcr.io/legostin/piomio` (`docker.yml`, which also publishes `main` on every push). Don't raise the version by hand unless asked.
+- Releases: a push to main that changes what ships releases by itself (`.github/workflows/release-on-push.yml`): the patch version goes up, the tag is made and the installers and the server image `ghcr.io/legostin/piomio` are published (`docker.yml`, which also publishes `main` on every push). Pushes of only the site, docs, root Markdown or tests release nothing. So push a significant change to main once it's done and checked, and don't raise the version by hand unless asked (a minor or major version: run the workflow by hand).
 - Server settings are environment variables: a new one goes in `.env.example` and both READMEs' tables.
 
 ## Interface (law)

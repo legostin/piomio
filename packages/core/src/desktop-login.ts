@@ -34,15 +34,17 @@ export class DesktopTickets {
 }
 
 /**
- * The app's lines on stdin: `stop` (Windows has no SIGTERM for a windowless child) and `ticket <t>`. The app closing
- * the pipe (it quit or crashed) stops the hub too, so the hub never outlives it.
+ * The app's lines on stdin: `stop` (Windows has no SIGTERM for a windowless child), `ticket <t>` and
+ * `update-failed <why>` (the Update button's install did not happen: self-update.ts). The app closing the pipe (it
+ * quit or crashed) stops the hub too, so the hub never outlives it.
  */
-export function readDesktopCommands(input: Readable, on: { stop: () => void; ticket: (t: string) => void }): void {
+export function readDesktopCommands(input: Readable, on: { stop: () => void; ticket: (t: string) => void; updateFailed?: (why: string) => void }): void {
   const lines = createInterface({ input });
   lines.on("line", (line) => {
-    const [cmd, arg] = line.trim().split(/\s+/, 2);
+    const [, cmd, arg = ""] = /^(\S+)\s*(.*)$/.exec(line.trim()) ?? [];
     if (cmd === "stop") on.stop();
     else if (cmd === "ticket" && arg) on.ticket(arg);
+    else if (cmd === "update-failed") on.updateFailed?.(arg.slice(0, 500));
   });
   lines.on("close", () => on.stop());
 }

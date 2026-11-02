@@ -2,13 +2,13 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, ThinkingView } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, MachineInfo, ThinkingView } from "@piomio/shared";
 import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
 import { EventBus } from "./bus.ts";
 import { Store } from "./store.ts";
-import { Settings, type CoreSettings } from "./settings.ts";
+import { DEFAULT_BRAIN_EGRESS, Settings, type CoreSettings } from "./settings.ts";
 import { VaultService } from "./vault/service.ts";
 import { AuditLog } from "./audit.ts";
 import { RuleStore } from "./policy/rules.ts";
@@ -17,6 +17,7 @@ import { ToolRegistry } from "./tools/registry.ts";
 import { HookRegistry } from "./hooks.ts";
 import { ToolGateway } from "./tools/gateway.ts";
 import { AgentRegistry, agentFromMarkdown, agentName } from "./agents.ts";
+import { AgentsStateStore } from "./agents-state.ts";
 import { SkillHolders, SkillIndex } from "./skills.ts";
 import { PluginHost } from "./plugins/host.ts";
 import { EgressProxy } from "./egress.ts";
@@ -28,6 +29,7 @@ import { Team } from "./team.ts";
 import { roadRoute } from "./routing.ts";
 import { UserLocations } from "./user-location.ts";
 import { announceUpdate } from "./updates.ts";
+import { clearRolledBack, confirmStarted, HubUpdates, type StartState } from "./self-update.ts";
 import { FEED_RUN_TOOLS, Feeds } from "./feeds.ts";
 import { SetupChats } from "./setup-chats.ts";
 import { registerFeedTools } from "./tools/feed-tools.ts";
@@ -36,6 +38,8 @@ import { thinkingView } from "./thinking.ts";
 import { registerPageTools } from "./tools/page-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
+import { AutoMode, type AutoContext, type AutoWhere } from "./policy/auto.ts";
+import { brainReviewer } from "./policy/reviewer.ts";
 import { Pages } from "./pages.ts";
 import { registerCoreTools } from "./tools/core-tools.ts";
 import { McpEndpoint } from "./mcp/server.ts";
@@ -57,13 +61,14 @@ import { SecretIntake } from "./secrets.ts";
 import { AgentDrafts } from "./agent-drafts.ts";
 import { BrainLogins } from "./brain-login.ts";
 import { CliTools } from "./cli-tools.ts";
-import { UserPath } from "./user-path.ts";
+import { UserPath } from "@piomio/shared/user-path";
 import { SetupGuide } from "./setup.ts";
 import { MediaService } from "./media.ts";
 import { Connections } from "./connections.ts";
 import { entryRef } from "./integrations.ts";
 import { cleanTranscription, Transcriber } from "./transcribe.ts";
 import { RemoteAccess } from "./remote.ts";
+import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
 import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
@@ -87,13 +92,20 @@ export class Hub {
   tools = new ToolRegistry();
   hooks = new HookRegistry();
   gateway: ToolGateway;
+  /** Auto mode: a reviewer decides what used to be an approval card (policy/auto.ts). */
+  auto: AutoMode;
+  private reviewToken?: string;
   agents: AgentRegistry;
+  /** Pinned, archived and deleted built-in agents (agents-state.ts). */
+  agentsState: AgentsStateStore;
   skills = new SkillIndex();
   egress = new EgressProxy();
   brains = new BrainRegistry();
   channels: ChannelRegistry;
   notifier: Notifier;
   runner: SessionRunner;
+  /** "/task …", "/brain": the hub's own commands (commands.ts). */
+  commands: HubCommands;
   team: Team;
   /** The user's channels: news an agent gathers on a schedule (feeds.ts). */
   feeds: Feeds;
@@ -115,6 +127,10 @@ export class Hub {
   cluster: Cluster;
   /** What every machine is doing now, for the machines block (activity.ts). */
   activity: MachineActivityFeed;
+  /** Updates on the person's button: this hub's on a server install, and the machines' (self-update.ts). */
+  updates: HubUpdates;
+  /** What cli.ts found of an update in progress before the database opened (settleBeforeStart). */
+  startState: StartState = {};
   /** Phones paired with the hub (the Piomio app) and the device port they talk to. */
   devices: DeviceRegistry;
   /** Where the user is, when their phone shares it (user-location.ts). */
@@ -164,6 +180,8 @@ export class Hub {
     this.rules = new RuleStore(this.db);
     this.approvals = new ApprovalService(this.db, this.bus, this.audit, this.rules);
     this.agents = new AgentRegistry(config.builtinAgentsDir, join(config.dataDir, "agents"));
+    this.agentsState = new AgentsStateStore(this.settings);
+    this.agents.state = () => this.agentsState.get();
     this.channels = new ChannelRegistry(this.vault.redactor);
     this.notifier = new Notifier({
       db: this.db,
@@ -185,6 +203,14 @@ export class Hub {
         return a ? agentName(a, hubLocale()) : id;
       },
     });
+    // The reviewer runs on this computer's own Claude Code, through the egress proxy like any brain.
+    this.auto = new AutoMode({
+      reviewer: brainReviewer({ brains: this.brains, dataDir: config.dataDir, env: () => this.reviewerEnv(), log: (m) => console.log(m) }),
+      context: (w) => this.autoContext(w),
+      dataDir: config.dataDir,
+      language: () => this.settings.get().language,
+      audit: this.audit,
+    });
     this.gateway = new ToolGateway({
       store: this.store,
       registry: this.tools,
@@ -198,16 +224,33 @@ export class Hub {
       workspaceFor: (s) => this.runner.workspacePath(s),
       jobTools: (s) => (s.taskId && this.store.getTask(s.taskId)?.feedId ? FEED_RUN_TOOLS : []),
       skills: this.skills,
+      auto: this.auto,
+      machineName: (id) => this.runner.computerName(id),
       // "%key%" approval summaries resolve against the owner's messages in the hub language.
       localize: (owner, text) =>
         owner === "core" ? localizeValue(text, catalogLookup(coreCatalog, hubLocale())) : localizePluginValue(this.plugins.get(owner)?.layout, text, hubLocale()),
     });
     this.invites = new InviteRegistry({ db: this.db, bus: this.bus, audit: this.audit });
-    this.setups = new MachineSetups({ db: this.db, bus: this.bus, audit: this.audit, vault: () => this.vault });
+    this.setups = new MachineSetups({ db: this.db, bus: this.bus, audit: this.audit, vault: () => this.vault, apiKeys: () => this.config.apiKeys });
     this.machines = new MachineHub({ db: this.db, bus: this.bus, brains: this.brains, audit: this.audit, invites: this.invites, setups: this.setups });
     this.cluster = new Cluster(this);
     this.machines.cluster = this.cluster;
     this.activity = new MachineActivityFeed(this.bus, this.machines);
+    this.updates = new HubUpdates({
+      config,
+      db: this.db,
+      bus: this.bus,
+      tell: (note) => this.tellDefaultAgent(note),
+      // cli.ts stops the hub on SIGTERM; systemd then starts the version `current` points at.
+      restart: () => void process.kill(process.pid, "SIGTERM"),
+      machine: (id) => {
+        const m = this.machines.get(id);
+        return m ? { info: m.info, online: m.status === "online" } : undefined;
+      },
+      sendNode: (id, update) => this.machines.sendUpdate(id, update),
+    });
+    this.activity.updates = this.updates;
+    this.bus.on("machine.updated", (m: { id?: string; info?: MachineInfo } | undefined) => m?.id && this.updates.machineChanged(m.id, m.info));
     this.devices = new DeviceRegistry({ db: this.db, bus: this.bus, audit: this.audit, invites: this.invites });
     this.locations = new UserLocations(this.settings, (id) => !!this.devices.get(id));
     this.secrets = new SecretIntake({ db: this.db, bus: this.bus, audit: this.audit, vault: this.vault, plugins: () => this.plugins });
@@ -251,6 +294,7 @@ export class Hub {
           .join(","),
     });
     this.setup = new SetupGuide({
+      apiKeys: this.config.apiKeys,
       brains: this.brains,
       agents: this.agents,
       settings: this.settings,
@@ -265,9 +309,20 @@ export class Hub {
       tellAgent: (id, note) => this.runner.tellAgent(id, note),
     });
     this.runner.d.setup = this.setup;
+    this.commands = new HubCommands({
+      store: this.store,
+      agents: this.agents,
+      channels: this.channels,
+      publicUrl: config.publicUrl,
+      thinkingView: (a) => this.thinkingView(a),
+      saveAgent: (a, actor) => this.saveAgent(a, actor),
+      tasks: this.runner,
+    });
+    this.runner.d.commands = this.commands;
     this.team = new Team({
       store: this.store,
       agents: this.agents,
+      pinned: () => this.agentsState.get().pinned,
       bus: this.bus,
       isRunning: (id) => this.runner.isRunning(id),
       floor: (id) => this.runner.floor(id),
@@ -341,6 +396,7 @@ export class Hub {
       tasks: {
         place: (agentId, machine) => this.runner.placeTask(agentId, machine),
         ask: (taskId, question) => this.runner.askStarter(taskId, question),
+        goal: (taskId, status, summary) => this.runner.reportGoal(taskId, status, summary),
         message: (taskId, text, from) => this.runner.messageTask(taskId, text, from),
         cancel: (taskId, from) => this.runner.cancelTaskFrom(taskId, from),
         computers: () => this.runner.computers(),
@@ -384,6 +440,8 @@ export class Hub {
       agents: this.agents,
       dataDir: config.dataDir,
       roots: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
+      auto: this.auto,
+      machineName: (id) => this.runner.computerName(id),
     });
     registerPageTools({
       registry: this.tools,
@@ -419,6 +477,7 @@ export class Hub {
       p.language = l;
     }
     if ("defaultAgent" in p && !this.agents.get(String(p.defaultAgent))) throw new LocalizedError("agent.notFound", undefined, 400);
+    if ("defaultAgent" in p && this.agents.isArchived(String(p.defaultAgent))) throw new LocalizedError("agent.archivedDefault", undefined, 400);
     if ("transcription" in p) {
       const t = cleanTranscription(p.transcription);
       if (typeof t === "string") throw new LocalizedError("settings.badTranscription", { reason: t }, 400);
@@ -573,12 +632,35 @@ export class Hub {
     const before = this.agents.get(agent.id);
     // Computers by id: a name, "local" or the hub's name become the id the binding keeps (one it does not know stays as written).
     const machines = [...new Set((agent.machines ?? []).map((m) => this.resolveComputer(m) ?? m.trim()).filter(Boolean))];
-    const { machines: _, ...rest } = agent;
+    const { machines: _, archived: __, ...rest } = agent;
+    // Made anew under the id of a deleted built-in one: it is back.
+    if (this.agentsState.get().removed.includes(rest.id)) this.agentsState.set("removed", rest.id, false);
     const saved = this.agents.save(machines.length ? { ...rest, machines } : rest);
     if (before && refs(before) !== refs(saved)) this.runner.brainsChanged(saved.id);
     this.audit.append(actor, "agent.save", saved.id);
     this.bus.emit("agents.updated", {});
     return saved;
+  }
+
+  /** The reviewer's environment: the egress proxy with the brains' hosts, as for a brain session (runner.ts). */
+  private reviewerEnv(): Record<string, string> {
+    this.reviewToken ??= this.egress.issueToken("brain:auto-review", DEFAULT_BRAIN_EGRESS);
+    const proxy = `http://${this.reviewToken}:x@127.0.0.1:${this.config.egressPort}`;
+    return { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" };
+  }
+
+  /**
+   * What auto mode's reviewer reads besides the action: the person's own recent words where the session works, the
+   * task's goal, and the agent's earlier calls there (never their results).
+   */
+  private autoContext(w: AutoWhere): AutoContext {
+    const person = this.gateway.personWords({ conversationId: w.conversationId, taskId: w.taskId }).texts;
+    const goal = w.taskId ? this.store.getTask(w.taskId)?.goal : undefined;
+    const calls = this.store
+      .listMessages(w.conversationId, { limit: 40 })
+      .filter((m) => m.role === "assistant" && (!m.agentId || m.agentId === w.agentId))
+      .flatMap((m) => m.parts.flatMap((p) => (p.type === "tool_call" ? [{ name: p.name, input: this.vault.redactor.value(p.input) }] : [])));
+    return { person, ...(goal ? { goal } : {}), calls: calls.slice(-20) };
   }
 
   /** The id an agent's binding (AgentDef.machines) names this hub's computer by: its replica id in a cluster, else "local". */
@@ -638,17 +720,61 @@ export class Hub {
     return saved;
   }
 
-  /** The agent leaves the team (and the sidebar); its dialog and messages stay in the database. */
-  removeAgent(id: string, actor: string): void {
-    if (id === "assistant" && this.agents.get(id)?.source !== "user") throw new LocalizedError("agent.builtinCannotDelete", undefined, 400);
+  /** Pinned agents sit under the default agent at the top of the list, in the order they were pinned. */
+  pinAgent(id: string, pinned: boolean, actor: string): void {
+    if (!this.agents.get(id)) throw new LocalizedError("agent.notFound", undefined, 404);
+    this.agentsState.set("pinned", id, pinned);
+    this.audit.append(actor, pinned ? "agent.pin" : "agent.unpin", id);
+    this.bus.emit("agents.updated", {});
+  }
+
+  /**
+   * The default agent cannot sleep or leave without someone in its place: `successor`, an agent of the team other than
+   * it, becomes the default first. Returns the default agent after the step.
+   */
+  private handOver(id: string, successor: string | undefined, actor: string): string {
+    const current = this.settings.get().defaultAgent;
+    if (current !== id) return current;
+    const next = successor ? this.agents.get(successor) : undefined;
+    if (!next || next.id === id || this.agents.isArchived(next.id)) throw new LocalizedError("agent.successorNeeded", { name: agentName(this.agents.get(id)!, this.settings.get().language) }, 400);
+    this.updateSettings({ defaultAgent: next.id }, actor);
+    return next.id;
+  }
+
+  /**
+   * The archive: the agent sleeps (agents-state.ts). Out of the team, its turn and tasks stop, its schedules and channel
+   * runs are skipped; its dialog, memory and settings stay, and it comes back as it was.
+   */
+  archiveAgent(id: string, archived: boolean, opts: { successor?: string }, actor: string): { defaultAgent: string } {
+    if (!this.agents.get(id)) throw new LocalizedError("agent.notFound", undefined, 404);
+    const defaultAgent = archived ? this.handOver(id, opts.successor, actor) : this.settings.get().defaultAgent;
+    this.agentsState.set("archived", id, archived);
+    if (archived) this.runner.stopAgent(id);
+    this.audit.append(actor, archived ? "agent.archive" : "agent.restore", id);
+    this.bus.emit("agents.updated", {});
+    return { defaultAgent };
+  }
+
+  /**
+   * The agent leaves for good with its dialog, tasks and schedules (plugins hear "agent.removed"); the channels it edited
+   * pass to the default agent. A built-in or plugin agent is remembered as deleted, since its file ships with the hub.
+   */
+  deleteAgent(id: string, opts: { successor?: string }, actor: string): { defaultAgent: string } {
+    const agent = this.agents.get(id);
+    if (!agent) throw new LocalizedError("agent.notFound", undefined, 404);
+    const defaultAgent = this.handOver(id, opts.successor, actor);
+    this.runner.stopAgent(id);
     this.agents.remove(id);
-    this.audit.append(actor, "agent.remove", id);
-    // Channels and "/" need a default agent that exists; the built-in assistant always does.
-    if (this.settings.get().defaultAgent === id && !this.agents.get(id)) this.updateSettings({ defaultAgent: "assistant" }, "core");
-    // Gone from the team (a built-in one only returns to its defaults): a skill only it had goes back to everyone.
-    if (!this.agents.get(id)) this.skills.holders?.dropAgent(id);
+    this.agentsState.forget(id);
+    if (this.agents.shipped(id)) this.agentsState.set("removed", id, true);
+    this.feeds.handOver(id, defaultAgent);
+    this.store.deleteAgentData(id);
+    this.skills.holders?.dropAgent(id);
+    this.audit.append(actor, "agent.delete", id, { name: agent.name });
+    this.bus.emit("agent.removed", { agentId: id });
     this.bus.emit("agents.updated", {});
     this.bus.emit("skills.updated", {});
+    return { defaultAgent };
   }
 
   /** Skills, commands, agents and MCP servers come from enabled plugin layouts + data dir. */
@@ -830,6 +956,12 @@ export class Hub {
     if (cfg.installClis) await this.userPath.refresh();
     await this.cluster.start();
     if (this.cluster.leads()) await this.lead();
+    if (cfg.installRoot) this.settleUpdate(cfg.installRoot);
+    this.updates.start();
+    // No brain works yet: the CLIs are looked for again, so one signed in over SSH is found without "Check again".
+    const recheck = setInterval(() => void this.recheckBrains(), 30_000);
+    recheck.unref();
+    this.timers.push(recheck);
     const sweep = setInterval(() => this.auth.sweep(), 3600_000);
     sweep.unref();
     this.timers.push(sweep);
@@ -845,11 +977,37 @@ export class Hub {
     }
   }
 
+  /** A note to the default agent, which tells the person; only the replica that leads talks. */
+  private tellDefaultAgent(note: string): void {
+    if (!this.leading) return;
+    this.runner.tellAgent(this.store.agentConversation(this.settings.get().defaultAgent).id, note);
+  }
+
+  /** The new version is up, so its update stays; or the launcher went back to this one, which the person hears. */
+  private settleUpdate(root: string): void {
+    if (this.startState.trial) confirmStarted(root, this.config.version);
+    const back = this.startState.rolledBack;
+    if (back) this.updates.rolledBack(back.to);
+    if (back && this.leading) {
+      this.tellDefaultAgent(
+        `[System] The update to Piomio ${back.to} did not start, so the server went back to ${back.from} by itself; everything is as it was before the update. ` +
+          "Tell the person in one short message. The server's log: `journalctl --user -u piomio`.",
+      );
+      clearRolledBack(root);
+    }
+  }
+
+  private async recheckBrains(): Promise<void> {
+    if (!this.leading || (await this.setup.usable().catch(() => true))) return;
+    await this.refreshBrains().catch(() => {});
+  }
+
   private stopping = false;
 
   async stop(): Promise<void> {
     this.stopping = true;
     for (const t of this.timers) clearInterval(t);
+    this.updates.stop();
     await this.cluster.stop();
     this.notifier.stop();
     this.feeds.stop();

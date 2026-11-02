@@ -38,6 +38,7 @@ export function previewText(m: Message): string {
 export class Team {
   private store: Store;
   private agents: { list(): Array<{ id: string }> };
+  private pinned: () => string[];
   private bus: EventBus;
   private isRunning: (conversationId: string) => boolean;
   private floor: (conversationId: string) => string[];
@@ -46,6 +47,8 @@ export class Team {
   constructor(d: {
     store: Store;
     agents: { list(): Array<{ id: string }> };
+    /** Agents pinned to the top of the list, in order (agents-state.ts). */
+    pinned?: () => string[];
     bus: EventBus;
     isRunning: (conversationId: string) => boolean;
     /** A group chat's member answering now, then the ones waiting for their turn. */
@@ -53,6 +56,7 @@ export class Team {
   }) {
     this.store = d.store;
     this.agents = d.agents;
+    this.pinned = d.pinned ?? (() => []);
     this.bus = d.bus;
     this.isRunning = d.isRunning;
     this.floor = d.floor ?? (() => []);
@@ -67,7 +71,7 @@ export class Team {
     });
   }
 
-  /** Every agent with its dialog (created for agents that have none yet). */
+  /** Every agent of the team (the archived ones are not) with its dialog (created for agents that have none yet). */
   list(): TeamMember[] {
     return this.agents.list().map((a) => this.memberOf(this.store.agentConversation(a.id)));
   }
@@ -89,6 +93,7 @@ export class Team {
 
   memberOf(conv: Conversation): TeamMember {
     const last = this.lastMessage(conv.id);
+    const pin = this.pinned().indexOf(conv.agentId);
     return {
       agentId: conv.agentId,
       conversationId: conv.id,
@@ -96,7 +101,14 @@ export class Team {
       lastActivityAt: conv.updatedAt,
       running: this.isRunning(conv.id),
       unread: this.store.unreadCount(conv.id),
+      ...(pin >= 0 ? { pinned: pin } : {}),
     };
+  }
+
+  /** The person wants to come back to the dialog: its last message from the agent counts as unread again. */
+  markUnread(conversationId: string): void {
+    this.store.markUnread(conversationId);
+    this.changed(conversationId);
   }
 
   groupOf(conv: Conversation): GroupChat {

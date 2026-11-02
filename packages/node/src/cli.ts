@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// piomio-node CLI: pair | run | status | policy
+// piomio-node CLI: pair | run | status | policy | uninstall
 
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { UserPath } from "@piomio/shared/user-path";
 import { configFile, keyFile, loadConfig, nodeHome, normalizeHubUrl, NotPairedError, parseInviteLink, UserError } from "./home.ts";
 import { PolicyStore, policySummary } from "./policy.ts";
 import { BrainHost } from "./brains.ts";
@@ -10,6 +14,8 @@ import { createNodeDaemon } from "./daemon.ts";
 import { consoleLogger, machineInfo, osName } from "./info.ts";
 import { t } from "./messages.ts";
 import { stopOnDesktopStdin } from "./desktop.ts";
+import { PIOMIO_VERSION } from "./version.ts";
+import { restart, RESTART_CODE } from "./self-update.ts";
 
 const help = () => t("cli.help", { home: nodeHome() });
 
@@ -40,7 +46,7 @@ async function cmdPair(args: string[], flags: Record<string, string | true>): Pr
   normalizeHubUrl(hubUrl);
   const home = nodeHome();
   const policy = new PolicyStore(home, { log: (m) => out(m) });
-  const brains = new BrainHost({ home, policy });
+  const brains = new BrainHost({ home, policy, userPath: new UserPath() });
   out(t("cli.checkingClis"));
   const clis = await brains.probeAll();
   const name = typeof flags.name === "string" ? flags.name : undefined;
@@ -55,7 +61,8 @@ async function cmdPair(args: string[], flags: Record<string, string | true>): Pr
       ? t("cli.brain.present", { id: c.brainId, version: c.version ? ` ${c.version}` : "" }) + (c.authenticated ? "" : t("cli.brain.noLoginSuffix"))
       : t("cli.brain.absent", { id: c.brainId, detail: c.detail ?? t("cli.brain.none") });
   out(t("cli.line.brains", { list: clis.map(brainState).join("; ") }));
-  out(t("cli.next"));
+  // install.sh (--service) starts the daemon as a service itself.
+  if (!flags.service) out(t("cli.next"));
 }
 
 async function cmdRun(): Promise<void> {
@@ -65,6 +72,7 @@ async function cmdRun(): Promise<void> {
   const daemon = createNodeDaemon({
     home,
     log,
+    userPath: new UserPath(),
     onFatal: () => {
       exiting = true;
       process.exitCode = 1;
@@ -81,7 +89,8 @@ async function cmdRun(): Promise<void> {
     const force = setTimeout(() => process.exit(1), 10_000);
     force.unref();
     await daemon.stop().catch(() => {});
-    process.exit(0);
+    // After an update (self-update.ts): a code systemd's Restart= starts the daemon again on.
+    process.exit(restart.requested ? RESTART_CODE : 0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -108,7 +117,7 @@ async function cmdStatus(): Promise<void> {
   const policy = new PolicyStore(home, { log: (m) => out(m) });
   out(t("cli.line.policy", { file: policy.file }));
   for (const l of policySummary(policy.get())) out(`  ${l}`);
-  const brains = new BrainHost({ home, policy });
+  const brains = new BrainHost({ home, policy, userPath: new UserPath() });
   out(t("cli.status.brains"));
   for (const c of await brains.probeAll()) {
     const detail = c.detail ? ` — ${c.detail}` : "";
@@ -129,6 +138,27 @@ async function cmdStatus(): Promise<void> {
   }
 }
 
+/** What install.sh set up for a machine (its Node, this file, the service) goes; the key, policy and workspace stay. */
+function cmdUninstall(): void {
+  const lib = join(homedir(), ".local", "lib", "piomio-node");
+  if (!existsSync(lib)) throw new UserError(t("cli.uninstallNotInstalled"));
+  const systemctl = (...a: string[]) => {
+    try {
+      // After `sudo -iu <user>` there is no XDG_RUNTIME_DIR, and systemctl --user would not find the user's systemd.
+      const env = { ...process.env, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.()}` };
+      execFileSync("systemctl", ["--user", ...a], { stdio: "ignore", env });
+    } catch {
+      /* not running, or no user manager */
+    }
+  };
+  systemctl("disable", "--now", "piomio-node.service");
+  rmSync(join(homedir(), ".config", "systemd", "user", "piomio-node.service"), { force: true });
+  systemctl("daemon-reload");
+  rmSync(join(homedir(), ".local", "bin", "piomio-node"), { force: true });
+  rmSync(lib, { recursive: true, force: true });
+  out(t("cli.uninstalled", { home: nodeHome() }));
+}
+
 function cmdPolicy(): void {
   const home = nodeHome();
   const policy = new PolicyStore(home, { log: (m) => out(m) });
@@ -141,6 +171,10 @@ function cmdPolicy(): void {
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
+  if (cmd === "--version" || cmd === "version") {
+    out(PIOMIO_VERSION);
+    return;
+  }
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h" || flags.help) {
     out(help());
     return;
@@ -154,6 +188,8 @@ async function main(): Promise<void> {
       return cmdStatus();
     case "policy":
       return cmdPolicy();
+    case "uninstall":
+      return cmdUninstall();
     case "mcp-bridge":
       // Internal: the stdio MCP bridge brain CLIs spawn (keeps the single-file download self-contained).
       await import("@piomio/mcp-bridge");

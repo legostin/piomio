@@ -1,0 +1,18 @@
+{
+  "id": "brain-kimi",
+  "name": "%name%",
+  "version": "0.1.0",
+  "description": "%description%",
+  "builtin": true,
+  "server": "./server/index.ts",
+  "contributes": {
+    "brains": ["kimi"],
+    "settings": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "title": "%settings.command.title%", "description": "%settings.command.description%", "default": "kimi" }
+      }
+    }
+  },
+  "permissions": {}
+}

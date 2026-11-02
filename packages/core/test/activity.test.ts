@@ -18,6 +18,22 @@ function setup(machines: Array<Pick<Machine, "id" | "name" | "status">> = []) {
 const approval = (conversationId: string, agentId: string) => ({ id: "ap", conversationId, agentId }) as Approval;
 
 describe("machines activity", () => {
+  it("offers on each online row the update self-update.ts has for it, and tells when that changes", async () => {
+    const { bus, feed, seen } = setup([
+      { id: "m1", name: "vps", status: "online" },
+      { id: "m2", name: "laptop", status: "offline" },
+    ]);
+    feed.updates = { offerFor: (id) => (id === "local" ? { update: "0.3.0", updating: true } : { update: "0.2.9" }) };
+    const view = feed.view();
+    expect(view[0]).toMatchObject({ id: "local", update: "0.3.0", updating: true });
+    expect(view[1]).toMatchObject({ id: "m1", update: "0.2.9" });
+    expect(view[2].update).toBeUndefined();
+    bus.emit("updates.changed", {});
+    await sleep(300);
+    expect(seen).toHaveLength(1);
+    feed.close();
+  });
+
   it("tells what a tool call does by the tool's name", () => {
     expect(["Bash", "shell", "exec_command"].map(stepOfTool)).toEqual(["command", "command", "command"]);
     expect(["Read", "Grep", "Glob"].map(stepOfTool)).toEqual(["reading", "reading", "reading"]);

@@ -195,7 +195,8 @@ export function SettingsPage() {
             <Field label={t("settings.defaultAgent")} hint={t("settings.defaultAgentHint")}>
               <Select value={form.defaultAgent} onChange={(e) => set("defaultAgent", e.target.value)}>
                 {!(agentList ?? []).some((a) => a.id === form.defaultAgent) && <option value={form.defaultAgent}>{form.defaultAgent}</option>}
-                {(agentList ?? []).map((a) => (
+                {/* An archived agent cannot be the default. */}
+                {(agentList ?? []).filter((a) => !a.archived || a.id === form.defaultAgent).map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
                   </option>

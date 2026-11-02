@@ -141,11 +141,12 @@ function appServer() {
         return;
       case "thread/start":
         // What the brain asked for, for tests that check it: the -c overrides and the thread's sandbox and approvals.
-        if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ args, sandbox: p.sandbox, approvalPolicy: p.approvalPolicy })}\n`);
+        if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ args, sandbox: p.sandbox, approvalPolicy: p.approvalPolicy, ephemeral: p.ephemeral, baseInstructions: p.baseInstructions })}\n`);
         threadId = `th-${process.pid}`;
         model = p.model ?? "default";
         note("thread/started", { thread: { id: threadId } });
-        return ok({ thread: { id: threadId }, model });
+        // FAKE_CODEX_SANDBOX: the sandbox the thread says it runs in ("dangerFullAccess": a Codex that ignored the profile).
+        return ok({ thread: { id: threadId }, model, ...(process.env.FAKE_CODEX_SANDBOX ? { sandbox: { type: process.env.FAKE_CODEX_SANDBOX } } : {}) });
       case "thread/resume":
         if (p.threadId === "missing") return fail("thread not found");
         threadId = p.threadId;

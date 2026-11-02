@@ -17,6 +17,7 @@ on:
       - "plugins/*/ui/**"
       - "packages/pages-kit/**"
       - "packages/shared/**"
+      - "packaging/linux/install.sh"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 

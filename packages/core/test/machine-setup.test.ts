@@ -23,7 +23,8 @@ describe("machine setup", () => {
   vault.init("correct horse battery staple");
   vault.upsert({ id: "openai_api_key", type: "secret", name: "OpenAI API key", fields: { value: "sk-test-123" } });
   let now = new Date("2026-10-30T12:00:00Z");
-  const setups = new MachineSetups({ db, bus, audit: new AuditLog(db), vault: () => vault, now: () => now });
+  let apiKeys = true;
+  const setups = new MachineSetups({ db, bus, audit: new AuditLog(db), vault: () => vault, apiKeys: () => apiKeys, now: () => now });
 
   it("refuses what cannot work and says why", () => {
     expect(() => normalizeSettings({ brains: { gemini: { auth: "key" } } })).toThrow(SetupError);
@@ -66,5 +67,23 @@ describe("machine setup", () => {
     now = new Date("2026-11-02T09:00:00Z");
     expect(setups.spent("mach_vps")).toBe(0);
     expect(periodOf("day", now)).toEqual({ since: "2026-11-02", resetsAt: "2026-11-03T00:00:00.000Z" });
+  });
+
+  it("without PIOMIO_API_KEYS: no key mode, stored key mode runs on the machine's own sign-in", () => {
+    apiKeys = false;
+    try {
+      const key = { brains: { codex: { auth: "key", providers: ["openai"], models: [{ id: "gpt-6-luna", price: { input: 0.2, output: 1.6 } }] } } };
+      expect(() => normalizeSettings(key, false)).toThrow(/PIOMIO_API_KEYS/);
+      expect(() => setups.set("mach_other", key)).toThrow(SetupError);
+      // mach_vps still has key mode stored from before: the machine gets a subscription and no keys.
+      vault.unlock("correct horse battery staple");
+      expect(setups.get("mach_vps").brains.codex?.auth).toBe("key");
+      expect(setups.nodeSetup("mach_vps").brains.codex).toEqual({ auth: "subscription", models: [] });
+      const view = setups.view("mach_vps");
+      expect(view.keys).toEqual([]);
+      expect(view.settings.brains.codex).toEqual({ auth: "subscription" });
+    } finally {
+      apiKeys = true;
+    }
   });
 });

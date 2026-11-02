@@ -194,7 +194,7 @@ describe("skills of their own on the hub", () => {
 
   it("an agent who leaves the team gives its only skill back to everyone", () => {
     hub.skills.holders!.set("web-search", ["smm", "researcher"]);
-    hub.removeAgent("smm", "user");
+    hub.deleteAgent("smm", {}, "user");
     expect(hub.skills.holders!.get("insta-post")).toEqual([]);
     expect(hub.skills.holders!.get("web-search")).toEqual(["researcher"]);
   });

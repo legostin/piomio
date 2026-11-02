@@ -221,6 +221,26 @@ export function buildSystemPrompt(c: PromptContext): string {
   return lines.filter((l) => l !== undefined).join("\n");
 }
 
+/**
+ * A long goal's prompt for its next round (the /goal command): the first one explains the loop, the next ones say which
+ * round it is. `limit`: the round it pauses at.
+ */
+export function goalPrompt(task: Pick<Task, "goal" | "rounds">, first: boolean, limit: number): string {
+  const round = (task.rounds ?? 0) + 1;
+  const lines = first
+    ? [
+        `This is a long goal the person set (/goal): work toward it on your own, round after round. After each of your replies the hub gives you the next round, up to ${limit} rounds, until you call goal_report:`,
+        '- the goal is fully reached and you checked it: goal_report {"status":"achieved","summary":…}; the summary is what the person gets;',
+        '- you cannot go on without the person (a decision, an access, something only they have): goal_report {"status":"blocked","summary": what you need}; the goal waits for their answer and then goes on.',
+        "Move it forward in real steps and do not stop to ask about routine ones. End each round with a short line: what you did, what comes next.",
+      ]
+    : [
+        `Round ${round} of ${limit}. Check what is done, then do the next step.`,
+        'Fully reached and checked: goal_report {"status":"achieved","summary":…}. Cannot go on without the person: goal_report {"status":"blocked","summary": what you need}.',
+      ];
+  return [...lines, "", "The goal:", task.goal].join("\n");
+}
+
 /** The last line of a task's first prompt: how its result reaches the person. */
 export function taskEnding(task: Pick<Task, "background" | "feedId" | "deliver">): string {
   if (!task.background) return "When you are done, briefly describe the result — it will be passed to whoever created the task.";

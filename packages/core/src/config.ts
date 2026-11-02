@@ -59,6 +59,11 @@ export interface Config {
    */
   sandboxBrains: boolean;
   /**
+   * Model access through plain API keys (PIOMIO_API_KEYS=1): the API brain (plugins/brain-api), key mode of machines'
+   * CLI brains and Codex with an OpenAI key. Off by default: agents think with the plans the person signs in to.
+   */
+  apiKeys: boolean;
+  /**
    * HOME of the brain CLIs (claude, codex), where their logins live: <data>/home/agent, or PIOMIO_BRAIN_HOME. The
    * desktop app sets that to the user's own home, so a CLI they already signed in to works as is, and Claude Code on
    * macOS finds the login keychain (it looks for it through HOME). Never under user isolation.
@@ -69,6 +74,21 @@ export interface Config {
   version: string;
   /** GitHub repository whose releases carry the desktop installers (`/download/desktop/<os>`). */
   releasesRepo: string;
+  /**
+   * Where packaging/linux/install.sh put this hub (PIOMIO_INSTALL_ROOT, set by its launcher): its versions, the link
+   * to the one that runs, the launcher. Such a hub updates itself on the person's button (self-update.ts).
+   */
+  installRoot?: string;
+  /**
+   * The desktop app's executable when it runs this hub and updates itself (PIOMIO_DESKTOP_APP, set by the app): the
+   * hub's Update button runs it with `--install-update` (self-update.ts).
+   */
+  desktopApp?: string;
+  /**
+   * Another release to update from (PIOMIO_UPDATE_URL): a local check. A server install reads it in the shape of
+   * GitHub's `releases/latest`, the desktop app (and its hub) as its latest.json.
+   */
+  updateUrl?: string;
   /** For tests: skip starting builtin plugins. */
   plugins: "all" | "none" | string[];
 }
@@ -142,11 +162,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     egressEnforced: env.PIOMIO_EGRESS_ENFORCED === "iptables" ? "iptables" : "proxy",
     installClis: env.PIOMIO_INSTALL_CLIS === "1" && env.PIOMIO_ISOLATION !== "users",
     sandboxBrains: env.PIOMIO_SANDBOX_BRAINS !== "0" && env.PIOMIO_ISOLATION !== "users" && process.platform === "darwin",
+    apiKeys: env.PIOMIO_API_KEYS === "1",
     brainHome: "",
     vaultPassphraseFile: env.PIOMIO_VAULT_PASSPHRASE_FILE && existsSync(env.PIOMIO_VAULT_PASSPHRASE_FILE) ? env.PIOMIO_VAULT_PASSPHRASE_FILE : undefined,
     timezone: env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     version: appVersion(),
     releasesRepo: env.PIOMIO_RELEASES_REPO || "legostin/piomio",
+    ...(env.PIOMIO_INSTALL_ROOT ? { installRoot: resolve(env.PIOMIO_INSTALL_ROOT) } : {}),
+    ...(env.PIOMIO_DESKTOP === "1" && env.PIOMIO_DESKTOP_APP ? { desktopApp: env.PIOMIO_DESKTOP_APP } : {}),
+    ...(env.PIOMIO_UPDATE_URL ? { updateUrl: env.PIOMIO_UPDATE_URL } : {}),
     plugins: (env.PIOMIO_PLUGINS ?? "all") === "all" ? "all" : env.PIOMIO_PLUGINS === "none" ? "none" : (env.PIOMIO_PLUGINS ?? "").split(","),
   };
   const merged = { ...cfg, ...overrides };

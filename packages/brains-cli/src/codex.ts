@@ -12,7 +12,7 @@ import { capture, childEnv, runLines } from "./proc.ts";
 import { brainsT } from "./messages.ts";
 import { parseCodexDeviceLogin, runCliLogin } from "./login.ts";
 import { AppServerUnsupported, CodexAppTurn, listCodexModels, parseCodexReset, type CodexModel } from "./codex-app.ts";
-import { askHub } from "./hub-permission.ts";
+import { askHub, type HubAnswer } from "./hub-permission.ts";
 
 export { parseCodexReset };
 
@@ -111,6 +111,8 @@ class CodexSession implements BrainSessionImpl {
     } catch {
       /* windows */
     }
+    // A bare session's prompt goes in as the thread's own instructions, with no project files read.
+    if (opts.bare) return;
     // Codex reads AGENTS.md from the working directory: that is where our system prompt goes.
     const agentsFile = join(opts.workspace, "AGENTS.md");
     const marker = "<!-- piomio:system -->";
@@ -128,14 +130,52 @@ class CodexSession implements BrainSessionImpl {
   }
 
   /** What the sandbox would not let through, Codex asks for; confined, the hub answers (hub-permission.ts). */
-  private ask(): ((tool: string, input: Record<string, unknown>) => Promise<boolean>) | undefined {
+  private ask(): ((tool: string, input: Record<string, unknown>) => Promise<HubAnswer>) | undefined {
     const confine = this.o.confine;
     // The front desk asks for nothing more: what its sandbox does not let through is a task's work.
     return confine && !this.o.frontDesk ? (tool, input) => askHub(this.o.mcp, confine.permissionTool, tool, input) : undefined;
   }
 
-  /** `-c` overrides: the hub's MCP server, approvals (asked of the hub when confined), the sandbox. */
-  private config(): string[] {
+  /**
+   * Confined by the hub: a permission profile in place of `sandbox_mode`, so that what no agent may read (the
+   * person's credentials, the hub's data) is closed to Codex's commands too, not only what it may write. The agent's
+   * earlier folders stay readable, no network.
+   */
+  private profile(): string[] | undefined {
+    const c = this.o.confine;
+    if (!c) return undefined;
+    const readOnly = this.sandbox() === "read-only";
+    const files = new Map<string, string>();
+    for (const p of c.denyRead) files.set(p, "deny");
+    for (const p of c.allowRead) if (p !== this.o.workspace) files.set(p, "read");
+    if (!readOnly) for (const p of c.allowWrite ?? []) files.set(p, "write");
+    return [
+      `default_permissions="piomio"`,
+      `permissions.piomio.extends=${tomlString(readOnly ? ":read-only" : ":workspace")}`,
+      `permissions.piomio.filesystem={${[...files].map(([p, a]) => `${tomlString(p)}=${tomlString(a)}`).join(",")}}`,
+      "permissions.piomio.network.enabled=false",
+    ];
+  }
+
+  /** A bare session (auto mode's reviewer): no hub, no tools, none of the person's MCP servers, plugins or memories. */
+  private bareConfig(): string[] {
+    return [
+      "mcp_servers={}",
+      `approval_policy="never"`,
+      `sandbox_mode="read-only"`,
+      "project_doc_max_bytes=0",
+      ...["shell_tool", "multi_agent", "apps", "plugins", "memories", "goals", "hooks", "image_generation"].map((f) => `features.${f}=false`),
+      ...(this.o.effort ? [`model_reasoning_effort=${tomlString(this.o.effort)}`] : []),
+      ...(this.p.extraConfig?.() ?? []),
+    ];
+  }
+
+  /**
+   * `-c` overrides: the hub's MCP server, approvals (asked of the hub when confined), the sandbox. `codex exec` (a Codex
+   * too old for the app-server, older than permission profiles) gets `sandbox_mode`.
+   */
+  private config(exec = false): string[] {
+    if (this.o.bare) return this.bareConfig();
     const [command, ...args] = this.o.mcp.bridgeCommand.length ? this.o.mcp.bridgeCommand : ["piomio-mcp-bridge"];
     return [
       `mcp_servers.piomio.command=${tomlString(command)}`,
@@ -143,8 +183,7 @@ class CodexSession implements BrainSessionImpl {
       `mcp_servers.piomio.env={PIOMIO_URL=${tomlString(this.o.mcp.url)},PIOMIO_TOKEN_FILE=${tomlString(join(this.dir, "token"))}}`,
       `mcp_servers.piomio.tool_timeout_sec=3600`,
       this.ask() ? `approval_policy="on-request"` : `approval_policy="never"`,
-      `sandbox_mode=${tomlString(this.sandbox())}`,
-      ...(this.o.confine && !this.o.frontDesk ? ["sandbox_workspace_write.network_access=false"] : []),
+      ...((!exec && this.profile()) || [`sandbox_mode=${tomlString(this.sandbox())}`]),
       ...(this.o.effort ? [`model_reasoning_effort=${tomlString(this.o.effort)}`] : []),
       ...(this.p.extraConfig?.() ?? []),
     ];
@@ -152,7 +191,7 @@ class CodexSession implements BrainSessionImpl {
 
   private args(): string[] {
     const a = ["exec", "--json", "--skip-git-repo-check", "-C", this.o.workspace];
-    for (const c of this.config()) a.push("-c", c);
+    for (const c of this.config(true)) a.push("-c", c);
     if (this.o.model) a.push("-m", this.o.model);
     if (this.threadId) a.push("resume", this.threadId, "-");
     else a.push("-");
@@ -167,7 +206,19 @@ class CodexSession implements BrainSessionImpl {
     const env = childEnv(process.env, { ...this.o.env, ...(await this.p.authEnv?.()) });
     if (!this.execOnly) {
       const start = () =>
-        new CodexAppTurn({ command: this.p.command?.() ?? "codex", config: this.config(), cwd: this.o.workspace, env, model: this.o.model, effort: this.o.effort, sandbox: this.sandbox(), threadId: this.threadId, ask: this.ask() });
+        new CodexAppTurn({
+          command: this.p.command?.() ?? "codex",
+          config: this.config(),
+          cwd: this.o.workspace,
+          env,
+          model: this.o.model,
+          effort: this.o.effort,
+          sandbox: this.o.bare ? "read-only" : this.sandbox(),
+          threadId: this.threadId,
+          ask: this.ask(),
+          ...(this.profile() && !this.o.bare ? { profile: true } : {}),
+          ...(this.o.bare ? { bare: { instructions: this.o.systemPrompt } } : {}),
+        });
       let app = start();
       this.app = app;
       try {

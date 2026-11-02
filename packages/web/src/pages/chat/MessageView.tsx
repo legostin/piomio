@@ -31,6 +31,8 @@ import { MapCard } from "./MapCard";
 import { NewsCard } from "./NewsCard";
 import { Choices, FeedCard } from "./ChatButtons";
 import { ThinkingCard } from "./ThinkingCard";
+import { ThinkingMenuCard } from "./ThinkingMenu";
+import { ArchiveCard } from "./ArchiveCard";
 import { PageCard } from "./PageCard";
 import { TaskLine } from "./TaskLine";
 import { LiveStep } from "./LiveStep";
@@ -47,6 +49,7 @@ const APPROVAL: Record<ApprovalStatus, { label: MessageKey; tone: "warning" | "s
   expired: { label: "approvalStatus.expired", tone: "neutral" },
   executed: { label: "approvalStatus.executed", tone: "success" },
   failed: { label: "approvalStatus.failed", tone: "danger" },
+  blocked: { label: "approvalStatus.blocked", tone: "neutral" },
 };
 
 /** The card's words for what the agent asks: a plain headline in the viewer's language and the detail as is. */
@@ -125,7 +128,54 @@ function AskedLine({ part }: { part: Extract<MessagePart, { type: "approval" }> 
   );
 }
 
+/** An action auto mode stopped: a quiet line with its reason, and "Allow" for when the person wants it anyway (once). */
+function BlockedLine({ part }: { part: Extract<MessagePart, { type: "approval" }> }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const blocked = part.status === "blocked";
+  const allow = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/api/approvals/${encodeURIComponent(part.approvalId)}`, { decision: "approve" });
+    } catch (e) {
+      setError(t("message.approval.failed", { error: errorText(e) }));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex w-full max-w-md flex-col gap-1 px-1 text-xs leading-relaxed text-muted">
+      <div className="flex items-start gap-1.5">
+        <ShieldAlert className={cx("mt-0.5 size-3.5 shrink-0", blocked ? "text-warning" : "text-success")} />
+        <button type="button" onClick={() => setOpen((v) => !v)} className="min-w-0 flex-1 text-left">
+          <span className={cx("break-words", !open && "line-clamp-2")}>
+            {part.summary}
+            <span className="text-muted/70"> · {blocked ? t("message.approval.autoStopped", { reason: part.auto?.reason ?? "" }) : t("message.approval.autoAllowed")}</span>
+          </span>
+        </button>
+        {blocked && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void allow()}
+            className="shrink-0 rounded-full border border-hairline px-2.5 py-0.5 font-medium text-fg hover:bg-surface-2 disabled:opacity-50"
+          >
+            {t("message.approval.approve")}
+          </button>
+        )}
+      </div>
+      {error && (
+        <div className="break-words text-danger" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ApprovalCard({ part }: { part: Extract<MessagePart, { type: "approval" }> }) {
+  if (part.auto) return <BlockedLine part={part} />;
   if (part.asked) return <AskedLine part={part} />;
   const known = APPROVAL[part.status];
   const st = known ? { label: t(known.label), tone: known.tone } : { label: part.status, tone: "neutral" as const };
@@ -166,6 +216,11 @@ function ErrorPart({ message }: { message: string }) {
       <span className="min-w-0 break-words whitespace-pre-wrap">{message}</span>
     </div>
   );
+}
+
+/** A line from the hub itself (a command's answer or hint): quiet and centred, not anyone speaking. */
+function NotePart({ text }: { text: string }) {
+  return <div className="mx-auto max-w-md px-3 py-1 text-center text-[13px] leading-snug text-muted break-words whitespace-pre-wrap">{text}</div>;
 }
 
 /**
@@ -330,6 +385,8 @@ function Parts({ message }: { message: Message }) {
             return <NotificationCard key={it.key} part={p} taskId={message.taskId} />;
           case "error":
             return <ErrorPart key={it.key} message={p.message} />;
+          case "note":
+            return <NotePart key={it.key} text={p.text} />;
           case "attachment":
             return <Attachment key={it.key} part={p} message={message} index={it.index} />;
           case "images":
@@ -363,7 +420,9 @@ function Parts({ message }: { message: Message }) {
           case "feed":
             return <FeedCard key={it.key} feedId={p.feedId} />;
           case "thinking":
-            return <ThinkingCard key={it.key} agentId={p.agentId} />;
+            return p.focus ? <ThinkingMenuCard key={it.key} agentId={p.agentId} focus={p.focus} /> : <ThinkingCard key={it.key} agentId={p.agentId} />;
+          case "agent_archive":
+            return <ArchiveCard key={it.key} agentId={p.agentId} />;
           case "page":
             return <PageCard key={it.key} pageId={p.pageId} conversationId={message.conversationId} />;
           case "widget":

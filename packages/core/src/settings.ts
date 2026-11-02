@@ -21,6 +21,11 @@ export interface CoreSettings {
   brainConcurrency: number;
   approvalInlineWaitSec: number;
   approvalExpireHours: number;
+  /**
+   * Who answers what used to be an approval card (policy/auto.ts): "auto", a reviewer model, the person only for money,
+   * messages, publishing and what the reviewer hands them; "ask", the person every time.
+   */
+  approvalMode: "auto" | "ask";
   /** Hub language: notifications, channels, approval cards and the default for the UI. */
   language: Locale;
   /** Access from anywhere: the hub runs its Tailscale node and the Funnel link (remote.ts). */
@@ -39,6 +44,11 @@ export const DEFAULT_BRAIN_EGRESS = [
   "openai.com",
   "chatgpt.com",
   "*.chatgpt.com",
+  // Kimi Code: its sign-in (auth.kimi.com/.ai) and its plan's API (api.kimi.com/.ai).
+  "kimi.com",
+  "*.kimi.com",
+  "kimi.ai",
+  "*.kimi.ai",
   "*.googleapis.com",
   "openrouter.ai",
   "registry.npmjs.org",
@@ -67,6 +77,7 @@ export function defaultSettings(timezone: string, language: Locale = localeFromE
     brainConcurrency: 2,
     approvalInlineWaitSec: 45,
     approvalExpireHours: 24,
+    approvalMode: "auto",
     language,
     remoteAccess: false,
     transcription: DEFAULT_TRANSCRIPTION,

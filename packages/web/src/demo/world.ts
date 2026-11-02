@@ -16,7 +16,7 @@ const AVATARS: Record<AgentId, AgentDef["avatar"]> = {
 };
 
 const BRAINS: Record<AgentId, string[]> = {
-  pio: ["claude-code@local", "codex@local", "api:anthropic"],
+  pio: ["claude-code@local", "codex@local", "kimi@local"],
   ada: ["claude-code@local", "codex@local"],
   leo: ["codex@local", "claude-code@local"],
   bit: ["claude-code@macbook", "codex@macbook", "claude-code@local"],
@@ -51,6 +51,15 @@ const CODEX: ProbeResult = {
   models: ["gpt-5.5-codex", "gpt-5.5-mini"],
   modelNames: { "gpt-5.5-codex": "GPT-5.5 Codex", "gpt-5.5-mini": "GPT-5.5 mini" },
   efforts: ["low", "medium", "high"],
+};
+const KIMI: ProbeResult = {
+  available: true,
+  authenticated: true,
+  version: "2.4.1",
+  model: "k3",
+  models: ["k3", "kimi-for-coding"],
+  modelNames: { k3: "K3", "kimi-for-coding": "Kimi for Coding" },
+  efforts: ["off", "low", "high", "max"],
 };
 
 /** Integrations whose logo the demo ships (static/logos/<id>.png, copied by the demo build). */
@@ -158,7 +167,7 @@ export function makeWorld(content: Content): World {
       { ref: "codex@local", label: `Codex · ${content.cast.machines.home}`, login: true, connected: true, probe: CODEX },
       { ref: "claude-code@macbook", label: `Claude Code · ${content.cast.machines.laptop}`, host: "macbook", connected: true, probe: CLAUDE },
       { ref: "codex@macbook", label: `Codex · ${content.cast.machines.laptop}`, host: "macbook", connected: true, probe: CODEX },
-      { ref: "api:anthropic", label: "Anthropic API", connected: true, probe: { ...CLAUDE, version: undefined } },
+      { ref: "kimi@local", label: `Kimi Code · ${content.cast.machines.home}`, login: true, connected: true, probe: KIMI },
     ],
     integrations: content.integrations.map((x) => ({ ...x, ...(LOGOS.includes(x.id) ? { logo: `/api/integrations/${x.id}/logo` } : {}) })),
     secretRequests: [],

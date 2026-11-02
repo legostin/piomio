@@ -5,8 +5,9 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "wouter";
-import { ArrowRight, ChevronDown } from "lucide-react";
+import { ArrowRight, ChevronDown, Target } from "lucide-react";
 import type { AgentDef, Task } from "@piomio/shared";
+import { goalLimit } from "@piomio/shared/commands";
 import { useStore } from "../../lib/store";
 import { taskStatus, threadStatus, type Tone } from "../../lib/format";
 import { agents, ensureAgents, ensureMachineActivity, ensureTasks, machineActivity, tasks } from "../../state/app";
@@ -44,6 +45,10 @@ export function TaskLine({ taskId, text, reply, from }: { taskId: string; text?:
   // The brain and depth chosen for it, in a word each.
   const brainName = task.thinking?.brain ? (brainList?.find((b) => b.ref === task.thinking!.brain || b.ref.split("@")[0] === task.thinking!.brain)?.label ?? task.thinking.brain) : undefined;
   const how = [brainName, task.thinking?.preset ? t(`thinking.preset.${task.thinking.preset}`) : undefined].filter(Boolean).join(" · ");
+  // A long goal (/goal): its mark, and while it goes, the round it is on.
+  const goal = task.kind === "goal";
+  const rounds = task.rounds ?? 0;
+  const round = goal && working ? t("task.goalRound", { n: rounds + 1, of: goalLimit(rounds) }) : undefined;
   return (
     <Link
       href={`/tasks/${encodeURIComponent(task.id)}`}
@@ -51,9 +56,10 @@ export function TaskLine({ taskId, text, reply, from }: { taskId: string; text?:
       className="press flex w-full max-w-md items-center gap-2.5 rounded-full border border-hairline bg-surface/70 py-1.5 pr-3.5 pl-1.5 text-[13px] hover:bg-surface"
     >
       <AgentAvatar avatar={agent?.avatar} id={task.agentId} name={name} size={22} running={task.status === "running"} />
+      {goal && <Target className="size-3.5 shrink-0 text-accent-text" aria-label={t("task.goal")} />}
       <span className="min-w-0 flex-1 truncate font-medium text-fg">{task.title}</span>
       {/* While it works, its step says more than the brain it runs on. */}
-      {(where || (how && !now)) && <span className="hidden shrink-0 text-xs text-muted sm:inline">{[where, now ? undefined : how].filter(Boolean).join(" · ")}</span>}
+      {(where || round || (how && !now)) && <span className="hidden shrink-0 text-xs text-muted sm:inline">{[where, round, now ? undefined : how].filter(Boolean).join(" · ")}</span>}
       <Status label={now ?? st.label} tone={st.tone} working={working} />
     </Link>
   );

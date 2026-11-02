@@ -2,7 +2,8 @@
 
 The landing page per language (`/en/`, `/ru/`) with the live demo: the real web UI (`packages/web`, demo entry
 `demo.html`, code in `packages/web/src/demo/`) running against a demo hub in the visitor's browser and playing one
-chapter of the story per section. Vite + React + Tailwind, prerendered with React's server renderer and hydrated.
+chapter of the story per section, and the server guide (`/en/server/`, `/ru/server/`). Vite + React + Tailwind,
+prerendered with React's server renderer and hydrated.
 Design: [docs/superpowers/specs/2026-10-31-website-design.md](../../docs/superpowers/specs/2026-10-31-website-design.md).
 
 ## Build, look, check
@@ -24,7 +25,10 @@ does not reach its end; `--only mail,send`, `--lang ru` and `--speed 4` narrow t
   (`src/demo/DemoWindow.tsx`), which loads `demo/demo.html?lang=…&chapter=…&autoplay=1` and talks to it by
   `postMessage` (`src/demo/protocol.ts`, a copy of `packages/web/src/demo/protocol.ts`; a test keeps the chapter lists
   equal).
-- `src/locales/{en,ru}.json`: every word of the page. Same keys in each (`src/locales/locales.test.ts`).
+- `src/sections/ServerGuide.tsx`: the server guide at `/<lang>/server/` (`src/pages.ts` lists the pages; `prerender.mjs`
+  writes each one per language and marks it on `<html data-page>`). The README's "On a server, step by step" says the
+  same in both languages: change them together.
+- `src/locales/{en,ru}.json`: every word of the pages. Same keys in each (`src/locales/locales.test.ts`).
 - `site.config.ts`: the repository, the TestFlight link, the site's address.
 - `scripts/build.mjs`: release links and the star count from GitHub (at build time; no network → the releases page),
   the demo, the page, prerendering (`prerender.mjs`), Open Graph pictures (`og.mjs`, Playwright), sitemap, robots.

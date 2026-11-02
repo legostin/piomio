@@ -18,6 +18,7 @@ import { SetupGate } from "../components/BrainSetupCard";
 import { LiveViewWindow } from "../components/LiveViewWindow";
 import { ChatView } from "./chat/ChatView";
 import { useReadMarker } from "./chat/AgentPage";
+import { ArchivedBar } from "./chat/AgentMenu";
 import { t } from "../i18n";
 
 /** Tell the app the page is on screen (it hides its spinner), once. */
@@ -144,12 +145,16 @@ function MobileChat({ conversationId }: { conversationId: string }) {
     signalReady(conversationId);
   }, [conv.loaded, conversationId]);
 
+  // An archived agent's dialog: read only, with the way back to the team.
+  const archived = !!agent?.archived && meta?.kind === "main";
+
   return (
     <ChatView
       conversationId={conversationId}
       header={false}
-      bottom={<SetupGate conversationId={conversationId} agentId={agentId} />}
-      emptyHint={agent && !isDefault && !isGroup ? t("agent.emptyHint", { name: agent.name }) : undefined}
+      bottom={archived ? undefined : <SetupGate conversationId={conversationId} agentId={agentId} />}
+      emptyHint={archived ? "" : agent && !isDefault && !isGroup ? t("agent.emptyHint", { name: agent.name }) : undefined}
+      dock={agent && archived ? <ArchivedBar agent={agent} /> : undefined}
     />
   );
 }

@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import type { Machine, MachineInfo, MachineUsage, ToolResult } from "@piomio/shared";
 import { createRpcPeer, newId, nowIso, wsTransport, type RpcPeer, type WsLike } from "@piomio/shared";
+import { pieceServer, readInPieces, type PieceAnswer, type PieceRequest } from "@piomio/replica";
 import { json, type Db } from "./db.ts";
 import type { EventBus } from "./bus.ts";
 import type { BrainRegistry } from "./brains.ts";
@@ -52,6 +53,14 @@ export class MachineHub {
     this.bus.on("vault.state", () => {
       for (const id of this.peers.keys()) void this.pushSetup(id);
     });
+  }
+
+  /** Sends a machine the hub's own daemon to replace itself with (node.update); it restarts and says hello again. */
+  async sendUpdate(machineId: string, update: { version: string; sha256: string; bundle: string }): Promise<void> {
+    const peer = this.peers.get(machineId);
+    if (!peer || peer.closed) throw new Error(`machine ${machineId} is offline`);
+    await peer.request("node.update", update, { timeoutMs: 120_000 });
+    this.audit.append("core", "machine.update", machineId, { version: update.version });
   }
 
   /** Sends a machine its setup (node.setup); a daemon from before setups ignores it. */
@@ -192,11 +201,8 @@ export class MachineHub {
       const r = files()!.changesSince(Number(p?.cursor) || 0, Math.min(Number(p?.limit) || 500, 2_000));
       return { ...r, changes: r.changes.filter((c) => c.root === "workspaces") };
     });
-    peer.handle("files.read", async (p: { root?: string; path?: string; sha?: string }) => {
-      if (p?.root !== "workspaces") return null;
-      const bytes = await files()!.read("workspaces", String(p.path ?? ""), String(p.sha ?? ""));
-      return bytes ? Buffer.from(bytes).toString("base64") : null;
-    });
+    const serve = pieceServer((_root, path, sha) => files()!.read("workspaces", path, sha));
+    peer.handle("files.read", (p: PieceRequest) => (p?.root === "workspaces" ? serve(p) : null));
     clearInterval(this.fileTimers.get(id));
     let busy = false;
     const timer = setInterval(() => {
@@ -205,10 +211,7 @@ export class MachineHub {
       void files()!
         .syncFrom(`${this.name(id) ?? id}-node`, {
           changesSince: (cursor, limit) => peer.request("files.changes", { cursor, limit }, { timeoutMs: 60_000 }),
-          read: async (root, path, sha) => {
-            const b = await peer.request<string | null>("files.read", { root, path, sha }, { timeoutMs: 300_000 });
-            return b ? new Uint8Array(Buffer.from(b, "base64")) : undefined;
-          },
+          read: (root, path, sha) => readInPieces((q) => peer.request<PieceAnswer>("files.read", q, { timeoutMs: 120_000 }), root, path, sha),
         })
         .catch(() => {})
         .finally(() => (busy = false));
