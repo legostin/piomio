@@ -3,7 +3,7 @@
 // task that keeps going round after round until goal_report, pauses every GOAL_ROUNDS rounds and on the person's word.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message, MessagePart, Task, ThinkingView } from "@piomio/shared";
@@ -14,17 +14,6 @@ import { goalPrompt } from "../src/prompt.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => Promise<T | undefined | false> | T | undefined | false, what: string, timeoutMs = 20_000): Promise<T> {
   const t0 = Date.now();

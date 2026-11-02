@@ -3,7 +3,7 @@
 // and a background run of a taught skill may click and type while its consequential clicks need a pre-approval.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolResult } from "@piomio/shared";
@@ -14,17 +14,6 @@ import { allowRule, labelCondition, parseSkillSave, skillSaveSummary } from "../
 import { decide } from "../src/policy/engine.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => T | undefined | false, what: string, timeoutMs = 10_000): Promise<T> {
   const t0 = Date.now();

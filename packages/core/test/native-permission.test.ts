@@ -3,7 +3,7 @@
 // approval card (and "always" remembers it), and only CLI brains see the permission tool.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Approval } from "@piomio/shared";
@@ -154,17 +154,6 @@ describe("the agent's other folders, read-only commands and folders a yes opened
     expect(grantFolder(join(home, "a.txt"), home)).toBeUndefined();
   });
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 describe("what an \"always allow\" for a command covers", () => {
   it("the program and its subcommand, or the script an interpreter runs; anything chained or inline stays exact", () => {

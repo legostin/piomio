@@ -3,7 +3,7 @@
 // asks for, compiling its card; folders outside the workspace, other computers' folders and a "no" install nothing.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import type { ToolCallContext, ToolResult } from "@piomio/shared";
@@ -12,17 +12,6 @@ import { Hub, loadConfig } from "../src/index.ts";
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const fixtures = join(import.meta.dirname, "fixtures");
 const TEMPLATE = join(ROOT, "integrations", "_template");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => T | undefined | false, what: string, timeoutMs = 15_000): Promise<T> {
   const t0 = Date.now();

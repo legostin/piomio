@@ -6,7 +6,7 @@
 // signed in; the always-signed-in fake brains are turned off, so the hub starts with none.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatBrainRef, parseBrainRef, type ProbeResult } from "@piomio/shared";
@@ -14,17 +14,6 @@ import { Hub, loadConfig } from "../src/index.ts";
 import { INTRO_REMOTE_NOTE, SetupGuide } from "../src/setup.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => Promise<T | undefined | false> | T | undefined | false, what: string, timeoutMs = 15_000): Promise<T> {
   const t0 = Date.now();
