@@ -45,6 +45,8 @@ export interface ToolSpec {
   asked?: AskedSpec;
   /** Only available to background tasks / interactive sessions. Default: both. */
   availability?: "all" | "interactive" | "background";
+  /** Only these agents see and call it (a companion's hands on the person's computer); unset: every agent. */
+  agents?: string[];
 }
 
 /** What an action is, for matching it to the person's words: the verb on its control, or the one thing a tool does. */

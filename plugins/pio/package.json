@@ -1,0 +1,10 @@
+{
+  "name": "@piomio/plugin-pio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pio: the assistant that is always next to you on the desktop (sees the active window, talks, takes the mouse when handed it)",
+  "devDependencies": {
+    "@types/react": "^19.2.18"
+  }
+}

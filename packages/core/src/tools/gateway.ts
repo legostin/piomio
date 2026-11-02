@@ -101,6 +101,7 @@ export class ToolGateway {
     if (t.owner === "core" && t.name.startsWith(HUB_TOOL_PREFIX) && !everyAgent && agent.id !== this.d.settings.get().defaultAgent) return false;
     if (t.availability === "background" && !s.background) return false;
     if (t.availability === "interactive" && s.background) return false;
+    if (t.agents?.length && !t.agents.includes(agent.id)) return false;
     if (s.background && agent.initiative < 2 && !(skillRun && SKILL_RUN_TOOLS.test(t.name)) && t.effect !== "read" && !BACKGROUND_ALWAYS_ALLOWED.includes(t.name)) return false;
     return true;
   }

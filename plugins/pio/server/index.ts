@@ -1,0 +1,129 @@
+// Built-in plugin "pio": the assistant that is always next to you (docs/superpowers/specs/2026-11-03-pio-always-on-design.md).
+// Its window in the desktop app (the UI module's bare page /pio/overlay) reports what it sees and hears; this side
+// keeps that in memory, gives Pio its [On screen] block and its tools, takes quiet looks on its own, and shows on the
+// team list what Pio is doing.
+
+import type { PluginContext, PluginModule } from "@piomio/plugin-sdk";
+import type { AgentPresence, Message } from "@piomio/shared";
+import { Bodies } from "./bodies.ts";
+import { screenBlock, watchNote } from "./context.ts";
+import { cleanPrefs, DEFAULT_PREFS, type Prefs } from "./prefs.ts";
+import { Relay, type ActResult } from "./relay.ts";
+import { AGENT, registerTools } from "./tools.ts";
+import { GAPS, looked, nextWatch, type WatchState } from "./watch.ts";
+
+const TICK_MS = 5_000;
+const PREFS_KEY = "prefs";
+
+/** What a Pio window sends (ui plugin.send). */
+type FromWindow =
+  | { type: "hello"; body: string; conversationId?: string }
+  | { type: "state"; body: string; watching?: boolean; voice?: boolean; control?: boolean; hearing?: boolean; speaking?: boolean }
+  | { type: "window"; body: string; app: string; title?: string }
+  | { type: "bye"; body: string }
+  | ({ type: "result" } & ActResult);
+
+let stop: (() => void) | undefined;
+
+const plugin: PluginModule = {
+  async activate(ctx: PluginContext) {
+    const bodies = new Bodies();
+    const relay = new Relay((channel, payload) => ctx.ui.emit(channel, payload));
+    const watch: WatchState = {};
+    let prefs: Prefs = cleanPrefs(await ctx.storage.get(PREFS_KEY));
+    let conversationId: string | undefined;
+    let presence: AgentPresence | undefined;
+
+    const showPresence = () => {
+      const now = bodies.presence();
+      if (now === presence) return;
+      presence = now;
+      ctx.core.call("agents.presence", { agentId: AGENT, presence: now ?? null }).catch((e) => ctx.log.warn(`presence: ${(e as Error).message}`));
+    };
+
+    const setPrefs = async (p: Partial<Prefs>): Promise<Prefs> => {
+      prefs = cleanPrefs(p, prefs);
+      await ctx.storage.set(PREFS_KEY, prefs);
+      ctx.ui.emit("prefs", prefs);
+      return prefs;
+    };
+
+    ctx.ui.onMessage((m: FromWindow) => {
+      if (!m || typeof m !== "object" || typeof (m as { body?: unknown }).body !== "string") {
+        if (m?.type === "result") relay.answer(m);
+        return;
+      }
+      switch (m.type) {
+        case "hello":
+          bodies.touch(m.body);
+          if (typeof m.conversationId === "string") conversationId = m.conversationId;
+          ctx.ui.emit("prefs", prefs);
+          break;
+        case "state":
+          bodies.state(m.body, m);
+          break;
+        case "window":
+          bodies.window(m.body, String(m.app ?? "").slice(0, 120), typeof m.title === "string" ? m.title.slice(0, 300) : undefined);
+          break;
+        case "bye":
+          bodies.gone(m.body);
+          break;
+        case "result":
+          relay.answer(m);
+          break;
+      }
+      showPresence();
+    });
+
+    // The person talking with Pio, and Pio's own remarks, keep its quiet looks away for a while.
+    ctx.events.on("message.created", (m: Message) => {
+      if (m.role === "user" && m.conversationId === conversationId) watch.lastTalkAt = Date.now();
+    });
+    ctx.events.on("message.updated", (m: Message) => {
+      if (m.agentId !== AGENT || m.role !== "assistant" || m.quiet || m.status !== "complete") return;
+      conversationId ??= m.conversationId;
+      watch.lastRemarkAt = Date.now();
+    });
+
+    ctx.hooks.on("turn.context", (p) => {
+      if (p.agentId !== AGENT || p.taskId) return;
+      conversationId = p.conversationId;
+      return { context: screenBlock(bodies.active(), Date.now()) };
+    });
+
+    registerTools(ctx, { bodies, relay, prefs: () => prefs, setPrefs });
+
+    let looking = false;
+    const tick = async () => {
+      if (looking) return;
+      const now = Date.now();
+      const body = bodies.active();
+      showPresence();
+      const due = nextWatch(body, watch, now, prefs.chattiness);
+      if (!due || !body) return;
+      looking = true;
+      looked(watch, body, now);
+      try {
+        const r = await ctx.core.call<{ skipped?: string; conversationId?: string }>("conversations.tell", { agentId: AGENT, quiet: true, text: watchNote(body, now, due.reason) });
+        if (r?.conversationId) conversationId = r.conversationId;
+        // Busy with the person: try again in half a minute, not after a whole gap.
+        if (r?.skipped) watch.lastLookAt = now - GAPS[prefs.chattiness].look + 30_000;
+      } catch (e) {
+        ctx.log.warn(`quiet look: ${(e as Error).message}`);
+      } finally {
+        looking = false;
+      }
+    };
+    const timer = setInterval(() => void tick(), TICK_MS);
+    stop = () => {
+      clearInterval(timer);
+      relay.close();
+    };
+    ctx.log.info(`pio ready (chattiness ${prefs.chattiness}, listen ${prefs.listen}; defaults ${JSON.stringify(DEFAULT_PREFS)})`);
+  },
+  deactivate() {
+    stop?.();
+  },
+};
+
+export default plugin;

@@ -1,0 +1,35 @@
+{
+  "id": "pio",
+  "name": "%name%",
+  "version": "0.1.0",
+  "description": "%description%",
+  "author": "Piomio",
+  "builtin": true,
+  "defaultEnabled": false,
+  "offer": "Pio, the assistant that is always next to you: a small face that floats over every app on the person's Mac or Windows computer (the Piomio desktop app). With \"Work together\" on it sees which window they work in and now and then says something useful on its own; it talks and listens (local open-source voice, no keys needed); it takes over the mouse and keyboard when they hand it control; bigger work it passes to the team, so the other agents' chats stay clean. It is a separate small agent pinned above the team, with its own chat.",
+  "server": "./server/index.ts",
+  "ui": "./ui/dist/index.js",
+  "contributes": {
+    "tools": true,
+    "hooks": [
+      "turn.context"
+    ]
+  },
+  "integration": {
+    "category": "assistant",
+    "icon": "sparkles",
+    "connect": "none",
+    "summary": "%integration.summary%",
+    "example": "%integration.example%"
+  },
+  "permissions": {
+    "core": [
+      "conversations.tell",
+      "agents.presence",
+      "ui.emit"
+    ],
+    "ui": [
+      "route"
+    ]
+  }
+}
