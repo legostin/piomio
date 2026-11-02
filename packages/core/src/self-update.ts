@@ -232,9 +232,14 @@ export interface HubUpdatesDeps {
   platform?: NodeJS.Platform;
 }
 
-/** A second launch of the desktop app hands its arguments to the running one and exits. */
-const launchApp = (file: string, args: string[]) => {
-  const child = spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true });
+/**
+ * A second launch of the desktop app hands its arguments to the running one and exits. Not with the hub's
+ * PIOMIO_DATA_DIR (the app sets it for the hub only): with it the app takes itself for a dev run, skips that hand-over
+ * and starts a second copy (packages/desktop/src-tauri/src/main.rs).
+ */
+export const launchApp = (file: string, args: string[], env: NodeJS.ProcessEnv = process.env) => {
+  const { PIOMIO_DATA_DIR: _, ...appEnv } = env;
+  const child = spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true, env: appEnv });
   child.on("error", (e) => console.log(`[piomio] ${basename(file)} ${args.join(" ")}: ${e.message}`));
   child.unref();
 };

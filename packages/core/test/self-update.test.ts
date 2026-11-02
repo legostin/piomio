@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventBus } from "../src/bus.ts";
-import { HubUpdates, archiveName, clearRolledBack, confirmStarted, currentVersion, desktopOffer, desktopPlatform, installLayout, latestOffer, settleBeforeStart, switchTo, UpdateError, type HubUpdatesDeps } from "../src/self-update.ts";
+import { HubUpdates, archiveName, clearRolledBack, confirmStarted, currentVersion, desktopOffer, desktopPlatform, installLayout, latestOffer, launchApp, settleBeforeStart, switchTo, UpdateError, type HubUpdatesDeps } from "../src/self-update.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "owl-selfupdate-"));
 
@@ -276,6 +276,20 @@ describe("the desktop app's update", () => {
     expect(u.offerFor("local")).toEqual({ update: "0.3.0" });
     expect(told[1]).toContain("could not update (no network); it stays on 0.2.4");
     u.stop();
+  });
+
+  it.skipIf(process.platform === "win32")("starts the app without the hub's data dir, so the running app gets the arguments", async () => {
+    const dir = tmp();
+    const app = join(dir, "piomio");
+    const out = join(dir, "seen");
+    // A stand-in for the app: what it was started with.
+    writeFileSync(app, `#!/bin/sh\n{ echo "args $*"; env; } > "${out}.part" && mv "${out}.part" "${out}"\n`, { mode: 0o755 });
+    launchApp(app, ["--install-update"], { PATH: process.env.PATH, PIOMIO_DATA_DIR: dir, PIOMIO_DESKTOP: "1", HOME: dir });
+    const seen = await vi.waitFor(() => readFileSync(out, "utf8"), { timeout: 5000, interval: 50 });
+    expect(seen).toContain("args --install-update");
+    expect(seen).toContain(`HOME=${dir}`);
+    // With PIOMIO_DATA_DIR the app takes itself for a dev run and starts a second copy (src-tauri/src/main.rs).
+    expect(seen).not.toMatch(/^PIOMIO_DATA_DIR=/m);
   });
 
   it("offers each version once and at most once a day", async () => {
