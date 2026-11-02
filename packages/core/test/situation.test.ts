@@ -239,7 +239,7 @@ describe("agents knowing what they do (integration)", () => {
     const asked = (await messages(main)).findLast((m) => m.role === "user")!;
     await until(async () => (await messages(main)).some((m) => m.parts.some((p) => p.type === "task")) && !hub.runner.isRunning(main), "the task line");
     await say(main, "meanwhile, hello");
-    const report = await until(async () => (await messages(main)).find((m) => m.role === "assistant" && m.parts[0]?.type === "reply_to"), "the report");
+    const report = await until(async () => (await messages(main)).find((m) => m.role === "assistant" && m.parts[0]?.type === "reply_to" && m.status !== "streaming"), "the report");
     expect(report.parts[0]).toEqual({ type: "reply_to", messageId: asked.id, text: `CALL task_delegate {"title":"Look around","goal":"look around BRIEF"}` });
     expect(textOf(report)).toMatch(/^fake heard: /);
     await until(() => !hub.runner.isRunning(main), "the dialog to settle");
