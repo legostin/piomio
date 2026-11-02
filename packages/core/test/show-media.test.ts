@@ -388,6 +388,7 @@ describe("agents show images and maps", () => {
       expect(fetched).toContain(pic(secret));
       expect(hub.audit.list({ action: "media.show" })[0]).toMatchObject({ actor: "user", target: "pics.attacker.test" });
       expect((await req("POST", "/api/media/show", { url: "javascript:alert(1)" })).status).toBe(400);
+      expect((await req("GET", `/api/media/state?url=${encodeURIComponent("javascript:alert(1)")}`)).status).toBe(400);
 
       // A picture the hub never decided: refused, except an earlier copy (nothing goes out) and a plugin's own UI.
       const never = "https://never.example.org/x.png";

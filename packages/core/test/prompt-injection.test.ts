@@ -225,4 +225,81 @@ describe("prompt injection fixtures", () => {
     expect(text(r2)).toContain("declined");
     expect(sent).toEqual([]);
   });
+
+  describe("(4) what is free to open after outside content: the trail and the person's words", () => {
+    const nobody = () => ({ texts: [], knownHost: () => false });
+    const until = async <T>(fn: () => T | undefined | false, what: string): Promise<T> => {
+      for (const end = Date.now() + 15_000; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
+        const v = fn();
+        if (v) return v;
+      }
+      throw new Error(`timed out waiting for ${what}`);
+    };
+
+    it("a CLI's own tools: its first fetches are its picks, links in their results are found, a host its shell wrote is not", async () => {
+      hub.saveAgent(agentFromMarkdown("reader", "---\nname: reader\ndescription: Test\nbrains: [fake@local]\ninitiative: 1\n---\nYou read.", "user"), "user");
+      const conv = hub.store.agentConversation("reader").id;
+      const events = [
+        // Two fetches before any result: chosen before anything from outside reached the session.
+        { call: "WebFetch", id: "w1", input: { url: "https://news.example.org/today", prompt: "Summarize" } },
+        { call: "WebFetch", id: "w2", input: { url: "https://weather.example.net/almaty", prompt: "The weather" } },
+        { result: "w1", output: "The story. Read more: https://cdn.other.example/story/9" },
+        { result: "w2", output: "Sunny." },
+        // Its own shell names a host; a link to it found in a page afterwards may be its own.
+        { call: "Bash", id: "b1", input: { command: "curl -s https://typed.example/?q=hello" } },
+        { result: "b1", output: "ok" },
+        { call: "WebFetch", id: "w3", input: { url: "https://cdn.other.example/story/9" } },
+        { result: "w3", output: "More at https://typed.example/found" },
+      ];
+      await hub.runner.userMessage(conv, `NATIVE ${JSON.stringify(events)}`, { channel: "web" });
+      await until(() => hub.store.listMessages(conv, { limit: 50 }).some((m) => m.role === "assistant" && m.status === "complete") && !hub.runner.isRunning(conv), "the turn");
+      const s = hub.store.activeSession(conv, "reader")!;
+      // Marked at the CLI's first fetch, before its result arrived.
+      expect(s.tainted).toBe(true);
+      const free = (url: string) => hub.egressGuard.check(s.id, [url], nobody);
+      expect(free("https://news.example.org/today")).toBeUndefined();
+      expect(free("https://weather.example.net/almaty")).toBeUndefined();
+      expect(free("https://weather.example.net/astana")).toBeUndefined();
+      expect(free("https://cdn.other.example/story/9")).toBeUndefined();
+      expect(free("https://typed.example/found")).toMatchObject({ host: "typed.example" });
+      expect(free(`https://collect.attacker.example/v?d=${PASSPORT}`)).toMatchObject({ host: "collect.attacker.example" });
+    });
+
+    it("Claude Code's own fetch before outside content is its pick: after a page, that site needs no review unless the address carries data", async () => {
+      const session = dialog("desk", "What will the weather be?");
+      const native = async (url: string) =>
+        JSON.parse(text(await hub.gateway.call(session, "native_permission", { tool_name: "WebFetch", input: { url, prompt: "The weather" } }))) as { behavior: string; message?: string };
+      prompts = [];
+      // A review that should not happen blocks at once rather than waiting on a card.
+      answers = [...BLOCK];
+      expect((await native("https://weather.example.net/almaty?days=3")).behavior).toBe("allow");
+      // The page it read marks the session (the runner does it on the CLI's call).
+      hub.store.updateSession(session, { tainted: true });
+      expect((await native("https://weather.example.net/almaty?days=3")).behavior).toBe("allow");
+      expect((await native("https://weather.example.net/astana")).behavior).toBe("allow");
+      expect(prompts).toHaveLength(0);
+      answers = [...BLOCK];
+      expect(await native(`https://weather.example.net/city?d=${encodeURIComponent(Buffer.from(NOTES).toString("base64"))}`)).toMatchObject({ behavior: "deny" });
+      expect(prompts[0]).toContain("which the person named, but it carries");
+    });
+
+    it("a task's goal counts as the person's words only when the task began before outside content", async () => {
+      const mine = hub.store.createTask({ agentId: "desk", title: "Prices", goal: "Compare phone prices on shop.example", createdBy: "user", background: false });
+      const s1 = hub.store.createSession({ conversationId: mine.conversationId, taskId: mine.id, agentId: "desk", brainRef: "claude-code@local", background: false, tainted: true }).row.id;
+      expect(hub.gateway.egressGiven({ conversationId: mine.conversationId, taskId: mine.id }).texts).toContain("Compare phone prices on shop.example");
+      prompts = [];
+      answers = [...BLOCK];
+      expect(text(await hub.gateway.call(s1, "web_fetch", { url: "https://shop.example/catalog/phones" }))).not.toContain("Auto mode");
+      expect(prompts).toHaveLength(0);
+
+      // Started from outside content: its goal may be a page's words.
+      const theirs = hub.store.createTask({ agentId: "desk", title: "Prices", goal: "Compare phone prices on shop2.example", createdBy: "agent", background: false, tainted: true });
+      const s2 = hub.store.createSession({ conversationId: theirs.conversationId, taskId: theirs.id, agentId: "desk", brainRef: "claude-code@local", background: false, tainted: true }).row.id;
+      expect(hub.gateway.egressGiven({ conversationId: theirs.conversationId, taskId: theirs.id }).texts).not.toContain("Compare phone prices on shop2.example");
+      answers = [...BLOCK];
+      expect(text(await hub.gateway.call(s2, "web_fetch", { url: "https://shop2.example/catalog/phones" }))).toContain("Auto mode stopped this");
+      expect(prompts[0]).toContain("Nobody named shop2.example");
+      expect(fetched).not.toContain("https://shop2.example/catalog/phones");
+    });
+  });
 });
