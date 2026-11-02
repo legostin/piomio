@@ -5,8 +5,8 @@
 // and the archived ones wait behind "Archive · N" at the end. The always-on companion (Pio) floats in a small card above all.
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
-import { Archive, ArrowLeft, ChevronRight, Pin, Plus, Star, UsersRound } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Archive, ArrowLeft, ChevronRight, Pin, Plus, Sparkles, Star, UsersRound } from "lucide-react";
 import type { AgentDef, GroupChat, TeamMember } from "@piomio/shared";
 import { useStore } from "../../lib/store";
 import { shortTime } from "../../lib/format";
@@ -14,6 +14,7 @@ import { agentPath, companionOf, groupOrder, groupPath, teamOrder } from "../../
 import { agents, ensureAgents, ensureGroups, ensureTeam, groups, session, team } from "../../state/app";
 import { ensureFeeds, feeds, unreadPosts } from "../../state/feeds";
 import { addAgent } from "../../state/panel";
+import { askInChat } from "../../state/ask";
 import { setSidebarTab, sidebarTab, type SidebarTab } from "../../state/prefs";
 import { AgentAvatar, AvatarPair } from "../../components/AgentAvatar";
 import { UnreadBadge } from "../../components/UnreadBadge";
@@ -154,6 +155,23 @@ function CompanionCard({ agent, member, active, menu, onNavigate }: { agent: Age
       </Link>
       <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="inset-y-0 right-2.5 my-auto" />
     </div>
+  );
+}
+
+/**
+ * A built-in plugin waiting to be turned on (Pio), under the default agent: anyone sees it, not only who opens the
+ * Plugins panel. Chat first: it asks the default agent in the person's words, and the agent turns it on.
+ */
+function WaitingPluginRow({ name, onAsk }: { name: string; onAsk: () => void }) {
+  return (
+    <button type="button" onClick={onAsk} className="press group mb-1.5 flex w-full items-center gap-3 rounded-2xl px-2.5 py-1.5 text-left text-[13px] text-muted hover:bg-surface/55 hover:text-fg">
+      <span className="flex w-[38px] shrink-0 justify-center">
+        <span className="flex size-7 items-center justify-center rounded-full bg-accent-soft text-accent-text transition-transform group-hover:scale-105">
+          <Sparkles className="size-3.5" />
+        </span>
+      </span>
+      <span className="min-w-0 flex-1 truncate">{t("team.turnOn", { name })}</span>
+    </button>
   );
 }
 
@@ -342,6 +360,13 @@ export function TeamList({
     onNavigate?.();
   };
 
+  const [, navigate] = useLocation();
+  // "Turn on Pio" under the default agent: the request goes to it in the person's words, and it turns the plugin on.
+  const ask = async (name: string) => {
+    onNavigate?.();
+    await askInChat(undefined, t("team.turnOnAsk", { name }), navigate);
+  };
+
   const addRow = (label: string, icon: React.ReactNode, onClick: () => void) => <AddRow label={label} icon={icon} onClick={onClick} />;
 
   return (
@@ -358,6 +383,9 @@ export function TeamList({
             )}
             {companion && <CompanionCard agent={companion.agent} member={companion.member} active={companion.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
             {lead && <DefaultAgentCard agent={lead.agent} member={lead.member} active={lead.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
+            {lead && !companion && (s?.waitingPlugins ?? []).map((p) => (
+              <WaitingPluginRow key={p.id} name={p.name} onAsk={() => void ask(p.name)} />
+            ))}
             {rest.map(({ agent, member }) => (
               <MemberRow key={agent.id} agent={agent} member={member} href={agentPath(agent.id, s?.defaultAgent)} active={agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />
             ))}

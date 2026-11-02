@@ -59,6 +59,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       pendingApprovals: hub.approvals.pendingCount(),
       inboxUnread: hub.notifier.unreadCount(),
       uiPlugins: hub.plugins.uiPlugins(requestLocale(req)),
+      // Built-in plugins waiting to be turned on (Pio): a line under the default agent invites the person.
+      waitingPlugins: hub.plugins.waiting(requestLocale(req)),
       channels: hub.channels.list(),
     };
   });

@@ -632,6 +632,13 @@ export class PluginHost {
       }));
   }
 
+  /** Built-in plugins that ship off with an offer (Pio) and are still off: the sidebar invites the person to turn them on. */
+  waiting(locale: Locale = hubLocale()): Array<{ id: string; name: string }> {
+    return this.list()
+      .filter((r) => r.source === "builtin" && !r.enabled && !!r.layout?.manifest.offer)
+      .map((r) => ({ id: r.id, name: localizePluginValue(r.layout, r.layout!.manifest.name, locale) }));
+  }
+
   /** Tell running plugins that the hub language changed (ctx.i18n.onChange). */
   broadcastLocale(locale: Locale): void {
     for (const r of this.running.values()) if (!r.peer.closed) r.peer.notify("locale.changed", { locale });

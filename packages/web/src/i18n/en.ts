@@ -1008,6 +1008,8 @@ export default {
   "agentProfile.missing": "This agent is no longer on the team",
   "team.you": "You: {text}",
   "team.working": "Working…",
+  "team.turnOn": "Turn on {name}",
+  "team.turnOnAsk": "Turn on {name}",
   "team.companionIdle": "Always next to you",
   "team.presence.watching": "watching",
   "team.presence.listening": "listening",

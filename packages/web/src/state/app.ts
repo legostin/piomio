@@ -52,6 +52,8 @@ export interface Bootstrap {
   /** Reports, digests, alerts and questions not read yet (the Inbox's badge); missing on an older hub. */
   inboxUnread?: number;
   uiPlugins: UiPluginEntry[];
+  /** Built-in plugins that ship off and wait to be offered (Pio); missing on an older hub. */
+  waitingPlugins?: Array<{ id: string; name: string }>;
   channels: ChannelEntry[];
 }
 

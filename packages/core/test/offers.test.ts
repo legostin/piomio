@@ -85,10 +85,15 @@ describe("the offer in the chat", () => {
     expect(hub.settings.getKey<string[]>(OFFERS_KEY, [])).toEqual(["fakeoffer"]);
   });
 
+  it("lists the plugin as waiting for the sidebar while it is off", () => {
+    expect(hub.plugins.waiting("en")).toEqual([{ id: "fakeoffer", name: "Fake offer" }]);
+  });
+
   it("does not offer a plugin the person turned on", async () => {
     hub.settings.setKey(OFFERS_KEY, []);
     await hub.plugins.setEnabled("fakeoffer", true);
     expect(hub.offerPlugins()).toEqual([]);
     expect(offers()).toHaveLength(1);
+    expect(hub.plugins.waiting("en")).toEqual([]);
   });
 });
