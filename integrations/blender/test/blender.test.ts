@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -113,11 +113,13 @@ describe("the launcher", () => {
       const s = b.read();
       if (s.window) windows.push(s.window);
       expect(scene.content).toEqual([{ type: "text", text: `Cube, Camera, Light | ${b.bin}` }]);
-      // The add-on came from the release's own source, enabled in the user repository; Blender opened with online access.
+      // The add-on came from the release's own source, enabled in the user repository; Blender opened with online access,
+      // as a window, or in the background on a Linux machine without a screen (a CI runner).
       const calls: string[][] = s.calls;
       expect(calls.find((c) => c.includes("build"))).toEqual(expect.arrayContaining(["--source-dir", join(b.src, "addon", "blender_mcp_addon")]));
       expect(calls.find((c) => c.includes("install-file"))).toEqual(expect.arrayContaining(["--repo", "user_default", "--enable"]));
-      expect(calls.at(-1)).toEqual(["--online-mode"]);
+      const screen = platform() !== "linux" || !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+      expect(calls.at(-1)).toEqual(screen ? ["--online-mode"] : ["--background", "--online-mode", "--command", "blender_mcp", "--port", String(port)]);
 
       // Blender is open now: the next call goes straight through.
       const before = b.read().calls.length;

@@ -149,8 +149,8 @@ describe("teammates writing to each other (integration)", () => {
   it("brings the reply into the sender's turn while it still works", async () => {
     const c = await chat();
     await say(c, "keep going SLOW");
-    await until(() => hub.runner.isRunning(c), "the turn to start");
-    await sleep(200);
+    // At work: its brain has begun to answer, so the reply can join the turn.
+    await until(async () => (await messages(c)).some((m) => m.role === "assistant" && textOf(m).includes("fake is thinking")), "the agent at work");
     // The brain writes to a teammate in the middle of its turn.
     const r = await hub.runner.messageTeammate("researcher", "quick check", { agentId: "assistant", conversationId: c, background: false, tainted: false, nest: true });
     expect(r.ok).toBe(true);

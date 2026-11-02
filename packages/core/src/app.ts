@@ -611,7 +611,7 @@ export class Hub {
     await g?.device.close();
   }
 
-  /** Where "unlock automatically after restarts" keeps the vault passphrase (hub-only file, like a Docker secret). */
+  /** Where "unlock automatically after restarts" keeps the vault passphrase (a file only the hub reads). */
   rememberedPassphraseFile(): string {
     return join(this.config.dataDir, "vault.passphrase");
   }
@@ -947,7 +947,6 @@ export class Hub {
 
   async start(opts: { listen?: boolean } = {}): Promise<void> {
     const cfg = this.config;
-    if (cfg.isolation.users) process.umask(0o002);
     for (const d of ["workspaces", "skills", "commands", "agents", "plugins", "plugins-data", "home"]) mkdirSync(join(cfg.dataDir, d), { recursive: true });
     const passphraseFile = cfg.vaultPassphraseFile ?? (existsSync(this.rememberedPassphraseFile()) ? this.rememberedPassphraseFile() : undefined);
     if (passphraseFile) this.vault.unlockFromFile(passphraseFile);

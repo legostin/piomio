@@ -13,7 +13,7 @@ export interface Tab {
   icon?: string;
 }
 
-/** Playwright's Chromium being downloaded by the plugin (outside Docker, on first use). */
+/** Playwright's Chromium being downloaded by the plugin (on first use). */
 export interface InstallStatus {
   installing: boolean;
   step: string | null;

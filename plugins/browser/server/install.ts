@@ -1,5 +1,5 @@
-// Playwright's Chromium on demand. The Docker image ships it; elsewhere (`npm start` on a laptop) the plugin downloads
-// it itself with Playwright's own CLI the first time it is missing, and browser calls wait for that one install.
+// Playwright's Chromium on demand: where neither Google Chrome nor Chromium is there, the plugin downloads it itself
+// with Playwright's own CLI the first time it is missing, and browser calls wait for that one install.
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";

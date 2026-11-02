@@ -766,7 +766,7 @@ export function registerHubTools(hub: Hub): void {
         if (!(e instanceof UpdateError)) return text(`The update failed: ${e?.message ?? e}`, true);
         const why: Record<string, string> = {
           notInstalled:
-            "This hub runs neither in the desktop app nor from the server installer (it runs in Docker or from the source code), so it can't update itself from here: Docker updates with `docker compose pull && docker compose up -d`, the source code with `git pull`.",
+            "This hub runs neither in the desktop app nor from the server installer (it runs from the source code), so it can't update itself from here: update it with `git pull` and a restart.",
           upToDate: `${name} already runs the latest version (${e.version}).`,
           unknown: `No machine ${asked}.`,
           offline: `${name} is offline; it can be updated once it is back.`,

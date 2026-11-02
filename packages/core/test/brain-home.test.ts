@@ -11,8 +11,4 @@ describe("brain home", () => {
   it("follows PIOMIO_BRAIN_HOME, as the desktop app sets it", () => {
     expect(loadConfig({ PIOMIO_BRAIN_HOME: "/Users/u" }, { dataDir: "/srv/owl" }).brainHome).toBe("/Users/u");
   });
-
-  it("stays in the data dir under user isolation", () => {
-    expect(loadConfig({ PIOMIO_BRAIN_HOME: "/Users/u", PIOMIO_ISOLATION: "users" }, { dataDir: "/srv/owl" }).brainHome).toBe(join("/srv/owl", "home", "agent"));
-  });
 });

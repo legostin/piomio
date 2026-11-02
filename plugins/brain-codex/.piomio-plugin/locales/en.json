@@ -6,5 +6,5 @@
   "settings.apiKeyRef.title": "OpenAI key (vault reference, optional)",
   "settings.apiKeyRef.description": "If empty, the ChatGPT subscription is used: sign in from the chat.",
   "settings.sandbox.title": "Codex sandbox",
-  "settings.sandbox.description": "On a Mac the hub keeps commands inside the agent's folder (workspace-write, no network) and asks you for the rest; read-only is stricter still. In Docker, isolation comes from Unix users and the egress proxy."
+  "settings.sandbox.description": "On a Mac the hub keeps commands inside the agent's folder (workspace-write, no network) and asks you for the rest; read-only is stricter still."
 }

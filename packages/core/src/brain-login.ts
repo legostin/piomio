@@ -26,7 +26,7 @@ interface Deps {
   egress: EgressProxy;
   audit: AuditLog;
   egressPort: () => number;
-  /** Installs missing CLIs; absent or disabled where the CLIs come with the hub (Docker). */
+  /** Installs missing CLIs; absent or disabled where the hub may not install them. */
   tools?: CliTools;
 }
 

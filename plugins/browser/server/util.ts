@@ -281,6 +281,20 @@ export function withTimeout<T>(p: Promise<T>, ms: number, message = "timeout"): 
   });
 }
 
+/**
+ * A page that navigates while it is read (a script's redirect, a navigation still landing) takes its document with it:
+ * once the new one has loaded, read that instead. Only once: a page that keeps navigating fails as before.
+ */
+export async function againAfterNavigation<T>(read: () => Promise<T>, settle: () => Promise<unknown>): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    if (!/Execution context was destroyed/i.test(String((e as Error)?.message ?? e))) throw e;
+    await settle().catch(() => {});
+    return read();
+  }
+}
+
 // ---------- TOTP (RFC 6238) ----------
 
 function base32Decode(s: string): Buffer {

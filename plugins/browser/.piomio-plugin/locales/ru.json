@@ -2,7 +2,7 @@
   "name": "Браузер",
   "description": "Обычный браузер (Google Chrome, если он установлен, иначе Chromium) с постоянным профилем: агент открывает сайты, читает страницы и заполняет формы; живой экран и перехват управления",
   "settings.headless.title": "Режим без окна",
-  "settings.headless.description": "auto — окно, если есть дисплей (Linux с DISPLAY, например Xvfb в Docker), иначе без окна; always — всегда без окна; never — всегда с окном",
+  "settings.headless.description": "auto — окно, если есть дисплей (Linux с DISPLAY, например Xvfb), иначе без окна; always — всегда без окна; never — всегда с окном",
   "settings.idleMinutes.title": "Закрывать после простоя, минут",
   "settings.allowLocalNetwork.title": "Разрешить агенту локальные адреса",
   "settings.allowLocalNetwork.description": "localhost, 192.168.*, 10.* и т. п. По умолчанию агент не может открывать адреса этого сервера и локальной сети",

@@ -8,7 +8,6 @@ import { Redactor } from "../src/vault/redact.ts";
 import { NOT_FOUND_QUIET_MS, VaultService, VaultError, type VaultAccessEntry } from "../src/vault/service.ts";
 import { AuditLog } from "../src/audit.ts";
 import { openDb } from "../src/db.ts";
-import { sudoSpawn } from "../src/plugins/host.ts";
 
 const tool = (name: string, effect: ToolDescriptor["effect"]): ToolDescriptor => ({ name, description: "", effect, inputSchema: {}, owner: "core" }) as ToolDescriptor;
 const base = (over: Partial<PolicyInput> = {}): PolicyInput => ({
@@ -272,16 +271,5 @@ describe("audit log", () => {
     expect(JSON.stringify(log.list())).not.toContain("super-secret");
     db.prepare("update audit set action = 'evil' where seq = 2").run();
     expect(log.verify()).toMatchObject({ ok: false, brokenAt: 2 });
-  });
-});
-
-describe("isolated child processes", () => {
-  it("keep secrets off the command line", () => {
-    const s = sudoSpawn("plugin", { PATH: "/usr/bin", API_KEY: "sk-very-secret", HTTP_PROXY: "http://tok:x@127.0.0.1:8089" }, "node", ["server.js"]);
-    expect(s.command).toBe("sudo");
-    expect(s.args).toEqual(["-n", "--preserve-env=PATH,API_KEY,HTTP_PROXY", "-u", "plugin", "--", "node", "server.js"]);
-    expect(s.args.join(" ")).not.toMatch(/sk-very-secret|tok:x/);
-    expect(s.env.API_KEY).toBe("sk-very-secret");
-    expect(() => sudoSpawn("plugin", { "A,B": "x" }, "node", [])).toThrow(/invalid environment variable/);
   });
 });

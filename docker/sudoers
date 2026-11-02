@@ -1,5 +1,0 @@
-# The hub (piomio) starts brain CLIs as "agent" and other plugins / MCP servers as "plugin".
-# env_reset drops the hub's environment; the hub names every variable a child gets with --preserve-env
-# (SETENV), so secrets travel in the environment and never on a command line other users could read.
-Defaults:piomio !requiretty, !lecture, env_reset
-piomio ALL=(agent,plugin) NOPASSWD:SETENV: ALL

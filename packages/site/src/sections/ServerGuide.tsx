@@ -1,10 +1,10 @@
 // The server guide (/<lang>/server/): the hub on a Linux server, or the server as a computer of the hub you have,
-// with install.sh; signing in to a CLI there; opening the chat; why not by the server's IP; what to check when stuck;
-// Docker, for the strongest isolation.
+// with install.sh; signing in to a CLI there; opening the chat; why not by the server's IP; what to check when stuck.
 // The README's "On a server, step by step" says the same.
 
 import type { ReactNode } from "react";
 import { siteConfig } from "../../site.config";
+import { data } from "../data";
 import { useI18n, type MessageKey } from "../i18n";
 import { CopyBlock } from "../components/CopyBlock";
 import { Rich } from "../components/Rich";
@@ -70,7 +70,7 @@ function Commands({ title, rows }: { title: string; rows: Array<[string, Message
 }
 
 export function ServerGuide() {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
   const install = `curl -fsSL ${siteConfig.installScript} | sh`;
   const ip = t("server.ph.ip");
   const signIn = "sudo -iu piomio\ncurl -fsSL https://chatgpt.com/codex/install.sh | sh\ncodex login --device-auth";
@@ -92,7 +92,7 @@ export function ServerGuide() {
         <h1 className="mt-3 font-display text-[clamp(2.1rem,4.6vw,3.4rem)] leading-[1.04] font-extrabold tracking-[-0.025em] text-balance">{t("server.title")}</h1>
         <p className="mt-5 text-[18px] leading-relaxed text-fg-2 text-pretty">{t("server.lead")}</p>
         <p className="mt-4 text-[15px] leading-relaxed text-muted text-pretty">
-          <Rich text={t("server.needs", { docker: "#docker" })} />
+          <Rich text={t("server.needs")} />
         </p>
       </header>
 
@@ -158,7 +158,7 @@ export function ServerGuide() {
             ))}
           </ul>
           <p>
-            <Rich text={t("server.address.safe", { proxy: `${REPO}#your-own-proxy` })} />
+            <Rich text={t("server.address.safe", { proxy: `${data.base}${lang}/${t("server.address.proxyDoc")}` })} />
           </p>
           <p>
             <Rich text={t("server.address.bare")} />
@@ -185,18 +185,6 @@ export function ServerGuide() {
               </p>
             </details>
           ))}
-        </div>
-      </Part>
-
-      <Part id="docker" title={t("server.docker.title")}>
-        <div className="mt-6 flex flex-col gap-4 text-[16px] leading-relaxed text-fg-2 text-pretty">
-          <p>
-            <Rich text={t("server.docker.text")} />
-          </p>
-          <CopyBlock code={`git clone ${REPO}.git && cd piomio\ndocker compose up -d\ndocker compose logs piomio | grep -A1 "Piomio:"`} />
-          <p>
-            <Rich text={t("server.docker.more", { env: `${REPO}/blob/main/.env.example` })} />
-          </p>
         </div>
       </Part>
     </article>

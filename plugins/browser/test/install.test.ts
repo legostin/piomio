@@ -72,7 +72,7 @@ function setup(opts: { present?: string[]; disabled?: boolean; maxInstallMs?: nu
 const settled = () => new Promise((r) => setTimeout(r, 0));
 
 describe("chromium installer", () => {
-  it("does nothing when Chromium is present (the Docker image)", async () => {
+  it("does nothing when Chromium is present", async () => {
     const { installer, runs } = setup({ present: [CHROME, SHELL] });
     expect(installer.missing()).toEqual([]);
     expect(installer.check()).toBe(false);

@@ -16,7 +16,7 @@ import { sanitizeToolName } from "../tools/registry.ts";
 import type { VaultService } from "../vault/service.ts";
 import type { AuditLog } from "../audit.ts";
 import type { EgressProxy } from "../egress.ts";
-import { passEnv, scrubEnv, sudoSpawn } from "../plugins/host.ts";
+import { scrubEnv } from "../plugins/host.ts";
 import { LocalizedError, t } from "../i18n.ts";
 import { McpOAuth } from "./oauth.ts";
 
@@ -223,18 +223,8 @@ export class McpClientManager {
           NO_PROXY: "127.0.0.1,localhost,::1",
           NODE_USE_ENV_PROXY: "1",
         };
-        let command = config.command;
-        let args = config.args ?? [];
-        let childEnv: Record<string, string>;
-        if (this.config.isolation.users) {
-          const s = sudoSpawn(this.config.isolation.pluginUser, { ...passEnv(), ...env, HOME: join(this.config.dataDir, "home", "plugin") }, command, args);
-          command = s.command;
-          args = s.args;
-          childEnv = s.env;
-        } else {
-          childEnv = { ...scrubEnv(process.env), ...env };
-        }
-        const transport = new StdioClientTransport({ command, args, env: childEnv, cwd: config.cwd, stderr: "pipe" });
+        const childEnv = { ...scrubEnv(process.env), ...env };
+        const transport = new StdioClientTransport({ command: config.command, args: config.args ?? [], env: childEnv, cwd: config.cwd, stderr: "pipe" });
         // A server that quits while starting says why on stderr: its last line becomes the error the person sees.
         transport.stderr?.on("data", (d: Buffer) => (stderrTail = (stderrTail + d.toString()).slice(-2000)));
         await client.connect(transport);

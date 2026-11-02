@@ -18,8 +18,10 @@ Self-hosted personal agent platform. Spec: `docs/superpowers/specs/2026-10-26-pi
   English is the source of truth and the fallback; `packages/core/test/i18n.test.ts` checks every catalog for parity.
 - Text for the model (tool results, tool descriptions, system notes, agent prompts), code and comments is English and not translated.
 - Secrets never go into settings, env files or prompts: store them in the vault and pass `vault://<id>` references.
-- Releases: a push to main that changes what ships releases by itself (`.github/workflows/release-on-push.yml`): the patch version goes up, the tag is made and the installers and the server image `ghcr.io/legostin/piomio` are published (`docker.yml`, which also publishes `main` on every push). Pushes of only the site, docs, root Markdown or tests release nothing. So push a significant change to main once it's done and checked, and don't raise the version by hand unless asked (a minor or major version: run the workflow by hand).
-- Server settings are environment variables: a new one goes in `.env.example` and both READMEs' tables.
+- Releases: a push to main that changes what ships releases by itself (`.github/workflows/release-on-push.yml`) once its checks pass (`checks.yml`: typecheck and tests, run again on the tag before publishing; a red push releases nothing): the patch version goes up, the tag is made and the installers are published. Pushes of only the site, docs, root Markdown or tests release nothing. So push a significant change to main once it's done and checked, and don't raise the version by hand unless asked (a minor or major version: run the workflow by hand).
+- Piomio ships as the desktop apps and `packaging/linux/install.sh` for Linux servers; there is no Docker image.
+- Docs: the site's documentation (piomio.io/<lang>/docs) is Markdown in `docs/guide/{en,ru}/`; how to write it is in `docs/guide/README.md`. A change that ships updates the pages it touches, in both languages, in the same commit: the site publishes them as the docs of the newest release. A minor or major release freezes the line before it into `docs/versions/<major.minor>/`.
+- Server settings are environment variables: a new one goes in `.env.example` and the docs' settings page (`docs/guide/{en,ru}/settings.md`).
 
 ## Interface (law)
 - Chat first. Everything can be made and set up in the chat with an agent: it asks, the person answers or taps buttons inside its messages (quick replies: `choices` parts; live cards with their actions), and agents have the tools for it. A "New …" or "Settings" entry point opens the right agent's chat with a short request in the person's words.
@@ -41,4 +43,3 @@ Delete what you create once it has served its purpose: nothing temporary outlive
 - `npm run build` — web UI, console and UI plugins (Vite / esbuild)
 - `npm run build:tailnet` — the hub's own Tailscale node `packages/tailnet` (Go, not an npm workspace; `go test ./...` there)
 - `npm start` — hub on :8080 (UI/API/MCP), :8081 (security console), :8089 (egress proxy)
-- Docker is in WSL here: `wsl -u root -e sh -lc "cd /mnt/c/... && docker ..."`

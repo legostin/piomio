@@ -1,11 +1,15 @@
-# A push to main that changes what ships releases a new version by itself: the patch version goes up (the root
-# package.json and package-lock.json's two root versions), the commit "Piomio X.Y.Z" lands on main with the tag vX.Y.Z,
-# and release.yml publishes the installers and the server image.
+# A push to main that changes what ships releases a new version by itself once its checks pass (checks.yml: the types
+# and the tests): the patch version goes up (the root package.json and package-lock.json's two root versions), the
+# commit "Piomio X.Y.Z" lands on main with the tag vX.Y.Z, and release.yml publishes the installers.
+# A push whose checks fail releases nothing.
 # What doesn't ship releases nothing: the site, the docs, Markdown at the root, tests and test helpers, and the
 # workflows that build none of it (see ships() below). Neither does a push that raised the version itself (a release
 # made by hand). Run this workflow by hand to release a minor or major version.
 # Pushes close together make one release: a newer one waiting replaces an older one, and each release takes main as it
 # is when it starts.
+# The docs (docs/guide) describe the newest release line; a minor or major release freezes them for the line before it
+# into docs/versions/<major.minor>, in the same commit (made by hand, it releases main as the last patch release left
+# it, so the docs are that line's last ones). The site rebuilds after the release (site.yml) and names the new version.
 name: release on push
 
 on:
@@ -45,7 +49,7 @@ jobs:
           ships() {
             case "$1" in
               packages/site/*|packages/testkit/*|docs/*) return 1 ;;
-              .github/workflows/site.yml|.github/workflows/release-on-push.yml) return 1 ;;
+              .github/workflows/site.yml|.github/workflows/release-on-push.yml|.github/workflows/checks.yml) return 1 ;;
               .github/workflows/*) return 0 ;;
               .github/*|*/test/*|*.test.ts|*.test.tsx) return 1 ;;
               */*) return 0 ;;
@@ -69,9 +73,15 @@ jobs:
           echo "$files"
           release false
 
+  # Every push to main is checked, whether it releases or not.
+  checks:
+    uses: ./.github/workflows/checks.yml
+    permissions:
+      contents: read
+
   release:
-    needs: check
-    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.check.outputs.release == 'true') }}
+    needs: [check, checks]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.check.outputs.release == 'true') }}
     runs-on: ubuntu-latest
     concurrency:
       group: release
@@ -82,11 +92,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: main
+          # The history and the tags, to tell whether the current version already holds this push.
+          fetch-depth: 0
+      # The checks take minutes: a later push whose checks finished first may have released this one already.
+      - name: Not released yet?
+        id: due
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_EVENT_NAME" = push ] && git merge-base --is-ancestor "$GITHUB_SHA" "v$v" 2>/dev/null; then
+            echo "v$v already holds $GITHUB_SHA"
+            echo "due=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "due=true" >>"$GITHUB_OUTPUT"
+          fi
       - name: Raise the version
+        if: steps.due.outputs.due == 'true'
         id: version
         env:
           BUMP: ${{ inputs.bump || 'patch' }}
         run: |
+          old=$(node -p "require('./package.json').version")
           v=$(node --input-type=module -e '
             import { readFileSync, writeFileSync } from "node:fs";
             const [major, minor, patch] = JSON.parse(readFileSync("package.json", "utf8")).version.split(".").map(Number);
@@ -99,9 +124,19 @@ jobs:
             }
             console.log(v);
           ')
-          git diff
+          # A new line: the docs of the one before stay on the site as they are now (docs/guide/README.md).
+          line() { echo "$1" | cut -d. -f1,2; }
+          if [ "$(line "$old")" != "$(line "$v")" ] && [ -f docs/guide/nav.json ]; then
+            dir="docs/versions/$(line "$old")"
+            rm -rf "$dir" && mkdir -p "$dir"
+            cp -R docs/guide/. "$dir/" && rm -f "$dir/README.md"
+            printf '{ "release": "%s" }\n' "$old" >"$dir/release.json"
+            git add "$dir"
+          fi
+          git diff HEAD --stat
           echo "version=$v" >>"$GITHUB_OUTPUT"
       - name: Commit, tag and start the release
+        if: steps.due.outputs.due == 'true'
         env:
           V: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}

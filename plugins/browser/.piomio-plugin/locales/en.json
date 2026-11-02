@@ -2,7 +2,7 @@
   "name": "Browser",
   "description": "An ordinary browser (Google Chrome if installed, otherwise Chromium) with a persistent profile: the agent opens sites, reads pages and fills in forms; live view and takeover",
   "settings.headless.title": "Headless mode",
-  "settings.headless.description": "auto — a window if there is a display (Linux with DISPLAY, e.g. Xvfb in Docker), otherwise headless; always — always headless; never — always with a window",
+  "settings.headless.description": "auto — a window if there is a display (Linux with DISPLAY, e.g. Xvfb), otherwise headless; always — always headless; never — always with a window",
   "settings.idleMinutes.title": "Close after inactivity, minutes",
   "settings.allowLocalNetwork.title": "Allow the agent to open local addresses",
   "settings.allowLocalNetwork.description": "localhost, 192.168.*, 10.* and the like. By default the agent cannot open addresses of this server or the local network",

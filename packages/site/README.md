@@ -2,8 +2,8 @@
 
 The landing page per language (`/en/`, `/ru/`) with the live demo: the real web UI (`packages/web`, demo entry
 `demo.html`, code in `packages/web/src/demo/`) running against a demo hub in the visitor's browser and playing one
-chapter of the story per section, and the server guide (`/en/server/`, `/ru/server/`). Vite + React + Tailwind,
-prerendered with React's server renderer and hydrated.
+chapter of the story per section, the server guide (`/en/server/`, `/ru/server/`) and the docs (`/en/docs/`,
+`/ru/docs/`). Vite + React + Tailwind, prerendered with React's server renderer and hydrated.
 Design: [docs/superpowers/specs/2026-10-31-website-design.md](../../docs/superpowers/specs/2026-10-31-website-design.md).
 
 ## Build, look, check
@@ -28,6 +28,12 @@ does not reach its end; `--only mail,send`, `--lang ru` and `--speed 4` narrow t
 - `src/sections/ServerGuide.tsx`: the server guide at `/<lang>/server/` (`src/pages.ts` lists the pages; `prerender.mjs`
   writes each one per language and marks it on `<html data-page>`). The README's "On a server, step by step" says the
   same in both languages: change them together.
+- The docs: Markdown in `docs/guide/{en,ru}/` at the repository's root (how to write it and how versions work:
+  [docs/guide/README.md](../../docs/guide/README.md)), older release lines in `docs/versions/`. `scripts/docs.mjs` reads
+  them; `prerender.mjs` writes each page of each line in each language with what it was made from (`#doc-data`), so
+  `src/docs/` (the Markdown parser `markdown.ts`, the page `DocsPage.tsx`) renders the same in the browser; each page's
+  Markdown is published next to it (`/en/docs/install.md`) and listed in llms.txt. `npm test` checks the pages
+  (`src/docs/docs.test.ts`), `npm run check:site` opens every one.
 - `src/locales/{en,ru}.json`: every word of the pages. Same keys in each (`src/locales/locales.test.ts`).
 - `site.config.ts`: the repository, the TestFlight link, the site's address.
 - `scripts/build.mjs`: release links and the star count from GitHub (at build time; no network → the releases page),

@@ -185,6 +185,9 @@ export function ndjsonTransport(input: Readable, output: Writable): RpcTransport
   input.setEncoding("utf8");
   input.on("data", (chunk: string) => {
     buffer += chunk;
+    // The buffer holds no line break before this chunk: a long line arriving in many chunks is not searched again
+    // each time (that made it quadratic).
+    if (!chunk.includes("\n")) return;
     let idx: number;
     while ((idx = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, idx).trim();

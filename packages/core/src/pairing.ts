@@ -54,7 +54,7 @@ const isTailnet = (ip: string) => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.tes
 const isPhysical = (name: string) => /^(en|eth|wlan|wl|Wi-?Fi|Ethernet)/i.test(name);
 
 /**
- * Where a phone can reach the device port, best first: `extra` (PIOMIO_DEVICE_URLS, e.g. for Docker), the computer's
+ * Where a phone can reach the device port, best first: `extra` (PIOMIO_DEVICE_URLS, e.g. behind a port forward), the computer's
  * Wi-Fi/Ethernet addresses, other private addresses, the hub's link (`link`, remote.ts), then Tailscale.
  */
 export function deviceUrls(port: number, extra: string[] = [], interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(), link?: string): string[] {

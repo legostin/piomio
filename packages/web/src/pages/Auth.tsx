@@ -87,7 +87,7 @@ function SetupForm() {
         <>
           <div className="flex gap-2.5 rounded-2xl bg-surface-2 p-3 text-xs leading-relaxed text-muted">
             <Terminal className="mt-0.5 size-4 shrink-0" />
-            <span>{tRich("auth.setup.codeHint", { command: <code className="font-mono">docker logs piomio</code> })}</span>
+            <span>{tRich("auth.setup.codeHint", { command: <code className="font-mono">sudo -iu piomio cat ~/.local/share/piomio/setup-code</code> })}</span>
           </div>
           <Field label={t("auth.setup.code")}>
             <Input value={token} onChange={(e) => setToken(e.target.value)} autoComplete="one-time-code" autoFocus required spellCheck={false} className="font-mono" />

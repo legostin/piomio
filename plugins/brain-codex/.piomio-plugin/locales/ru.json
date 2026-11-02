@@ -6,5 +6,5 @@
   "settings.apiKeyRef.title": "Ключ OpenAI (ссылка vault, необязательно)",
   "settings.apiKeyRef.description": "Если пусто — используется подписка ChatGPT: войдите из чата.",
   "settings.sandbox.title": "Песочница Codex",
-  "settings.sandbox.description": "На Mac хаб держит команды в папке агента (workspace-write, без сети), а остальное спрашивает у вас; read-only ещё строже. В Docker изоляцию обеспечивают пользователи Unix и egress-прокси."
+  "settings.sandbox.description": "На Mac хаб держит команды в папке агента (workspace-write, без сети), а остальное спрашивает у вас; read-only ещё строже."
 }
