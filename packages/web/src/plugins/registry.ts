@@ -25,6 +25,8 @@ export interface RouteEntry {
   icon?: string;
   component: ComponentType<SlotProps>;
   nav: boolean;
+  /** Drawn alone, without the sidebar and panels (the desktop app's overlay window). */
+  bare?: boolean;
 }
 
 export interface StatusEntry {
@@ -105,9 +107,10 @@ export function addContribution(pluginId: string, slot: SlotName, c: SlotContrib
   return addTo("contributions", { ...c, id: c.id ?? k.key, pluginId, slot, ...k });
 }
 
-export function addRoute(pluginId: string, r: { path: string; title: string; icon?: string; component: ComponentType<SlotProps>; nav?: boolean }): () => void {
+export function addRoute(pluginId: string, r: { path: string; title: string; icon?: string; component: ComponentType<SlotProps>; nav?: boolean; bare?: boolean }): () => void {
   const path = normalizePath(r.path);
-  return addTo("routes", { pluginId, key: nextKey(pluginId).key, path, title: r.title, icon: r.icon, component: r.component, nav: r.nav ?? true });
+  const bare = r.bare === true;
+  return addTo("routes", { pluginId, key: nextKey(pluginId).key, path, title: r.title, icon: r.icon, component: r.component, nav: bare ? false : (r.nav ?? true), ...(bare ? { bare } : {}) });
 }
 
 export function addStatus(pluginId: string, item: { id: string; render: ComponentType<SlotProps> }): () => void {

@@ -1059,3 +1059,11 @@ html.owl-mobile[data-keyboard="open"] .chat-dock {
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* The desktop app's Pio window: a transparent window over every app; only the plugin's page draws anything. */
+html.owl-overlay,
+html.owl-overlay body,
+html.owl-overlay #root {
+  background: transparent !important;
+  overflow: hidden;
+}

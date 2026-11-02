@@ -181,7 +181,11 @@ export interface PiomioUI {
     /** Replace a core component (chat.composer, chat.message); highest priority wins. */
     override<P = any>(slot: SlotName, component: ComponentType<P>, opts?: { priority?: number; match?: SlotContribution["match"] }): () => void;
   };
-  routes: { add(r: { path: string; title: string; icon?: string; component: ComponentType<SlotProps>; nav?: boolean }): () => void };
+  /**
+   * A full page. `bare`: drawn alone, without the sidebar and panels (the desktop app's Pio overlay at /pio/overlay);
+   * never in the navigation.
+   */
+  routes: { add(r: { path: string; title: string; icon?: string; component: ComponentType<SlotProps>; nav?: boolean; bare?: boolean }): () => void };
   statusbar: { add(item: { id: string; render: ComponentType<SlotProps> }): () => void };
   commands: { register(c: { id: string; title: string; run: () => void | Promise<void> }): () => void };
   settings: { section(s: { id: string; title: string; component: ComponentType<SlotProps> }): () => void };

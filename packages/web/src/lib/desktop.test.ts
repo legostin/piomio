@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { desktopApp, desktopTicketFrom, dragRegion, onAnotherComputer, pairLink } from "./desktop";
+import { desktopApp, desktopInvoke, desktopTicketFrom, dragRegion, onAnotherComputer, pairLink } from "./desktop";
 
 describe("desktop app links", () => {
   it("reads a sign-in ticket from the address fragment", () => {
@@ -17,8 +17,9 @@ describe("desktop app links", () => {
 
   it("knows the app window it runs in", () => {
     expect(desktopApp({})).toBeUndefined();
-    expect(desktopApp({ piomioDesktop: { scheme: "piomio", test: false } })).toEqual({ scheme: "piomio", test: false, overlayTitleBar: false });
-    expect(desktopApp({ piomioDesktop: { scheme: "piomio-test", test: true } })).toEqual({ scheme: "piomio-test", test: true, overlayTitleBar: false });
+    expect(desktopApp({ piomioDesktop: { scheme: "piomio", test: false } })).toEqual({ scheme: "piomio", test: false, overlayTitleBar: false, pio: false });
+    expect(desktopApp({ piomioDesktop: { scheme: "piomio-test", test: true } })).toEqual({ scheme: "piomio-test", test: true, overlayTitleBar: false, pio: false });
+    expect(desktopApp({ piomioDesktop: { scheme: "piomio", pio: true } })?.pio).toBe(true);
     expect(desktopApp({ piomioDesktop: { scheme: "piomio", overlayTitleBar: true } })?.overlayTitleBar).toBe(true);
     expect(desktopApp({ piomioDesktop: { scheme: "javascript" } })).toBeUndefined();
   });
@@ -39,5 +40,16 @@ describe("desktop app links", () => {
     expect(onAnotherComputer("127.0.0.1", mac, {})).toBe(false);
     expect(onAnotherComputer("piomio.tail1234.ts.net", "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X)", {})).toBe(false);
     expect(onAnotherComputer("piomio.tail1234.ts.net", mac, { piomioDesktop: { scheme: "piomio" } })).toBe(false);
+  });
+});
+
+describe("the Pio window's commands", () => {
+  it("go to the app's IPC, and fail outside its window", async () => {
+    const calls: unknown[] = [];
+    const w = { __TAURI_INTERNALS__: { invoke: async (cmd: string, args?: unknown) => (calls.push([cmd, args]), { ok: true }) } };
+    await expect(desktopInvoke("pio_frontmost", undefined, w)).resolves.toEqual({ ok: true });
+    await desktopInvoke("pio_frame", { expanded: true }, w);
+    expect(calls).toEqual([["pio_frontmost", undefined], ["pio_frame", { expanded: true }]]);
+    await expect(desktopInvoke("pio_frontmost", undefined, {})).rejects.toThrow(/Pio window/);
   });
 });

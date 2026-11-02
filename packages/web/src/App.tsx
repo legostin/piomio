@@ -4,8 +4,8 @@ import { useStore } from "./lib/store";
 import { agentPath } from "./lib/team";
 import { conversations, init, phase, session, team } from "./state/app";
 import { openPanel } from "./state/panel";
-import { useUiPlugins } from "./plugins/host";
-import { matchRoute } from "./plugins/registry";
+import { pluginLoad, useUiPlugins } from "./plugins/host";
+import { matchRoute, type RouteEntry } from "./plugins/registry";
 import { usePluginRegistry } from "./plugins/slots";
 import { PluginBoundary } from "./plugins/boundary";
 import { AuthScreen } from "./pages/Auth";
@@ -23,6 +23,7 @@ import { ChannelPage } from "./pages/channels/ChannelPage";
 import { entityPath } from "./state/ask";
 import { MobileApp, useMobileReadyOnError } from "./pages/MobileApp";
 import { mobileMode } from "./lib/mobile";
+import { desktopApp, desktopInvoke } from "./lib/desktop";
 import { t } from "./i18n";
 
 export function App() {
@@ -58,11 +59,48 @@ export function App() {
 
 function ReadyApp() {
   useUiPlugins();
+  const [location] = useLocation();
+  const { routes } = usePluginRegistry();
+  const route = matchRoute(routes, location);
+  if (route?.bare) return <BareRoute route={route} />;
+  // The desktop app's Pio window shows nothing but a bare page: the rest of the app has no place in a bubble.
+  if (overlayWindow) return <NoOverlay />;
   return (
     <Layout>
       <Routes />
     </Layout>
   );
+}
+
+const overlayWindow = !!desktopApp()?.pio;
+
+/** A plugin's page drawn alone; in the desktop app's Pio window over a see-through background. */
+function BareRoute({ route }: { route: RouteEntry }) {
+  useEffect(() => {
+    if (!overlayWindow) return;
+    document.documentElement.classList.add("owl-overlay");
+    return () => document.documentElement.classList.remove("owl-overlay");
+  }, []);
+  const C = route.component;
+  return (
+    <PluginBoundary key={route.key} pluginId={route.pluginId}>
+      <C pluginId={route.pluginId} />
+    </PluginBoundary>
+  );
+}
+
+/** The Pio window with no page for it (the plugin is off): once the plugins have loaded, the app puts it away. */
+function NoOverlay() {
+  const s = useStore(session);
+  const loads = useStore(pluginLoad);
+  const settled = !!s && Object.keys(loads).length >= (s.uiPlugins ?? []).length && Object.values(loads).every((l) => l.status !== "loading");
+  useEffect(() => {
+    document.documentElement.classList.add("owl-overlay");
+    if (!settled) return;
+    const timer = setTimeout(() => void desktopInvoke("pio_hide").catch(() => {}), 1500);
+    return () => clearTimeout(timer);
+  }, [settled]);
+  return null;
 }
 
 /** A former page URL: open its panel section over the default agent's dialog (keeping the query, e.g. /tasks?new=1). */

@@ -8,13 +8,15 @@ export interface DesktopApp {
   test: boolean;
   /** macOS: the window has no title bar; its buttons sit over the page's top-left corner. */
   overlayTitleBar: boolean;
+  /** The app's Pio window (the always-on companion floating over every app): it shows only bare plugin routes. */
+  pio: boolean;
 }
 
 /** The desktop app whose window shows this page, if any. */
 export function desktopApp(w: unknown = globalThis): DesktopApp | undefined {
   const d = (w as { piomioDesktop?: Partial<DesktopApp> }).piomioDesktop;
   return d && typeof d.scheme === "string" && /^piomio(-test)?$/.test(d.scheme)
-    ? { scheme: d.scheme, test: d.test === true, overlayTitleBar: d.overlayTitleBar === true }
+    ? { scheme: d.scheme, test: d.test === true, overlayTitleBar: d.overlayTitleBar === true, pio: d.pio === true }
     : undefined;
 }
 
@@ -49,6 +51,21 @@ export function onAnotherComputer(hostname: string, userAgent: string, w: unknow
   if (desktopApp(w)) return false;
   if (/iPhone|iPad|iPod|Android/i.test(userAgent)) return false;
   return !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(hostname);
+}
+
+/** Asks the desktop app to show its Pio window (the companion over every app) or to put it away. */
+export function desktopPio(app: DesktopApp, show: boolean): void {
+  location.href = `${app.scheme}://pio?show=${show ? 1 : 0}`;
+}
+
+/**
+ * A command of the desktop app, from its Pio window only (the app grants them to that window and the hub's origin):
+ * rejects elsewhere.
+ */
+export function desktopInvoke<T = unknown>(cmd: string, args?: Record<string, unknown>, w: unknown = globalThis): Promise<T> {
+  const ipc = (w as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<T> } }).__TAURI_INTERNALS__;
+  if (!ipc?.invoke) return Promise.reject(new Error("not in the desktop app's Pio window"));
+  return ipc.invoke(cmd, args);
 }
 
 /** Asks the desktop app around this page to quit, or to reset (it confirms that in its own window first). */
