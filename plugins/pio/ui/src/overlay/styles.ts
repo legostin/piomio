@@ -6,33 +6,33 @@ export const CSS = `
 .pio-root[data-x=right]{justify-content:flex-end}
 .pio-root[data-y=bottom]{align-items:flex-end}
 .pio-root *{box-sizing:border-box}
-.pio-stack{display:flex;gap:10px;align-items:flex-end;padding:8px;width:100%;max-width:100%}
+.pio-stack{display:flex;gap:10px;align-items:flex-end;padding:11px;width:100%;max-width:100%}
 .pio-root[data-x=right] .pio-stack{flex-direction:row-reverse}
 .pio-root[data-y=top] .pio-stack{align-items:flex-start}
-.pio-face{position:relative;flex:none;width:56px;height:56px;border-radius:50%;cursor:grab;
+.pio-face{position:relative;flex:none;width:50px;height:50px;border-radius:50%;cursor:grab;
   background:radial-gradient(circle at 35% 28%,#ffe2a8 0,#ffb547 38%,#e8891a 72%,#c96d0e 100%);
-  box-shadow:0 6px 18px rgba(80,40,0,.28),inset 0 -4px 10px rgba(120,50,0,.25);transition:transform .25s ease}
+  box-shadow:0 3px 8px rgba(80,40,0,.26),inset 0 -4px 9px rgba(120,50,0,.25);transition:transform .25s ease}
 .pio-face:hover{transform:scale(1.06)}
-.pio-face::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:2.5px solid transparent;transition:border-color .3s,opacity .3s}
+.pio-face::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2.5px solid transparent;transition:border-color .3s,opacity .3s}
 .pio-face[data-state=watching]::after{border-color:rgba(20,160,150,.55)}
 .pio-face[data-state=listening]::after{border-color:rgba(20,160,150,.75);border-style:dashed}
 .pio-face[data-state=hearing]::after{border-color:#14a096;animation:pio-pulse 1s ease-in-out infinite}
 .pio-face[data-state=thinking]::after{border-color:#e8891a transparent #e8891a transparent;animation:pio-spin 1.1s linear infinite}
 .pio-face[data-state=speaking]::after{border-color:#ffb547;animation:pio-pulse .7s ease-in-out infinite}
 .pio-face[data-state=driving]::after{border-color:#e5484d;border-width:3px;animation:pio-pulse 1.4s ease-in-out infinite}
-.pio-eye{position:absolute;top:21px;width:9px;height:12px;border-radius:50%;background:#fff;animation:pio-blink 5.5s infinite}
-.pio-eye::after{content:"";position:absolute;left:2.5px;top:3.5px;width:5px;height:6px;border-radius:50%;background:#2b1a08}
-.pio-eye.l{left:16px}.pio-eye.r{right:16px}
+.pio-eye{position:absolute;top:18px;width:8px;height:11px;border-radius:50%;background:#fff;animation:pio-blink 5.5s infinite}
+.pio-eye::after{content:"";position:absolute;left:2px;top:3px;width:4.5px;height:5.5px;border-radius:50%;background:#2b1a08}
+.pio-eye.l{left:14px}.pio-eye.r{right:14px}
 .pio-face[data-state=thinking] .pio-eye::after{top:1.5px}
-.pio-face[data-state=driving] .pio-eye{height:9px;top:23px}
+.pio-face[data-state=driving] .pio-eye{height:8px;top:20px}
 @keyframes pio-blink{0%,94%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
 @keyframes pio-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(1.07)}}
 @keyframes pio-spin{to{transform:rotate(360deg)}}
-.pio-card{flex:1;min-width:0;background:var(--surface,#fff);border-radius:20px;box-shadow:0 12px 40px rgba(0,0,0,.22),0 0 0 1px rgba(0,0,0,.05);
-  padding:14px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 16px);overflow:hidden;animation:pio-in .18s ease-out}
+.pio-card{flex:1;min-width:0;background:var(--surface,#fff);border-radius:18px;box-shadow:0 2px 8px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.07);
+  padding:14px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 22px);overflow:hidden;animation:pio-in .18s ease-out}
 @keyframes pio-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
-.pio-line{flex:1;min-width:0;background:var(--surface,#fff);border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.2),0 0 0 1px rgba(0,0,0,.05);
-  padding:11px 14px;font-size:13.5px;line-height:1.4;max-height:calc(100vh - 16px);overflow:hidden;overflow-wrap:anywhere;animation:pio-in .18s ease-out;cursor:pointer}
+.pio-line{flex:1;min-width:0;background:var(--surface,#fff);border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.07);
+  padding:11px 14px;font-size:13.5px;line-height:1.4;max-height:calc(100vh - 22px);overflow:hidden;overflow-wrap:anywhere;animation:pio-in .18s ease-out;cursor:pointer}
 .pio-head{display:flex;align-items:center;gap:8px}
 .pio-name{font-weight:650;font-size:14px}
 .pio-state{font-size:12px;color:var(--muted,#8a817a);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
