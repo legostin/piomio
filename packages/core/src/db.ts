@@ -135,6 +135,8 @@ const MIGRATIONS: string[] = [
   `alter table approvals add column auto text;`,
   // What the hub may fetch when a chat shows a picture (policy/pictures.ts): "shown" or "held", per address.
   `create table pictures(url text primary key, state text not null, at text not null);`,
+  // A quiet turn's reply (Message.quiet): hidden while it streams, kept or deleted when it ends.
+  `alter table messages add column quiet integer not null default 0;`,
 ];
 
 /**

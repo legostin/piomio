@@ -2,7 +2,7 @@
 // Changes in a dialog (new or finished messages, turns starting and ending, the read marker) go out as "team.updated";
 // in a group chat (also its title and members) as "group.updated".
 
-import type { Conversation, GroupChat, Message, TeamMember } from "@piomio/shared";
+import type { AgentPresence, Conversation, GroupChat, Message, TeamMember } from "@piomio/shared";
 import { truncate } from "@piomio/shared";
 import type { Store } from "./store.ts";
 import type { EventBus } from "./bus.ts";
@@ -43,6 +43,8 @@ export class Team {
   private isRunning: (conversationId: string) => boolean;
   private floor: (conversationId: string) => string[];
   private pending = new Set<string>();
+  /** The always-on companion's live state, by agent (set by its plugin; never stored). */
+  private presences = new Map<string, AgentPresence>();
 
   constructor(d: {
     store: Store;
@@ -65,6 +67,7 @@ export class Team {
       if (m.status !== "streaming") this.changed(m.conversationId);
     });
     d.bus.on("conversation.activity", (a) => this.changed(a.conversationId));
+    d.bus.on("message.deleted", (m) => this.changed(m.conversationId));
     // A group renamed or with new members.
     d.bus.on("conversation.updated", (c: Conversation) => {
       if (c.kind === "group") this.changed(c.id);
@@ -91,9 +94,18 @@ export class Team {
     return this.store.listGroups().map((c) => this.groupOf(c));
   }
 
+  /** What the agent is doing on the person's computer now (undefined: nothing), pushed to clients at once. */
+  setPresence(agentId: string, presence: AgentPresence | undefined): void {
+    if (this.presences.get(agentId) === presence) return;
+    if (presence) this.presences.set(agentId, presence);
+    else this.presences.delete(agentId);
+    this.changed(this.store.agentConversation(agentId).id);
+  }
+
   memberOf(conv: Conversation): TeamMember {
     const last = this.lastMessage(conv.id);
     const pin = this.pinned().indexOf(conv.agentId);
+    const presence = this.presences.get(conv.agentId);
     return {
       agentId: conv.agentId,
       conversationId: conv.id,
@@ -102,6 +114,7 @@ export class Team {
       running: this.isRunning(conv.id),
       unread: this.store.unreadCount(conv.id),
       ...(pin >= 0 ? { pinned: pin } : {}),
+      ...(presence ? { presence } : {}),
     };
   }
 
@@ -128,6 +141,7 @@ export class Team {
   private lastMessage(conversationId: string): GroupChat["lastMessage"] {
     const recent = this.store.listMessages(conversationId, { limit: PREVIEW_LOOKBACK });
     for (let i = recent.length - 1; i >= 0; i--) {
+      if (recent[i].quiet) continue;
       const text = previewText(recent[i]);
       if (text) return { role: recent[i].role, text, createdAt: recent[i].createdAt, ...(recent[i].agentId ? { agentId: recent[i].agentId } : {}) };
     }

@@ -2,7 +2,7 @@
 // shows who said what last, whether someone is working right now and how much is unread; "Add agent" opens the
 // new-agent form, "New group" the form for a chat with several agents, "New channel" the form for a channel.
 // The default agent sits large on top, the pinned under it; every agent has a menu (right click, a long press, "⋯"),
-// and the archived ones wait behind "Archive · N" at the end.
+// and the archived ones wait behind "Archive · N" at the end. The always-on companion (Pio) is a small row above all.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
@@ -10,7 +10,7 @@ import { Archive, ArrowLeft, ChevronRight, Pin, Plus, Star, UsersRound } from "l
 import type { AgentDef, GroupChat, TeamMember } from "@piomio/shared";
 import { useStore } from "../../lib/store";
 import { shortTime } from "../../lib/format";
-import { agentPath, groupOrder, groupPath, teamOrder } from "../../lib/team";
+import { agentPath, companionOf, groupOrder, groupPath, teamOrder } from "../../lib/team";
 import { agents, ensureAgents, ensureGroups, ensureTeam, groups, session, team } from "../../state/app";
 import { ensureFeeds, feeds, unreadPosts } from "../../state/feeds";
 import { addAgent } from "../../state/panel";
@@ -113,6 +113,38 @@ function DefaultAgentCard({ agent, member, active, menu, onNavigate }: { agent: 
         </span>
       </Link>
       <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="top-2 right-2" />
+    </div>
+  );
+}
+
+/** The always-on companion (Pio): a small row above the team with what it is doing on the computer now. */
+function CompanionRow({ agent, member, active, menu, onNavigate }: { agent: AgentDef; member?: TeamMember; active: boolean; menu: AgentMenuApi; onNavigate?: () => void }) {
+  const unread = member?.unread ?? 0;
+  const running = !!member?.running;
+  const presence = member?.presence;
+  const state = running && !presence ? t("team.working") : presence ? t(`team.presence.${presence}`) : undefined;
+  const triggers = useMenuTriggers(agent.id, menu);
+  return (
+    <div className="group/agent relative mb-1">
+      <Link
+        href={agentPath(agent.id, undefined)}
+        onClick={onNavigate}
+        aria-current={active ? "page" : undefined}
+        title={agent.description || undefined}
+        className={cx("press flex items-center gap-2.5 rounded-full py-1 pr-9 pl-1", active ? "bg-surface shadow-card" : menu.openFor === agent.id ? "bg-surface/55" : "hover:bg-surface/55", NO_CALLOUT)}
+        {...triggers}
+      >
+        <AgentAvatar avatar={agent.avatar} id={agent.id} name={agent.name} size={28} running={running} />
+        <span className={cx("min-w-0 flex-1 truncate text-[13px]", unread ? "font-semibold" : "font-medium")}>{agent.name}</span>
+        {state && (
+          <span className="flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-accent-text">
+            {presence && <span className="size-1.5 animate-pulse rounded-full bg-accent" aria-hidden />}
+            {state}
+          </span>
+        )}
+        {unread > 0 && <UnreadBadge n={unread} />}
+      </Link>
+      <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="inset-y-0 right-1.5 my-auto" />
     </div>
   );
 }
@@ -268,6 +300,10 @@ export function TeamList({
       s?.defaultAgent,
     );
   }, [agentList, members, s?.defaultAgent]);
+  const companion = useMemo(() => {
+    const byAgent = new Map((members ?? []).map((m) => [m.agentId, m]));
+    return companionOf((agentList ?? []).map((agent) => ({ agent, member: byAgent.get(agent.id) })));
+  }, [agentList, members]);
   const lead = entries[0]?.agent.id === s?.defaultAgent ? entries[0] : undefined;
   const rest = lead ? entries.slice(1) : entries;
   // The last one restored: back to the team.
@@ -299,6 +335,7 @@ export function TeamList({
                 <Spinner />
               </div>
             )}
+            {companion && <CompanionRow agent={companion.agent} member={companion.member} active={companion.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
             {lead && <DefaultAgentCard agent={lead.agent} member={lead.member} active={lead.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
             {rest.map(({ agent, member }) => (
               <MemberRow key={agent.id} agent={agent} member={member} href={agentPath(agent.id, s?.defaultAgent)} active={agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />

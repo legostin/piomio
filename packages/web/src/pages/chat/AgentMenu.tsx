@@ -130,6 +130,7 @@ export function useAgentMenu({ onNavigate }: { onNavigate?: () => void } = {}): 
     ? agentMenuActions({
         isDefault: agent.id === defaultAgent,
         archived: agent.archived,
+        companion: agent.companion,
         pinned: member?.pinned !== undefined,
         unread: member?.unread ?? 0,
         hasMessages: !!member?.lastMessage,

@@ -3,19 +3,19 @@
 import type { AgentDef, TeamMember } from "@piomio/shared";
 
 export interface TeamEntry {
-  agent: Pick<AgentDef, "id" | "name" | "archived">;
+  agent: Pick<AgentDef, "id" | "name" | "archived" | "companion">;
   member?: TeamMember;
 }
 
 /**
  * The default agent first, then the pinned in their order, then whoever talked last; agents with an empty dialog by
- * name. Archived agents are not on the team list.
+ * name. Archived agents are not on the team list, nor the always-on companion (it sits above the list: companionOf).
  */
 export function teamOrder<E extends TeamEntry>(entries: E[], defaultAgent: string | undefined): E[] {
   const activity = (e: TeamEntry) => (e.member?.lastMessage ? e.member.lastActivityAt : "");
   const pin = (e: TeamEntry) => e.member?.pinned ?? Infinity;
   return entries
-    .filter((e) => !e.agent.archived)
+    .filter((e) => !e.agent.archived && !e.agent.companion)
     .sort((a, b) => {
       if (a.agent.id === defaultAgent) return -1;
       if (b.agent.id === defaultAgent) return 1;
@@ -27,12 +27,23 @@ export function teamOrder<E extends TeamEntry>(entries: E[], defaultAgent: strin
     });
 }
 
+/** The always-on companion (Pio), shown small above the team: the first one that is not archived. */
+export function companionOf<E extends TeamEntry>(entries: E[]): E | undefined {
+  return entries.find((e) => e.agent.companion && !e.agent.archived);
+}
+
 /** What the agent's menu offers (right click, a long press, "⋯"), in the order shown. */
 export type AgentMenuAction = "pin" | "unpin" | "unread" | "read" | "default" | "settings" | "archive" | "restore" | "delete";
 
-export function agentMenuActions(o: { isDefault: boolean; archived?: boolean; pinned?: boolean; unread: number; hasMessages: boolean }): AgentMenuAction[] {
+export function agentMenuActions(o: { isDefault: boolean; archived?: boolean; pinned?: boolean; companion?: boolean; unread: number; hasMessages: boolean }): AgentMenuAction[] {
   if (o.archived) return ["restore", "delete"];
   const out: AgentMenuAction[] = [];
+  // The companion is always on top and comes and goes with its plugin: only its dialog and settings.
+  if (o.companion) {
+    if (o.unread > 0) out.push("read");
+    else if (o.hasMessages) out.push("unread");
+    return [...out, "settings"];
+  }
   // The default agent is always on top: nothing to pin, nothing to make default.
   if (!o.isDefault) out.push(o.pinned ? "unpin" : "pin");
   if (o.unread > 0) out.push("read");

@@ -109,6 +109,7 @@ export default {
   "agent.successorNeeded": "{name} is the default agent: first pick who takes their place",
   "agent.archivedChat": "{name} is in the archive. Bring them back to talk.",
   "agent.archivedDefault": "An agent in the archive cannot be the default agent",
+  "agent.companionDefault": "The always-on companion cannot be the default agent",
   "agent.deleteCard": "Delete {name} for good, with their dialog, schedules and tasks",
   "agent.deleteCardSuccessor": "Delete {name} for good, with their dialog, schedules and tasks; {successor} becomes the default agent",
   "agent.selfEditApproval": "Change its own profile (name, description or instructions)",

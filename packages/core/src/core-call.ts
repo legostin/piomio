@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realp
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import type { AttachmentKind, CoreMethod } from "@piomio/shared";
-import { parseBrainRef } from "@piomio/shared";
+import { AGENT_PRESENCES, parseBrainRef } from "@piomio/shared";
 import type { Hub } from "./app.ts";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, safeFileName, saveAttachment, type IncomingFile } from "./attachments.ts";
 import { MAX_TRANSCRIBE_BYTES, uploadName } from "./transcribe.ts";
@@ -66,23 +66,42 @@ export function createCoreCall(hub: Hub) {
       }
       case "conversations.tell": {
         // A note an agent answers (a teach recording, the person's hint, a noticed routine): the task it is for, else
-        // the dialog named, else the default agent's. Plugins pass what they saw outside: the session counts it so.
+        // the dialog named, else the agent's dialog (agentId), else the default agent's. Plugins pass what they saw
+        // outside: the session counts it so. quiet: a look the agent takes on its own (runner.tellQuietly).
         const text = String(p.text ?? "").trim();
         if (!text) throw new Error("text is required");
+        if (p.quiet === true) {
+          const agent = typeof p.agentId === "string" ? hub.agents.get(p.agentId) : undefined;
+          const conv = p.conversationId ? hub.store.getConversation(String(p.conversationId)) : agent ? hub.store.agentConversation(agent.id) : undefined;
+          if (!conv) throw new Error("a quiet note needs the agentId or conversationId of a dialog");
+          const r = hub.runner.tellQuietly(conv.id, text, { taint: true });
+          return r === "busy" ? { conversationId: conv.id, skipped: "busy" } : { conversationId: conv.id, delivered: "dialog" };
+        }
         const task = typeof p.taskId === "string" && p.taskId ? hub.store.getTask(p.taskId) : undefined;
         if (task) {
           hub.store.addMessage({ conversationId: task.conversationId, role: "system", parts: [{ type: "text", text }], status: "complete", taskId: task.id });
           if ((await hub.runner.wakeTask(task, text, { taint: true })) !== "cancelled") return { conversationId: task.conversationId, delivered: "task" };
         }
         // A cancelled task's note goes to whoever started it.
+        const named = typeof p.agentId === "string" && hub.agents.get(p.agentId) ? p.agentId : undefined;
         const conv = task
           ? (task.parentConversationId ? hub.store.getConversation(task.parentConversationId) : undefined) ?? hub.store.agentConversation(task.agentId)
           : p.conversationId
             ? hub.store.getConversation(String(p.conversationId))
-            : hub.store.agentConversation(hub.settings.get().defaultAgent);
+            : hub.store.agentConversation(named ?? hub.settings.get().defaultAgent);
         if (!conv) throw new Error("conversation not found");
         hub.runner.tellAgent(conv.id, text, { taint: true });
         return { conversationId: conv.id, delivered: "dialog" };
+      }
+      case "agents.presence": {
+        // A companion's live state on the team list: only an agent this plugin ships (its agents dir).
+        const id = String(p.agentId ?? "");
+        const dir = hub.plugins.get(pluginId)?.layout?.agentsDir;
+        if (!/^[a-z0-9_-]{1,64}$/i.test(id) || !dir || !existsSync(join(dir, `${id}.md`)) || !hub.agents.get(id)) throw new Error(`${id || "agentId"} is not an agent of this plugin`);
+        const presence = p.presence ?? undefined;
+        if (presence !== undefined && !AGENT_PRESENCES.includes(presence)) throw new Error(`presence must be one of ${AGENT_PRESENCES.join(", ")} or null`);
+        hub.team.setPresence(id, presence);
+        return { ok: true };
       }
       case "speech.transcribe": {
         if (p.check === true) return { available: !!hub.transcriber.engine() };

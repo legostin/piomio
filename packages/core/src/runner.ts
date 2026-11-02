@@ -122,6 +122,8 @@ interface TurnOpts {
   replyTo?: { messageId: string; text: string };
   /** The input is the user's own words (not a system note): plugins may learn from it (turn.context). */
   fromUser?: boolean;
+  /** A look the agent takes on its own (tellQuietly): its reply shows only if it has something to say. */
+  quiet?: boolean;
 }
 
 /** User messages waiting for the conversation's next turn. */
@@ -641,6 +643,19 @@ export class SessionRunner {
     if (!conv) return;
     this.d.store.addMessage({ conversationId: conv.id, role: "system", parts: [{ type: "text", text: note }], status: "complete" });
     void this.enqueue(conv.id, () => this.runTurn(conv, note, opts.taint ? { taint: true } : {}));
+  }
+
+  /**
+   * A look the agent takes on its own (the companion watching the screen): no note in the dialog, and its reply shows
+   * only when it has something to say (not empty, not "[quiet]"). Skipped while the dialog is busy or has messages
+   * waiting: the person comes first.
+   */
+  tellQuietly(conversationId: string, note: string, opts: { taint?: boolean } = {}): "started" | "busy" {
+    const conv = this.d.store.getConversation(conversationId);
+    if (!conv) throw new Error("conversation not found");
+    if (this.isRunning(conv.id) || this.pending.has(conv.id)) return "busy";
+    void this.enqueue(conv.id, () => this.runTurn(conv, note, { quiet: true, ...(opts.taint ? { taint: true } : {}) }));
+    return "started";
   }
 
   /** The user did something in a card, outside any turn: note it for the agent and let it answer. */
@@ -2164,7 +2179,7 @@ export class SessionRunner {
         if (pick?.model && live!.model && live!.model !== pick.model) input.text = input.text.replace(/^(\[Now: [^\]]*\]\n)?/, (now) => `${now}${MODEL_SWITCH_NOTE}\n`);
         if (pick?.model) live!.model = pick.model;
         if (pick?.effort) live!.effort = pick.effort;
-        const r = await this.streamTurn(conv, row!, live!, agent, { ...input, ...backup, ...thinks }, task, opts.replyChannel, opts.replyTo);
+        const r = await this.streamTurn(conv, row!, live!, agent, { ...input, ...backup, ...thinks }, task, opts.replyChannel, opts.replyTo, opts.quiet);
         if (r.retry) {
           lastError = r.error ?? lastError;
           if (r.limited) earliestReset = r.limited.resetAt ?? earliestReset;
@@ -2174,7 +2189,8 @@ export class SessionRunner {
         // Group chats live in the web UI only. A turn nobody typed that wrote to a teammate again is agents talking
         // among themselves: the phone gets the outcome, not that.
         const chatter = !opts.replyChannel && opts.quote === undefined && this.wroteToTeammate(r.messageId);
-        if (conv.kind !== "group" && !chatter) {
+        // A quiet look is for the screen it was taken on, not the channels.
+        if (conv.kind !== "group" && !chatter && !opts.quiet) {
           const broadcast = await this.deliver(conv, r.answer ?? r.text, opts, r.messageId, row!);
           // Messages from other channels joined the turn: those channels get the reply too (unless all of them did).
           if (!broadcast) for (const ch of r.channels ?? []) if (ch !== opts.replyChannel) await this.deliver(conv, r.answer ?? r.text, { replyChannel: ch }, r.messageId, row!);
@@ -2197,12 +2213,15 @@ export class SessionRunner {
     task: Task | undefined,
     replyChannel?: string,
     replyTo?: TurnOpts["replyTo"],
+    quiet?: boolean,
   ): Promise<TurnResult & { retry?: boolean }> {
     // How it thinks for this reply: the model asked for (the one that answers replaces it when the brain says) and the effort.
     let model = turn.model ?? live.model;
     const effort = turn.effort ?? live.effort;
-    const newMessage = (parts: MessagePart[] = []) =>
-      this.d.store.addMessage({
+    /** The turn's messages: a quiet turn keeps or deletes them all at the end. */
+    const made: string[] = [];
+    const newMessage = (parts: MessagePart[] = []) => {
+      const m = this.d.store.addMessage({
         conversationId: conv.id,
         role: "assistant",
         parts,
@@ -2213,7 +2232,11 @@ export class SessionRunner {
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         channel: replyChannel,
+        ...(quiet ? { quiet: true } : {}),
       });
+      made.push(m.id);
+      return m;
+    };
     // The reply's first message shows which of the user's messages it answers.
     const answers: MessagePart[] = replyTo ? [{ type: "reply_to", ...replyTo }] : [];
     let msg = newMessage(answers);
@@ -2378,14 +2401,23 @@ export class SessionRunner {
 
     // Nothing produced and the brain failed or is limited: let the caller try the next brain.
     if (!produced && (limited || fatal)) {
-      this.d.store.updateMessage(msg.id, { parts: [{ type: "error", message: t("chat.tryingOtherBrain", { ref: live.brainRef, error: error ?? t("chat.error") }) }], status: "error" });
+      if (quiet) for (const id of made) this.d.store.deleteMessage(id);
+      else this.d.store.updateMessage(msg.id, { parts: [{ type: "error", message: t("chat.tryingOtherBrain", { ref: live.brainRef, error: error ?? t("chat.error") }) }], status: "error" });
       if (fatal && !limited) this.d.brains.invalidate(live.brainRef);
       return { text: "", error, limited, awaitingApproval: false, retry: true };
     }
 
     if (error) parts.push({ type: "error", message: error });
     parts = mergeAttached(parts, current());
-    this.d.store.updateMessage(msg.id, { parts, status: error && !produced ? "error" : "complete" });
+    this.d.store.updateMessage(msg.id, { parts, status: error && !produced ? "error" : "complete" }, !quiet);
+    // A quiet look: nothing to say (or it failed) takes the whole turn back; something to say shows now.
+    if (quiet) {
+      if (!quietSaid(fullText) || (error && !fullText.trim())) {
+        for (const id of made) this.d.store.deleteMessage(id);
+        return { text: "", error, limited, awaitingApproval: false };
+      }
+      for (const id of made) this.d.store.updateMessage(id, { quiet: false });
+    }
     // The brain died mid-turn (its process, its connection): what it said so far stays, and a task goes on from there.
     const broken = fatal && !limited;
     return { text: fullText.trim(), answer: finalAnswer(parts), error, limited, awaitingApproval, messageId: msg.id, ...(broken ? { broken } : {}), ...(channels.size ? { channels: [...channels] } : {}) };
@@ -2458,6 +2490,12 @@ function finalAnswer(parts: MessagePart[]): string {
   const tail = texts(lastTool + 1).join("").trim();
   // Answered, then called a tool and said nothing more: the answer is the last thing it said.
   return tail || (texts(0).findLast((s) => s.trim()) ?? "").trim();
+}
+
+/** A quiet look said something: not empty and not the "[quiet]" it answers with when it has nothing. */
+export function quietSaid(text: string): boolean {
+  const said = text.trim();
+  return !!said && !/^\[quiet\]/i.test(said);
 }
 
 /** Reports this long reach their starter whole; a longer one ends with a pointer to the rest (task_status has all of it). */

@@ -22,8 +22,9 @@ function byTime(a: Message, b: Message): number {
   return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0;
 }
 
-/** Insert or replace a message, keeping chronological order. */
+/** Insert or replace a message, keeping chronological order. A quiet turn's reply stays out until it is kept. */
 export function upsertMessage(messages: Message[], msg: Message): Message[] {
+  if (msg.quiet) return removeMessage(messages, msg.id);
   const i = messages.findIndex((m) => m.id === msg.id);
   if (i >= 0) {
     const next = messages.slice();
@@ -33,6 +34,11 @@ export function upsertMessage(messages: Message[], msg: Message): Message[] {
   const last = messages[messages.length - 1];
   if (!last || byTime(last, msg) <= 0) return [...messages, msg];
   return [...messages, msg].sort(byTime);
+}
+
+/** A message taken back ("message.deleted"). */
+export function removeMessage(messages: Message[], id: string): Message[] {
+  return messages.some((m) => m.id === id) ? messages.filter((m) => m.id !== id) : messages;
 }
 
 export function textLength(m: Message): number {
@@ -54,6 +60,7 @@ export function mergeFetched(local: Message[], fetched: Message[]): Message[] {
   // Keep locally loaded history older than the fetched window.
   if (oldest) for (const m of local) if (m.createdAt < oldest && !fetchedIds.has(m.id)) out.push(m);
   for (const f of fetched) {
+    if (f.quiet) continue;
     const l = localById.get(f.id);
     if (l && f.status === "streaming" && l.status === "streaming" && textLength(l) > textLength(f)) out.push(l);
     else out.push(f);

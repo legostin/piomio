@@ -8,7 +8,7 @@ import { countdown, groupedCode, slugify } from "./format";
 import { mergeClasses } from "./classes";
 import { stickAfterScroll } from "./stick";
 import { sectionForPath } from "../components/nav";
-import { agentForPath, agentMenuActions, agentPath, successorsOf, teamOrder } from "./team";
+import { agentForPath, agentMenuActions, agentPath, companionOf, successorsOf, teamOrder } from "./team";
 import { placeMenu } from "./menu";
 import { AVATAR_COLORS, AVATAR_SHAPES, defaultAvatar, parseAvatar } from "@piomio/shared/avatar";
 
@@ -195,6 +195,18 @@ describe("team sidebar", () => {
     expect(teamOrder(entries, "assistant").map((e) => e.agent.id)).toEqual(["assistant", "coder", "zed", "writer", "anna"]);
   });
 
+  it("keeps the always-on companion above the team, out of its order", () => {
+    const entries = [
+      { agent: { id: "assistant", name: "Assistant" }, member: member("assistant", "2026-10-01T00:00:00.000Z") },
+      { agent: { id: "pio", name: "Pio", companion: true }, member: member("pio", "2026-10-30T10:00:00.000Z") },
+      { agent: { id: "anna", name: "Anna" } },
+    ];
+    expect(teamOrder(entries, "assistant").map((e) => e.agent.id)).toEqual(["assistant", "anna"]);
+    expect(companionOf(entries)?.agent.id).toBe("pio");
+    expect(companionOf([{ agent: { id: "pio", name: "Pio", companion: true, archived: true } }])).toBeUndefined();
+    expect(successorsOf("assistant", entries.map((e) => e.agent)).map((a) => a.id)).toEqual(["anna"]);
+  });
+
   it("offers what fits the agent in its menu", () => {
     expect(agentMenuActions({ isDefault: false, unread: 0, hasMessages: true })).toEqual(["pin", "unread", "default", "settings", "archive", "delete"]);
     expect(agentMenuActions({ isDefault: false, pinned: true, unread: 2, hasMessages: true })).toEqual(["unpin", "read", "default", "settings", "archive", "delete"]);
@@ -203,6 +215,8 @@ describe("team sidebar", () => {
     // The default agent is always on top and already the default.
     expect(agentMenuActions({ isDefault: true, unread: 0, hasMessages: true })).toEqual(["unread", "settings", "archive", "delete"]);
     expect(agentMenuActions({ isDefault: false, archived: true, unread: 0, hasMessages: true })).toEqual(["restore", "delete"]);
+    // The companion comes and goes with its plugin: no pin, default, archive or delete.
+    expect(agentMenuActions({ isDefault: false, companion: true, unread: 1, hasMessages: true })).toEqual(["read", "settings"]);
   });
 
   it("finds who can take the default agent's place: active agents other than it", () => {

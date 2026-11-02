@@ -523,6 +523,7 @@ export class Hub {
     }
     if ("defaultAgent" in p && !this.agents.get(String(p.defaultAgent))) throw new LocalizedError("agent.notFound", undefined, 400);
     if ("defaultAgent" in p && this.agents.isArchived(String(p.defaultAgent))) throw new LocalizedError("agent.archivedDefault", undefined, 400);
+    if ("defaultAgent" in p && this.agents.get(String(p.defaultAgent))?.companion) throw new LocalizedError("agent.companionDefault", undefined, 400);
     if ("transcription" in p) {
       const t = cleanTranscription(p.transcription);
       if (typeof t === "string") throw new LocalizedError("settings.badTranscription", { reason: t }, 400);

@@ -439,6 +439,11 @@ export interface Message {
   effort?: string;
   /** Where a user message came from / where an assistant reply should also go. */
   channel?: string;
+  /**
+   * A quiet turn's reply (the companion looking on its own): not shown while it streams; when it ends it is either
+   * kept (the flag goes) or deleted ("message.deleted") because the agent had nothing to say.
+   */
+  quiet?: boolean;
   createdAt: ISODate;
 }
 
@@ -481,7 +486,13 @@ export interface TeamMember {
   unread: number;
   /** Pinned to the top of the list (under the default agent): its place among the pinned, 0 first. */
   pinned?: number;
+  /** The always-on companion's live state, set by its plugin (core method agents.presence); unset when idle. */
+  presence?: AgentPresence;
 }
+
+/** What the always-on companion is doing on the person's computer right now. */
+export type AgentPresence = "watching" | "listening" | "speaking" | "driving";
+export const AGENT_PRESENCES: readonly AgentPresence[] = ["watching", "listening", "speaking", "driving"];
 
 /** A group chat as the sidebar shows it, kept current by "group.updated". */
 export interface GroupChat {
@@ -637,6 +648,11 @@ export interface AgentDef {
   archived?: boolean;
   /** Translated name / description shown in the UI ("i18n: { ru: { name: … } }" in the frontmatter). */
   i18n?: Partial<Record<Locale, { name?: string; description?: string }>>;
+  /**
+   * The always-on companion (Pio, plugins/pio): its own small dialog pinned above the team; never the default agent.
+   * `companion: true` in the frontmatter.
+   */
+  companion?: boolean;
 }
 
 /**
@@ -1297,6 +1313,7 @@ export type UiEvent =
   | { type: "message.created"; data: Message }
   | { type: "message.delta"; data: { id: string; conversationId: string; delta: string } }
   | { type: "message.updated"; data: Message }
+  | { type: "message.deleted"; data: { id: string; conversationId: string } }
   | { type: "conversation.updated"; data: Conversation }
   | { type: "team.updated"; data: TeamMember }
   | { type: "group.updated"; data: GroupChat }

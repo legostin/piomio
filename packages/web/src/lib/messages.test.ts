@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "@piomio/shared";
-import { appendDelta, applyDelta, isStreaming, mergeFetched, prependOlder, upsertMessage } from "./messages";
+import { appendDelta, applyDelta, isStreaming, mergeFetched, prependOlder, removeMessage, upsertMessage } from "./messages";
 
 const msg = (id: string, createdAt: string, parts: Message["parts"] = [], status: Message["status"] = "complete"): Message => ({
   id,
@@ -36,6 +36,17 @@ describe("applyDelta", () => {
   it("ignores deltas for unknown messages", () => {
     const list = [msg("a", "2026-01-01T00:00:00Z")];
     expect(applyDelta(list, { id: "zzz", delta: "x" })).toBe(list);
+  });
+});
+
+describe("quiet replies", () => {
+  it("keeps a quiet turn's reply out until it is kept, and drops a deleted one", () => {
+    const quiet = { ...msg("q", "2"), quiet: true };
+    expect(upsertMessage([msg("a", "1")], quiet).map((m) => m.id)).toEqual(["a"]);
+    expect(upsertMessage([msg("a", "1"), msg("q", "2")], quiet).map((m) => m.id)).toEqual(["a"]);
+    expect(upsertMessage([msg("a", "1")], msg("q", "2")).map((m) => m.id)).toEqual(["a", "q"]);
+    expect(mergeFetched([], [msg("a", "1"), quiet]).map((m) => m.id)).toEqual(["a"]);
+    expect(removeMessage([msg("a", "1"), msg("q", "2")], "q").map((m) => m.id)).toEqual(["a"]);
   });
 });
 

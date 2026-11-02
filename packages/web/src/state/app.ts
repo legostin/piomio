@@ -6,7 +6,7 @@ import type { AgentDef, Catalog, Conversation, GroupChat, Locale, MachineActivit
 import { api, ApiError, onUnauthorized, request, setCsrf } from "../lib/api";
 import { createStore, Emitter, type Store } from "../lib/store";
 import { HubSocket, type ConnectionState } from "../lib/socket";
-import { applyDelta, mergeFetched, prependOlder, upsertMessage } from "../lib/messages";
+import { applyDelta, mergeFetched, prependOlder, removeMessage, upsertMessage } from "../lib/messages";
 import { desktopTicketFrom } from "../lib/desktop";
 import { mobileMode } from "../lib/mobile";
 import { toastWorthy } from "../lib/notifications";
@@ -324,6 +324,9 @@ function handleEvent(e: UiEvent): void {
       break;
     case "message.delta":
       patchConv(e.data.conversationId, (c) => ({ ...c, messages: applyDelta(c.messages, e.data) }));
+      break;
+    case "message.deleted":
+      patchConv(e.data.conversationId, (c) => ({ ...c, messages: removeMessage(c.messages, e.data.id) }));
       break;
     case "conversation.updated":
       conversations.set((list) => sortConversations(upsertById(list, e.data)));

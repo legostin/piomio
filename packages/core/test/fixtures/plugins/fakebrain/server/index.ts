@@ -5,6 +5,7 @@
 // "CRASH" there breaks the turn off after a first word, the way a brain whose process died does.
 // Brain `fake` takes input into such a turn (steer): the turn then ends with "fake also heard: <its last line>";
 // `fake2` cannot steer, so the hub sends it as the next turn.
+// "QUIET?" answers "[quiet]" (a quiet look with nothing to say).
 // "TIME?" answers with the turn's "[Now: …]" line (or "none"); a turn with files answers with their paths and the note.
 // "SELF?" answers with the last "[You now]" block the session got (or "none"); "INPUT?" with the rest of the turn's input.
 // "NATIVE <events>" uses the brain's own tools (a CLI's WebFetch, its shell), never the hub's: a JSON array of
@@ -195,6 +196,12 @@ export default {
             const handoff = /HANDOFF (\S+)$/.exec(turn.text.trim().split("\n").at(-1) ?? "");
             if (handoff) {
               yield { type: "text", delta: `over to @${handoff[1]}` };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            // A quiet look with nothing to say.
+            if (last === "QUIET?") {
+              yield { type: "text", delta: "[quiet]" };
               yield { type: "done", resumeToken: `${id}-resume` };
               return;
             }

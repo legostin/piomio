@@ -6,6 +6,7 @@ export type BusEvents = {
   "message.created": any;
   "message.updated": any;
   "message.delta": { id: string; conversationId: string; delta: string };
+  "message.deleted": { id: string; conversationId: string };
   "conversation.updated": any;
   /** A turn started or ended in a conversation. */
   "conversation.activity": { conversationId: string; running: boolean };
@@ -112,6 +113,7 @@ export function toUiEvent(name: string, payload: any): UiEvent | null {
     case "message.created":
     case "message.updated":
     case "message.delta":
+    case "message.deleted":
     case "conversation.updated":
     case "team.updated":
     case "group.updated":

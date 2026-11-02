@@ -46,6 +46,7 @@ const msgFrom = (r: any): Message => ({
   ...(r.model ? { model: r.model } : {}),
   ...(r.effort ? { effort: r.effort } : {}),
   channel: r.channel ?? undefined,
+  ...(r.quiet ? { quiet: true } : {}),
   createdAt: r.created_at,
 });
 
@@ -222,7 +223,7 @@ export class Store {
     const r = this.db
       .prepare(
         "select count(*) as n from messages m join conversations c on c.id = m.conversation_id " +
-          "where m.conversation_id = ? and m.role != 'user' and m.status != 'streaming' and m.created_at > coalesce(c.read_at, '')",
+          "where m.conversation_id = ? and m.role != 'user' and m.status != 'streaming' and m.quiet = 0 and m.created_at > coalesce(c.read_at, '')",
       )
       .get(id) as { n: number };
     return r.n;
@@ -244,21 +245,30 @@ export class Store {
   addMessage(m: Omit<Message, "id" | "createdAt"> & { id?: string }): Message {
     const msg: Message = { ...m, id: m.id ?? newId("m_"), createdAt: nowIso() };
     this.db
-      .prepare("insert into messages(id, conversation_id, role, parts, status, agent_id, task_id, brain_ref, model, effort, channel, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(msg.id, msg.conversationId, msg.role, JSON.stringify(msg.parts), msg.status, msg.agentId ?? null, msg.taskId ?? null, msg.brainRef ?? null, msg.model ?? null, msg.effort ?? null, msg.channel ?? null, msg.createdAt);
+      .prepare("insert into messages(id, conversation_id, role, parts, status, agent_id, task_id, brain_ref, model, effort, channel, quiet, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(msg.id, msg.conversationId, msg.role, JSON.stringify(msg.parts), msg.status, msg.agentId ?? null, msg.taskId ?? null, msg.brainRef ?? null, msg.model ?? null, msg.effort ?? null, msg.channel ?? null, msg.quiet ? 1 : 0, msg.createdAt);
     this.touchConversation(msg.conversationId);
     this.bus.emit("message.created", msg);
     return msg;
   }
 
-  updateMessage(id: string, patch: { parts?: MessagePart[]; status?: Message["status"]; brainRef?: string; model?: string }, emit = true): Message | undefined {
+  updateMessage(id: string, patch: { parts?: MessagePart[]; status?: Message["status"]; brainRef?: string; model?: string; quiet?: boolean }, emit = true): Message | undefined {
     if (patch.parts) this.db.prepare("update messages set parts = ? where id = ?").run(JSON.stringify(patch.parts), id);
+    if (patch.quiet !== undefined) this.db.prepare("update messages set quiet = ? where id = ?").run(patch.quiet ? 1 : 0, id);
     if (patch.status) this.db.prepare("update messages set status = ? where id = ?").run(patch.status, id);
     if (patch.brainRef) this.db.prepare("update messages set brain_ref = ? where id = ?").run(patch.brainRef, id);
     if (patch.model) this.db.prepare("update messages set model = ? where id = ?").run(patch.model, id);
     const m = this.getMessage(id);
     if (m && emit) this.bus.emit("message.updated", m);
     return m;
+  }
+
+  /** A message taken back (a quiet turn that had nothing to say): clients drop it. */
+  deleteMessage(id: string): void {
+    const m = this.getMessage(id);
+    if (!m) return;
+    this.db.prepare("delete from messages where id = ?").run(id);
+    this.bus.emit("message.deleted", { id, conversationId: m.conversationId });
   }
 
   getMessage(id: string): Message | undefined {

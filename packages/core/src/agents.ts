@@ -37,6 +37,7 @@ export function agentFromMarkdown(id: string, text: string, source: string): Age
     source,
     avatar: parseAvatar(data.avatar),
     i18n: parseAgentI18n(data.i18n),
+    ...(data.companion === true ? { companion: true } : {}),
   };
 }
 
@@ -106,6 +107,7 @@ export function agentToMarkdown(a: AgentDef): string {
     policyProfile: a.policyProfile,
     budget: a.budget,
     ...(a.i18n ? { i18n: a.i18n } : {}),
+    ...(a.companion ? { companion: true } : {}),
   };
   return `---\n${toYaml(fm).trim()}\n---\n${a.prompt.trim()}\n`;
 }
