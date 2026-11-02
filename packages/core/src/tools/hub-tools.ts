@@ -13,7 +13,7 @@
 // The one exception is profile_update at the end: every agent may change its own profile when the user asks.
 
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { AgentDef, AgentDraft, IntegrationView, JsonSchema, Locale, MachineSettings, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
+import type { AgentDef, AgentDraft, IntegrationView, JsonSchema, Locale, MachineSettings, SpeechStatus, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { AVATAR_COLORS, AVATAR_SHAPES, defaultAvatar, formatBrainRef, KEY_PROVIDERS, keyProvider, parseAvatar, parseBrainRef, parseThinking } from "@piomio/shared";
 import { normalizeSettings, SetupError } from "../machine-setup.ts";
 import { siteDomain } from "../secrets.ts";
@@ -35,7 +35,19 @@ import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 export const HUB_TOOL_PREFIX = "hub_";
 
 /** Settings the assistant may change on request. Everything else is refused with a pointer to the settings panel. */
-export const AGENT_SETTABLE = ["timezone", "defaultAgent", "language", "quietHours", "digestTimes", "notifyRatePerHour", "brainConcurrency", "channelMirror", "approvalMode"] as const;
+export const AGENT_SETTABLE = [
+  "timezone",
+  "defaultAgent",
+  "language",
+  "quietHours",
+  "digestTimes",
+  "notifyRatePerHour",
+  "brainConcurrency",
+  "channelMirror",
+  "approvalMode",
+  "voice",
+  "transcription",
+] as const;
 
 const SECRET_KEY = /key|token|secret|password/i;
 
@@ -165,8 +177,10 @@ export function registerHubTools(hub: Hub): void {
         `Change hub settings when the user asks. Allowed keys: ${AGENT_SETTABLE.join(", ")}. ` +
         'Shapes: timezone "Europe/Berlin"; language "en"|"ru"; quietHours {enabled, start:"23:00", end:"08:00"}; digestTimes ["09:00","19:00"]; notifyRatePerHour number; brainConcurrency number; defaultAgent agent id; ' +
         "channelMirror true|false (the default agent's replies to messages typed in the web UI also go to Telegram); " +
-        'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card). ' +
-        "Network allowlists can only be changed by the user in the settings panel.",
+        'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card); ' +
+        'voice {voice: a voice id from hub_speech_status, speed: 0.5–2} (how the hub\'s local voice speaks); ' +
+        'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install). ' +
+        "Network allowlists and a custom speech-to-text server can only be changed by the user in the settings panel.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
     },
     async (i, ctx) => {
@@ -174,6 +188,10 @@ export function registerHubTools(hub: Hub): void {
       const refused = Object.keys(patch).filter((k) => !(AGENT_SETTABLE as readonly string[]).includes(k));
       if (refused.length) return text(`Refused: ${refused.join(", ")} can only be changed by the user in the settings panel (gear icon → Settings).`, true);
       if (!Object.keys(patch).length) return text("Nothing to change.", true);
+      // A server of the agent's choosing would receive the person's voice: that one stays with the person.
+      const tr = patch.transcription as { provider?: unknown; baseUrl?: unknown; keyRef?: unknown } | undefined;
+      if (tr && typeof tr === "object" && (tr.provider === "custom" || tr.baseUrl !== undefined || tr.keyRef !== undefined))
+        return text("Refused: a custom speech-to-text server can only be set by the user in the settings panel (gear icon → Settings → Voice).", true);
       const err = validateSettings(patch);
       if (err) return text(err, true);
       // Asking the person more needs no yes; letting a reviewer decide instead of them does, on a card.
@@ -203,6 +221,37 @@ export function registerHubTools(hub: Hub): void {
       }
       const next = hub.updateSettings(patch, "agent");
       return text(`Settings updated: ${Object.keys(patch).map((k) => `${k}=${JSON.stringify((next as any)[k])}`).join(", ")}`);
+    },
+  );
+
+  // ---------- the local speech engine (speech/engine.ts) ----------
+
+  reg(
+    {
+      name: "speech_status",
+      effect: "read",
+      description: "What the hub's local speech engine has: the engine itself, its voices (ids, languages, sizes, licenses, installed or not), the voice and speed in use, local speech-to-text, and a download in progress.",
+      inputSchema: obj({}),
+    },
+    () => text(speechSummary(hub.speech.status("en"))),
+  );
+
+  reg(
+    {
+      name: "speech_install",
+      effect: "local-write",
+      description:
+        "Download the hub's local speech engine so it can speak and hear without an API key: the engine itself the first time (about 20 MB), " +
+        "a voice (about 21 MB; `voice`, else the voice in use) and, with stt true, the local speech-to-text model for the hub language " +
+        "(GigaAM v3 for Russian, 156 MB; Parakeet v3 otherwise, 465 MB). `stt` alone downloads no voice. Downloads run in the background, one at a time: " +
+        "check with hub_speech_status. Tell the person the size first, and the license when it is not CC0 " +
+        "(Ryan: CC BY-NC-SA 4.0, non-commercial; Irina and Amy: unknown). The local engine hears WAV recordings (the voice overlay's), not Telegram's voice notes.",
+      inputSchema: obj({ voice: { type: "string", description: "A voice id from hub_speech_status" }, stt: { type: "boolean", description: "Also the local speech-to-text model" } }),
+    },
+    (i) => {
+      const s = hub.speech.install({ voice: i.voice, stt: i.stt === true }, "en");
+      hub.audit.append("agent", "speech.install", undefined, { voice: i.voice ?? null, stt: i.stt === true });
+      return text(speechSummary(s));
     },
   );
 
@@ -1552,6 +1601,21 @@ function validateSettings(p: Record<string, unknown>): string | undefined {
     if (k in p && (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max)) return `${k} must be a whole number from ${min} to ${max}.`;
   }
   return undefined;
+}
+
+/** The local speech engine's status for the model. */
+export function speechSummary(s: SpeechStatus): string {
+  const mb = (n: number) => `${Math.max(1, Math.round(n / (1024 * 1024)))} MB`;
+  const engine =
+    s.runtime === "ready" ? "installed" : s.runtime === "downloading" ? "downloading" : s.runtime === "failed" ? "not installed (the last install failed)" : "not installed";
+  return [
+    `Engine: ${engine}.`,
+    ...(s.downloading ? [`Downloading ${s.downloading.item}: ${mb(s.downloading.received)} of ${mb(s.downloading.total)}.`] : []),
+    ...(s.error ? [`Last install failed: ${s.error}`] : []),
+    `Voice in use: ${s.voice}, speed ${s.speed}.`,
+    `Voices: ${s.voices.map((v) => `${v.id} (${v.name}, ${v.lang}, ${v.gender}, ${mb(v.size)}, license ${v.license}, ${v.installed ? "installed" : "not installed"})`).join("; ")}.`,
+    `Speech to text: provider ${s.stt.provider}; the local model ${s.stt.local.model} (${mb(s.stt.local.size)}) is ${s.stt.local.installed ? "installed" : "not installed"}.`,
+  ].join("\n");
 }
 
 function maskSecrets(s: Record<string, unknown>): Record<string, unknown> {

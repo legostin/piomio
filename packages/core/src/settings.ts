@@ -1,6 +1,7 @@
 import { DEFAULT_LOCALE, localeFromEnv, type Locale } from "@piomio/shared";
 import { json, type Db } from "./db.ts";
 import { DEFAULT_TRANSCRIPTION, type TranscriptionSettings } from "./transcribe.ts";
+import { DEFAULT_VOICE_SETTINGS, type VoiceSettings } from "./speech/settings.ts";
 
 export interface CoreSettings {
   timezone: string;
@@ -32,6 +33,8 @@ export interface CoreSettings {
   remoteAccess: boolean;
   /** Speech to text for voice messages (transcribe.ts). */
   transcription: TranscriptionSettings;
+  /** The local engine's voice and speed (speech/): unset, the hub language's default voice at normal speed. */
+  voice: VoiceSettings;
 }
 
 export const DEFAULT_BRAIN_EGRESS = [
@@ -81,6 +84,7 @@ export function defaultSettings(timezone: string, language: Locale = localeFromE
     language,
     remoteAccess: false,
     transcription: DEFAULT_TRANSCRIPTION,
+    voice: DEFAULT_VOICE_SETTINGS,
   };
 }
 

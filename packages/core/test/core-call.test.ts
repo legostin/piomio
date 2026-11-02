@@ -1,7 +1,7 @@
 // Core methods plugins call (core-call.ts) against a fake hub: a note that wakes an agent (conversations.tell), the
 // words of an audio clip (speech.transcribe) and a task that follows a skill (tasks.create).
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Conversation, Task } from "@piomio/shared";
@@ -58,9 +58,9 @@ function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: s
     },
     transcriber: {
       engine: () => (opts.engine === false ? undefined : { label: "Fake" }),
-      transcribe: async (file: string, mimeType?: string) => {
-        f.heard.push({ file, mimeType, bytes: readFileSync(file, "utf8") });
-        return opts.transcribe ? opts.transcribe(file) : "сначала каталог";
+      transcribeBuffer: async (data: Buffer, mimeType?: string, name?: string) => {
+        f.heard.push({ file: name ?? "", mimeType, bytes: data.toString("utf8") });
+        return opts.transcribe ? opts.transcribe(name ?? "") : "сначала каталог";
       },
     },
   } as unknown as Hub;
@@ -97,7 +97,7 @@ describe("core methods for plugins", () => {
     await expect(call("browser", "conversations.tell", { text: "  " })).rejects.toThrow(/text is required/);
   });
 
-  it("speech.transcribe turns a clip into words through a temp file it always removes", async () => {
+  it("speech.transcribe turns a clip into words, named by its type for the services", async () => {
     const f = fakeHub();
     const call = createCoreCall(f.hub);
     expect(await call("browser", "speech.transcribe", { check: true })).toEqual({ available: true });
@@ -107,17 +107,16 @@ describe("core methods for plugins", () => {
     expect(r).toEqual({ text: "сначала каталог" });
     expect(f.heard).toHaveLength(1);
     expect(f.heard[0]).toMatchObject({ mimeType: "audio/webm;codecs=opus", bytes: "OggS fake" });
-    expect(f.heard[0].file).toMatch(/\.webm$/);
-    expect(existsSync(f.heard[0].file)).toBe(false);
+    expect(f.heard[0].file).toBe("audio.webm");
 
-    // A failure keeps its reason, and the file is gone too.
+    // A failure keeps its reason.
     const failing = fakeHub({
       transcribe: async () => {
         throw new TranscribeError("Fake answered 401: Invalid API key");
       },
     });
     await expect(createCoreCall(failing.hub)("browser", "speech.transcribe", { data: Buffer.from("x").toString("base64"), mimeType: "audio/ogg" })).rejects.toThrow("Fake answered 401: Invalid API key");
-    expect(existsSync(failing.heard[0].file)).toBe(false);
+    expect(failing.heard[0].file).toBe("audio.ogg");
 
     await expect(call("browser", "speech.transcribe", { data: "", mimeType: "audio/ogg" })).rejects.toThrow(/no audio/);
     await expect(call("browser", "speech.transcribe", { data: "A".repeat(36 * 1024 * 1024), mimeType: "audio/ogg" })).rejects.toThrow(/25 MB/);

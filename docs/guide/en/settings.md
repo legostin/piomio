@@ -14,9 +14,10 @@ Just say it: "turn on quiet hours from 22:00", "my time zone is Europe/Berlin", 
 - quiet hours, digest times and notifications per hour;
 - parallel sessions per brain;
 - whether the default agent's replies to what you type in the web UI also go to Telegram;
-- auto mode, or asking you every time (turning auto mode on shows you a card first, see [Approvals and auto mode](approvals.md)).
+- auto mode, or asking you every time (turning auto mode on shows you a card first, see [Approvals and auto mode](approvals.md));
+- speech to text for voice messages (except your own server), and the voice and speed for reading aloud; it also downloads the local speech engine ("install local speech recognition"), see [Voice](#voice).
 
-It also connects plugins and services, changes their settings and makes agents. The rest of the **General** page is yours alone: the network allowlists, the approval timings, the details in Telegram and the speech-to-text choice. Ask for those, and the assistant points you to the panel.
+It also connects plugins and services, changes their settings and makes agents. The rest of the **General** page is yours alone: the network allowlists, the approval timings, the details in Telegram and your own speech-to-text server. Ask for those, and the assistant points you to the panel.
 
 ## The Settings panel
 
@@ -64,15 +65,34 @@ See [Approvals and auto mode](approvals.md).
 - **Parallel sessions per brain** (2, from 1 to 16): how many tasks and agent threads run at once on one brain on one computer. The rest wait in line; your own conversations never wait.
 - **Extra allowed hosts**: where brains may connect besides the default list (Anthropic, OpenAI, Kimi, GitHub, npm and the like). Wildcards like `*.example.com` work.
 
-### Voice messages
+### Voice
 
-Voice messages and audio files are turned into text before the agent answers.
+Voice messages and audio files are turned into text before the agent answers, and the hub can read text aloud with a voice of its own.
 
-- **Speech to text**: **Automatic: OpenAI or Groq, whichever key the vault has** (the default), **Groq (has a free tier)**, **OpenAI**, **My own server (OpenAI-compatible)** or **Off**. The keys are `groq_api_key` and `openai_api_key` in the vault; the assistant asks for one in the chat when it needs it.
+- **Speech to text**: **Automatic: OpenAI or Groq if the vault has a key, else this computer** (the default), **This computer (free, offline)**, **Groq (has a free tier)**, **OpenAI**, **My own server (OpenAI-compatible)** or **Off**. The keys are `groq_api_key` and `openai_api_key` in the vault; the assistant asks for one in the chat when it needs it.
 - **Model**: empty means the service's default.
 - **Server address** and **Key in the vault**: for your own server, for example a local Whisper. The address goes up to `/audio/transcriptions`, such as `http://127.0.0.1:8000/v1`.
+- **Voice for reading aloud** and **Speed** (0.75× to 1.5× here, 0.5× to 2× in the chat): the voice the hub speaks with. Unset, it is Dmitri for a Russian hub and Ryan otherwise, at 1×. Saved with **Save**.
 
 Under the choice you see what works now, or that nothing is set up and voice messages reach the agent as audio files.
+
+#### The local speech engine
+
+The hub can speak and hear on its own computer, free and without the internet once it is downloaded. It is not in the installers: **Install** downloads it when you want it, or say "install local speech recognition" in the chat. Each download is checked against a fixed checksum before it is unpacked, one at a time, with its progress under the button; a broken one leaves nothing behind and shows why, with **Retry**. What it downloads:
+
+- the engine itself, the first time: about 20 MB ([sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), Apache-2.0, and the espeak-ng phonemizer the voices need, GPL-3.0, which runs in a process of its own);
+- a voice, about 20 MB each (the table below);
+- speech recognition for the hub language, when **Speech to text** is **This computer (free, offline)**: GigaAM v3 for Russian (156 MB, MIT), Parakeet TDT v3 for English and 24 other European languages (465 MB, CC BY 4.0).
+
+| Voice | Language | License of its recordings |
+|---|---|---|
+| Dmitri | Russian | CC0 |
+| Denis | Russian | CC0 |
+| Irina | Russian | unknown |
+| Ryan | English | CC BY-NC-SA 4.0 (non-commercial) |
+| Amy | English | unknown |
+
+The local engine hears WAV recordings, such as the phrases a voice overlay sends. Telegram voice notes and what the web chat records are in other formats: they still need a Groq or OpenAI key. Everything goes into the `voice` folder in the data folder (see [Files and folders](#files-and-folders)); delete it to free the space.
 
 ### Plugins' cards
 
@@ -213,4 +233,4 @@ The chat and the console listen on `127.0.0.1` unless `PIOMIO_HOST` says otherwi
 | From source | `.data` in the repository | the shell | the terminal |
 | A computer of your hub | `~/.piomio-node` | `~/.piomio-node/policy.json` | `journalctl --user -u piomio-node`, or the app's log |
 
-An install from when Piomio was called Owlbot keeps its `Owlbot` folder. In the data folder: `piomio.db` (chats, agents, tasks, settings), `vault.db` (the vault, encrypted), `workspaces` (the agents' working folders), `plugins` and `plugins-data` (installed plugins and their data, memory included), `agents`, `skills`, `commands`, `pages`, `tailnet` (the access-from-anywhere node), `devices` (the phones' certificate), `tools` (CLIs installed from the chat) and `backups`.
+An install from when Piomio was called Owlbot keeps its `Owlbot` folder. In the data folder: `piomio.db` (chats, agents, tasks, settings), `vault.db` (the vault, encrypted), `workspaces` (the agents' working folders), `plugins` and `plugins-data` (installed plugins and their data, memory included), `agents`, `skills`, `commands`, `pages`, `tailnet` (the access-from-anywhere node), `devices` (the phones' certificate), `tools` (CLIs installed from the chat), `voice` (the local speech engine and its voices, once downloaded) and `backups`.

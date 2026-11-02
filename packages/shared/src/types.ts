@@ -1318,6 +1318,46 @@ export interface AuditEntry {
   hash: string;
 }
 
+// ---------- Voice: speech to text and the hub's local speech engine (core speech/) ----------
+
+/** Where voice messages are turned into text: a hosted service, the person's own server, or the hub's local engine. */
+export type TranscriptionProvider = "auto" | "openai" | "groq" | "custom" | "local" | "off";
+
+/** A voice the local engine can speak with (GET /api/speech). */
+export interface VoiceInfo {
+  id: string;
+  /** The language it speaks: "ru", "en". */
+  lang: string;
+  gender: "male" | "female";
+  /** In the reader's language. */
+  name: string;
+  /** Download size in bytes. */
+  size: number;
+  /** The voice data's license, as its model card gives it ("CC0", "CC BY-NC-SA 4.0", "unknown"). */
+  license: string;
+  installed: boolean;
+}
+
+/** What the local speech engine has and does (GET /api/speech, POST /api/speech/install, UiEvent speech.status). */
+export interface SpeechStatus {
+  /** The engine itself (sherpa-onnx and the phonemizer, downloaded on first use). */
+  runtime: "missing" | "downloading" | "ready" | "failed";
+  /** Why the last install failed, in the reader's language. */
+  error?: string;
+  /** The voice speech is spoken with (settings.voice.voice, else the hub language's default). */
+  voice: string;
+  /** The speed it speaks at (settings.voice.speed, else 1). */
+  speed: number;
+  voices: VoiceInfo[];
+  stt: {
+    provider: TranscriptionProvider;
+    /** The local speech-to-text model for the hub language; size is its download in bytes. */
+    local: { model: string; installed: boolean; size: number };
+  };
+  /** The download in progress (item: "runtime", a voice id or a speech-to-text model id). */
+  downloading?: { item: string; received: number; total: number };
+}
+
 // ---------- Realtime events (hub → web) ----------
 
 export type UiEvent =
@@ -1357,6 +1397,8 @@ export type UiEvent =
   | { type: "secret.request"; data: SecretRequest }
   | { type: "agent_draft.updated"; data: AgentDraft }
   | { type: "brain.login"; data: BrainLoginState }
+  /** The local speech engine changed (installed, a download's progress, settings): `status` and `data` are the same. */
+  | { type: "speech.status"; status: SpeechStatus; data: SpeechStatus }
   | { type: "plugin.event"; data: { pluginId: string; channel: string; payload: unknown } };
 
 // ---------- Integrations ----------

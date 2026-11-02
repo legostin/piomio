@@ -129,11 +129,12 @@ Voice messages and audio files are turned into text before the agent answers. Th
 
 Say "set up voice messages". The assistant asks for a Groq or OpenAI API key with a card that saves it straight into the vault. Groq has a free tier. Once a key is in the vault, voice messages work.
 
-The same lives in **Settings** → **General** → **Voice messages**. Under **Speech to text** you pick one of these:
+The same lives in **Settings** → **General** → **Voice**. Under **Speech to text** you pick one of these:
 
 | Option | What it uses |
 |---|---|
-| **Automatic: OpenAI or Groq, whichever key the vault has** | The default. OpenAI first, then Groq |
+| **Automatic: OpenAI or Groq if the vault has a key, else this computer** | The default. OpenAI first, then Groq, then the local engine once it is installed |
+| **This computer (free, offline)** | The hub's own engine: **Install** downloads it (GigaAM v3 for Russian, Parakeet TDT v3 otherwise), see [the local speech engine](settings.md#the-local-speech-engine). It hears WAV recordings only, not Telegram's voice notes |
 | **Groq (has a free tier)** | `groq_api_key` in the vault, model `whisper-large-v3-turbo` |
 | **OpenAI** | `openai_api_key` in the vault, model `gpt-4o-mini-transcribe` |
 | **My own server (OpenAI-compatible)** | **Server address** (up to `/audio/transcriptions`, for example a local Whisper at `http://127.0.0.1:8000/v1`), a **Model** and, if it needs one, a **Key in the vault** (`vault://…`) |
