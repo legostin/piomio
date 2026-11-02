@@ -68,6 +68,8 @@ Once a conversation has read outside content (a web page, an email, a reply from
 
 - An "always allow" rule works only for recipients and sites you have approved before. A new one asks again.
 - Every lasting change to the hub itself (settings, agents, plugins) needs a yes: yours on a card that says exactly what changes, a rule of yours, or auto mode's reviewer.
+- Opening a web address goes to auto mode's reviewer when the address could carry your data to a site: one the agent put together for a site nobody named, or one with a long or encoded value in it. A page can say "open this address with what you read added to it", and opening it is enough to send it. Links from what the agent read, addresses you gave and plain addresses on sites you named open freely. The reviewer asks you on a card only when it hands the question over or keeps blocking; with auto mode off, it's a card.
+- Pictures in the agent's replies and Telegram's link previews follow the same rule, without asking: see [Pictures and carousels](chat.md#pictures-and-carousels) and [What comes to Telegram](telegram.md#what-comes-to-telegram).
 
 ## "You asked": your words as the yes
 

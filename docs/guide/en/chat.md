@@ -78,6 +78,8 @@ Replies are Markdown: headings, lists, tables, links and code blocks with a Copy
 
 An agent can show pictures right in the chat: one picture as a card, two to ten as a carousel you swipe. Tap one to open it full screen. Pictures a task shows also reach the dialog that started the task.
 
+The hub loads every picture for the chat itself, so a picture's address reaches its site as soon as you see it. After the agent has read outside content (a web page, an email), a picture whose address it put together itself doesn't load on its own: the address could carry data from the chat to that site. In its place is a quiet line, **Picture from** and the site, with **Show**: tap it and the picture loads, from then on everywhere. Pictures from what the agent read, from your own messages and plain addresses on sites you named load as usual. A news card, a channel post or a page cover just leaves such a picture out.
+
 ### Maps and routes
 
 For places, addresses and directions the agent shows an OpenStreetMap map: places with symbols and short notes, and a route through them. Walking, driving and cycling routes follow real roads and paths and show length and time; public transport is drawn as straight lines.
