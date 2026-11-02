@@ -1,6 +1,6 @@
-// The website's checks, on the built site (npm run build:site first): the landing page and the server guide open without
-// errors in both languages, and every chapter of the demo plays to its end in both languages, fast, without the demo hub
-// meeting a request it does not know.
+// The website's checks, on the built site (npm run build:site first): the landing page, the server guide and every docs
+// page open without errors in both languages, and every chapter of the demo plays to its end in both languages, fast,
+// without the demo hub meeting a request it does not know.
 //
 //   node packages/site/scripts/check.mjs [--speed 8] [--only mail,send] [--lang ru]
 //
@@ -89,7 +89,38 @@ for (const lang of langs) {
   console.log(`page /${lang}/server/ checked`);
 }
 
-// 3. Every chapter, in every language, to its end.
+// 3. The docs: every page of the newest line, prerendered and hydrated without a mismatch, its language links and its
+// sidebar on the same page, its Markdown next to it; the versioned copy of the overview.
+const nav = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../docs/guide/nav.json"), "utf8"));
+const slugs = nav.groups.flatMap((g) => g.pages);
+const line = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../package.json"), "utf8")).version.split(".").slice(0, 2).join(".");
+for (const lang of langs) {
+  const page = await context.newPage();
+  for (const [slug, prefix] of [...slugs.map((s) => [s, ""]), ["index", `${line}/`]]) {
+    const path = `/${lang}/docs/${prefix}${slug === "index" ? "" : `${slug}/`}`;
+    const problems = watch(page, path);
+    const res = await page.goto(`${origin}${base}${path.slice(1)}`, { waitUntil: "networkidle" });
+    if (!res?.ok()) failures.push(`${path}: HTTP ${res?.status()}`);
+    const seen = await page.evaluate(() => ({
+      page: document.documentElement.dataset.page,
+      title: document.querySelector("article h1")?.textContent ?? "",
+      other: [...document.querySelectorAll("header a[hreflang]")].map((a) => a.getAttribute("href")),
+      current: [...document.querySelectorAll('aside nav a[aria-current="page"]')].map((a) => a.getAttribute("href")),
+    }));
+    const tail = `docs/${prefix}${slug === "index" ? "" : `${slug}/`}`;
+    if (seen.page !== "docs" || !seen.title) failures.push(`${path}: ${JSON.stringify(seen)}`);
+    if (!seen.other.every((h) => h?.endsWith(tail))) failures.push(`${path}: language links ${seen.other.join(", ")}`);
+    if (!seen.current.every((h) => h?.endsWith(tail)) || !seen.current.length) failures.push(`${path}: sidebar marks ${seen.current.join(", ")}`);
+    failures.push(...problems());
+    page.removeAllListeners();
+  }
+  const md = await context.request.get(`${origin}${base}${lang}/docs/${slugs[1]}.md`);
+  if (!md.ok() || !(await md.text()).startsWith("---")) failures.push(`/${lang}/docs/${slugs[1]}.md: not the page's Markdown`);
+  await page.close();
+  console.log(`docs /${lang}/docs/: ${slugs.length} pages checked`);
+}
+
+// 4. Every chapter, in every language, to its end.
 for (const lang of langs)
   for (const chapter of chapters) {
     const page = await context.newPage();

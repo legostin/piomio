@@ -7,6 +7,9 @@
 # made by hand). Run this workflow by hand to release a minor or major version.
 # Pushes close together make one release: a newer one waiting replaces an older one, and each release takes main as it
 # is when it starts.
+# The docs (docs/guide) describe the newest release line; a minor or major release freezes them for the line before it
+# into docs/versions/<major.minor>, in the same commit (made by hand, it releases main as the last patch release left
+# it, so the docs are that line's last ones). The site rebuilds after the release (site.yml) and names the new version.
 name: release on push
 
 on:
@@ -108,6 +111,7 @@ jobs:
         env:
           BUMP: ${{ inputs.bump || 'patch' }}
         run: |
+          old=$(node -p "require('./package.json').version")
           v=$(node --input-type=module -e '
             import { readFileSync, writeFileSync } from "node:fs";
             const [major, minor, patch] = JSON.parse(readFileSync("package.json", "utf8")).version.split(".").map(Number);
@@ -120,7 +124,16 @@ jobs:
             }
             console.log(v);
           ')
-          git diff
+          # A new line: the docs of the one before stay on the site as they are now (docs/guide/README.md).
+          line() { echo "$1" | cut -d. -f1,2; }
+          if [ "$(line "$old")" != "$(line "$v")" ] && [ -f docs/guide/nav.json ]; then
+            dir="docs/versions/$(line "$old")"
+            rm -rf "$dir" && mkdir -p "$dir"
+            cp -R docs/guide/. "$dir/" && rm -f "$dir/README.md"
+            printf '{ "release": "%s" }\n' "$old" >"$dir/release.json"
+            git add "$dir"
+          fi
+          git diff HEAD --stat
           echo "version=$v" >>"$GITHUB_OUTPUT"
       - name: Commit, tag and start the release
         if: steps.due.outputs.due == 'true'

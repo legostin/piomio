@@ -434,6 +434,9 @@ export function Footer() {
           <a href={`${repo}#readme`} className="hover:text-fg">
             {t("footer.readme")}
           </a>
+          <a href={`${data.base}${lang}/docs/`} className="hover:text-fg">
+            {t("footer.docs")}
+          </a>
           <a href={`${data.base}${lang}/server/`} className="hover:text-fg">
             {t("footer.server")}
           </a>

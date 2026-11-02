@@ -1,27 +1,54 @@
 // Prerendering: each page (the landing page, the server guide) per language from the client build's index.html and the
-// server build's render(), plus the language chooser at the root (with the English page's head, so a shared bare link
-// still shows a card), a 404 page, sitemap.xml, robots.txt and llms.txt.
+// server build's render(), the docs (scripts/docs.mjs: every line, every page, in every language, with each page's
+// Markdown next to it for agents), plus the language chooser at the root (with the English page's head, so a shared
+// bare link still shows a card), a 404 page, sitemap.xml, robots.txt and llms.txt.
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { frontMatter } from "../src/docs/markdown.ts";
+import { loadDocs, pageData } from "./docs.mjs";
 
 /**
- * @param {{ dist: string; ssrEntry: string; languages: readonly string[]; base: string; origin: string }} o
+ * @param {{ dist: string; ssrEntry: string; languages: readonly string[]; base: string; origin: string; release?: string; repo: string }} o
  */
-export async function prerender({ dist, ssrEntry, languages, base, origin }) {
+export async function prerender({ dist, ssrEntry, languages, base, origin, release, repo }) {
   const template = readFileSync(join(dist, "index.html"), "utf8");
-  const { render, llmsTxt, PAGES, pagePath } = await import(pathToFileURL(ssrEntry).href);
+  const { render, renderDoc, llmsTxt, PAGES, pagePath } = await import(pathToFileURL(ssrEntry).href);
+  const write = (file, text) => {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+  };
+  // Functions as replacements: a page's text may hold `$&` or `$1` (shell commands in the docs).
+  const fill = (lang, marked, head, html) =>
+    template
+      .replace('<html lang="en">', () => `<html lang="${lang}"${marked ? ` data-page="${marked}"` : ""}>`)
+      .replace("<!--head-->", () => head)
+      .replace("<!--app-->", () => html);
   for (const lang of languages)
     for (const which of PAGES) {
       const { html, head } = render(lang, which);
-      const page = template
-        .replace('<html lang="en">', `<html lang="${lang}"${which === "home" ? "" : ` data-page="${which}"`}>`)
-        .replace("<!--head-->", head)
-        .replace("<!--app-->", html);
-      mkdirSync(join(dist, lang, pagePath(which)), { recursive: true });
-      writeFileSync(join(dist, lang, pagePath(which), "index.html"), page);
+      write(join(dist, lang, pagePath(which), "index.html"), fill(lang, which === "home" ? "" : which, head, html));
     }
+
+  // The docs: the newest line at /<lang>/docs/… and /<lang>/docs/<line>/…, older lines at /<lang>/docs/<line>/….
+  const lines = loadDocs({ languages, release });
+  let docPages = 0;
+  for (const line of lines)
+    for (const prefix of line.current ? ["", `${line.id}/`] : [`${line.id}/`])
+      for (const lang of languages)
+        for (const slug of Object.keys(line.pages[lang])) {
+          const doc = pageData({ lines, line, lang, slug, prefix, repo });
+          const { html, head } = renderDoc(doc);
+          const json = JSON.stringify(doc).replace(/</g, "\\u003c");
+          const folder = join(dist, lang, "docs", prefix, slug === "index" ? "" : slug);
+          write(join(folder, "index.html"), fill(lang, "docs", `${head}\n    <script type="application/json" id="doc-data">${json}</script>`, html));
+          write(join(dist, lang, "docs", prefix, `${slug}.md`), doc.source);
+          docPages++;
+        }
+  const newest = lines[0];
+  const docSlugs = Object.keys(newest.pages.en);
+  console.log(`[site] docs: ${docPages} pages, lines ${lines.map((l) => `${l.id} (${l.release})`).join(", ")}`);
 
   // The root and unknown addresses: the visitor's language (English by default), plain links without scripts.
   const chooser = (head) => `<!doctype html>
@@ -52,22 +79,32 @@ ${head}
   const alternates = [...languages.map((l) => `<link rel="alternate" hreflang="${l}" href="${origin}${base}${l}/" />`), `<link rel="alternate" hreflang="x-default" href="${origin}${base}en/" />`];
   writeFileSync(join(dist, "index.html"), chooser(render("en").head));
   writeFileSync(join(dist, "404.html"), chooser(["<title>Piomio</title>", ...alternates].join("\n")));
-  writeFileSync(join(dist, "llms.txt"), llmsTxt());
+  writeFileSync(
+    join(dist, "llms.txt"),
+    llmsTxt(
+      docSlugs.map((slug) => {
+        const { meta } = frontMatter(newest.pages.en[slug]);
+        return { slug, title: meta.title, description: meta.description };
+      }),
+    ),
+  );
 
   const today = new Date().toISOString().slice(0, 10);
   writeFileSync(
     join(dist, "sitemap.xml"),
     `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
-${PAGES.flatMap((which) =>
-  languages.map(
-    (l) => `  <url>
-    <loc>${origin}${base}${l}/${pagePath(which)}</loc>
+${[...PAGES.map(pagePath), ...docSlugs.map((slug) => `docs/${slug === "index" ? "" : `${slug}/`}`)]
+  .flatMap((path) =>
+    languages.map(
+      (l) => `  <url>
+    <loc>${origin}${base}${l}/${path}</loc>
     <lastmod>${today}</lastmod>
-${languages.map((x) => `    <xhtml:link rel="alternate" hreflang="${x}" href="${origin}${base}${x}/${pagePath(which)}" />`).join("\n")}
+${languages.map((x) => `    <xhtml:link rel="alternate" hreflang="${x}" href="${origin}${base}${x}/${path}" />`).join("\n")}
   </url>`,
-  ),
-).join("\n")}
+    ),
+  )
+  .join("\n")}
 </urlset>
 `,
   );

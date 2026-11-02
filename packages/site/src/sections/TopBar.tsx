@@ -1,13 +1,14 @@
-// The top bar: the owl and the name, the page's parts, the language, GitHub and the download.
+// The top bar: the owl and the name, the page's parts and the docs, the language, GitHub and the download.
 
-import { siteConfig } from "../../site.config";
+import { siteConfig, type Lang } from "../../site.config";
 import { data } from "../data";
 import { useI18n } from "../i18n";
-import { GitHub, OwlMark, Star } from "../components/icons";
+import { Book, GitHub, OwlMark, Star } from "../components/icons";
 import { DownloadButton } from "../components/Download";
 import { pagePath, type Page } from "../pages";
 
-export function TopBar({ page = "home" }: { page?: Page }) {
+/** `hrefFor`: this page in another language, when it is not a fixed page (a docs page). */
+export function TopBar({ page = "home", hrefFor }: { page?: Page; hrefFor?: (lang: Lang) => string }) {
   const { lang, t } = useI18n();
   // On another page the landing page's parts are links back to it.
   const home = page === "home" ? "" : `${data.base}${lang}/`;
@@ -17,6 +18,7 @@ export function TopBar({ page = "home" }: { page?: Page }) {
     [`${home}#security`, t("nav.security")],
     [`${home}#faq`, t("nav.faq")],
   ];
+  const docs = `${data.base}${lang}/docs/`;
   return (
     <header className="sticky top-0 z-40 border-b border-hairline bg-[var(--glass)] backdrop-blur-xl backdrop-saturate-150">
       <nav className="mx-auto flex h-16 max-w-[1320px] items-center gap-3 px-4 sm:px-6 lg:px-10">
@@ -30,13 +32,26 @@ export function TopBar({ page = "home" }: { page?: Page }) {
               {label}
             </a>
           ))}
+          <a href={docs} aria-current={page === "docs" ? "page" : undefined} className="rounded-full px-3 py-1.5 text-[14.5px] font-medium text-fg-2 transition-colors hover:bg-surface-2 hover:text-fg aria-[current=page]:text-fg">
+            {t("nav.docs")}
+          </a>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {/* Below lg the page's parts hide; the docs stay, as a word, or a book where even that doesn't fit. */}
+          <a
+            href={docs}
+            aria-current={page === "docs" ? "page" : undefined}
+            aria-label={t("nav.docs")}
+            className="grid size-9 place-items-center rounded-full text-fg-2 hover:text-fg aria-[current=page]:text-fg sm:size-auto sm:px-2.5 sm:py-1.5 lg:hidden"
+          >
+            <Book size={18} className="sm:hidden" />
+            <span className="hidden text-[14px] font-medium sm:inline">{t("nav.docs")}</span>
+          </a>
           <div className="flex rounded-full bg-surface-2 p-0.5 text-[12.5px] font-semibold" role="group" aria-label={t("nav.language")}>
             {siteConfig.languages.map((l) => (
               <a
                 key={l}
-                href={`${data.base}${l}/${pagePath(page)}`}
+                href={hrefFor ? hrefFor(l) : `${data.base}${l}/${pagePath(page)}`}
                 hrefLang={l}
                 lang={l}
                 aria-current={l === lang ? "page" : undefined}

@@ -4,6 +4,7 @@
 
 import type { ReactNode } from "react";
 import { siteConfig } from "../../site.config";
+import { data } from "../data";
 import { useI18n, type MessageKey } from "../i18n";
 import { CopyBlock } from "../components/CopyBlock";
 import { Rich } from "../components/Rich";
@@ -69,7 +70,7 @@ function Commands({ title, rows }: { title: string; rows: Array<[string, Message
 }
 
 export function ServerGuide() {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
   const install = `curl -fsSL ${siteConfig.installScript} | sh`;
   const ip = t("server.ph.ip");
   const signIn = "sudo -iu piomio\ncurl -fsSL https://chatgpt.com/codex/install.sh | sh\ncodex login --device-auth";
@@ -157,7 +158,7 @@ export function ServerGuide() {
             ))}
           </ul>
           <p>
-            <Rich text={t("server.address.safe", { proxy: `${REPO}#your-own-proxy` })} />
+            <Rich text={t("server.address.safe", { proxy: `${data.base}${lang}/${t("server.address.proxyDoc")}` })} />
           </p>
           <p>
             <Rich text={t("server.address.bare")} />
