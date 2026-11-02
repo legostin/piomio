@@ -37,7 +37,7 @@ describe("brain CLI installs", () => {
     expect(cliToolSpecs("freebsd", "x64", false).map((t) => t.brainId)).toEqual(["claude-code", "kimi"]);
   });
 
-  it("offers nothing when installs are off (Docker, user isolation)", () => {
+  it("offers nothing when installs are off (a hub run from the source code)", () => {
     const off = new CliTools(tmp(), false);
     expect(off.forBrain("codex")).toBeUndefined();
     expect(off.binDirs()).toEqual([]);

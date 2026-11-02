@@ -16,7 +16,6 @@ set -eu
 LINK="${1:-}"
 
 REPO="${PIOMIO_REPO:-legostin/piomio}"
-DOCKER_URL="https://github.com/$REPO#on-a-server-docker"
 
 case "${PIOMIO_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in
   ru*) L=ru ;;
@@ -26,14 +25,14 @@ esac
 # What the installer says, in English and Russian (packages/core/test/install-script.test.ts keeps them in step).
 msg() {
   case "$L:$1" in
-    en:not_linux) echo "This installer is for Linux servers. On a Mac or Windows install the app from https://piomio.io; elsewhere use Docker: $DOCKER_URL" ;;
-    ru:not_linux) echo "Этот установщик — для серверов на Linux. На Mac и Windows поставьте приложение с https://piomio.io, в остальных случаях — Docker: $DOCKER_URL" ;;
-    en:arch) echo "This processor (%s) is not supported: x86_64 and arm64 are. Docker may work: $DOCKER_URL" ;;
-    ru:arch) echo "Этот процессор (%s) не поддерживается, только x86_64 и arm64. Возможно, подойдёт Docker: $DOCKER_URL" ;;
-    en:systemd) echo "This Linux has no systemd, which keeps Piomio running. Use Docker: $DOCKER_URL" ;;
-    ru:systemd) echo "На этом Linux нет systemd, который держит Piomio запущенным. Используйте Docker: $DOCKER_URL" ;;
-    en:musl) echo "This Linux uses musl (Alpine and the like), and Piomio needs glibc. Use Docker: $DOCKER_URL" ;;
-    ru:musl) echo "Этот Linux на musl (Alpine и похожие), а Piomio нужен glibc. Используйте Docker: $DOCKER_URL" ;;
+    en:not_linux) echo "This installer is for Linux servers. On a Mac or Windows install the app from https://piomio.io." ;;
+    ru:not_linux) echo "Этот установщик — для серверов на Linux. На Mac и Windows поставьте приложение с https://piomio.io." ;;
+    en:arch) echo "This processor (%s) is not supported: x86_64 and arm64 are." ;;
+    ru:arch) echo "Этот процессор (%s) не поддерживается, только x86_64 и arm64." ;;
+    en:systemd) echo "This Linux has no systemd, which keeps Piomio running: use Ubuntu, Debian, Fedora or the like." ;;
+    ru:systemd) echo "На этом Linux нет systemd, который держит Piomio запущенным: подойдут Ubuntu, Debian, Fedora и похожие." ;;
+    en:musl) echo "This Linux uses musl (Alpine and the like), and Piomio needs glibc: use Ubuntu, Debian, Fedora or the like." ;;
+    ru:musl) echo "Этот Linux на musl (Alpine и похожие), а Piomio нужен glibc: подойдут Ubuntu, Debian, Fedora и похожие." ;;
     en:need) echo "Piomio's installer needs %s: install it and run this again." ;;
     ru:need) echo "Установщику Piomio нужен %s: установите его и запустите снова." ;;
     en:user_new) echo "Created the user %s without sudo: Piomio and its agents work as this user." ;;

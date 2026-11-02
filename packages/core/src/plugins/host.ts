@@ -279,21 +279,14 @@ export class PluginHost {
     const cfg = this.d.config;
     const proxyToken = this.d.egress.issueToken(`plugin:${id}`, rec.granted.network);
     const proxyUrl = `http://${proxyToken}:x@127.0.0.1:${cfg.egressPort}`;
-    // Builtin brain plugins run harness CLIs (claude, codex) as the "agent" user with a persistent home where the CLI
-    // logins live (config.brainHome: the user's own home in the desktop app); everything else runs as the
-    // unprivileged "plugin" user.
+    // Builtin brain plugins run harness CLIs (claude, codex) with a persistent home where the CLI logins live
+    // (config.brainHome: the user's own home in the desktop app); everything else gets its data dir as its home.
     const isBrainHost = rec.source === "builtin" && rec.layout.manifest.contributes.brains.length > 0;
     const home = isBrainHost ? cfg.brainHome : dataDir;
-    const runAs = isBrainHost ? cfg.isolation.agentUser : cfg.isolation.pluginUser;
-    if (cfg.isolation.users) {
-      // Directories must belong to the user the plugin runs as (plugins-data is sticky world-writable, like /tmp).
-      execFileSync("sudo", ["-n", "-u", runAs, "--", "mkdir", "-p", dataDir, home], { stdio: "pipe", env: passEnv() });
-    } else {
-      mkdirSync(dataDir, { recursive: true });
-      mkdirSync(home, { recursive: true });
-      // Running as the user: CLIs that keep logins in the macOS keychain must find it from their own HOME.
-      if (isBrainHost) linkUserKeychains(home);
-    }
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    // Running as the user: CLIs that keep logins in the macOS keychain must find it from their own HOME.
+    if (isBrainHost) linkUserKeychains(home);
     const env: Record<string, string> = {
       HOME: home,
       PIOMIO_DATA_DIR_PLUGIN: dataDir,
@@ -309,14 +302,8 @@ export class PluginHost {
     };
     const runner = join(cfg.appRoot, "packages", "plugin-sdk", "src", "runner.ts");
     const nodeArgs = ["--disable-warning=ExperimentalWarning", runner, rec.layout.serverEntry];
-    let child: ChildProcess;
-    if (cfg.isolation.users) {
-      const s = sudoSpawn(runAs, { ...passEnv(), ...env }, process.execPath, nodeArgs);
-      child = spawn(s.command, s.args, { cwd: rec.dir, env: s.env, stdio: ["pipe", "pipe", "pipe"] });
-    } else {
-      const base = isBrainHost ? withPath(scrubEnv(process.env), [], this.d.cliBinDirs?.() ?? []) : scrubEnv(process.env);
-      child = spawn(process.execPath, nodeArgs, { cwd: rec.dir, env: { ...base, ...env }, stdio: ["pipe", "pipe", "pipe"] });
-    }
+    const base = isBrainHost ? withPath(scrubEnv(process.env), [], this.d.cliBinDirs?.() ?? []) : scrubEnv(process.env);
+    const child: ChildProcess = spawn(process.execPath, nodeArgs, { cwd: rec.dir, env: { ...base, ...env }, stdio: ["pipe", "pipe", "pipe"] });
 
     const peer = createRpcPeer(ndjsonTransport(child.stdout!, child.stdin!));
     const running: Running = { child, peer, stopping: false, unsubs: [] };
@@ -791,23 +778,6 @@ export class PluginHost {
     this.d.onLayoutsChanged();
     this.d.bus.emit("plugins.updated", {});
   }
-}
-
-/**
- * Run `command` as another unix user with exactly `env`. The variables travel in sudo's own environment
- * (`--preserve-env`, allowed by the sudoers rule), never on the command line: any user in the container can
- * read command lines with ps, and these carry egress tokens and MCP server secrets.
- */
-export function sudoSpawn(user: string, env: Record<string, string>, command: string, args: string[]): { command: string; args: string[]; env: Record<string, string> } {
-  for (const k of Object.keys(env)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`invalid environment variable name: ${k}`);
-  return { command: "sudo", args: ["-n", `--preserve-env=${Object.keys(env).join(",")}`, "-u", user, "--", command, ...args], env };
-}
-
-/** Harmless variables isolated children still need: binaries, locale, X display, browsers. */
-export function passEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const out: Record<string, string> = { PATH: env.PATH ?? "/usr/local/bin:/usr/bin:/bin", LANG: env.LANG ?? "C.UTF-8" };
-  for (const k of ["LC_ALL", "DISPLAY", "PLAYWRIGHT_BROWSERS_PATH", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "DISABLE_AUTOUPDATER"]) if (env[k]) out[k] = env[k]!;
-  return out;
 }
 
 export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string> {

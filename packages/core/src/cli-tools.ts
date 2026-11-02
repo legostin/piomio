@@ -3,8 +3,8 @@
 // npm-cli.js that came with the hub's own Node. A missing brain CLI is installed from its official npm package into
 // <data>/tools when the user signs it in from the chat; its native binary goes on the PATH of the plugin hosting that
 // brain, after the system PATH, so a CLI the user installed themselves wins (Kimi Code is a Node script: its npm link
-// in node_modules/.bin, which the brain runs with the hub's own Node). Under user isolation (the Docker image) the CLIs
-// are part of the image and run as another user, so the hub never installs them there.
+// in node_modules/.bin, which the brain runs with the hub's own Node). Without PIOMIO_INSTALL_CLIS (a hub run from the
+// source code) the hub installs nothing.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";

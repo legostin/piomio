@@ -77,7 +77,7 @@ export function llmsTxt(): string {
 
 > ${t("meta.description")}
 
-Piomio is a self-hosted personal agent platform: a team of AI agents with names and jobs that you talk to in a chat. It runs as a desktop app for macOS and Windows, on a Linux server (one command, or one Docker image), and several computers form one team. Agents think with the Claude Code, Codex and Kimi Code CLIs on the person's own plans, signed in with their own accounts; a hub on a server can also take API keys (Anthropic, OpenAI, OpenRouter, DeepSeek, GLM, any OpenAI-compatible server, Ollama) when started with PIOMIO_API_KEYS=1. Anything that reaches outside (emails, bookings, payments) waits for the person's approval in the chat; secrets live in a vault the model never sees. Free and open source under Apache-2.0.
+Piomio is a self-hosted personal agent platform: a team of AI agents with names and jobs that you talk to in a chat. It runs as a desktop app for macOS and Windows, on a Linux server (one command), and several computers form one team. Agents think with the Claude Code, Codex and Kimi Code CLIs on the person's own plans, signed in with their own accounts; a hub on a server can also take API keys (Anthropic, OpenAI, OpenRouter, DeepSeek, GLM, any OpenAI-compatible server, Ollama) when started with PIOMIO_API_KEYS=1. Anything that reaches outside (emails, bookings, payments) waits for the person's approval in the chat; secrets live in a vault the model never sees. Free and open source under Apache-2.0.
 
 ## Docs
 
@@ -95,6 +95,6 @@ On Linux with systemd (x64 or arm64), as root:
 curl -fsSL ${siteConfig.installScript} | sh
 \`\`\`
 
-It creates the user \`piomio\` without sudo and runs the hub as that user's systemd service. Sign in to Claude Code, Codex or Kimi Code as that user (\`sudo -iu piomio\`); the hub uses that sign-in as it is. The chat listens on 127.0.0.1:8080: open it through \`ssh -N -L 8080:localhost:8080 root@<server>\` at http://localhost:8080 with the setup code the installer printed. With an invite link from an existing hub (\`curl -fsSL ${siteConfig.installScript} | sh -s -- https://<hub>/join/<code>\`) the server becomes a computer of that hub instead. Docker: ${data.origin}${data.base}en/server/#docker
+It creates the user \`piomio\` without sudo and runs the hub as that user's systemd service. Sign in to Claude Code, Codex or Kimi Code as that user (\`sudo -iu piomio\`); the hub uses that sign-in as it is. The chat listens on 127.0.0.1:8080: open it through \`ssh -N -L 8080:localhost:8080 root@<server>\` at http://localhost:8080 with the setup code the installer printed. With an invite link from an existing hub (\`curl -fsSL ${siteConfig.installScript} | sh -s -- https://<hub>/join/<code>\`) the server becomes a computer of that hub instead.
 `;
 }

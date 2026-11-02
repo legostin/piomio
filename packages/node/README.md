@@ -52,7 +52,7 @@ The CLI and its log speak English or Russian. The language comes from `PIOMIO_LA
 
 ## Pairing
 
-1. In the hub's web UI, go to the **Machines** page, connect a new machine and copy the one-time code (valid for 10 minutes). You can also get one on the hub's command line: `node packages/core/src/cli.ts pairing-code`, or `docker exec piomio piomio-entrypoint pairing-code laptop` in Docker.
+1. In the hub's web UI, go to the **Machines** page, connect a new machine and copy the one-time code (valid for 10 minutes). You can also get one on the hub's command line: `node packages/core/src/cli.ts pairing-code`, or `piomio pairing-code laptop` on a server install.
 2. On this machine:
 
 ```sh

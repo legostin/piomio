@@ -22,7 +22,7 @@ export const PluginPermissionsSchema = z
     core: z.array(z.string()).default([]),
     /** UI capabilities, informational for the install dialog. */
     ui: z.array(z.string()).default([]),
-    /** Extra filesystem paths (informational; enforced by unix users in Docker). */
+    /** Extra filesystem paths (informational). */
     fs: z.array(z.string()).default([]),
   })
   .default({ network: [], vault: [], core: [], ui: [], fs: [] });

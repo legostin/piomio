@@ -61,8 +61,6 @@ On a Mac or PC Piomio thinks with the CLIs this user is already signed in to, so
 
 ## 3c. Linux server (systemd, x64 or arm64)
 
-On Alpine and other musl systems, use Docker instead: https://piomio.io/en/server/#docker.
-
 Ask the person how Piomio should run, then install:
 
 - **As its own user (recommended)**: run as root, which creates the user `piomio` without sudo; agents then can't touch the rest of the server. Ask before using root or sudo; if sudo needs a password, give the person the command to run themselves.

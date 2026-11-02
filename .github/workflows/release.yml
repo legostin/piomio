@@ -1,5 +1,5 @@
 # A version tag (v0.2.0, the root package.json's version) builds and checks the desktop installers (desktop.yml) and
-# publishes them as that version's release, and publishes the server image under the version (docker.yml).
+# publishes them as that version's release.
 # Hubs of the version hand the installers out at /download/desktop/<os> (packages/core/src/server/join-page.ts), so
 # the asset names must stay what packaging/desktop/build.mjs makes. Its latest.json is what installed apps check for
 # updates (packages/desktop/src-tauri/src/update.rs). release-on-push.yml starts it on the tag it makes, since a tag
@@ -15,8 +15,8 @@ permissions:
   contents: write
 
 # Releases come out one at a time in the order of their tags (release-on-push.yml can make a new one while the last is
-# still building), so the newest ends up as GitHub's latest release, the image's latest tag and the latest.json
-# installed apps update from. A newer tag waiting replaces an older one waiting: it holds all of the older one's changes.
+# still building), so the newest ends up as GitHub's latest release and the latest.json installed apps update
+# from. A newer tag waiting replaces an older one waiting: it holds all of the older one's changes.
 concurrency:
   group: release-build
 
@@ -36,13 +36,6 @@ jobs:
     # The update signing key (TAURI_SIGNING_PRIVATE_KEY).
     secrets: inherit
 
-  image:
-    needs: version
-    uses: ./.github/workflows/docker.yml
-    permissions:
-      contents: read
-      packages: write
-
   publish:
     needs: installers
     runs-on: ubuntu-latest
@@ -52,7 +45,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Only the installers: the image's digests are artifacts of this run too.
+      # Only the installers.
       - uses: actions/download-artifact@v4
         with:
           path: dist

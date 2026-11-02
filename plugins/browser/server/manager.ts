@@ -83,7 +83,7 @@ interface Cast {
 export class BrowserManager {
   ctx: PluginContext;
   settings: BrowserSettings;
-  /** Installs Playwright's Chromium when it is missing (outside Docker); launches wait for it. */
+  /** Installs Playwright's Chromium when it is missing; launches wait for it. */
   readonly installer: ChromiumInstaller;
   /** Google Chrome on this computer, launched instead of Playwright's Chromium (no download then). */
   readonly chrome: string | null;

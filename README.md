@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="https://github.com/legostin/piomio/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/legostin/piomio?style=flat-square&color=f4a11a&label=release"></a>
-  <img alt="macOS, Windows, Docker" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Docker-1c1814?style=flat-square">
+  <img alt="macOS, Windows, Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-1c1814?style=flat-square">
   <img alt="English and Russian" src="https://img.shields.io/badge/EN%20%C2%B7%20RU-1c1814?style=flat-square">
   <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-1c1814?style=flat-square"></a>
 </p>
@@ -79,7 +79,7 @@ From there the assistant walks you through the rest in the chat, one thing at a 
 curl -fsSL https://piomio.io/install.sh | sh
 ```
 
-It makes a user `piomio` for the hub and its agents and prints the setup code and the `ssh -L` line that opens the chat on your computer. Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead. Step by step: [On a server](#on-a-server), also [on the site](https://piomio.io/en/server/). Prefer Docker? See [In Docker](https://piomio.io/en/server/#docker).
+It makes a user `piomio` for the hub and its agents and prints the setup code and the `ssh -L` line that opens the chat on your computer. Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead. Step by step: [On a server](#on-a-server), also [on the site](https://piomio.io/en/server/).
 
 **With your AI.** Already use Claude Code, Codex or Kimi Code? Paste this into it on the computer or server where Piomio should run:
 
@@ -124,7 +124,7 @@ flowchart LR
 
 - **Secrets stay in a vault.** Models only ever see `vault://` references, and secret values are stripped from anything headed to a model, a channel or a log.
 - **Actions that reach outside need your yes.** A separate console holds the approvals, the vault and the audit log. After an agent has read outside content (mail, the web), a new recipient needs your yes again.
-- **Sandbox.** In Docker, brains and plugins run as separate users with their own folders, and all their traffic goes through an egress filter. The desktop app runs them as your own user, so Docker is the one to pick for the strongest isolation.
+- **Sandbox.** Brains and plugins reach the web through an egress filter with allowlists. On a Mac, the CLI brains' own commands stay inside the agent's folder (a macOS sandbox) and ask you for the rest; on a server, everything runs as a user without sudo.
 - **Audit.** Every tool call, decision and vault access goes into a hash-chained log you can verify.
 
 ## Reference
@@ -142,7 +142,7 @@ The details, for when you need them.
 - **A lively chat.** Replies with formatting (headings, lists, tables, code) in the web UI and in Telegram alike. An agent can show a picture, a photo carousel or an OpenStreetMap map right in its message. Send it files, photos and screenshots the same way: the paperclip, a paste or a drop in the web UI, or simply in Telegram, where voice messages, albums and places work too. Voice messages are transcribed before the agent answers: with a Groq key (free tier), an OpenAI key, or your own Whisper server (**Settings → Voice messages**); the assistant offers to set it up when the first one arrives. Forms in the chat fold into a single line once saved, out of your way.
 - **Memory.** Long-term memory about you, kept as markdown facts with git history and full-text search. Facts picked up in untrusted sessions wait for your review.
 - **MCP and skills.** Connect any MCP server, skill or command. Claude Code and Codex plugins install as they are.
-- **Built-in browser.** Chromium inside the container (outside Docker it installs itself on first use): websites, forms, screenshots, sign-in with passwords from the vault, and a live view where you can take over.
+- **Built-in browser.** Google Chrome when the computer has it, otherwise Chromium, which installs itself on first use: websites, forms, screenshots, sign-in with passwords from the vault, and a live view where you can take over.
 - **A network of machines.** Other computers join as nodes. The agent runs commands and works with files on them, and can use their subscriptions (Claude Code or Codex on your laptop).
 - **Security.** A vault for passwords and personal data: the model only ever sees `vault://` references. External actions need your approval in a separate console. Plugins and CLI brains run in a sandbox under dedicated Unix users, and all their traffic goes through an egress filter. The audit log is protected by a hash chain.
 - **Everything is a plugin, including the UI.** Panels, tabs, tool-result renderers, the composer, channels, brains, tools. See [docs/plugins.md](docs/plugins.md).
@@ -153,7 +153,7 @@ The details, for when you need them.
 
 
 <details>
-<summary><b>Installing in detail: the desktop app and Docker</b></summary>
+<summary><b>Installing in detail: the desktop app</b></summary>
 
 #### On your computer (Windows, macOS)
 
@@ -173,32 +173,9 @@ To start from scratch, choose **Reset Piomio…** in the icon's menu. The app li
 
 Your data stays in `%LOCALAPPDATA%\Piomio` (Windows) or `~/Library/Application Support/Piomio` (macOS); updating keeps it (an install from when Piomio was called Owlbot keeps its `Owlbot` folder). To uninstall, use **Settings → Apps** on Windows (it asks before deleting your data) or move Piomio from Applications to the Trash on macOS (the data stays; to remove it too, first choose **Reset Piomio… → Delete and quit** in the icon's menu). The hub listens on `http://localhost:41780` (console `:41781`, egress proxy `:41789`), away from ports other tools tend to hold (8080, OpenClaw's 18789); another port goes into `desktop.json` in the data folder as `{"port": 19000}`. It is reachable from this computer only; for your phone, see [Phone](#phone).
 
-The desktop version runs the hub, plugins and CLI brains as your own user: the Docker image's separate Unix users and its kernel-level network block are not there. For the strongest isolation, run Piomio in Docker.
+The desktop version runs the hub, plugins and CLI brains as your own user.
 
 The Mac app is signed and notarized by Apple. The Windows one is not signed yet, so SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
-
-<a id="on-a-server-docker"></a>
-#### In Docker
-
-```bash
-git clone https://github.com/legostin/piomio.git && cd piomio
-docker compose up -d
-docker compose logs piomio | grep -A1 "Piomio:"
-```
-
-`docker compose` takes the ready image from GitHub (`ghcr.io/legostin/piomio`, amd64 and arm64): `latest` is the last release, `main` follows every change to main (`PIOMIO_IMAGE_TAG`). `docker compose up -d --build` builds it from the folder instead. To update: `git pull && docker compose pull && docker compose up -d`.
-
-**Opening it.** The chat (`8080`) and the security console (`8081`) open on the server itself (`127.0.0.1`), so nothing faces the internet. From your computer:
-
-- **Through SSH**, nothing to set up: run `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server` and keep it running. http://localhost:8080 in your browser is now the hub, passkeys included.
-- **On the server's address**: put `PIOMIO_BIND=0.0.0.0` and `PIOMIO_PUBLIC_URL=http://<address>:8080` in `.env`, then `docker compose up -d`. Without `PIOMIO_PUBLIC_URL` the hub refuses every address but `localhost`. This is plain HTTP: on the open internet put HTTPS in front ([your own Tailscale or proxy](#your-own-proxy)). Note that Docker opens published ports past `ufw`.
-- After the setup, [access from anywhere](#access-from-anywhere) gives the hub an HTTPS link of its own: one button in the chat.
-
-1. Open http://localhost:8080 (or your address), enter the **setup code** from the logs and choose a password. Your browser's language becomes the hub language (see [Languages](#languages)).
-2. Until a brain works, the chat shows a setup card: sign Claude Code, Codex or Kimi Code in with your subscription (on a desktop install the hub can install a missing CLI first), or, on a hub started with `PIOMIO_API_KEYS=1`, give an API key (see below). Whatever you write meanwhile is answered as soon as a brain is connected.
-3. Then the assistant leads the rest of the setup in the chat, one step at a time and only when you agree: Telegram, a backup brain, other computers, and getting to know you. Say "not now" to skip a step, "let's continue the setup" to come back to it. When something needs a key or a token, the assistant shows a secure field in the chat: the value goes straight into the encrypted vault and the model only ever sees `vault://id`. You can also just paste a token into a message: the hub recognises known formats, takes it out of the message and stores it.
-
-Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example) lists each one with an example, [Environment variables](#environment-variables) has the defaults. Everything is stored in the `piomio-data` volume (`/data`): the database, the vault, workspaces, CLI logins and plugins.
 
 </details>
 
@@ -206,7 +183,7 @@ Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example)
 <details>
 <summary><b>On a server, step by step</b></summary>
 
-A server stays on, so your agents keep working while your computer sleeps. You need Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like; on Alpine and other musl systems, use [Docker](https://piomio.io/en/server/#docker)) and SSH access as root. The same guide is [on the site](https://piomio.io/en/server/).
+A server stays on, so your agents keep working while your computer sleeps. You need Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like) and SSH access as root. The same guide is [on the site](https://piomio.io/en/server/).
 
 There are two ways to use a server:
 
@@ -250,7 +227,7 @@ Commands, after `sudo -iu piomio`:
 
 Files: the app in `~/.local/lib/piomio` (`piomio` in `~/.local/bin`), the data in `~/.local/share/piomio`, settings in `~/.config/piomio/env` ([the variables](#environment-variables), one per line). The chat (`8080`) and the console (`8081`) open on `127.0.0.1`; the phones' port is `8082`.
 
-Without Docker the hub, the plugins and the CLI brains run as one user: the user without sudo is the wall, not separate Unix users and a kernel-level network block. For the strongest isolation, use [Docker](https://piomio.io/en/server/#docker).
+The hub, the plugins and the CLI brains run as one user: the user without sudo is the wall.
 
 <a id="server-computer"></a>
 #### A computer of your hub
@@ -406,7 +383,7 @@ The Piomio iOS app (repository `piomio-ios`) is the hub in your pocket: your tea
 1. In **Settings → Devices**, press **Connect a phone** and scan the QR code with the app, or open its link on the phone. You can also ask the assistant to "connect my phone", or run `piomio devices pair` on the server to get the QR in the terminal.
 2. Confirm on the phone with Face ID.
 
-The QR gives the phone every address it can use, and the phone takes whichever answers: the hub's own HTTPS port for phones on the home network (the hub's port + 2: 41782 in the desktop app, 8082 on a server; `PIOMIO_DEVICE_PORT`; only this port opens to the network, the web UI stays where it was), the computer's Tailscale address, and the link from [access from anywhere](#access-from-anywhere) (a phone paired before the link learns it on its next connection). `PIOMIO_DEVICES=0` closes the home-network port; phones then use the link alone. The phone pins the hub's own certificate from the QR, so no domain or CA is involved. Its token is revoked in one click in **Devices**; approving an action needs a signature by a key that stays in the phone's Secure Enclave, so a stolen token cannot approve anything. Rules, the vault's items and the audit stay in the security console. In Docker, publish the device port and list the addresses phones should use: `PIOMIO_DEVICE_URLS=https://192.168.1.10:8082`.
+The QR gives the phone every address it can use, and the phone takes whichever answers: the hub's own HTTPS port for phones on the home network (the hub's port + 2: 41782 in the desktop app, 8082 on a server; `PIOMIO_DEVICE_PORT`; only this port opens to the network, the web UI stays where it was), the computer's Tailscale address, and the link from [access from anywhere](#access-from-anywhere) (a phone paired before the link learns it on its next connection). `PIOMIO_DEVICES=0` closes the home-network port; phones then use the link alone. The phone pins the hub's own certificate from the QR, so no domain or CA is involved. Its token is revoked in one click in **Devices**; approving an action needs a signature by a key that stays in the phone's Secure Enclave, so a stolen token cannot approve anything. Rules, the vault's items and the audit stay in the security console. Behind a port forward or a proxy, list the addresses phones should use: `PIOMIO_DEVICE_URLS=https://192.168.1.10:8082`.
 
 </details>
 
@@ -422,7 +399,7 @@ The QR gives the phone every address it can use, and the phone takes whichever a
 
 Through the link come the web UI (sign in with your Piomio password: passkeys belong to the computer's own address), the phone app and other machines (`piomio-node pair <link> <code>`). Never through it: the first-run setup, the security console and plugin webhooks; brains on machines paired through the link reach the hub's tools there with their own session tokens. Wrong passwords are counted per address and, through the link, also together: 30 within an hour pause signing in from outside for an hour and notify you, while signing in on the computer keeps working. The node keeps its keys in `<data>/tailnet`; **Forget the node** signs it out of Tailscale and deletes them. Tailscale asks a node to sign in again after 180 days by default: the card warns two weeks ahead, and you can turn key expiry off for `piomio` in Tailscale's admin console. Piomio does not send Tailscale its node logs.
 
-The desktop app and the Docker image include the node. When you run from source, build it with `npm run build:tailnet` (needs Go); without it the card says it is unavailable.
+The desktop app and the server install include the node. When you run from source, build it with `npm run build:tailnet` (needs Go); without it the card says it is unavailable.
 
 <a id="your-own-proxy"></a>
 #### Your own Tailscale or proxy
@@ -451,23 +428,26 @@ Passkeys (passwordless sign-in) need HTTPS or `localhost`; `tailscale serve` tak
 <summary><b>Security model</b></summary>
 
 - **Two origins.** The chat and plugins live on `:8080`. Approvals, the vault, rules and the audit log live on `:8081`, with their own cookie, a strict CSP and `frame-ancestors 'none'`. Plugin code on the main page cannot read or click anything in the console.
-- **Vault.** Secrets are encrypted with XChaCha20-Poly1305 under a data key, which in turn is wrapped by a key derived with Argon2id. Models only ever see `vault://id`. A plugin gets an item only if the item is declared in its permissions **and** the item's scope allows that plugin, domain or agent. Secret values are stripped from everything that goes to models, channels and logs. After a restart the vault is sealed, unless you ticked "unlock automatically" (the passphrase is then kept in `/data/vault.passphrase`, readable by the hub only) or pass a passphrase file through `PIOMIO_VAULT_PASSPHRASE_FILE` (a Docker secret).
+- **Vault.** Secrets are encrypted with XChaCha20-Poly1305 under a data key, which in turn is wrapped by a key derived with Argon2id. Models only ever see `vault://id`. A plugin gets an item only if the item is declared in its permissions **and** the item's scope allows that plugin, domain or agent. Secret values are stripped from everything that goes to models, channels and logs. After a restart the vault is sealed, unless you ticked "unlock automatically" (the passphrase is then kept in `/data/vault.passphrase`, readable by the hub only) or pass a passphrase file through `PIOMIO_VAULT_PASSPHRASE_FILE`.
 - **Tool policy.** Every tool has an effect: `read`, `local-write` or `external`. External actions need approval by default. "Always allow" creates a narrow rule (one recipient, one domain). Once a session has read untrusted content (web, mail), new recipients need approval again. Background tasks of agents with an initiative below 2 can only read and notify.
-- **Sandbox.** The hub runs as the `piomio` user, CLI brains as `agent`, other plugins and MCP servers as `plugin`. Their traffic goes through an egress proxy with allowlists. With `cap_add: [NET_ADMIN]` and `PIOMIO_EGRESS_ENFORCED=iptables`, the kernel blocks direct network access for `agent` and `plugin`.
+- **Sandbox.** The hub, the CLI brains, plugins and MCP servers run as the hub's user (on a server, `piomio` without sudo). Their web traffic goes through an egress proxy with allowlists. On a Mac, the CLI brains' own commands run in a macOS sandbox (Seatbelt) that keeps them in the agent's folder; anything beyond asks you.
 - **Nodes.** Nodes authenticate with an Ed25519 key created during one-time pairing. Every action on a machine has to pass both the hub policy and the node's local policy.
-- **Audit.** Every tool call, policy decision, vault access and sign-in is recorded in a hash-chained log. Check its integrity with `docker exec piomio piomio-entrypoint audit-verify` or in the console.
+- **Audit.** Every tool call, policy decision, vault access and sign-in is recorded in a hash-chained log. Check its integrity in the console or with `audit-verify` (see [Hub commands](#hub-commands)).
 
 </details>
 
 
+<a id="hub-commands"></a>
 <details>
-<summary><b>Container commands</b></summary>
+<summary><b>Hub commands</b></summary>
+
+On a server they are `piomio <command>`, after `sudo -iu piomio`; from the source code, `node packages/core/src/cli.ts <command>`.
 
 ```bash
-docker exec piomio piomio-entrypoint reset-password 'new-password'
-docker exec piomio piomio-entrypoint pairing-code laptop
-docker exec piomio piomio-entrypoint backup /data/backups
-docker exec piomio piomio-entrypoint audit-verify
+piomio reset-password 'new-password'
+piomio pairing-code laptop
+piomio backup
+piomio audit-verify
 ```
 
 - `reset-password` sets a new password (at least 8 characters) and signs out every session.
@@ -482,26 +462,23 @@ docker exec piomio piomio-entrypoint audit-verify
 <details>
 <summary><b>Environment variables</b></summary>
 
-In Docker they go in `.env` next to `docker-compose.yml` ([.env.example](.env.example) has them with examples). The first two are read by `docker-compose.yml` itself. A server install reads them from `~/.config/piomio/env`.
+A server install reads them from `~/.config/piomio/env`, one per line ([.env.example](.env.example) has them with examples); a hub run from the source code, from its environment.
 
 | Variable | Default | |
 |---|---|---|
-| `PIOMIO_IMAGE_TAG` | `latest` | the image `docker-compose.yml` runs: `latest` (the last release), `main` (every change to main) or a version |
-| `PIOMIO_BIND` | `127.0.0.1` | where `docker-compose.yml` opens ports 8080 and 8081 on the server: `0.0.0.0` opens them on every address (set `PIOMIO_PUBLIC_URL` too) |
 | `PIOMIO_PUBLIC_URL` | `http://localhost:8080` | address of the chat UI, used for links and the Origin check |
 | `PIOMIO_CONSOLE_URL` | same host, port 8081 | address of the security console |
 | `PIOMIO_ALLOWED_HOSTS` | — | extra host names, comma-separated |
 | `PIOMIO_LANG` | — | pins the hub language: `en` or `ru` |
 | `PIOMIO_VAULT_PASSPHRASE_FILE` | — | unlocks the vault automatically |
-| `PIOMIO_EGRESS_ENFORCED` | `proxy` | `iptables` blocks direct network access outright (needs `NET_ADMIN`) |
 | `PIOMIO_SETUP_TOKEN` | random | sets the setup code in advance |
 | `PIOMIO_TRUST_PROXY` | — | `1` trusts `X-Forwarded-*` from a reverse proxy |
-| `PIOMIO_HOST` | `127.0.0.1` (`0.0.0.0` in the image) | listen address |
+| `PIOMIO_HOST` | `127.0.0.1` | listen address: `0.0.0.0` listens on every address (set `PIOMIO_PUBLIC_URL` too) |
 | `PIOMIO_PORT`, `PIOMIO_CONSOLE_PORT`, `PIOMIO_EGRESS_PORT` | `8080`, `8081`, `8089` | ports of the chat UI, the console and the egress proxy |
 | `PIOMIO_DEVICE_PORT`, `PIOMIO_DEVICE_HOST` | port + 2 (`8082`), `0.0.0.0` | the phones' HTTPS port and where it listens |
 | `PIOMIO_DEVICES` | — | `0` closes the phones' port on the network: phones then reach the hub only through the link |
 | `PIOMIO_DEVICE_URLS` | detected | addresses for the pairing QR, comma-separated, ahead of the detected ones |
-| `PIOMIO_DATA_DIR` | `.data/` (`/data` in the image) | data directory |
+| `PIOMIO_DATA_DIR` | `.data/` (`~/.local/share/piomio` on a server install) | data directory |
 | `PIOMIO_INSTALL_CLIS` | — (`1` in the desktop installers and on a server install) | `1` lets **Sign in** install a missing Claude Code, Codex or Kimi Code into `<data>/tools`, and reads the PATH of the user's login shell |
 | `PIOMIO_INSTALL_ROOT` | — (`~/.local/lib/piomio` on a server install) | where `install.sh` put the hub: such a hub updates itself on the **Update** button |
 | `PIOMIO_UPDATE_URL` | GitHub's latest release | another release to update from (a local check): in the shape of GitHub's `releases/latest` for a server install, a `latest.json` for the desktop app |
@@ -512,7 +489,7 @@ In Docker they go in `.env` next to `docker-compose.yml` ([.env.example](.env.ex
 | `PIOMIO_REPLICA_NAME` | the host name | what this machine is called among the hub's replicas |
 | `PIOMIO_NODE_URLS` | the machine's address | where machines reach this hub, comma-separated |
 | `PIOMIO_ROUTER_URL` | `https://routing.openstreetmap.de` | the OSRM server for routes on maps |
-| `TZ` | system time zone (`UTC` in the image) | default time zone for reminders, quiet hours and the digest |
+| `TZ` | system time zone | default time zone for reminders, quiet hours and the digest |
 
 Most behaviour is configured in **Settings** in the web UI: language, time zone, quiet hours, digest times, `channelApprovalDetails` (full action details in Telegram) and `brainEgressAllow` (extra hosts brains may reach). One hub setting has no field on that page yet: `egressPrivateAllow`, the local-network hosts plugins and brains may reach (for example `searxng` or `nas.local`); set it through `PATCH /api/settings`.
 
@@ -531,7 +508,7 @@ npm test             # unit and integration tests
 npm run typecheck
 ```
 
-You need Node.js 24.5+ (TypeScript runs without a build step). Outside Docker the browser plugin downloads Playwright's Chromium by itself the first time it starts without one (a one-time download into Playwright's cache, or `PLAYWRIGHT_BROWSERS_PATH`); browser calls made meanwhile wait for it. Set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` to turn that off and install it yourself with `npx playwright install chromium`. The project layout and conventions are described in [CLAUDE.md](CLAUDE.md), the design in [docs/superpowers/specs](docs/superpowers/specs/2026-10-26-piomio-design.md) (in Russian). Core messages live in `packages/core/src/locales/{en,ru}.ts`, plugin messages in `.piomio-plugin/locales/{en,ru}.json`; `npm test` checks that every translation matches English.
+You need Node.js 24.5+ (TypeScript runs without a build step). Without Google Chrome the browser plugin downloads Playwright's Chromium by itself the first time it starts without one (a one-time download into Playwright's cache, or `PLAYWRIGHT_BROWSERS_PATH`); browser calls made meanwhile wait for it. Set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` to turn that off and install it yourself with `npx playwright install chromium`. The project layout and conventions are described in [CLAUDE.md](CLAUDE.md), the design in [docs/superpowers/specs](docs/superpowers/specs/2026-10-26-piomio-design.md) (in Russian). Core messages live in `packages/core/src/locales/{en,ru}.ts`, plugin messages in `.piomio-plugin/locales/{en,ru}.json`; `npm test` checks that every translation matches English.
 
 #### Desktop app
 

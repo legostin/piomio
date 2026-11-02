@@ -181,7 +181,7 @@ export default {
   "auth.setup.title": "First run",
   "auth.setup.intro": "Choose a password to sign in with. To confirm it's you, enter the setup code.",
   "auth.setup.introDesktop": "Choose a password to sign in with. Piomio runs on this computer and keeps everything here.",
-  "auth.setup.codeHint": "The hub prints the setup code to its log on first start, on the line “enter the setup code”. In Docker: {command}",
+  "auth.setup.codeHint": "The hub prints the setup code to its log on first start, on the line “enter the setup code”. On a server installed with install.sh: {command}",
   "auth.setup.code": "Setup code",
   "auth.setup.password": "New password",
   "auth.setup.passwordHint": "At least 8 characters",

@@ -22,7 +22,7 @@ export interface Config {
   replicaName: string;
   /** PIOMIO_NODE_URLS: where machines reach this replica (/node/ws, /mcp); unset: its machine address. */
   nodeUrls: string[];
-  /** PIOMIO_DEVICE_URLS: addresses for the pairing QR ahead of the detected ones (Docker, reverse proxies). */
+  /** PIOMIO_DEVICE_URLS: addresses for the pairing QR ahead of the detected ones (reverse proxies, port forwards). */
   deviceUrls: string[];
   /** URL users and nodes use to reach the main UI / API. */
   publicUrl: string;
@@ -48,14 +48,11 @@ export interface Config {
   /** The pages kit's build (packages/pages-kit/dist), which pages run on. */
   pagesKitDir: string;
   consoleDist: string;
-  isolation: { users: boolean; hubUser: string; agentUser: string; pluginUser: string };
-  egressEnforced: "iptables" | "proxy";
-  /** Install missing Claude Code / Codex CLIs into <data>/tools on sign-in (desktop installers; never under isolation). */
+  /** Install missing Claude Code / Codex CLIs into <data>/tools on sign-in (desktop installers, install.sh). */
   installClis: boolean;
   /**
    * Keep local CLI brains' own tools in their sandbox (macOS Seatbelt; BrainSessionOptions.confine). On by default on
-   * macOS, where the brains run as the person; PIOMIO_SANDBOX_BRAINS=0 turns it off. A hub isolated by unix users
-   * has its own walls.
+   * macOS, where the brains run as the person; PIOMIO_SANDBOX_BRAINS=0 turns it off.
    */
   sandboxBrains: boolean;
   /**
@@ -153,15 +150,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     webDist: join(appRoot, "packages", "web", "dist"),
     pagesKitDir: join(appRoot, "packages", "pages-kit", "dist"),
     consoleDist: join(appRoot, "packages", "console", "dist"),
-    isolation: {
-      users: env.PIOMIO_ISOLATION === "users",
-      hubUser: env.PIOMIO_HUB_USER ?? "piomio",
-      agentUser: env.PIOMIO_AGENT_USER ?? "agent",
-      pluginUser: env.PIOMIO_PLUGIN_USER ?? "plugin",
-    },
-    egressEnforced: env.PIOMIO_EGRESS_ENFORCED === "iptables" ? "iptables" : "proxy",
-    installClis: env.PIOMIO_INSTALL_CLIS === "1" && env.PIOMIO_ISOLATION !== "users",
-    sandboxBrains: env.PIOMIO_SANDBOX_BRAINS !== "0" && env.PIOMIO_ISOLATION !== "users" && process.platform === "darwin",
+    installClis: env.PIOMIO_INSTALL_CLIS === "1",
+    sandboxBrains: env.PIOMIO_SANDBOX_BRAINS !== "0" && process.platform === "darwin",
     apiKeys: env.PIOMIO_API_KEYS === "1",
     brainHome: "",
     vaultPassphraseFile: env.PIOMIO_VAULT_PASSPHRASE_FILE && existsSync(env.PIOMIO_VAULT_PASSPHRASE_FILE) ? env.PIOMIO_VAULT_PASSPHRASE_FILE : undefined,
@@ -175,7 +165,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
   };
   const merged = { ...cfg, ...overrides };
   if (!overrides.brainHome) {
-    merged.brainHome = env.PIOMIO_BRAIN_HOME && env.PIOMIO_ISOLATION !== "users" ? resolve(env.PIOMIO_BRAIN_HOME) : join(merged.dataDir, "home", "agent");
+    merged.brainHome = env.PIOMIO_BRAIN_HOME ? resolve(env.PIOMIO_BRAIN_HOME) : join(merged.dataDir, "home", "agent");
   }
   return merged;
 }

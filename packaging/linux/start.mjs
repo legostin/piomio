@@ -2,7 +2,7 @@
 //   <root>/current/runtime/bin/node <root>/current/packaging/linux/start.mjs [start|version|reset-password …]
 // Like the desktop app, the hub runs as the person's user with their home and the PATH of their login shell, so the
 // Claude Code, Codex or Kimi Code they signed in to over SSH is what the agents think with; nothing is copied.
-// Ports as in Docker (8080 the chat, 8081 the console, 8082 phones), on 127.0.0.1 unless ~/.config/piomio/env says.
+// Ports 8080 (the chat), 8081 (the console) and 8082 (phones), on 127.0.0.1 unless ~/.config/piomio/env says.
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
