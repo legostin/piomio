@@ -2,7 +2,7 @@
 // not again from another replica that starts on the same version.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hub, loadConfig } from "../src/index.ts";
@@ -10,17 +10,6 @@ import { agentFromMarkdown } from "../src/agents.ts";
 import { announceUpdate, compareVersions } from "../src/updates.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 describe("compareVersions", () => {
   it("compares dotted versions as numbers", () => {

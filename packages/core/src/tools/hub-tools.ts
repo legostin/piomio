@@ -42,7 +42,7 @@ const SECRET_KEY = /key|token|secret|password/i;
 /** Tools that only put a card in front of the user, who then decides: fine even after outside content was read. */
 const CARDS = new Set(["secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
-const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete"]);
+const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete", "machine_commands"]);
 /** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. */
 export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n));
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
@@ -734,6 +734,36 @@ export function registerHubTools(hub: Hub): void {
     (i) => describeSetup(String(i.machine ?? ""), normalizeSettings({ brains: i.brains, limit: i.limit }, keys)),
   );
 
+  reg(
+    {
+      name: "machine_commands",
+      effect: "external",
+      approvalSummary: "%machines.commandsOnApproval%",
+      description:
+        "Turn commands on or off on one of the person's connected computers (its own policy decides; the person says yes on a card). " +
+        "With commands on, the agents' brains there run commands (Claude Code's Bash, Kimi's, machine_exec) and auto mode checks each one as it does on this hub; " +
+        "a task there that cannot run something it needs (Blender, a build) is the usual reason. Turning them off needs the card too.",
+      inputSchema: obj({ machine: { type: "string", description: "Machine id or name" }, on: { type: "boolean", description: "true: allow commands; false: forbid them" } }, ["machine", "on"]),
+    },
+    async (i) => {
+      const m = hub.machines.find(String(i.machine ?? ""));
+      if (!m) return text(`No machine ${i.machine}. See machine_list.`, true);
+      const on = i.on !== false;
+      const r = await hub.machines.setCommands(m.id, on);
+      if ("commands" in r) return text(`Commands on ${m.name} are ${r.commands ? "on: tasks there may run them now, each checked by auto mode" : "off"}.`);
+      const why = {
+        offline: `${m.name} is offline; this can be done once it is back.`,
+        tooOld: `${m.name} runs an older Piomio${m.info?.version ? ` (${m.info.version})` : ""}, which cannot change this from here. Ask the person to update the Piomio app on that computer once (its tray menu: Install update); from then on this works from the chat, updates too.`,
+        owner: r.message ?? `${m.name} refused.`,
+      }[r.refused];
+      return text(why, true);
+    },
+    (i) => {
+      const name = hub.machines.find(String(i.machine ?? ""))?.name ?? String(i.machine ?? "");
+      return tFor(hubLocale())(i.on === false ? "machines.commandsOffApproval" : "machines.commandsOnApproval", { machine: name });
+    },
+  );
+
   // ---------- the cluster: hub replicas ----------
 
   reg(
@@ -744,7 +774,8 @@ export function registerHubTools(hub: Hub): void {
         "Update Piomio on a machine. \"local\" (the default) is this hub. When it runs in the desktop app, the app downloads its update, restarts with it " +
         "and is back in a minute or two. When it was installed on a server with install.sh, it downloads the new release, checks it, restarts and is back " +
         "in about a minute, and goes back to the old version by itself if the new one does not start. A paired machine " +
-        "(id or name) gets this hub's version of its program and restarts in a few seconds. The machines block shows the same Update button.",
+        "(id or name) gets this hub's version of its program and restarts in a few seconds; one inside the Piomio app installs the app's update and is back in a few minutes. " +
+        "The machines block shows the same Update button.",
       inputSchema: obj({ machine: { type: "string", description: '"local" for this hub, else a machine\'s id or name' } }),
     },
     async (i) => {
@@ -757,7 +788,9 @@ export function registerHubTools(hub: Hub): void {
         const r = await hub.updates.update(m?.id ?? "local");
         return text(
           !local
-            ? `${name} is updating to ${r.version}: it restarts and comes back online in a few seconds.`
+            ? m?.info?.selfUpdate
+              ? `${name} is updating to ${r.version}: it restarts and comes back online in a few seconds.`
+              : `The Piomio app on ${name} is updating: it downloads the update and restarts with it, back online in a few minutes.`
             : hub.updates.kind === "desktop"
               ? `The Piomio app is updating to ${r.version}: it downloads the update, then restarts with it (this conversation pauses for a minute or two). If it can't, it stays on ${hub.config.version} and says so.`
               : `Updating this hub to Piomio ${r.version}: it downloads and checks the release, then restarts (this conversation pauses for about a minute). If something fails it stays on ${hub.config.version} and says so.`,
@@ -770,7 +803,7 @@ export function registerHubTools(hub: Hub): void {
           upToDate: `${name} already runs the latest version (${e.version}).`,
           unknown: `No machine ${asked}.`,
           offline: `${name} is offline; it can be updated once it is back.`,
-          notSelf: `${name} runs inside the Piomio app on that computer, which updates it from its tray menu.`,
+          notSelf: `${name} runs inside an older Piomio app on that computer, which can't take an update from here: ask the person to update it once from its tray menu (Install update); after that it updates from the chat.`,
           noBundle: "This hub has no machine program to send (packages/node/dist/piomio-node.mjs is missing).",
         };
         return text(why[e.reason] ?? e.message, e.reason !== "upToDate");

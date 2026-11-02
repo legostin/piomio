@@ -48,7 +48,7 @@ export function googleScopes(hub: Hub): string[] {
 /** How a plugin without an `integration` block shows in the catalog: as a brain, or as something else. */
 function plainIntegration(m: PiomioManifest): IntegrationInfo {
   const brain = m.contributes.brains.length > 0;
-  return { category: brain ? "brains" : "other", icon: brain ? "brain" : "puzzle", connect: m.contributes.setup?.secrets.length ? "setup" : "none", scopes: [], entries: [] };
+  return { category: brain ? "brains" : "other", icon: brain ? "brain" : "puzzle", connect: m.contributes.setup?.secrets.length ? "setup" : "none", scopes: [], localApp: false, entries: [] };
 }
 
 /** A logo the hub serves, at most: a 128×128 PNG is a few KB. */

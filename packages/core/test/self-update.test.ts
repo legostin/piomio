@@ -216,6 +216,23 @@ describe("machines", () => {
     await expect(u.update("m1")).rejects.toMatchObject({ reason: "offline" });
     u.stop();
   });
+
+  it("has a machine inside the desktop app install the app's update, from the chat or the button", async () => {
+    const asked: string[] = [];
+    let m = { online: true, info: { ...info("0.2.3", false), desktopApp: true } };
+    const { u } = updates(root("0.2.4"), { machine: () => m, appUpdateNode: async (id) => void asked.push(id) });
+    expect(u.offerFor("m1", m.info)).toEqual({ update: "0.2.4" });
+    expect(await u.update("m1")).toEqual({ version: "0.2.4" });
+    expect(asked).toEqual(["m1"]);
+    expect(u.offerFor("m1", m.info)).toEqual({ update: "0.2.4", updating: true });
+    m = { online: true, info: { ...info("0.2.4", false), desktopApp: true } };
+    u.machineChanged("m1", m.info);
+    expect(u.offerFor("m1", m.info)).toEqual({});
+    // An app from before this cannot take it from the hub: the person updates it there once.
+    m = { online: true, info: { ...info("0.2.3", false) } } as typeof m;
+    await expect(u.update("m1")).rejects.toMatchObject({ reason: "notSelf" });
+    u.stop();
+  });
 });
 
 describe("the desktop app's update", () => {

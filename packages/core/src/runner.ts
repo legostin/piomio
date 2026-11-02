@@ -1272,11 +1272,11 @@ export class SessionRunner {
   }
 
   /** The computers a task can run on: the hub's own first, then the paired ones. */
-  computers(): Array<{ id: string; name: string; online: boolean; gpus?: string[] }> {
+  computers(): Array<{ id: string; name: string; online: boolean; gpus?: string[]; commands?: boolean }> {
     const gpus = (list: string[] | undefined) => (list?.length ? { gpus: list } : {});
     return [
       { id: "local", name: hubName(), online: true, ...gpus(this.d.gpus?.()) },
-      ...(this.d.machines?.() ?? []).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", ...gpus(m.info?.gpus) })),
+      ...(this.d.machines?.() ?? []).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", ...gpus(m.info?.gpus), ...(m.info && !m.info.commands ? { commands: false } : {}) })),
     ];
   }
 
@@ -1713,7 +1713,7 @@ export class SessionRunner {
       skills,
       nativeSkills: !!skillsDir,
       appended,
-      machine: { name: this.computerName(ref.machineId), local },
+      machine: { name: this.computerName(ref.machineId), local, ...(!local ? { commands: !!this.d.machines?.().find((m) => m.id === ref.machineId)?.info?.commands } : {}) },
       setup: background || task ? undefined : await this.d.setup?.promptBlock(agent.id),
       group: conv.kind === "group" ? { title: conv.title, members: this.groupMembers(conv) } : undefined,
       dispatch: conv.kind === "main" && !task && !background ? this.dispatchContext() : undefined,
@@ -1757,6 +1757,8 @@ export class SessionRunner {
       ...(local && this.d.config.sandboxBrains
         ? { confine: { ...confinement(this.d.config.dataDir, workspace, local && ref.brainId === "claude-code" ? this.d.claudePluginDirs() : []), permissionTool: NATIVE_PERMISSION_TOOL } }
         : {}),
+      // On a paired computer that allows commands, its brain asks the hub about them (auto mode, the person).
+      ...(!local ? { askTool: NATIVE_PERMISSION_TOOL } : {}),
     });
     this.live.set(row.id, { handle, brainRef: formatBrainRef(ref), stamp: this.stampOf(agent, conv, kind), ...(thinking.model ? { model: thinking.model } : {}), ...(thinking.effort ? { effort: thinking.effort } : {}) });
     if (!sameBrain) this.d.audit.append("core", "session.open", row.id, { agent: agent.id, brain: formatBrainRef(ref), conversation: conv.id, task: task?.id });

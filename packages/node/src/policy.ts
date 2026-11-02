@@ -30,6 +30,11 @@ export interface Policy {
   };
   /** Brain sessions run in <workspacesRoot>/<agent>/<task-or-conversation>. */
   workspacesRoot: string;
+  /**
+   * The person may turn commands (exec.enabled) on and off here from the hub's chat, with their yes on a card
+   * (node.policy). False: this computer's permissions change only in this file.
+   */
+  hubChanges: boolean;
 }
 
 /** Claude Code built-in tools allowed by default: file tools and web, but no Bash. */
@@ -49,6 +54,7 @@ export function defaultPolicy(userHome = homedir()): Policy {
       kimi: { enabled: true },
     },
     workspacesRoot: ws,
+    hubChanges: true,
   };
 }
 
@@ -120,6 +126,7 @@ export function normalizePolicy(raw: any, userHome = homedir()): Policy {
       },
     },
     workspacesRoot: raw.workspacesRoot === undefined ? (allowedDirs[0] ?? d.workspacesRoot) : expandPath(raw.workspacesRoot, userHome, "workspacesRoot"),
+    hubChanges: bool(raw.hubChanges, true, "hubChanges"),
   };
 }
 
@@ -196,6 +203,21 @@ export class PolicyStore {
     return this.current;
   }
 
+  /**
+   * Commands on this computer on or off (exec.enabled), asked from the hub's chat with the person's yes. Only that
+   * field changes in the file; the rest stays as the person wrote it. Refused when the file says hubChanges: false.
+   */
+  setCommands(on: boolean): Policy {
+    const current = this.get();
+    if (!current.hubChanges) throw new Error("The owner of this computer keeps its permissions on the computer itself (hubChanges: false in its policy.json).");
+    const raw = JSON.parse(readFileSync(this.file, "utf8"));
+    raw.exec = { ...(raw.exec ?? {}), enabled: on };
+    normalizePolicy(raw, this.userHome);
+    writeFileSync(this.file, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
+    this.log(t(on ? "policy.commandsOn" : "policy.commandsOff"));
+    return this.get();
+  }
+
   onChange(cb: (p: Policy) => void): void {
     this.listeners.push(cb);
   }
@@ -223,6 +245,7 @@ export function policySummary(p: Policy): string[] {
           : t("policy.summary.anyCommand")
         : t("policy.summary.noCommands"),
     }),
+    t("policy.summary.hubChanges", { state: yes(p.hubChanges) }),
     t("policy.summary.claude", { state: cc.enabled ? t("policy.summary.claudeOn", { tools: cc.allowedTools.join(", ") }) : t("policy.summary.off") }),
     t("policy.summary.codex", { state: p.brains.codex.enabled ? t("policy.summary.codexOn", { sandbox: p.brains.codex.sandbox }) : t("policy.summary.off") }),
     t("policy.summary.kimi", { state: p.brains.kimi.enabled ? t("policy.summary.kimiOn") : t("policy.summary.off") }),

@@ -33,8 +33,10 @@ export function machineInfo(policy: Policy, clis: MachineInfo["clis"], gpus: str
     nodeVersion: process.version,
     version: PIOMIO_VERSION,
     selfUpdate: !!selfFile(),
+    ...(process.env.PIOMIO_DESKTOP_APP ? { desktopApp: true } : {}),
     clis,
     allowedDirs: [...policy.allowedDirs],
+    commands: policy.exec.enabled,
     ...(gpus.length ? { gpus } : {}),
   };
 }

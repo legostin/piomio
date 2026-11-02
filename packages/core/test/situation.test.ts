@@ -6,7 +6,7 @@
 // Uses the scripted fake brain (test/fixtures/plugins/fakebrain): "SELF?" answers with the last block it got, "SLOW".
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MachineActivity, Message, MessagePart, Task } from "@piomio/shared";
@@ -96,17 +96,6 @@ describe("the [You now] block", () => {
     expect(block).not.toContain("t_1 “Edit the hotel shot”: a task");
   });
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => Promise<T | undefined | false> | T | undefined | false, what: string, timeoutMs = 15_000): Promise<T> {
   const t0 = Date.now();

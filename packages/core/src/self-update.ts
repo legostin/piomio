@@ -222,6 +222,8 @@ export interface HubUpdatesDeps {
   machine: (id: string) => { info?: MachineInfo; online: boolean } | undefined;
   /** Sends a machine the hub's own piomio-node bundle. */
   sendNode: (id: string, update: { version: string; sha256: string; bundle: string }) => Promise<void>;
+  /** Has a machine that runs inside the desktop app install the app's own update (node.appUpdate). */
+  appUpdateNode?: (id: string) => Promise<void>;
   fetch?: typeof fetch;
   run?: Run;
   verify?: (file: string, signatureText: string) => Promise<boolean>;
@@ -339,7 +341,7 @@ export class HubUpdates {
   }
 
   private nodeNeeds(info?: MachineInfo): boolean {
-    return !!info?.selfUpdate && !!info.version && compareVersions(this.d.config.version, info.version) > 0;
+    return (!!info?.selfUpdate || !!info?.desktopApp) && !!info.version && compareVersions(this.d.config.version, info.version) > 0;
   }
 
   /**
@@ -360,9 +362,21 @@ export class HubUpdates {
     const m = this.d.machine(id);
     if (!m) throw new UpdateError("unknown");
     if (!m.online) throw new UpdateError("offline");
-    if (!m.info?.selfUpdate) throw new UpdateError("notSelf");
+    if (!m.info?.selfUpdate && !(m.info?.desktopApp && this.d.appUpdateNode)) throw new UpdateError("notSelf");
     if (!this.nodeNeeds(m.info)) throw new UpdateError("upToDate", m.info.version);
     if (this.machines.has(id)) return { version: this.d.config.version };
+    // Inside the desktop app: the app downloads its own update and restarts with it (longer than a daemon's swap).
+    if (!m.info.selfUpdate) {
+      this.machines.set(id, setTimeout(() => this.machineDone(id), 15 * 60_000));
+      this.d.bus.emit("updates.changed", {});
+      try {
+        await this.d.appUpdateNode!(id);
+      } catch (e) {
+        this.machineDone(id);
+        throw e;
+      }
+      return { version: this.d.config.version };
+    }
     const file = join(this.d.config.appRoot, "packages", "node", "dist", "piomio-node.mjs");
     if (!existsSync(file)) throw new UpdateError("noBundle");
     const bundle = readFileSync(file);

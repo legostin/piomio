@@ -2,7 +2,7 @@
 // brain gets to read (the others' messages since its own last reply), Stop, channels, the sidebar view, and storage.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentDef, MachineActivity, Message } from "@piomio/shared";
@@ -17,17 +17,6 @@ import { firstSpeakers, groupTurn, groupTurnText, handOff } from "../src/group-c
 
 const fixtures = join(import.meta.dirname, "fixtures");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(fn: () => Promise<T | undefined | false> | T | undefined | false, what: string, timeoutMs = 15_000): Promise<T> {
   const t0 = Date.now();

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { request } from "node:https";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hub, loadConfig } from "../src/index.ts";
@@ -12,17 +12,6 @@ import { approvalPayload } from "../src/devices.ts";
 import { parsePairingLink } from "../src/pairing.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 /** What the app does: HTTPS to the device port, trusting only the certificate whose SHA-256 the QR carried. */
 function phoneRequest(port: number, fingerprint: string, method: string, path: string, body?: unknown, token?: string): Promise<{ status: number; json: any }> {

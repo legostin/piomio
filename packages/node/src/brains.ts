@@ -138,6 +138,8 @@ export class BrainHost {
       createClaudeCodeProvider({
         command: () => resolveCli(policy().brains["claude-code"].command ?? DEFAULT_COMMANDS["claude-code"]),
         allowedTools: () => policy().brains["claude-code"].allowedTools,
+        // Commands allowed on this computer: Claude Code's Bash asks the hub (auto mode, the person) instead of failing.
+        asks: () => policy().exec.enabled,
         stateDir: stateDir("claude-code"),
         log,
         locale: hubLocale,

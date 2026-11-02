@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -16,17 +16,6 @@ const FAKE = join(fixtures, "tailnet/fake-tailnet.mjs");
 chmodSync(FAKE, 0o755);
 const LINK = "piomio-test.tail1234.ts.net";
 const PASSWORD = "remote-test-pass";
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 function until<T>(fn: () => Promise<T | undefined> | T | undefined, ms = 5000): Promise<T> {
   const end = Date.now() + ms;
