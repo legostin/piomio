@@ -1,6 +1,6 @@
-// Prerendering: one static page per language from the client build's index.html and the server build's render(), plus
-// the language chooser at the root (with the English page's head, so a shared bare link still shows a card), a 404
-// page, sitemap.xml, robots.txt and llms.txt.
+// Prerendering: each page (the landing page, the server guide) per language from the client build's index.html and the
+// server build's render(), plus the language chooser at the root (with the English page's head, so a shared bare link
+// still shows a card), a 404 page, sitemap.xml, robots.txt and llms.txt.
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -11,16 +11,17 @@ import { pathToFileURL } from "node:url";
  */
 export async function prerender({ dist, ssrEntry, languages, base, origin }) {
   const template = readFileSync(join(dist, "index.html"), "utf8");
-  const { render, llmsTxt } = await import(pathToFileURL(ssrEntry).href);
-  for (const lang of languages) {
-    const { html, head } = render(lang);
-    const page = template
-      .replace('<html lang="en">', `<html lang="${lang}">`)
-      .replace("<!--head-->", head)
-      .replace("<!--app-->", html);
-    mkdirSync(join(dist, lang), { recursive: true });
-    writeFileSync(join(dist, lang, "index.html"), page);
-  }
+  const { render, llmsTxt, PAGES, pagePath } = await import(pathToFileURL(ssrEntry).href);
+  for (const lang of languages)
+    for (const which of PAGES) {
+      const { html, head } = render(lang, which);
+      const page = template
+        .replace('<html lang="en">', `<html lang="${lang}"${which === "home" ? "" : ` data-page="${which}"`}>`)
+        .replace("<!--head-->", head)
+        .replace("<!--app-->", html);
+      mkdirSync(join(dist, lang, pagePath(which)), { recursive: true });
+      writeFileSync(join(dist, lang, pagePath(which), "index.html"), page);
+    }
 
   // The root and unknown addresses: the visitor's language (English by default), plain links without scripts.
   const chooser = (head) => `<!doctype html>
@@ -58,15 +59,15 @@ ${head}
     join(dist, "sitemap.xml"),
     `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
-${languages
-  .map(
+${PAGES.flatMap((which) =>
+  languages.map(
     (l) => `  <url>
-    <loc>${origin}${base}${l}/</loc>
+    <loc>${origin}${base}${l}/${pagePath(which)}</loc>
     <lastmod>${today}</lastmod>
-${languages.map((x) => `    <xhtml:link rel="alternate" hreflang="${x}" href="${origin}${base}${x}/" />`).join("\n")}
+${languages.map((x) => `    <xhtml:link rel="alternate" hreflang="${x}" href="${origin}${base}${x}/${pagePath(which)}" />`).join("\n")}
   </url>`,
-  )
-  .join("\n")}
+  ),
+).join("\n")}
 </urlset>
 `,
   );

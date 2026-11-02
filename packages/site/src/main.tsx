@@ -5,13 +5,16 @@ import { StrictMode } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { siteConfig, type Lang } from "../site.config";
 import { App } from "./App";
+import { PAGES, type Page } from "./pages";
 import "./styles.css";
 
 const lang = (siteConfig.languages as readonly string[]).includes(document.documentElement.lang) ? (document.documentElement.lang as Lang) : "en";
+// prerender.mjs marks a page other than the landing one on <html data-page>.
+const page = (PAGES as readonly string[]).includes(document.documentElement.dataset.page ?? "") ? (document.documentElement.dataset.page as Page) : "home";
 const root = document.getElementById("root")!;
 const app = (
   <StrictMode>
-    <App lang={lang} />
+    <App lang={lang} page={page} />
   </StrictMode>
 );
 if (root.firstElementChild) hydrateRoot(root, app);

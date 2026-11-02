@@ -5,8 +5,9 @@ import { useState, type ReactNode } from "react";
 import { siteConfig } from "../../site.config";
 import { data } from "../data";
 import { useI18n, type MessageKey } from "../i18n";
+import { CopyBlock } from "../components/CopyBlock";
 import { downloadHref } from "../components/Download";
-import { Apple, Bell, Box, Brain, Chain, Check, ChevronDown, Copy, Docker, FaceId, Filter, GitHub, Globe, Home, Laptop, Lock, Mic, OwlMark, ThumbUp, Windows } from "../components/icons";
+import { Apple, ArrowRight, Bell, Box, Brain, Chain, Check, ChevronDown, FaceId, Filter, GitHub, Globe, Home, Laptop, Lock, Mic, OwlMark, Server, ThumbUp, Windows } from "../components/icons";
 import { LOGOS } from "../logos";
 
 function Heading({ eyebrow, title, lead, center }: { eyebrow: string; title: string; lead?: string; center?: boolean }) {
@@ -328,36 +329,13 @@ export function Faq() {
 /** The questions, in order (faq.q<n> / faq.a<n>); entry-server.tsx gives them to search engines too. */
 export const FAQ = [1, 2, 3, 4, 5, 6, 7] as const;
 
-function CopyBlock({ code }: { code: string }) {
-  const { t } = useI18n();
-  const [done, setDone] = useState(false);
-  return (
-    <div className="relative">
-      <pre className="overflow-x-auto rounded-2xl bg-[var(--code-bg)] py-4 pr-24 pl-5 font-mono text-[13px] leading-relaxed text-[var(--code-fg)]">{code}</pre>
-      <button
-        type="button"
-        onClick={() => {
-          void navigator.clipboard?.writeText(code).then(() => {
-            setDone(true);
-            setTimeout(() => setDone(false), 1600);
-          });
-        }}
-        className="absolute top-3 right-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-[12px] font-semibold text-[var(--code-fg)] transition-colors hover:bg-white/20"
-      >
-        {done ? <Check size={13} /> : <Copy size={13} />}
-        {done ? t("install.copied") : t("install.copy")}
-      </button>
-    </div>
-  );
-}
-
 export function Install() {
-  const { t } = useI18n();
-  const [tab, setTab] = useState<"mac" | "win" | "docker">("mac");
-  const tabs: Array<["mac" | "win" | "docker", ReactNode, MessageKey]> = [
+  const { lang, t } = useI18n();
+  const [tab, setTab] = useState<"mac" | "win" | "server">("mac");
+  const tabs: Array<["mac" | "win" | "server", ReactNode, MessageKey]> = [
     ["mac", <Apple size={16} />, "install.tab.mac"],
     ["win", <Windows size={15} />, "install.tab.win"],
-    ["docker", <Docker size={17} />, "install.tab.docker"],
+    ["server", <Server size={16} />, "install.tab.server"],
   ];
   const steps = (os: "mac" | "win") => (
     <ol className="flex flex-col gap-3">
@@ -390,11 +368,20 @@ export function Install() {
             ))}
           </div>
           <div className="mt-7" role="tabpanel">
-            {tab === "docker" ? (
+            {tab === "server" ? (
               <div className="flex flex-col gap-4">
-                <p className="text-[16px] text-fg-2">{t("install.docker.lead")}</p>
-                <CopyBlock code={`git clone https://github.com/${siteConfig.repo}.git piomio && cd piomio\ndocker compose up -d\ndocker compose logs piomio | grep -A1 "Piomio:"`} />
-                <p className="text-[14px] text-muted">{t("install.docker.note")}</p>
+                <p className="text-[16px] text-fg-2">{t("install.server.lead")}</p>
+                <CopyBlock code={`curl -fsSL ${siteConfig.installScript} | sh`} />
+                <p className="text-[14px] leading-relaxed text-muted">{t("install.server.note")}</p>
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <a href={`${data.base}${lang}/server/`} className="candy inline-flex items-center gap-2 rounded-full px-5 py-3 text-[15px] font-semibold">
+                    {t("install.server.guide")}
+                    <ArrowRight size={16} />
+                  </a>
+                  <a href={`https://github.com/${siteConfig.repo}#on-a-server-docker`} className="text-[14px] font-semibold text-accent-text underline-offset-4 hover:underline">
+                    {t("install.server.docker")}
+                  </a>
+                </div>
               </div>
             ) : (
               <div className="flex flex-col gap-6">
@@ -420,7 +407,7 @@ export function Install() {
 }
 
 export function Footer() {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
   const repo = `https://github.com/${data.repo}`;
   return (
     <footer className="border-t border-hairline">
@@ -439,6 +426,9 @@ export function Footer() {
           </a>
           <a href={`${repo}#readme`} className="hover:text-fg">
             {t("footer.readme")}
+          </a>
+          <a href={`${data.base}${lang}/server/`} className="hover:text-fg">
+            {t("footer.server")}
           </a>
           <a href={data.release.page} className="hover:text-fg">
             {t("footer.releases")}

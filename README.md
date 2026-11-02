@@ -73,13 +73,13 @@ They think with the Claude Code, Codex or Kimi Code subscription you already hav
 
 From there the assistant walks you through the rest in the chat, one thing at a time: Telegram, a backup brain, other computers, and getting to know you.
 
-**On a server.** One command on Linux (x64 or arm64):
+**On a server.** One command on Linux (x64 or arm64), as root:
 
 ```bash
 curl -fsSL https://piomio.io/install.sh | sh
 ```
 
-If Claude Code, Codex or Kimi Code is installed and signed in on the server, the agents use it as it is: nothing to sign in or copy. Run as root, the installer makes a user `piomio` for the hub and its agents. It prints the setup code and the `ssh -L` line that opens the hub on your computer. See [On a server](#on-a-server). Prefer Docker? See [In Docker](#on-a-server-docker).
+It makes a user `piomio` for the hub and its agents and prints the setup code and the `ssh -L` line that opens the chat on your computer. Sign in to Claude Code, Codex or Kimi Code as that user, and the agents use it as it is: nothing to copy. The server can also be a computer of the hub on your Mac instead. Step by step: [On a server](#on-a-server), also [on the site](https://piomio.io/en/server/). Prefer Docker? See [In Docker](#on-a-server-docker).
 
 **On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub through a QR code, and approvals need Face ID.
 
@@ -145,7 +145,7 @@ The details, for when you need them.
 
 
 <details>
-<summary><b>Installing in detail: the desktop app, a server and Docker</b></summary>
+<summary><b>Installing in detail: the desktop app and Docker</b></summary>
 
 #### On your computer (Windows, macOS)
 
@@ -169,29 +169,6 @@ The desktop version runs the hub, plugins and CLI brains as your own user: the D
 
 The Mac app is signed and notarized by Apple. The Windows one is not signed yet, so SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
 
-<a id="on-a-server"></a>
-#### On a server (Linux)
-
-```bash
-curl -fsSL https://piomio.io/install.sh | sh
-```
-
-For Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like; Alpine and other musl systems use [Docker](#on-a-server-docker)). It installs the latest release, with its own Node, as a systemd service of one user:
-
-- Run as root, it makes the user `piomio` without sudo, installs the libraries the agents' browser needs and installs for that user. Run as a user, it installs for you.
-- The hub runs as that user, with that user's home and the PATH of their login shell. A Claude Code, Codex or Kimi Code that user has installed and signed in is what the agents think with: nothing is copied anywhere, and a CLI signed in later is found within a minute. Sign one in over SSH (`sudo -iu piomio`, then `claude`, `codex login` or `kimi login`), or press **Sign in** in the chat, which installs a missing CLI first.
-- Files: the app in `~/.local/lib/piomio` (`piomio` in `~/.local/bin`), the data in `~/.local/share/piomio`, settings in `~/.config/piomio/env` (the variables below, one per line; then `systemctl --user restart piomio`). The chat (`8080`) and the console (`8081`) open on `127.0.0.1`, the phones' port is `8082`.
-
-At the end it prints the setup code and `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server`: run that on your computer and open http://localhost:8080. [Access from anywhere](#access-from-anywhere) later gives the hub an HTTPS link of its own.
-
-Already have a hub, say on your Mac? Then the server can be one of its computers instead of a hub of its own: the same installer with an invite link, see [Other computers](#other-computers).
-
-**Updates come on a button.** When a release is out, the server's row in **Machines** shows **Update** and the assistant offers it in the chat (or just say "update the server"). The hub downloads the release, checks its signature (the key the desktop app's updates are signed with), makes sure the new version starts, keeps a copy of the database, restarts and is back in about a minute. If the new version doesn't start three times, it goes back to the previous one with the database as it was, and says so in the chat. Running the installer again updates too. Computers joined with `piomio-node` get the same **Update** when they run an older version than the hub (a `piomio-node.mjs` from before this feature doesn't say its version: download it again once).
-
-Commands, as that user: `piomio reset-password <new>`, `piomio backup`, `piomio version`, `piomio uninstall` (removes the app and the service; the data stays). The log: `journalctl --user -u piomio`.
-
-Without Docker the hub, the plugins and the CLI brains run as one user: the user without sudo is the wall, not separate Unix users and a kernel-level network block. For the strongest isolation, use Docker.
-
 <a id="on-a-server-docker"></a>
 #### In Docker
 
@@ -214,6 +191,100 @@ docker compose logs piomio | grep -A1 "Piomio:"
 3. Then the assistant leads the rest of the setup in the chat, one step at a time and only when you agree: Telegram, a backup brain, other computers, and getting to know you. Say "not now" to skip a step, "let's continue the setup" to come back to it. When something needs a key or a token, the assistant shows a secure field in the chat: the value goes straight into the encrypted vault and the model only ever sees `vault://id`. You can also just paste a token into a message: the hub recognises known formats, takes it out of the message and stores it.
 
 Settings go in `.env` next to `docker-compose.yml`: [.env.example](.env.example) lists each one with an example, [Environment variables](#environment-variables) has the defaults. Everything is stored in the `piomio-data` volume (`/data`): the database, the vault, workspaces, CLI logins and plugins.
+
+</details>
+
+<a id="on-a-server"></a>
+<details>
+<summary><b>On a server, step by step</b></summary>
+
+A server stays on, so your agents keep working while your computer sleeps. You need Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like; on Alpine and other musl systems, use [Docker](#on-a-server-docker)) and SSH access as root. The same guide is [on the site](https://piomio.io/en/server/).
+
+There are two ways to use a server:
+
+- **[The hub on the server](#server-hub).** The server is your Piomio: chats, agents, memory and the vault live there. You open it in a browser, the phone app or the desktop app.
+- **[A computer of your hub](#server-computer).** Your hub stays on your Mac or PC, and the server joins it: agents run commands there, use its files and think with its Claude Code or Codex. The chats stay on your computer, so while it sleeps, the server waits.
+
+<a id="server-hub"></a>
+#### The hub on the server
+
+1. **Install.** Connect to the server over SSH as root and run:
+   ```bash
+   curl -fsSL https://piomio.io/install.sh | sh
+   ```
+   It creates the user `piomio` without sudo, installs the libraries the agents' browser needs and starts Piomio, with its own Node, as that user's systemd service. At the end it prints the setup code, the line that opens the chat on your computer, and the brains it found. Running it again updates Piomio. (Run as an ordinary user, it installs for that user; then leave out `sudo -iu piomio` below.)
+2. **Sign in to a brain.** Agents think with the CLI that the user `piomio` is signed in to, on your own plan: the hub runs as that user, with its home and the PATH of its login shell, and copies nothing. Sign in yourself, as that user. Codex, for example:
+   ```bash
+   sudo -iu piomio
+   curl -fsSL https://chatgpt.com/codex/install.sh | sh
+   codex login --device-auth
+   ```
+   Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`, then `claude`. Kimi Code: `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`, then `kimi` and `/login`. Piomio finds the sign-in within a minute, no restart needed. You can also skip this step and press **Sign in** in the chat later: it installs a missing CLI first.
+3. **Open the chat.** It listens only on the server itself. On your computer, run the line the installer printed and keep it running:
+   ```bash
+   ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 root@<server-ip>
+   ```
+   Then open http://localhost:8080, enter the setup code and choose a password. The assistant takes you through the rest in the chat. Lost the code? `sudo -iu piomio cat ~/.local/share/piomio/setup-code`.
+4. **Reach it from anywhere.** Say "turn on access from anywhere" in the chat and sign in to Tailscale with a free account. The hub gets a permanent link like `https://piomio.<your-tailnet>.ts.net`: any browser, the phone app and your other computers reach it there, with no tunnel and no open ports. See [Access from anywhere](#access-from-anywhere).
+5. **Update with a button.** When a release is out, the server's row in **Machines** shows **Update**, and the assistant offers it in the chat (or say "update the server"). The hub downloads the release, checks its signature (the key the desktop app's updates are signed with), makes sure the new version starts, keeps a copy of the database, restarts and is back in about a minute. If the new version doesn't start three times, it goes back to the previous one with the database as it was, and says so in the chat. Computers joined with `piomio-node` get the same **Update** when they run an older version than the hub (a `piomio-node.mjs` from before this feature doesn't say its version: download it again once).
+
+Commands, after `sudo -iu piomio`:
+
+| Command | |
+|---|---|
+| `piomio version` | the installed version |
+| `piomio backup` | a copy of the database, the vault, agents and plugins in `~/.local/share/piomio/backups` |
+| `piomio reset-password <new>` | a new password for the chat |
+| `piomio devices pair` | a QR code for the phone app, right in the terminal |
+| `systemctl --user restart piomio` | a restart, for example after a change in `~/.config/piomio/env` |
+| `journalctl --user -u piomio -f` | the log |
+| `piomio uninstall` | removes the app and the service; the data stays in `~/.local/share/piomio` |
+
+Files: the app in `~/.local/lib/piomio` (`piomio` in `~/.local/bin`), the data in `~/.local/share/piomio`, settings in `~/.config/piomio/env` ([the variables](#environment-variables), one per line). The chat (`8080`) and the console (`8081`) open on `127.0.0.1`; the phones' port is `8082`.
+
+Without Docker the hub, the plugins and the CLI brains run as one user: the user without sudo is the wall, not separate Unix users and a kernel-level network block. For the strongest isolation, use [Docker](#on-a-server-docker).
+
+<a id="server-computer"></a>
+#### A computer of your hub
+
+1. **Let the server reach your hub.** A hub on a Mac or PC at home opens only there until you turn on [access from anywhere](#access-from-anywhere): say "turn on access from anywhere" in its chat. If you skip this, the assistant offers it when you ask to connect a computer.
+2. **Get an invite.** Say "connect a computer" in the chat and press the button on the card. You get a one-time link that works for an hour, like `https://piomio.<your-tailnet>.ts.net/join/AB12CD34`. Open it: under **Server without a screen** the page shows the next command with your link already in it.
+3. **Run it on the server as root:**
+   ```bash
+   curl -fsSL https://piomio.io/install.sh | PIOMIO_NAME=vps sh -s -- https://piomio.<your-tailnet>.ts.net/join/<code>
+   ```
+   It creates the user `piomio`, puts Node.js (from nodejs.org) and the hub's `piomio-node` in `~/.local/lib/piomio-node` and keeps them connected as the systemd user service `piomio-node`. `PIOMIO_NAME` is what the computer is called in **Machines**; without it, the server's host name.
+4. **Sign in to a brain**, the same way as for a hub: `sudo -iu piomio`, then sign in to Codex, Claude Code or Kimi Code. They become the brains `codex@vps`, `claude-code@vps` and `kimi@vps`, and the hub sees a sign-in within a minute.
+5. **Decide what agents may do there.** The server decides that, in `~/.piomio-node/policy.json` ([the policy](packages/node/README.md)): by default agents work only in `~/piomio-workspace`, and running commands is off. A change takes effect by itself. Newer versions of `piomio-node` come from the hub: its row in **Machines** shows **Update** when it's behind.
+
+Commands, after `sudo -iu piomio`: `piomio-node status` (whether it's paired, its policy, its CLIs and whether the hub answers), `journalctl --user -u piomio-node -f` (the log) and `piomio-node uninstall` (removes the service; the key and the policy stay; remove the computer in **Machines** too).
+
+<a id="server-address"></a>
+#### Why not just the server's IP address?
+
+Piomio opens the chat only on `127.0.0.1`, on purpose:
+
+- The chat (port 8080) speaks plain HTTP. Over the internet your password and session would travel unencrypted, and bots find an open port within minutes.
+- Passkeys work only over HTTPS or on `localhost`, so `http://<ip>:8080` can't use them.
+- Port 8081 is the security console: rules, the vault, the audit. It should never face the internet.
+
+The safe ways in are the SSH tunnel, [access from anywhere](#access-from-anywhere), or [your own domain with HTTPS in front](#your-own-proxy). The phones' port 8082 is HTTPS with the hub's own certificate, which the app pins from the QR code, so that one is fine to open: `ufw allow 8082/tcp`.
+
+If you still want the bare address, with plain HTTP and no passkeys, put this in `~/.config/piomio/env`:
+
+```
+PIOMIO_HOST=0.0.0.0
+PIOMIO_PUBLIC_URL=http://<server-ip>:8080
+```
+
+Then, as root, `ufw allow 8080/tcp` (and only 8080: the console now listens on every address too, so 8081 stays closed), and as `piomio`, `systemctl --user restart piomio`. Without `PIOMIO_PUBLIC_URL` the hub refuses every address but `localhost`.
+
+#### If something goes wrong
+
+- **The installer can't reach the hub.** The invite link has to open from the server: try `curl -I <link>` there. A hub at home needs access from anywhere turned on. Each link works once and for an hour, so ask for a new one.
+- **A brain is signed in, but Piomio doesn't see it.** It has to be signed in as the user Piomio runs as, `piomio`, not as root. Check with `sudo -iu piomio`, then `codex login status` or `claude auth status`.
+- **`systemctl --user` can't connect to the bus.** Open the user's shell with `sudo -iu piomio`: the installer set it up so that `systemctl --user` and `journalctl --user` work there.
+- **The chat doesn't open on localhost:8080.** The `ssh -L` line has to keep running while you use the chat. On the server, `sudo -iu piomio`, then `systemctl --user status piomio` and `journalctl --user -u piomio -n 50` show whether Piomio runs and what stops it.
 
 </details>
 
@@ -308,7 +379,7 @@ Piomio signs in with its own Google client. To use your own instead, create one 
    ```bash
    curl -fsSL https://piomio.io/install.sh | sh -s -- https://your-hub-url/join/<code>
    ```
-   It puts the hub's own `piomio-node`, with Node from nodejs.org, in `~/.local/lib/piomio-node` and keeps it running as the systemd user service `piomio-node`. Run as root, it makes the user `piomio` for it, as for a hub. `PIOMIO_NAME=<name>` names the computer; `piomio-node uninstall` removes it (the key and the policy stay). Elsewhere, with Node.js 24.5+:
+   Step by step: [A computer of your hub](#server-computer). It puts the hub's own `piomio-node`, with Node from nodejs.org, in `~/.local/lib/piomio-node` and keeps it running as the systemd user service `piomio-node`. Run as root, it makes the user `piomio` for it, as for a hub. `PIOMIO_NAME=<name>` names the computer; `piomio-node uninstall` removes it (the key and the policy stay). Elsewhere, with Node.js 24.5+:
    ```bash
    curl -fsSLo piomio-node.mjs https://your-hub-url/download/piomio-node.mjs
    node piomio-node.mjs pair https://your-hub-url/join/<code> --name laptop

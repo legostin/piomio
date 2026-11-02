@@ -1,5 +1,6 @@
-// The website's checks, on the built site (npm run build:site first): both pages open without errors, and every chapter
-// of the demo plays to its end in both languages, fast, without the demo hub meeting a request it does not know.
+// The website's checks, on the built site (npm run build:site first): the landing page and the server guide open without
+// errors in both languages, and every chapter of the demo plays to its end in both languages, fast, without the demo hub
+// meeting a request it does not know.
 //
 //   node packages/site/scripts/check.mjs [--speed 8] [--only mail,send] [--lang ru]
 //
@@ -70,7 +71,25 @@ for (const lang of langs) {
   console.log(`page /${lang}/ checked`);
 }
 
-// 2. Every chapter, in every language, to its end.
+// 2. The server guide: prerendered, hydrated without a mismatch, its language switch pointing at the guide.
+for (const lang of langs) {
+  const page = await context.newPage();
+  const problems = watch(page, `/${lang}/server/`);
+  const res = await page.goto(`${origin}${base}${lang}/server/`, { waitUntil: "networkidle" });
+  if (!res?.ok()) failures.push(`/${lang}/server/: HTTP ${res?.status()}`);
+  const seen = await page.evaluate(() => ({
+    page: document.documentElement.dataset.page,
+    parts: ["hub", "computer", "address", "trouble"].filter((id) => document.getElementById(id)).length,
+    other: [...document.querySelectorAll("a[hreflang]")].map((a) => a.getAttribute("href")),
+  }));
+  if (seen.page !== "server" || seen.parts !== 4) failures.push(`/${lang}/server/: ${JSON.stringify(seen)}`);
+  if (!seen.other.every((h) => h?.endsWith("/server/"))) failures.push(`/${lang}/server/: language links ${seen.other.join(", ")}`);
+  failures.push(...problems());
+  await page.close();
+  console.log(`page /${lang}/server/ checked`);
+}
+
+// 3. Every chapter, in every language, to its end.
 for (const lang of langs)
   for (const chapter of chapters) {
     const page = await context.newPage();

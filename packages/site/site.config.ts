@@ -8,6 +8,8 @@ export const siteConfig = {
   testflightUrl: "",
   /** The site's address once a domain is connected (canonical links, Open Graph); empty: GitHub Pages. */
   siteUrl: "",
+  /** The server installer (packaging/linux/install.sh, published by the site's build), as the README and the hub's invite page give it. */
+  installScript: "https://piomio.io/install.sh",
   languages: ["en", "ru"] as const,
 };
 
