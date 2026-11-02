@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pio-capture"
+description = "Enables the pio_capture command without any pre-configured scope."
+commands.allow = ["pio_capture"]
+
+[[permission]]
+identifier = "deny-pio-capture"
+description = "Denies the pio_capture command without any pre-configured scope."
+commands.deny = ["pio_capture"]

@@ -155,6 +155,7 @@ pub fn setup(app: &mut tauri::App, args: Args) -> Result<(), Box<dyn std::error:
     handle.exit(0);
     return Ok(());
   }
+  app.manage(crate::pio::Pio::default());
   let paths = Paths::resolve(&handle)?;
   // Before any window: WebView2's GPU caches go when the last run did not end cleanly (gpucache.rs). Tauri keeps the
   // webviews' data in the app's local data dir, a dev run's too, so a dev run leaves it to the installed app.
@@ -222,6 +223,10 @@ pub fn setup(app: &mut tauri::App, args: Args) -> Result<(), Box<dyn std::error:
   match settings.mode {
     Some(mode) if !damaged => {
       start(&handle, mode);
+      // Pio's bubble comes back with the app, a start at login too.
+      if settings.pio {
+        crate::pio::start(&handle);
+      }
       if !args.background && !linked {
         open_ui(&handle);
       } else if !linked {
@@ -302,9 +307,8 @@ fn on_status(app: &AppHandle, status: Status) {
   }
 }
 
-/// The hub window's address: what `launch.mjs url` prints once the hub answers (the setup form with its code until a
-/// password is set), else the hub with a fresh one-time sign-in ticket.
-fn hub_window_url(st: &AppState) -> Option<Url> {
+/// What `launch.mjs url` prints once the hub answers: its address, with the setup form's code until a password is set.
+fn hub_base(st: &AppState) -> Option<String> {
   let p = &st.paths;
   let out = supervisor::command(&p.node)
     .arg(p.launch())
@@ -316,15 +320,43 @@ fn hub_window_url(st: &AppState) -> Option<Url> {
   if !out.status.success() {
     return None;
   }
-  let base = String::from_utf8_lossy(&out.stdout).trim().to_string();
-  if base.contains("#setup=") {
-    return Url::parse(&base).ok();
-  }
+  Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// `url` with a fresh one-time sign-in ticket the hub was just given.
+fn signed_in(st: &AppState, url: &str) -> Option<Url> {
   let ticket = login::new_ticket();
   if !st.supervisor.send_line(&format!("ticket {ticket}")) {
     return None;
   }
-  Url::parse(&login::with_ticket(&base, &ticket)).ok()
+  Url::parse(&login::with_ticket(url, &ticket)).ok()
+}
+
+/// The hub window's address: the setup form with its code until a password is set, else the hub with a fresh
+/// one-time sign-in ticket.
+fn hub_window_url(st: &AppState) -> Option<Url> {
+  let base = hub_base(st)?;
+  if base.contains("#setup=") {
+    return Url::parse(&base).ok();
+  }
+  signed_in(st, &base)
+}
+
+/// The address of Pio's bubble (pio/): the hub's `/pio/overlay`, with a ticket of its own in hub mode (the app may have
+/// started in the background, with no hub window signed in yet). None until the hub answers and has a password.
+pub fn pio_url(st: &AppState) -> Option<Url> {
+  let mode = st.settings.lock().unwrap().mode?;
+  match mode {
+    Mode::Hub => {
+      let base = hub_base(st)?;
+      if base.contains("#setup=") {
+        return None;
+      }
+      let page = crate::pio::overlay_url(&Url::parse(&base).ok()?)?;
+      signed_in(st, page.as_str())
+    }
+    Mode::Node => crate::pio::overlay_url(&Url::parse(&settings::existing_node(&st.paths.node_home)?.hub).ok()?),
+  }
 }
 
 /// Shows what the user should see now: the setup window (first run, an error, a link) or the hub's UI.
@@ -381,9 +413,13 @@ pub fn choose(app: &AppHandle, mode: Mode) -> Result<(), String> {
   let running = matches!(*st.status.lock().unwrap(), Status::Starting | Status::Running | Status::Restarting);
   if previous != Some(mode) || !running {
     window::close_main(app);
+    crate::pio::close(app);
     start(app, mode);
   }
   open_ui(app);
+  if st.settings.lock().unwrap().pio {
+    crate::pio::start(app);
+  }
   Ok(())
 }
 
@@ -426,13 +462,15 @@ fn on_link(app: &AppHandle, url: &Url) -> bool {
   true
 }
 
-/// A link of the app's scheme the hub window navigated to: its "This app" settings ask to reset or quit (deeplink.rs).
-/// Runs off the navigation callback, which must not open windows itself.
+/// A link of the app's scheme the hub window navigated to: its "This app" settings ask to reset or quit, its page turns
+/// Pio's bubble on or off (deeplink.rs). Runs off the navigation callback, which must not open windows itself.
 pub fn on_window_link(app: &AppHandle, url: &Url) {
   let (app, url) = (app.clone(), url.clone());
   std::thread::spawn(move || match deeplink::window_action(&url, app.state::<AppState>().paths.flavor.scheme()) {
     Some(WindowAction::Reset) => on_menu(&app, "reset"),
     Some(WindowAction::Quit) => app.exit(0),
+    Some(WindowAction::Pio(show)) => crate::pio::set_shown(&app, show),
+    Some(WindowAction::Open) => open_ui(&app),
     None => {
       on_link(&app, &url);
     }
@@ -477,6 +515,7 @@ pub fn reset(app: &AppHandle, quit: bool) -> Result<(), String> {
     let _ = w.clear_all_browsing_data();
   }
   window::close_main(app);
+  crate::pio::close(app);
   let p = &st.paths;
   let exe = std::env::current_exe().ok();
   let text = |e: std::io::Error| e.to_string();
@@ -504,9 +543,15 @@ pub fn reset(app: &AppHandle, quit: bool) -> Result<(), String> {
 pub fn restart(app: &AppHandle) {
   let st = app.state::<AppState>();
   *st.error.lock().unwrap() = None;
-  let mode = st.settings.lock().unwrap().mode;
+  let (mode, pio) = {
+    let s = st.settings.lock().unwrap();
+    (s.mode, s.pio)
+  };
   if let Some(mode) = mode {
     start(app, mode);
+    if pio {
+      crate::pio::start(app);
+    }
   }
 }
 

@@ -61,4 +61,14 @@ mod tests {
   fn fills_placeholders() {
     assert_eq!(Texts::for_locale(Some("en")).f("tray.status.portBusy", &[("port", "8080")]), "Port 8080 is taken");
   }
+
+  #[test]
+  fn has_pios_texts() {
+    let ru = Texts::for_locale(Some("ru"));
+    assert_eq!(ru.t("pio.name"), "Пио");
+    assert_eq!(ru.f("pio.control.reason", &[("reason", "открыть вкладку")]), "Пио хочет: открыть вкладку");
+    for key in ["pio.control.title", "pio.control.body", "pio.control.allow", "pio.control.deny", "pio.frame.label"] {
+      assert_ne!(Texts::for_locale(Some("en")).t(key), key);
+    }
+  }
 }

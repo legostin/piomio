@@ -13,6 +13,7 @@ mod i18n;
 mod login;
 #[cfg(target_os = "macos")]
 mod migration;
+mod pio;
 mod renamed;
 mod reset;
 mod settings;
@@ -36,6 +37,9 @@ fn main() {
     // Without its click script: that script sends target=_blank links over IPC, which the hub's page may not use, so
     // they did nothing. The main window's own new-window handler opens them in the browser (window.rs).
     .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
+    // Pio's native confirmation and its shortcuts (Esc while it drives, push-to-talk); no page gets their commands.
+    .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(pio::control::on_shortcut).build())
     .invoke_handler(tauri::generate_handler![
       commands::get_state,
       commands::choose_hub,
@@ -44,7 +48,17 @@ fn main() {
       commands::open_log,
       commands::retry,
       commands::dismiss,
-      commands::reset_app
+      commands::reset_app,
+      pio::commands::pio_frontmost,
+      pio::commands::pio_capture,
+      pio::commands::pio_frame,
+      pio::commands::pio_permissions,
+      pio::commands::pio_open_settings,
+      pio::commands::pio_control_begin,
+      pio::commands::pio_control_end,
+      pio::commands::pio_act,
+      pio::commands::pio_hotkey,
+      pio::commands::pio_hide
     ])
     .on_window_event(window::on_event)
     .setup(move |app| app::setup(app, args))

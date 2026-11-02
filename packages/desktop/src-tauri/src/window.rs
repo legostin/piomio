@@ -1,6 +1,6 @@
 //! Two windows: "main" shows the hub's own web UI (no app commands but dragging it on macOS), "setup" the app's own
 //! screens (ui/). Links that leave the hub's origin open in the system browser; the hub's own downloads go into the
-//! Downloads folder; closing the hub window keeps the app in the tray.
+//! Downloads folder; closing the hub window keeps the app in the tray. Pio's bubble and its frame are in pio/.
 
 use tauri::ipc::CapabilityBuilder;
 use tauri::webview::{DownloadEvent, NewWindowResponse};
@@ -138,7 +138,8 @@ pub fn close_main(app: &AppHandle) {
   }
 }
 
-/// Closing the hub window only hides it; closing the setup window before anything was chosen quits.
+/// Closing the hub window only hides it; closing the setup window before anything was chosen quits. Pio's bubble
+/// closes only by its own "hide" or the hub window's page (pio/).
 pub fn on_event(window: &Window, event: &WindowEvent) {
   let app = window.app_handle();
   match event {
@@ -147,6 +148,9 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
       let _ = window.hide();
       hide_dock_if_idle(app);
     }
+    WindowEvent::CloseRequested { api, .. } if window.label() == crate::pio::PIO => api.prevent_close(),
+    WindowEvent::Moved(_) if window.label() == crate::pio::PIO => crate::pio::on_moved(window),
+    WindowEvent::Destroyed if window.label() == crate::pio::PIO => crate::pio::on_closed(app),
     WindowEvent::Destroyed if window.label() == SETUP => {
       let first_run = app.try_state::<AppState>().map(|s| s.settings.lock().unwrap().mode.is_none()).unwrap_or(true);
       if let Some(s) = app.try_state::<AppState>() {

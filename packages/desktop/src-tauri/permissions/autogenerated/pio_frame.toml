@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pio-frame"
+description = "Enables the pio_frame command without any pre-configured scope."
+commands.allow = ["pio_frame"]
+
+[[permission]]
+identifier = "deny-pio-frame"
+description = "Denies the pio_frame command without any pre-configured scope."
+commands.deny = ["pio_frame"]

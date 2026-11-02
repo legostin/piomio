@@ -1,6 +1,7 @@
 //! `piomio://pair?hub=<url>&code=<code>`: the link the hub's Machines page offers to connect this computer. The test
 //! build's scheme is `piomio-test` (flavor.rs). The hub window also uses `<scheme>://reset` and `<scheme>://quit` for
-//! its "This app" settings; those are only taken from that window, never from the system (`window_action`).
+//! its "This app" settings and `<scheme>://pio?show=1|0` for Pio's bubble; those are only taken from that window, never
+//! from the system (`window_action`).
 
 use serde::Serialize;
 use tauri::Url;
@@ -43,9 +44,14 @@ pub fn parse(link: &Url, scheme: &str) -> Option<PairLink> {
 pub enum WindowAction {
   Reset,
   Quit,
+  /// Pio's bubble on or off (pio/).
+  Pio(bool),
+  /// The hub window, as the tray's "Open" shows it: the bubble's "Open chat".
+  Open,
 }
 
-/// `<scheme>://reset` or `<scheme>://quit` from the hub window's settings.
+/// `<scheme>://reset` or `<scheme>://quit` from the hub window's settings; `<scheme>://pio?show=1|0` from its page
+/// while the Pio plugin is on or goes off; `<scheme>://open` from the bubble's.
 pub fn window_action(link: &Url, scheme: &str) -> Option<WindowAction> {
   if link.scheme() != scheme {
     return None;
@@ -53,6 +59,12 @@ pub fn window_action(link: &Url, scheme: &str) -> Option<WindowAction> {
   match what(link) {
     "reset" => Some(WindowAction::Reset),
     "quit" => Some(WindowAction::Quit),
+    "open" => Some(WindowAction::Open),
+    "pio" => match link.query_pairs().find(|(k, _)| k == "show")?.1.as_ref() {
+      "1" => Some(WindowAction::Pio(true)),
+      "0" => Some(WindowAction::Pio(false)),
+      _ => None,
+    },
     _ => None,
   }
 }
@@ -97,5 +109,20 @@ mod tests {
     assert_eq!(a("piomio-test://quit", "piomio-test"), Some(WindowAction::Quit));
     assert_eq!(a("piomio://reset", "piomio-test"), None);
     assert_eq!(a("piomio://pair?hub=https://a.b&code=x", "piomio"), None);
+  }
+
+  #[test]
+  fn reads_the_pio_switch() {
+    let a = |s: &str, scheme: &str| window_action(&Url::parse(s).unwrap(), scheme);
+    assert_eq!(a("piomio://pio?show=1", "piomio"), Some(WindowAction::Pio(true)));
+    assert_eq!(a("piomio://pio?show=0", "piomio"), Some(WindowAction::Pio(false)));
+    assert_eq!(a("piomio-test://pio?show=1", "piomio-test"), Some(WindowAction::Pio(true)));
+    assert_eq!(a("piomio:pio?show=0", "piomio"), Some(WindowAction::Pio(false)));
+    assert_eq!(a("piomio://pio?show=1", "piomio-test"), None);
+    assert_eq!(a("piomio://pio", "piomio"), None);
+    assert_eq!(a("piomio://pio?show=yes", "piomio"), None);
+    assert_eq!(p("piomio://pio?show=1"), None);
+    assert_eq!(a("piomio://open", "piomio"), Some(WindowAction::Open));
+    assert_eq!(a("piomio-test://open", "piomio"), None);
   }
 }
