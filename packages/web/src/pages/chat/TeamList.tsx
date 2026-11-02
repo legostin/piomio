@@ -2,7 +2,7 @@
 // shows who said what last, whether someone is working right now and how much is unread; "Add agent" opens the
 // new-agent form, "New group" the form for a chat with several agents, "New channel" the form for a channel.
 // The default agent sits large on top, the pinned under it; every agent has a menu (right click, a long press, "⋯"),
-// and the archived ones wait behind "Archive · N" at the end. The always-on companion (Pio) is a small row above all.
+// and the archived ones wait behind "Archive · N" at the end. The always-on companion (Pio) floats in a small card above all.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
@@ -119,34 +119,32 @@ function DefaultAgentCard({ agent, member, active, menu, onNavigate }: { agent: 
 }
 
 /**
- * The always-on companion (Pio): a compact row above the team, its face on the same line as the others', what it is
- * doing on the computer as a dot on the face and a word after its name.
+ * The always-on companion (Pio): a small card of its own above the team, floating there, with what it is doing on the
+ * computer now (a dot on its face and a line under its name).
  */
-function CompanionRow({ agent, member, active, menu, onNavigate }: { agent: AgentDef; member?: TeamMember; active: boolean; menu: AgentMenuApi; onNavigate?: () => void }) {
+function CompanionCard({ agent, member, active, menu, onNavigate }: { agent: AgentDef; member?: TeamMember; active: boolean; menu: AgentMenuApi; onNavigate?: () => void }) {
   const unread = member?.unread ?? 0;
   const running = !!member?.running;
   const presence = member?.presence;
   const state = running && !presence ? t("team.working") : presence ? t(`team.presence.${presence}`) : undefined;
   const triggers = useMenuTriggers(agent.id, menu);
   return (
-    <div className="group/agent relative mb-1">
+    <div className="group/agent relative mx-1 mt-0.5 mb-3">
       <Link
         href={agentPath(agent.id, undefined)}
         onClick={onNavigate}
         aria-current={active ? "page" : undefined}
         title={agent.description || undefined}
-        className={cx("press flex items-center gap-3 rounded-2xl px-2.5 py-1.5", active ? "bg-surface shadow-card" : menu.openFor === agent.id ? "bg-surface/55" : "hover:bg-surface/55", NO_CALLOUT)}
+        className={cx("owl-hover press flex items-center gap-3 rounded-[20px] bg-surface py-2.5 pr-3 pl-2.5", active && "ring-1 ring-accent/45", NO_CALLOUT)}
         {...triggers}
       >
-        <span className="flex w-[38px] shrink-0 justify-center">
-          <span className="relative">
-            <AgentAvatar avatar={agent.avatar} id={agent.id} name={agent.name} size={30} running={running} />
-            {presence && <span className={cx("absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-accent ring-2", active ? "ring-surface" : "ring-canvas")} aria-hidden />}
-          </span>
+        <span className="relative shrink-0">
+          <AgentAvatar avatar={agent.avatar} id={agent.id} name={agent.name} size={36} running={running} />
+          {presence && <span className="absolute -right-0.5 -bottom-0.5 size-3 animate-pulse rounded-full bg-accent ring-2 ring-surface" aria-hidden />}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[13.5px]">
-          <span className={unread ? "font-semibold" : "font-medium"}>{agent.name}</span>
-          {state && <span className="text-muted"> · {state}</span>}
+        <span className="min-w-0 flex-1">
+          <span className={cx("block truncate text-[14px]", unread ? "font-bold" : "font-semibold")}>{agent.name}</span>
+          <span className={cx("block truncate text-[12px]", state ? "font-medium text-accent-text" : "text-muted")}>{state ?? t("team.companionIdle")}</span>
         </span>
         {unread > 0 && (
           <span className="transition-opacity group-hover/agent:opacity-0">
@@ -154,7 +152,7 @@ function CompanionRow({ agent, member, active, menu, onNavigate }: { agent: Agen
           </span>
         )}
       </Link>
-      <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="inset-y-0 right-2 my-auto" />
+      <MoreButton label={t("agentMenu.open", { name: agent.name })} open={menu.openFor === agent.id} onOpen={(anchor) => menu.toggle(agent.id, anchor)} className="inset-y-0 right-2.5 my-auto" />
     </div>
   );
 }
@@ -358,7 +356,7 @@ export function TeamList({
                 <Spinner />
               </div>
             )}
-            {companion && <CompanionRow agent={companion.agent} member={companion.member} active={companion.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
+            {companion && <CompanionCard agent={companion.agent} member={companion.member} active={companion.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
             {lead && <DefaultAgentCard agent={lead.agent} member={lead.member} active={lead.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
             {rest.map(({ agent, member }) => (
               <MemberRow key={agent.id} agent={agent} member={member} href={agentPath(agent.id, s?.defaultAgent)} active={agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />

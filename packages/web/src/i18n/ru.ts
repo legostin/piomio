@@ -1008,6 +1008,7 @@ export default {
   "agentDraft.missing": "Этот черновик больше недоступен",
   "team.you": "Вы: {text}",
   "team.working": "Работает…",
+  "team.companionIdle": "Всегда рядом",
   "team.presence.watching": "смотрит",
   "team.presence.listening": "слушает",
   "team.presence.speaking": "говорит",
