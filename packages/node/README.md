@@ -94,6 +94,8 @@ The examples assume the source checkout is in `~/piomio`; adjust the paths to ma
 
 ### Linux (systemd user service)
 
+On a server, `curl -fsSL https://piomio.io/install.sh | sh -s -- <invite link>` sets all of this up (its own Node, the hub's `piomio-node.mjs`, this unit) and keeps it updated from the hub. By hand:
+
 `~/.config/systemd/user/piomio-node.service`:
 
 ```ini

@@ -115,6 +115,8 @@ export interface BrainHostOptions {
   hubUrl?: string;
   bridgeCommand?: string[];
   log?: (msg: string) => void;
+  /** The user's own PATH (their login shell's), read before each probe; a service starts with a short one. */
+  userPath?: { refresh(): Promise<boolean>; dirs(): string[] };
 }
 
 export class BrainHost {
@@ -237,6 +239,12 @@ export class BrainHost {
 
   /** Probe every known brain; disabled ones are reported as unavailable. */
   async probeAll(): Promise<MachineInfo["clis"]> {
+    if (this.o.userPath) {
+      await this.o.userPath.refresh();
+      // Only directories this PATH lacks come back, so it grows once per directory; the CLIs' children see it too.
+      const add = this.o.userPath.dirs();
+      if (add.length) process.env.PATH = [process.env.PATH, ...add].filter(Boolean).join(delimiter);
+    }
     return Promise.all(
       BRAIN_IDS.map(async (id) => {
         if (!this.enabled(id)) {

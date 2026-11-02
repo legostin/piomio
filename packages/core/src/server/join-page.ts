@@ -25,6 +25,9 @@ export function installerUrl(repo: string, version: string, os: "windows" | "mac
   return `https://github.com/${repo}/releases/download/v${version}/${asset}`;
 }
 
+/** packaging/linux/install.sh, as the site serves it. */
+export const INSTALL_SH = "https://piomio.io/install.sh";
+
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 const STYLE = `
@@ -58,7 +61,7 @@ export function registerJoinPage(app: FastifyInstance, hub: Hub, o: { remote: bo
     const desktop = desktopSection(t, desktopPairLink(origin, code), platform === "macos" ? ["macos", "windows"] : ["windows", "macos"]);
     const phoneLink = hub.phoneLink(code);
     const phone = phoneSection(t, phoneLink);
-    const server = `<section><h2>${esc(t("join.server.title"))}</h2><p class="muted">${esc(t("join.server.hint"))}</p><code>curl -fsSLo piomio-node.mjs ${esc(origin)}/download/piomio-node.mjs &amp;&amp; node piomio-node.mjs pair ${esc(origin)}/join/${esc(code)}</code></section>`;
+    const server = serverSection(t, origin, `${origin}/join/${code}`);
     const first = platform === "ios" ? phone : platform === "android" ? `<section><p>${esc(t("join.android"))}</p></section>` : platform === "other" ? server : desktop;
     const rest = (platform === "ios" ? [desktop, server] : platform === "android" ? [desktop, phone, server] : platform === "other" ? [desktop, phone] : [phone, server]).join("");
     const lead = `<p>${esc(t("join.lead", { hub: hubName() }))}</p>`;
@@ -81,6 +84,16 @@ function desktopSection(t: (k: string, p?: Record<string, string | number>) => s
     `<p class="muted">${esc(t("join.desktop.hint"))}</p>` +
     `<p><strong>${esc(t("join.desktop.noApp"))}</strong></p><p>${downloads}</p>` +
     `<p class="muted">${esc(t("join.desktop.signing"))}</p><p class="muted">${esc(t("join.desktop.again"))}</p></section>`
+  );
+}
+
+/** A Linux server joins with install.sh (its own Node, a systemd service); anything else runs the daemon with its Node. */
+function serverSection(t: (k: string, p?: Record<string, string | number>) => string, origin: string, link: string): string {
+  return (
+    `<section><h2>${esc(t("join.server.title"))}</h2><p class="muted">${esc(t("join.server.hint"))}</p>` +
+    `<code>curl -fsSL ${INSTALL_SH} | sh -s -- ${esc(link)}</code>` +
+    `<p class="muted">${esc(t("join.server.node"))}</p>` +
+    `<code>curl -fsSLo piomio-node.mjs ${esc(origin)}/download/piomio-node.mjs &amp;&amp; node piomio-node.mjs pair ${esc(link)}</code></section>`
   );
 }
 

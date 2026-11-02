@@ -79,7 +79,9 @@ async function main(): Promise<void> {
       if (!config.installRoot) throw new Error(cliT()("cli.uninstallNotServer"));
       const systemctl = (...a: string[]) => {
         try {
-          execFileSync("systemctl", ["--user", ...a], { stdio: "ignore" });
+          // After `sudo -iu <user>` there is no XDG_RUNTIME_DIR, and systemctl --user would not find the user's systemd.
+          const env = { ...process.env, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.()}` };
+          execFileSync("systemctl", ["--user", ...a], { stdio: "ignore", env });
         } catch {
           /* not running, or no user manager */
         }

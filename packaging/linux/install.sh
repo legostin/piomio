@@ -6,7 +6,14 @@
 # updates. Settings: ~/.config/piomio/env; remove: piomio uninstall (the data stays).
 # PIOMIO_VERSION=x.y.z installs that release; PIOMIO_ARCHIVE=<file> a local archive (packaging/linux/build.mjs);
 # PIOMIO_REPO=<owner/name> another repository's releases.
+#
+# With an invite link the server becomes a computer of the hub you already have (the invite page shows the line):
+#   curl -fsSL https://piomio.io/install.sh | sh -s -- https://<hub>/join/<code>
+# That installs piomio-node (the hub's own build, with Node from nodejs.org) as a systemd user service instead; the
+# hub updates it on its Update button. PIOMIO_NAME=<name> names the computer; remove: piomio-node uninstall.
 set -eu
+
+LINK="${1:-}"
 
 REPO="${PIOMIO_REPO:-legostin/piomio}"
 DOCKER_URL="https://github.com/$REPO#on-a-server-docker"
@@ -71,6 +78,22 @@ msg() {
     ru:brains_how) echo "  Например:  %s" ;;
     en:settings) echo "Settings: %s. Remove: piomio uninstall (the data stays)." ;;
     ru:settings) echo "Настройки: %s. Удалить: piomio uninstall (данные останутся)." ;;
+    en:bad_link) echo "%s is not an invite link: it looks like https://<hub>/join/<code>. Ask Piomio in the chat to connect a computer." ;;
+    ru:bad_link) echo "%s — не ссылка-приглашение: она выглядит как https://<хаб>/join/<код>. Попросите Piomio в чате подключить компьютер." ;;
+    en:node_download) echo "Downloading Node.js %s…" ;;
+    ru:node_download) echo "Скачиваю Node.js %s…" ;;
+    en:node_bundle) echo "Downloading Piomio's daemon from %s…" ;;
+    ru:node_bundle) echo "Скачиваю демон Piomio с %s…" ;;
+    en:hub_unreachable) echo "Could not reach the hub at %s. Check that the link opens from this server, then run this again." ;;
+    ru:hub_unreachable) echo "Не удалось достучаться до хаба %s. Проверьте, что ссылка открывается с этого сервера, и запустите снова." ;;
+    en:connecting) echo "Connecting this server to the hub…" ;;
+    ru:connecting) echo "Подключаю этот сервер к хабу…" ;;
+    en:machine_ready) echo "This server is a computer of %s now and stays connected as a service: agents can work here." ;;
+    ru:machine_ready) echo "Теперь этот сервер — компьютер хаба %s и остаётся подключённым как служба: агенты могут здесь работать." ;;
+    en:machine_down) echo "piomio-node did not start. Its log: %s" ;;
+    ru:machine_down) echo "piomio-node не запустился. Его журнал: %s" ;;
+    en:machine_remove) echo "Remove: piomio-node uninstall (the key and the policy stay)." ;;
+    ru:machine_remove) echo "Удалить: piomio-node uninstall (ключ и политика останутся)." ;;
   esac
 }
 
@@ -95,6 +118,10 @@ esac
 command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] || die systemd
 if ls /lib/ld-musl-* >/dev/null 2>&1; then die musl; fi
 for tool in curl tar gzip sha256sum; do command -v "$tool" >/dev/null 2>&1 || die need "$tool"; done
+case "$LINK" in
+  "" | http://*/join/* | https://*/join/*) ;;
+  *) die bad_link "$LINK" ;;
+esac
 
 TMP=$(mktemp -d)
 chmod 755 "$TMP"
@@ -114,7 +141,7 @@ if [ "$(id -u)" = 0 ]; then
   systemctl start "user@$TUID.service" 2>/dev/null || true
   as_user() { runuser -u "$TARGET" -- env HOME="$H" XDG_RUNTIME_DIR="/run/user/$TUID" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$TUID/bus" "$@"; }
   login_sh() { runuser -l "$TARGET" -c "$1"; }
-  LOG="sudo -u $TARGET XDG_RUNTIME_DIR=/run/user/$TUID journalctl --user -u piomio -n 50"
+  JOURNAL="sudo -u $TARGET XDG_RUNTIME_DIR=/run/user/$TUID journalctl --user"
   SIGN_IN="sudo -iu $TARGET"
 else
   TARGET=$(id -un)
@@ -125,17 +152,147 @@ else
   fi
   as_user() { "$@"; }
   login_sh() { "${SHELL:-/bin/sh}" -lc "$1"; }
-  LOG="journalctl --user -u piomio -n 50"
+  JOURNAL="journalctl --user"
   SIGN_IN=""
 fi
 
 # Files the target user owns: written through it.
 write_as_user() { as_user sh -c 'cat >"$1"' sh "$1"; }
 
+UNITS="$H/.config/systemd/user"
+
+# Appends lines to the profile the user's login shell reads, once per tag.
+add_to_profile() {
+  PROFILE="$H/.profile"
+  case "$(getent passwd "$TARGET" | cut -d: -f7)" in
+    */zsh) PROFILE="$H/.zprofile" ;;
+    */bash)
+      # bash reads the first of these that exists and skips .profile then.
+      if [ -f "$H/.bash_profile" ]; then PROFILE="$H/.bash_profile"; elif [ -f "$H/.bash_login" ]; then PROFILE="$H/.bash_login"; fi
+      ;;
+  esac
+  grep -qsF "Piomio (install.sh): $1" "$PROFILE" && return 0
+  printf '\n# Piomio (install.sh): %s\n%s\n' "$1" "$2" | as_user sh -c 'cat >>"$1"' sh "$PROFILE"
+}
+
+# The command on the user's PATH: a login shell that doesn't add ~/.local/bin by itself gets a line that does.
+put_on_path() {
+  login_sh "command -v $1" >/dev/null 2>&1 && return 0
+  # shellcheck disable=SC2016 # $HOME and $PATH are for the profile
+  add_to_profile "its commands" 'export PATH="$HOME/.local/bin:$PATH"'
+}
+
+# The user root made has no session of its own: after `sudo -iu`, systemctl --user and journalctl --user find it so.
+if [ "$(id -u)" = 0 ]; then
+  # shellcheck disable=SC2016 # for the profile
+  add_to_profile "systemctl --user after sudo -iu" '[ -n "${XDG_RUNTIME_DIR:-}" ] || export XDG_RUNTIME_DIR="/run/user/$(id -u)"'
+fi
+
+# Enables and (re)starts a user unit once the user's systemd answers.
+start_unit() {
+  i=0
+  until [ -S "/run/user/$TUID/bus" ] || [ "$i" -ge 20 ]; do
+    sleep 0.5
+    i=$((i + 1))
+  done
+  as_user systemctl --user daemon-reload
+  as_user systemctl --user enable "$1" >/dev/null 2>&1
+  as_user systemctl --user restart "$1"
+}
+
+# Which CLIs the user has and is signed in to, with the way to sign in when none is.
+brain() {
+  login_sh "command -v $2" >/dev/null 2>&1 || return 0
+  if [ -z "$3" ]; then
+    say brain_found "$1"
+  elif login_sh "$3" >/dev/null 2>&1; then
+    SIGNED=1
+    say brain_in "$1"
+  else
+    say brain_out "$1"
+  fi
+}
+report_brains() {
+  echo
+  say brains "$TARGET"
+  SIGNED=0
+  brain "Claude Code" claude "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true'"
+  brain "Codex" codex "codex login status 2>&1 | grep -qi 'logged in'"
+  brain "Kimi Code" kimi ""
+  if [ "$SIGNED" = 0 ]; then
+    say brains_none "$TARGET"
+    say brains_how "${SIGN_IN:+$SIGN_IN, }curl -fsSL https://claude.ai/install.sh | bash, claude"
+  fi
+  echo
+}
+
+# With an invite link: a computer of that hub (piomio-node), not a hub of its own.
+if [ -n "$LINK" ]; then
+  HUB=${LINK%/join/*}
+  NROOT="$H/.local/lib/piomio-node"
+  # The Node the desktop installers and release archives carry (packaging/desktop/stage.mjs).
+  NODE_VERSION=24.16.0
+  NODE_DIR="node-v$NODE_VERSION-linux-$ARCH"
+  as_user mkdir -p "$NROOT" "$H/.local/bin" "$UNITS"
+  if [ "$(as_user "$NROOT/node/bin/node" --version 2>/dev/null || true)" != "v$NODE_VERSION" ]; then
+    say node_download "$NODE_VERSION"
+    curl -fSL --progress-bar -o "$TMP/$NODE_DIR.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/$NODE_DIR.tar.gz"
+    curl -fsSL -o "$TMP/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
+    (cd "$TMP" && grep " $NODE_DIR.tar.gz\$" SHASUMS256.txt | sha256sum -c - >/dev/null 2>&1) || die checksum
+    chmod 644 "$TMP/$NODE_DIR.tar.gz"
+    as_user rm -rf "$NROOT/node.new"
+    as_user mkdir -p "$NROOT/node.new"
+    as_user tar -xzf "$TMP/$NODE_DIR.tar.gz" -C "$NROOT/node.new" --strip-components=1
+    as_user rm -rf "$NROOT/node"
+    as_user mv "$NROOT/node.new" "$NROOT/node"
+  fi
+  # The hub's own build of the daemon: the version it expects; it sends newer ones itself later.
+  say node_bundle "$HUB"
+  curl -fsSL -o "$TMP/piomio-node.mjs" "$HUB/download/piomio-node.mjs" || die hub_unreachable "$HUB"
+  chmod 644 "$TMP/piomio-node.mjs"
+  as_user cp "$TMP/piomio-node.mjs" "$NROOT/piomio-node.mjs.new"
+  as_user mv -f "$NROOT/piomio-node.mjs.new" "$NROOT/piomio-node.mjs"
+  write_as_user "$H/.local/bin/piomio-node" <<'EOF'
+#!/bin/sh
+# piomio-node with the Node install.sh put next to it (packaging/linux/install.sh).
+exec "$HOME/.local/lib/piomio-node/node/bin/node" --disable-warning=ExperimentalWarning "$HOME/.local/lib/piomio-node/piomio-node.mjs" "$@"
+EOF
+  as_user chmod 755 "$H/.local/bin/piomio-node"
+  put_on_path piomio-node
+
+  say connecting
+  set -- pair "$LINK" --service
+  [ -z "${PIOMIO_NAME:-}" ] || set -- "$@" --name "$PIOMIO_NAME"
+  as_user env PIOMIO_LANG="$L" "$H/.local/bin/piomio-node" "$@" || exit 1
+
+  write_as_user "$UNITS/piomio-node.service" <<'EOF'
+# Piomio's daemon on a computer of a hub (packaging/linux/install.sh with an invite link).
+[Unit]
+Description=Piomio computer
+
+[Service]
+ExecStart=%h/.local/lib/piomio-node/node/bin/node --disable-warning=ExperimentalWarning %h/.local/lib/piomio-node/piomio-node.mjs run
+Restart=always
+RestartSec=3
+# 1: revoked, not paired or a broken policy.json, which starting again does not fix. An update exits with 75.
+RestartPreventExitStatus=1
+
+[Install]
+WantedBy=default.target
+EOF
+  start_unit piomio-node.service
+  sleep 3
+  as_user systemctl --user is-active --quiet piomio-node.service || die machine_down "$JOURNAL -u piomio-node -n 50"
+  echo
+  say machine_ready "$HUB"
+  report_brains
+  say machine_remove
+  exit 0
+fi
+
 ROOT="$H/.local/lib/piomio"
 DATA="$H/.local/share/piomio"
 CONF="$H/.config/piomio/env"
-UNITS="$H/.config/systemd/user"
 
 if [ -n "${PIOMIO_ARCHIVE:-}" ]; then
   cp "$PIOMIO_ARCHIVE" "$TMP/piomio.tar.gz"
@@ -182,19 +339,7 @@ as_user cp "$ROOT/versions/$V/packaging/linux/piomio" "$ROOT/piomio.new"
 as_user chmod 755 "$ROOT/piomio.new"
 as_user mv -f "$ROOT/piomio.new" "$ROOT/piomio"
 as_user ln -sfn "$ROOT/piomio" "$H/.local/bin/piomio"
-# The command on the user's PATH: a login shell that doesn't add ~/.local/bin by itself gets a line that does.
-if ! login_sh 'command -v piomio' >/dev/null 2>&1; then
-  PROFILE="$H/.profile"
-  case "$(getent passwd "$TARGET" | cut -d: -f7)" in
-    */zsh) PROFILE="$H/.zprofile" ;;
-    */bash)
-      # bash reads the first of these that exists and skips .profile then.
-      if [ -f "$H/.bash_profile" ]; then PROFILE="$H/.bash_profile"; elif [ -f "$H/.bash_login" ]; then PROFILE="$H/.bash_login"; fi
-      ;;
-  esac
-  # shellcheck disable=SC2016 # $HOME and $PATH are for the profile
-  printf '\n# Piomio (install.sh): the piomio command\nexport PATH="$HOME/.local/bin:$PATH"\n' | as_user sh -c 'cat >>"$1"' sh "$PROFILE"
-fi
+put_on_path piomio
 
 # The agents' browser (Chromium, which the hub downloads by itself) needs system libraries: root installs them once.
 if [ "$(id -u)" = 0 ] && [ "$FIRST" = 1 ]; then
@@ -232,14 +377,7 @@ WantedBy=default.target
 EOF
 
 say starting
-i=0
-until [ -S "/run/user/$TUID/bus" ] || [ "$i" -ge 20 ]; do
-  sleep 0.5
-  i=$((i + 1))
-done
-as_user systemctl --user daemon-reload
-as_user systemctl --user enable piomio.service >/dev/null 2>&1
-as_user systemctl --user restart piomio.service
+start_unit piomio.service
 
 PORT=$(sed -n 's/^PIOMIO_PORT=\([0-9][0-9]*\).*/\1/p' "$CONF" | tail -n 1)
 PORT=${PORT:-8080}
@@ -251,7 +389,7 @@ while [ "$i" -lt 120 ]; do
   sleep 1
   i=$((i + 1))
 done
-case "$STATE" in *"\"version\":\"$V\""*) ;; *) die not_up "$LOG" ;; esac
+case "$STATE" in *"\"version\":\"$V\""*) ;; *) die not_up "$JOURNAL -u piomio -n 50" ;; esac
 
 echo
 say ready "$V"
@@ -260,27 +398,5 @@ say open "ssh -N -L 8080:localhost:$PORT -L 8081:localhost:$((PORT + 1)) ${SUDO_
 case "$STATE" in
   *'"hasPassword":false'*) if [ -f "$DATA/setup-code" ]; then say code "$(cat "$DATA/setup-code")"; fi ;;
 esac
-
-echo
-say brains "$TARGET"
-SIGNED=0
-brain() {
-  login_sh "command -v $2" >/dev/null 2>&1 || return 0
-  if [ -z "$3" ]; then
-    say brain_found "$1"
-  elif login_sh "$3" >/dev/null 2>&1; then
-    SIGNED=1
-    say brain_in "$1"
-  else
-    say brain_out "$1"
-  fi
-}
-brain "Claude Code" claude "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true'"
-brain "Codex" codex "codex login status 2>&1 | grep -qi 'logged in'"
-brain "Kimi Code" kimi ""
-if [ "$SIGNED" = 0 ]; then
-  say brains_none "$TARGET"
-  say brains_how "${SIGN_IN:+$SIGN_IN, }curl -fsSL https://claude.ai/install.sh | bash, claude"
-fi
-echo
+report_brains
 say settings "$CONF"

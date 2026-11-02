@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { FileSync } from "@piomio/replica";
 import { loadConfig, loadKey, saveHubUrls, type NodeConfig } from "./home.ts";
 import { PolicyStore } from "./policy.ts";
-import { BrainHost } from "./brains.ts";
+import { BrainHost, type BrainHostOptions } from "./brains.ts";
 import { NodeService } from "./service.ts";
 import { NodeClient } from "./client.ts";
 import type { Logger } from "./info.ts";
@@ -21,6 +21,10 @@ export interface NodeDaemonOptions {
   minBackoffMs?: number;
   maxBackoffMs?: number;
   onFatal?: (message: string) => void;
+  /** The user's login-shell PATH for the CLIs (brains.ts); `run` passes it. */
+  userPath?: BrainHostOptions["userPath"];
+  /** How often to look at the CLIs again while none is signed in (client.ts). */
+  brainRecheckMs?: number;
 }
 
 export interface NodeDaemon {
@@ -44,7 +48,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     (port) => o.log(t("gateway.ready", { port })),
     (e) => o.log(`gateway: ${e?.message ?? e}`),
   );
-  const brains = new BrainHost({ home: o.home, policy, gateway, hubUrl: config.hubUrl, bridgeCommand: o.bridgeCommand, log: o.log });
+  const brains = new BrainHost({ home: o.home, policy, gateway, hubUrl: config.hubUrl, bridgeCommand: o.bridgeCommand, log: o.log, userPath: o.userPath });
   // The daemon's own home (key, policy) is never reachable through fs.*/exec, even if an allowed dir contains it.
   service = new NodeService({ policy, brains, log: o.log, guard: { deny: [o.home] } });
   const clientFor = (hubUrl: string, secondary: boolean) =>
@@ -57,6 +61,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
       pingIntervalMs: o.pingIntervalMs,
       minBackoffMs: o.minBackoffMs,
       maxBackoffMs: o.maxBackoffMs,
+      brainRecheckMs: o.brainRecheckMs,
       ...(secondary ? { secondary: true } : { onFatal: o.onFatal }),
     });
   const client = clientFor(config.hubUrl, false);

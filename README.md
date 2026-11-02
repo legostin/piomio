@@ -184,6 +184,8 @@ For Linux with systemd on x64 or arm64 (Ubuntu, Debian, Fedora and the like; Alp
 
 At the end it prints the setup code and `ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 you@server`: run that on your computer and open http://localhost:8080. [Access from anywhere](#access-from-anywhere) later gives the hub an HTTPS link of its own.
 
+Already have a hub, say on your Mac? Then the server can be one of its computers instead of a hub of its own: the same installer with an invite link, see [Other computers](#other-computers).
+
 **Updates come on a button.** When a release is out, the server's row in **Machines** shows **Update** and the assistant offers it in the chat (or just say "update the server"). The hub downloads the release, checks its signature (the key the desktop app's updates are signed with), makes sure the new version starts, keeps a copy of the database, restarts and is back in about a minute. If the new version doesn't start three times, it goes back to the previous one with the database as it was, and says so in the chat. Running the installer again updates too. Computers joined with `piomio-node` get the same **Update** when they run an older version than the hub (a `piomio-node.mjs` from before this feature doesn't say its version: download it again once).
 
 Commands, as that user: `piomio reset-password <new>`, `piomio backup`, `piomio version`, `piomio uninstall` (removes the app and the service; the data stays). The log: `journalctl --user -u piomio`.
@@ -301,14 +303,18 @@ Piomio signs in with its own Google client. To use your own instead, create one 
 <details>
 <summary><b>Other computers</b></summary>
 
-1. On the **Machines** page, connect a new machine to get a one-time code (valid for 10 minutes).
-2. On the other computer (it only needs Node.js 24.5+), download the daemon from the hub and pair the machine:
+1. Ask the assistant to connect a computer. It gives a one-time link, valid for an hour. A Mac or PC opens it in the Piomio app.
+2. A Linux server (systemd, x64 or arm64) joins with one command, which the link's page shows:
+   ```bash
+   curl -fsSL https://piomio.io/install.sh | sh -s -- https://your-hub-url/join/<code>
+   ```
+   It puts the hub's own `piomio-node`, with Node from nodejs.org, in `~/.local/lib/piomio-node` and keeps it running as the systemd user service `piomio-node`. Run as root, it makes the user `piomio` for it, as for a hub. `PIOMIO_NAME=<name>` names the computer; `piomio-node uninstall` removes it (the key and the policy stay). Elsewhere, with Node.js 24.5+:
    ```bash
    curl -fsSLo piomio-node.mjs https://your-hub-url/download/piomio-node.mjs
-   node piomio-node.mjs pair https://your-hub-url <code> --name laptop
+   node piomio-node.mjs pair https://your-hub-url/join/<code> --name laptop
    node piomio-node.mjs run
    ```
-3. The node appears in the list. Its local Claude Code and Codex become the brains `claude-code@<machine>` and `codex@<machine>`. What the agent may do on the machine (folders, commands, brains) is decided by the machine's owner in `~/.piomio-node/policy.json`; commands are off by default. Running the daemon as a service with systemd, launchd or Task Scheduler is covered in [packages/node/README.md](packages/node/README.md).
+3. The computer appears in **Machines**. Its Claude Code, Codex and Kimi Code become the brains `claude-code@<machine>`, `codex@<machine>` and `kimi@<machine>`, signed in as they are there; one signed in later is found within a minute. What the agent may do on the machine (folders, commands, brains) is decided by the machine's owner in `~/.piomio-node/policy.json`; commands are off by default. Running the daemon as a service with launchd or Task Scheduler is covered in [packages/node/README.md](packages/node/README.md).
 
 Under the team in the sidebar (and in the phone app's **Hub** tab) every machine shows whether it is online and, while agents work there, who works on what and what they are doing right now: running a command, reading or editing files, on the web, writing, or waiting for your approval. A row opens that chat or task.
 

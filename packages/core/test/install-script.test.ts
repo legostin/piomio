@@ -19,6 +19,13 @@ describe("install.sh", () => {
     for (const k of used) expect(en, k).toContain(k);
   });
 
+  it("joins a hub with the Node the installers carry", () => {
+    const stage = readFileSync(join(dir, "..", "desktop", "stage.mjs"), "utf8");
+    const pinned = /NODE_VERSION \|\| "([\d.]+)"/.exec(stage)?.[1];
+    expect(pinned).toBeTruthy();
+    expect(script).toContain(`NODE_VERSION=${pinned}\n`);
+  });
+
   it("each message has as many %s in both languages", () => {
     for (const [, key, text] of script.matchAll(/^\s+en:(\w+)\) echo "(.*)" ;;$/gm)) {
       const ru = new RegExp(`^\\s+ru:${key}\\) echo "(.*)" ;;$`, "m").exec(script)?.[1] ?? "";

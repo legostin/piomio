@@ -11,7 +11,8 @@
     "./thinking": "./src/thinking.ts",
     "./commands": "./src/commands.ts",
     "./models": "./src/models.ts",
-    "./pages": "./src/pages.ts"
+    "./pages": "./src/pages.ts",
+    "./user-path": "./src/user-path.ts"
   },
   "dependencies": {
     "yaml": "^2.9.1",

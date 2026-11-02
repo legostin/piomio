@@ -2,7 +2,7 @@
 // Reconnects forever with exponential backoff (max 60 s); a 4401 close (revoked / unknown key) is fatal.
 
 import WebSocket from "ws";
-import { createRpcPeer, normalizeLocale, wsTransport, type RpcPeer, type WsLike } from "@piomio/shared";
+import { createRpcPeer, normalizeLocale, wsTransport, type MachineInfo, type RpcPeer, type WsLike } from "@piomio/shared";
 import { setHubLocale, t } from "./messages.ts";
 import { nodeWsUrl } from "./home.ts";
 import { signChallenge } from "./keys.ts";
@@ -24,6 +24,8 @@ export interface NodeClientOptions {
   onFatal?: (message: string) => void;
   /** One of several connections (another replica of the hub): losing it stops only what it opened. */
   secondary?: boolean;
+  /** While no CLI here is signed in, how often to look again (default 30 s). */
+  brainRecheckMs?: number;
 }
 
 export type ClientState = "idle" | "connecting" | "online" | "stopped";
@@ -39,6 +41,10 @@ export class NodeClient {
   private onlineWaiters: Array<() => void> = [];
   private stopPolicyWatch?: () => void;
   private helloTimer?: NodeJS.Timeout;
+  private brainTimer?: NodeJS.Timeout;
+  /** The CLIs as the last node.hello told the hub. */
+  private announced = "";
+  private signedIn = false;
   /** Name the hub knows this machine by (from node.hello). */
   hubName?: string;
 
@@ -106,6 +112,7 @@ export class NodeClient {
         this.peer = undefined;
       }
       clearInterval(this.pingTimer);
+      clearInterval(this.brainTimer);
       // Only what this connection opened stops: the machine may be serving the hub over another one.
       if (peerOf) void this.o.service.detach(peerOf);
       if (this.state === "stopped") return;
@@ -160,6 +167,10 @@ export class NodeClient {
           });
         }, this.o.pingIntervalMs ?? 30_000);
         this.pingTimer.unref?.();
+        // A CLI signed in over SSH after the daemon started reaches the hub by itself, without "Check again".
+        clearInterval(this.brainTimer);
+        this.brainTimer = setInterval(() => void this.recheckBrains(peer), this.o.brainRecheckMs ?? 30_000);
+        this.brainTimer.unref?.();
       } catch (e: any) {
         this.o.log(t("client.helloFailed", { error: String(e?.message ?? e) }));
         ws.terminate();
@@ -169,10 +180,12 @@ export class NodeClient {
   }
 
   /** Probe the CLIs and announce this machine (info + installed brains) to the hub. */
-  async hello(): Promise<{ machineId: string; name: string }> {
+  async hello(probed?: MachineInfo["clis"]): Promise<{ machineId: string; name: string }> {
     const peer = this.peer;
     if (!peer) throw new Error(t("client.offline"));
-    const clis = await this.o.service.brains.probeAll();
+    const clis = probed ?? (await this.o.service.brains.probeAll());
+    this.announced = cliState(clis);
+    this.signedIn = clis.some((c) => c.authenticated);
     const info = machineInfo(this.o.service.policy.get(), clis);
     const brains = this.o.service.brains.available();
     const r = await peer.request<{ machineId: string; name: string; language?: string }>("node.hello", { info, brains }, { timeoutMs: 30_000 });
@@ -181,12 +194,21 @@ export class NodeClient {
     return r;
   }
 
+  /** Only while nothing here is signed in: a machine with a working CLI is not probed over and over. */
+  private async recheckBrains(peer: RpcPeer): Promise<void> {
+    if (this.peer !== peer || this.signedIn) return;
+    const clis = await this.o.service.brains.probeAll().catch(() => undefined);
+    if (!clis || this.peer !== peer || cliState(clis) === this.announced) return;
+    await this.hello(clis).catch((e) => this.o.log(`node.hello: ${e.message}`));
+  }
+
   async stop(): Promise<void> {
     if (this.state === "stopped") return;
     this.state = "stopped";
     clearTimeout(this.reconnectTimer);
     clearTimeout(this.helloTimer);
     clearInterval(this.pingTimer);
+    clearInterval(this.brainTimer);
     this.stopPolicyWatch?.();
     const ws = this.ws;
     this.ws = undefined;
@@ -199,3 +221,6 @@ export class NodeClient {
     await this.o.service.abortAll();
   }
 }
+
+/** What the hub needs to hear again about the CLIs: which are there and signed in. */
+const cliState = (clis: MachineInfo["clis"]) => JSON.stringify(clis.map((c) => ({ id: c.brainId, available: c.available, authenticated: c.authenticated })));

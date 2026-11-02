@@ -87,6 +87,7 @@ describe("one link to connect a device", () => {
     const html = await r.text();
     expect(html).toContain(`href="piomio://pair?hub=${encodeURIComponent(base)}&amp;code=${code}"`);
     expect(html.indexOf("/download/desktop/windows")).toBeLessThan(html.indexOf("/download/desktop/macos"));
+    expect(html).toContain(`curl -fsSL https://piomio.io/install.sh | sh -s -- ${base}/join/${code}`);
     expect(html).toContain(`node piomio-node.mjs pair ${base}/join/${code}`);
     expect(html).not.toMatch(/<script/i);
   });

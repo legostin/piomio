@@ -7,9 +7,9 @@ import { DEFAULT_LOCALE, localeFromEnv, translator, type Catalog, type Locale, t
 const en = {
   // cli
   "cli.help":
-    "piomio-node — connects this computer to an Piomio hub\n\nCommands:\n  piomio-node pair <invite-link> [--name <name>]      pair this machine (ask Piomio in the chat to connect a computer)\n  piomio-node run                                     connect to the hub and serve requests (in the terminal)\n  piomio-node status                                  pairing, policy, installed CLIs, hub reachability\n  piomio-node policy                                  path and contents of the policy file\n\nState folder: {home} (override with PIOMIO_NODE_HOME)",
+    "piomio-node — connects this computer to a Piomio hub\n\nCommands:\n  piomio-node pair <invite-link> [--name <name>]      pair this machine (ask Piomio in the chat to connect a computer)\n  piomio-node run                                     connect to the hub and serve requests (in the terminal)\n  piomio-node status                                  pairing, policy, installed CLIs, hub reachability\n  piomio-node policy                                  path and contents of the policy file\n  piomio-node uninstall                               remove what install.sh set up (the key and policy stay)\n\nState folder: {home} (override with PIOMIO_NODE_HOME)",
   "cli.pairUsage": "Usage: piomio-node pair <invite-link> [--name <name>]\nExample: piomio-node pair https://piomio.example.ts.net/join/AB12CD34\nThe link comes from the chat: ask Piomio to connect a computer.",
-  "cli.badLink": "{link} is not an Piomio invite link. It looks like https://<hub>/join/<code>: ask Piomio in the chat to connect a computer.",
+  "cli.badLink": "{link} is not a Piomio invite link. It looks like https://<hub>/join/<code>: ask Piomio in the chat to connect a computer.",
   "cli.checkingClis": "Checking installed CLIs…",
   "cli.paired": "\nThis machine is paired with the hub {hub}: “{name}” ({id})",
   "cli.replaced": "The previous pairing ({id}) was replaced — you can revoke it in the web UI.",
@@ -21,6 +21,8 @@ const en = {
   "cli.brain.absent": "{id} — {detail}",
   "cli.brain.none": "none",
   "cli.next": "\nNext: piomio-node run   (or install it as a service — see the README)",
+  "cli.uninstallNotInstalled": "piomio-node was not installed by install.sh here: nothing to remove.",
+  "cli.uninstalled": "piomio-node and its service are removed. The key and the policy stay in {home}.",
   "cli.run.header": "piomio-node: machine “{name}” ({id}), hub {hub}",
   "cli.run.policy": "Policy:   {file} (changes apply on the fly)",
   "cli.stopping": "{signal}: stopping…",
@@ -120,7 +122,7 @@ const en = {
 
 const ru: Record<keyof typeof en, string> = {
   "cli.help":
-    "piomio-node — подключает этот компьютер к хабу Piomio\n\nКоманды:\n  piomio-node pair <ссылка> [--name <имя>]             привязать машину (попросите Piomio в чате подключить компьютер)\n  piomio-node run                                     подключиться к хабу и обслуживать запросы (в консоли)\n  piomio-node status                                  привязка, политика, установленные CLI, доступность хаба\n  piomio-node policy                                  путь и содержимое файла политики\n\nПапка состояния: {home} (переопределяется PIOMIO_NODE_HOME)",
+    "piomio-node — подключает этот компьютер к хабу Piomio\n\nКоманды:\n  piomio-node pair <ссылка> [--name <имя>]             привязать машину (попросите Piomio в чате подключить компьютер)\n  piomio-node run                                     подключиться к хабу и обслуживать запросы (в консоли)\n  piomio-node status                                  привязка, политика, установленные CLI, доступность хаба\n  piomio-node policy                                  путь и содержимое файла политики\n  piomio-node uninstall                               удалить то, что поставил install.sh (ключ и политика останутся)\n\nПапка состояния: {home} (переопределяется PIOMIO_NODE_HOME)",
   "cli.pairUsage": "Использование: piomio-node pair <ссылка> [--name <имя>]\nПример: piomio-node pair https://piomio.example.ts.net/join/AB12CD34\nСсылку даёт чат: попросите Piomio подключить компьютер.",
   "cli.badLink": "{link} — не ссылка-приглашение Piomio. Она выглядит как https://<хаб>/join/<код>: попросите Piomio в чате подключить компьютер.",
   "cli.checkingClis": "Проверяю установленные CLI…",
@@ -134,6 +136,8 @@ const ru: Record<keyof typeof en, string> = {
   "cli.brain.absent": "{id} — {detail}",
   "cli.brain.none": "нет",
   "cli.next": "\nДальше: piomio-node run   (или установите как службу — см. README)",
+  "cli.uninstallNotInstalled": "piomio-node здесь ставил не install.sh: удалять нечего.",
+  "cli.uninstalled": "piomio-node и его служба удалены. Ключ и политика остались в {home}.",
   "cli.run.header": "piomio-node: машина «{name}» ({id}), хаб {hub}",
   "cli.run.policy": "Политика: {file} (изменения применяются на лету)",
   "cli.stopping": "{signal}: остановка…",

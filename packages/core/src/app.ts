@@ -59,7 +59,7 @@ import { SecretIntake } from "./secrets.ts";
 import { AgentDrafts } from "./agent-drafts.ts";
 import { BrainLogins } from "./brain-login.ts";
 import { CliTools } from "./cli-tools.ts";
-import { UserPath } from "./user-path.ts";
+import { UserPath } from "@piomio/shared/user-path";
 import { SetupGuide } from "./setup.ts";
 import { MediaService } from "./media.ts";
 import { Connections } from "./connections.ts";
