@@ -16,6 +16,18 @@ export interface Frontmost {
   bounds: Rect;
 }
 
+/** The person's window as text (Accessibility; never a password field's). */
+export interface WindowText {
+  app: string;
+  title?: string;
+  url?: string;
+  document?: string;
+  selected?: string;
+  focused?: string;
+  text: string;
+  truncated: boolean;
+}
+
 export interface Capture {
   jpeg: string;
   width: number;
@@ -45,6 +57,7 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 export const desk = {
   frontmost: () => invoke<Frontmost | null>("pio_frontmost"),
   capture: (target: "window" | "screen", maxSide = 1440) => invoke<Capture>("pio_capture", { target, maxSide }),
+  windowText: () => invoke<WindowText>("pio_window_text"),
   frame: (f: { expanded?: boolean; width?: number; height?: number }) => invoke<null>("pio_frame", f),
   permissions: () => invoke<{ screen: boolean; accessibility: boolean }>("pio_permissions"),
   openSettings: (pane: "screen" | "accessibility" | "microphone") => invoke<null>("pio_open_settings", { pane }),

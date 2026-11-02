@@ -179,6 +179,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
 
   /** What the hub asks this window to do on the computer (Pio's tools). */
   const perform = async (action: string, a: Record<string, unknown>): Promise<unknown> => {
+    if (action === "read") return desk.windowText();
     if (action === "look") {
       const cap = await desk.capture(a.target === "screen" ? "screen" : "window");
       live.current.lastCap = cap;

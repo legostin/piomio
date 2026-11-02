@@ -13,8 +13,9 @@ Pio needs the Piomio desktop app on a Mac or a Windows PC. On other devices Pio 
 
 ## Turn Pio on
 
-Pio comes turned off. After the update your main assistant offers it once in the chat, with buttons. You can also ask
-any time: "turn on Pio". To turn it off, say "turn off Pio", or switch it off in **Settings → Plugins → Pio — always
+Pio comes turned off. After the update (on a new hub: right after the introductions) your main assistant offers it
+once in the chat, with buttons. While Pio is off, a **Turn on Pio** line waits under your main assistant in the
+sidebar; it asks the assistant for you. You can also ask any time: "turn on Pio". To turn it off, say "turn off Pio", or switch it off in **Settings → Plugins → Pio — always
 next to you**.
 
 Once Pio is on, two things appear:
@@ -41,6 +42,11 @@ When Pio says something while the card is closed, its line pops out next to the 
 ## What Pio sees
 
 With **Work together** on, Pio knows the active app and window title before each answer, and the windows before it.
+Pio can also read the active window as text through macOS's accessibility (what screen readers use): the page's
+address or the document's file, what you selected, the field you type in, and the text it shows, never a password
+field. For mail, documents, code and pages that is quicker and more exact than a picture, so Pio reads first and looks
+at a picture for charts and layout.
+
 When you ask Pio to look ("Pio, look what's wrong with this chart", "what's here?"), the face sends a picture of your
 active window with your words, so Pio sees what you mean at once; otherwise Pio takes the picture itself when it needs
 one. The picture goes with that message into Pio's chat (its files, like any photo you send), nowhere else.
@@ -98,7 +104,7 @@ macOS asks once for each of these, for Piomio:
 | Permission | What for |
 |---|---|
 | **Screen Recording** | window titles and Pio's look at the screen |
-| **Accessibility** | the mouse and keyboard when you hand over control |
+| **Accessibility** | reading the window's text, and the mouse and keyboard when you hand over control |
 | **Microphone** | Pio's voice |
 
 When one is missing, Pio's card says so and **Open Settings** goes to the right place in System Settings.

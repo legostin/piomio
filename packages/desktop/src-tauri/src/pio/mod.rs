@@ -4,6 +4,7 @@
 //! mouse and keyboard once the person allows it (control.rs). The hub window's page turns it on and off
 //! (`<scheme>://pio?show=1|0`); the app remembers that and where the bubble was left.
 
+pub mod ax;
 pub mod commands;
 pub mod control;
 pub mod screen;

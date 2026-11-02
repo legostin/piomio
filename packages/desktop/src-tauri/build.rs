@@ -12,6 +12,7 @@ fn main() {
     "dismiss",
     "reset_app",
     "pio_frontmost",
+    "pio_window_text",
     "pio_capture",
     "pio_frame",
     "pio_permissions",

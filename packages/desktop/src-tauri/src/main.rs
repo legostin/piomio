@@ -50,6 +50,7 @@ fn main() {
       commands::dismiss,
       commands::reset_app,
       pio::commands::pio_frontmost,
+      pio::commands::pio_window_text,
       pio::commands::pio_capture,
       pio::commands::pio_frame,
       pio::commands::pio_permissions,

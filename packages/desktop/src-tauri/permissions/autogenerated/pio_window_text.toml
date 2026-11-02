@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pio-window-text"
+description = "Enables the pio_window_text command without any pre-configured scope."
+commands.allow = ["pio_window_text"]
+
+[[permission]]
+identifier = "deny-pio-window-text"
+description = "Denies the pio_window_text command without any pre-configured scope."
+commands.deny = ["pio_window_text"]

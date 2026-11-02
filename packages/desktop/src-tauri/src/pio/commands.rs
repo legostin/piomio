@@ -8,8 +8,9 @@ use super::control::{self, Act};
 use super::screen::{self, Capture, Frontmost, Permissions};
 
 /// The commands' permissions (build.rs makes them from the command names).
-pub const PERMISSIONS: [&str; 10] = [
+pub const PERMISSIONS: [&str; 11] = [
   "allow-pio-frontmost",
+  "allow-pio-window-text",
   "allow-pio-capture",
   "allow-pio-frame",
   "allow-pio-permissions",
@@ -29,6 +30,16 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 #[tauri::command]
 pub async fn pio_frontmost() -> Result<Option<Frontmost>, String> {
   blocking(screen::frontmost).await
+}
+
+/// The text of the person's active window (Accessibility; never a password field's), or why it cannot be read.
+#[tauri::command]
+pub async fn pio_window_text() -> Result<super::ax::WindowText, String> {
+  blocking(|| {
+    let f = screen::frontmost().ok_or("no window of another app is active")?;
+    super::ax::read(f.pid, f.app)
+  })
+  .await?
 }
 
 /// A JPEG of the person's window or of its screen, at most `maxSide` pixels a side.
