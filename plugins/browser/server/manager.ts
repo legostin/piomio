@@ -335,7 +335,9 @@ export class BrowserManager {
         this.userAgents.set(key, ua);
         return ua;
       } finally {
-        await b.close().catch(() => {});
+        // Not waited for: Google Chrome takes seconds to quit (7 s on a Mac, longer on a busy server), and the real
+        // launch, with a profile of its own, needs nothing from this one.
+        void b.close().catch(() => {});
       }
     } catch (e: any) {
       // The real launch will report what is wrong; the browser still works, only less like a person's.
