@@ -21,6 +21,7 @@ type FromWindow =
   | { type: "state"; body: string; watching?: boolean; voice?: boolean; control?: boolean; hearing?: boolean; speaking?: boolean }
   | { type: "window"; body: string; app: string; title?: string }
   | { type: "bye"; body: string }
+  | { type: "open"; body: string }
   | ({ type: "result" } & ActResult);
 
 let stop: (() => void) | undefined;
@@ -67,6 +68,10 @@ const plugin: PluginModule = {
           break;
         case "bye":
           bodies.gone(m.body);
+          break;
+        case "open":
+          // "Open chat" in Pio's window: the main window shows Pio's chat.
+          ctx.ui.emit("open-chat", {});
           break;
         case "result":
           relay.answer(m);
