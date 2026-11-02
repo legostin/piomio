@@ -20,6 +20,10 @@ Another program holds the port Piomio needs (41780, or 41781 and 41789 next to i
 
 The app signs its window in with a one-time link. When that link is too old, sign in with your Piomio password once.
 
+### The window stays white on Windows
+
+Piomio was ended abruptly (by an update, a crash or **End task**) and left the window's saved graphics data damaged: the page runs, but nothing is drawn. The app clears that data when it starts after such an exit, so the next start draws the window again. On a version from before that fix, install the next update from the icon's menu (**Install update …**): the new version clears it as it starts.
+
 ### Windows warns that it protected your PC
 
 The Windows app isn't signed yet. Choose **More info → Run anyway**. See [Install on a Mac or PC](install.md).

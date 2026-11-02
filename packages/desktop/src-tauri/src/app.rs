@@ -156,6 +156,17 @@ pub fn setup(app: &mut tauri::App, args: Args) -> Result<(), Box<dyn std::error:
     return Ok(());
   }
   let paths = Paths::resolve(&handle)?;
+  // Before any window: WebView2's GPU caches go when the last run did not end cleanly (gpucache.rs). Tauri keeps the
+  // webviews' data in the app's local data dir, a dev run's too, so a dev run leaves it to the installed app.
+  #[cfg(windows)]
+  if !paths.dev {
+    let dir = handle.path().app_local_data_dir()?;
+    if !crate::gpucache::ended_cleanly(&dir) {
+      if let Err(e) = crate::gpucache::clear(&dir) {
+        eprintln!("piomio: webview GPU caches: {e}");
+      }
+    }
+  }
   let mut settings = settings::load(&paths.config_dir);
   if settings.mode.is_none() && args.mode.is_some() {
     settings.mode = args.mode;
@@ -558,6 +569,14 @@ pub fn on_run_event(app: &AppHandle, event: RunEvent) {
     RunEvent::Exit => {
       if let Some(st) = app.try_state::<AppState>() {
         st.supervisor.stop();
+        // Not reached when an update's installer takes over (update.rs) or the app is killed: the next start clears
+        // the GPU caches.
+        #[cfg(windows)]
+        if !st.paths.dev {
+          if let Ok(dir) = app.path().app_local_data_dir() {
+            crate::gpucache::mark_clean(&dir);
+          }
+        }
       }
     }
     #[cfg(target_os = "macos")]

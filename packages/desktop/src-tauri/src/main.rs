@@ -8,6 +8,7 @@ mod autostart;
 mod commands;
 mod deeplink;
 mod flavor;
+mod gpucache;
 mod i18n;
 mod login;
 #[cfg(target_os = "macos")]
