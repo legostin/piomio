@@ -108,7 +108,7 @@ Keep in mind:
 
 ## Commands on a computer
 
-Commands are off on a new computer, so its programs (Blender, a build) don't start from the hub. To allow them, say so in the chat: "allow commands on LEGOSTIN-PC". The assistant shows a card, **Allow commands on the computer LEGOSTIN-PC**, and after your **Allow** the computer turns `exec.enabled` on in its own policy. From then on Claude Code there asks the hub about each command it isn't allowed by itself, and auto mode checks it the way it does on the hub's computer (see [Approvals and auto mode](approvals.md)). "Forbid commands on LEGOSTIN-PC" turns them off the same way. The computer needs Piomio 0.2.20 or newer for this; with `"hubChanges": false` in its policy it refuses.
+Commands are off on a new computer, so its programs (Blender, a build) don't start from the hub. To allow them, say so in the chat: "allow commands on LEGOSTIN-PC". The assistant shows a card, **Allow commands on the computer LEGOSTIN-PC**, and after your **Allow** the computer turns `exec.enabled` on in its own policy. From then on Claude Code there asks the hub about each command it isn't allowed by itself, and auto mode checks it the way it does on the hub's computer (see [Approvals and auto mode](approvals.md)). "Forbid commands on LEGOSTIN-PC" turns them off the same way. The computer needs Piomio 0.2.21 or newer for this; with `"hubChanges": false` in its policy it refuses.
 
 ## Who works where right now
 
@@ -154,7 +154,7 @@ How it behaves:
 
 ## Updates
 
-A computer running `piomio-node` older than the hub shows **Update** on its row in the **Machines** block and in the phone's **Hub** tab. Pressed, it gets the hub's own version over its connection and restarts in a few seconds. A computer connected through the Piomio app shows **Update** too, from Piomio 0.2.20 on: pressed (or "update LEGOSTIN-PC" in the chat), the app there downloads its update and restarts with it in a few minutes. An older app updates from its own tray menu (**Install update**) once; an app older than 0.2.7 can't update itself, so install the current one on that computer from [piomio.io](https://piomio.io). Agents know which Piomio each computer runs and say when one is older than the hub. More in [Updates](updates.md).
+A computer running `piomio-node` older than the hub shows **Update** on its row in the **Machines** block and in the phone's **Hub** tab. Pressed, it gets the hub's own version over its connection and restarts in a few seconds. A computer connected through the Piomio app shows **Update** too, from Piomio 0.2.21 on: pressed (or "update LEGOSTIN-PC" in the chat), the app there downloads its update and restarts with it in a few minutes. An older app updates from its own tray menu (**Install update**) once; an app older than 0.2.7 can't update itself, so install the current one on that computer from [piomio.io](https://piomio.io). Agents know which Piomio each computer runs and say when one is older than the hub. More in [Updates](updates.md).
 
 ## Remove a computer
 
