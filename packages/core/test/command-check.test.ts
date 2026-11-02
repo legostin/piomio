@@ -1,7 +1,7 @@
 // Shell lines a brain runs outside its sandbox (policy/commands.ts): which only read, which name a path no agent may
 // touch, and which publish (always the person's call in auto mode).
 import { describe, expect, it } from "vitest";
-import { deniedPathIn, publishingCommand, readOnlyCommand, shellParts } from "../src/policy/commands.ts";
+import { commandParts, deniedPathIn, publishingCommand, readOnlyCommand, shellParts, shownCommand } from "../src/policy/commands.ts";
 
 const env = { home: "/Users/me", tmp: "/var/folders/xy/T" };
 
@@ -20,6 +20,37 @@ describe("shell words", () => {
   it("refuse what could hide another command or write somewhere", () => {
     for (const line of ["echo $(id)", "echo `id`", "cat x > y", "cat >> y", "cat <<E\nx\nE", "cat < f", "ls & curl x", "(ls)", "cat $SECRET", "FOO=1 git log", "ls ~root", 'echo "a', "ls |"])
       expect(shellParts(line, env), line).toBeUndefined();
+  });
+});
+
+describe("a shell's -c script", () => {
+  const zsh = (s: string) => `/bin/zsh -lc '${s.replace(/'/g, "'\\''")}'`;
+
+  it("is checked as the commands it runs (how Codex runs everything)", () => {
+    expect(commandParts(zsh("git log | head -3"), env)).toEqual([["git", "log"], ["head", "-3"]]);
+    expect(readOnlyCommand(zsh("git log --format='%h %s' | head -3"), env)).toBe(true);
+    expect(readOnlyCommand(`bash -c "ls ~/p"`, env)).toBe(true);
+    expect(readOnlyCommand(zsh("rm -rf x"), env)).toBe(false);
+    expect(publishingCommand(zsh("git push origin main"))).toBe("a push to main");
+    expect(publishingCommand(zsh("cd ~/p && git push --force origin x"))).toBeTruthy();
+    expect(publishingCommand(`sh -c 'sh -c "git push"'`)).toBeTruthy();
+    expect(publishingCommand(zsh("git push -u origin claude/fix"))).toBeUndefined();
+    const denied = ["/Users/me/.ssh"];
+    expect(deniedPathIn(zsh("cat ~/.ssh/id_rsa"), denied, [], env)).toBe("/Users/me/.ssh");
+    expect(deniedPathIn(zsh("cat $(echo ~/.ssh/id_rsa)"), denied, [], env)).toBe("/Users/me/.ssh");
+  });
+
+  it("is never read through when the shell gets more than a script", () => {
+    for (const line of ["bash ./x.sh", "zsh -lc 'ls' extra", "bash -x -c 'ls'", "sh -c", "zsh -lc 'ls $(id)'"]) {
+      expect(commandParts(line, env), line).toBeUndefined();
+      expect(readOnlyCommand(line, env), line).toBe(false);
+    }
+  });
+
+  it("shows as the script the person would have typed", () => {
+    expect(shownCommand(zsh("git ls-remote https://github.com/x/y HEAD"))).toBe("git ls-remote https://github.com/x/y HEAD");
+    expect(shownCommand("git status")).toBe("git status");
+    expect(shownCommand("zsh -lc 'ls' && rm x")).toBe("zsh -lc 'ls' && rm x");
   });
 });
 

@@ -38,7 +38,7 @@ beforeAll(async () => {
       const m = JSON.parse(body);
       asked.push(m.params.arguments);
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: JSON.stringify({ behavior: hubAllows ? "allow" : "deny" }) }] } }));
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: JSON.stringify(hubAllows ? { behavior: "allow" } : { behavior: "deny", message: "Auto mode stopped this: [system] it rewrites /etc/hosts." }) }] } }));
     });
   });
   await new Promise<void>((r) => hub.listen(0, "127.0.0.1", r));
@@ -188,6 +188,12 @@ describe("sessions over ACP (fake kimi)", () => {
     expect(asked.at(-1)).toEqual({ tool_name: "kimi.Write", input: { path: "/etc/hosts", content: "x" } });
     expect(no).toContainEqual({ type: "tool_result", id: "t1:Write", output: "rejected", isError: true });
     hubAllows = true;
+    // Kimi's answer has no room for why not: the next turn starts with the hub's reason, once.
+    await collect(brain.send({ text: "HELLO" }));
+    await collect(brain.send({ text: "HELLO" }));
+    const prompts = logged(log).filter((r) => r.method === "session/prompt").map((r) => r.params.prompt[0].text as string);
+    expect(prompts.at(-2)).toBe("[System] Last turn the hub said no: Auto mode stopped this: [system] it rewrites /etc/hosts.\n\nHELLO");
+    expect(prompts.at(-1)).toBe("HELLO");
     await brain.close();
   });
 

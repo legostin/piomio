@@ -5,7 +5,7 @@
 // format, a JSON text: {"behavior":"allow","updatedInput":…} or {"behavior":"deny","message":…}. When the person
 // has to say yes, the hub shows the same approval card as for an external action and waits for it.
 import type { ApprovalAsk, ToolResult } from "@piomio/shared";
-import { truncate } from "@piomio/shared";
+import { parseBrainRef, truncate } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
 import type { ApprovalService } from "../approvals.ts";
 import type { RuleStore } from "../policy/rules.ts";
@@ -18,6 +18,7 @@ import type { AutoAction, AutoMode } from "../policy/auto.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
 import { agentRoot, classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
+import { shownCommand } from "../policy/commands.ts";
 
 export const NATIVE_PERMISSION_TOOL = "native_permission";
 /** How long a brain's question waits for the person: the CLI holds its turn meanwhile. */
@@ -52,6 +53,23 @@ function classifyCodex(kind: string, input: Record<string, unknown>, cwd: string
   }
   if (kind === "codex.fileChange") return { kind: "write", tool: kind, path: str(input.grantRoot) ?? str(input.path) ?? cwd };
   return { kind: "other", tool: kind, input };
+}
+
+/** What a brain asks about, as an action. */
+function classify(tool: string, input: Record<string, unknown>, workspace: string): NativeAction {
+  if (tool.startsWith("codex.")) return classifyCodex(tool, input, workspace);
+  if (tool.startsWith("kimi.")) return classifyKimiTool(tool.slice(5), input, workspace);
+  return classifyClaudeTool(tool, input, workspace);
+}
+
+/**
+ * Two requests for the same action: the same command or path. What the brain says around it (Claude Code's
+ * description, Codex's reason) is new every time it asks.
+ */
+function actionKey(a: NativeAction, input: unknown): string {
+  if (a.kind === "command") return `command:${a.command.trim()}`;
+  if (a.kind === "read" || a.kind === "write") return `${a.kind}:${a.path}`;
+  return `other:${JSON.stringify(input)}`;
 }
 
 /** The action for auto mode's reviewer, with why it was not let through at once. */
@@ -108,12 +126,10 @@ export function registerNativePermission(d: NativePermissionDeps): void {
     async (raw, ctx) => {
       const i = (raw ?? {}) as { tool_name?: unknown; input?: unknown };
       const tool = String(i.tool_name ?? "");
-      const input = i.input && typeof i.input === "object" ? (i.input as Record<string, unknown>) : {};
-      const action = tool.startsWith("codex.")
-        ? classifyCodex(tool, input, ctx.workspace)
-        : tool.startsWith("kimi.")
-          ? classifyKimiTool(tool.slice(5), input, ctx.workspace)
-          : classifyClaudeTool(tool, input, ctx.workspace);
+      const given = i.input && typeof i.input === "object" ? (i.input as Record<string, unknown>) : {};
+      // Codex runs every command as `zsh -lc '<script>'`: the person's rules, the card and the reviewer see the script.
+      const input = tool === "codex.command" && typeof given.command === "string" ? { ...given, command: shownCommand(given.command) } : given;
+      const action = classify(tool, input, ctx.workspace);
       const { denyRead } = confinement(d.dataDir, ctx.workspace);
       const own = agentRoot(ctx.workspace);
       const readRoots = [...(own ? [own] : []), ...(opened.get(ctx.sessionId) ?? [])];
@@ -137,14 +153,17 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       }
       const safe = d.redactor.value(input);
       // The person allowed this very call after auto mode had stopped it.
-      if (decided.decision === "ask" && d.approvals.takeAllowance(ctx.sessionId, tool, safe)) decided = { decision: "allow", reason: "the person allowed it after auto mode stopped it" };
+      const key = actionKey(classify(tool, safe as Record<string, unknown>, ctx.workspace), safe);
+      const same = (stored: unknown) => !!stored && typeof stored === "object" && actionKey(classify(tool, stored as Record<string, unknown>, ctx.workspace), stored) === key;
+      if (decided.decision === "ask" && d.approvals.takeAllowance(ctx.sessionId, tool, same)) decided = { decision: "allow", reason: "the person allowed it after auto mode stopped it" };
       // Background work of an agent that may only suggest has nobody to ask.
       const agent = d.agents.get(ctx.agentId);
       if (decided.decision === "ask" && ctx.background && (agent?.initiative ?? 0) < 2) decided = { decision: "deny", reason: "background work cannot ask the person" };
 
       // Auto mode decides instead of a card; what it hands over still gets one.
       if (decided.decision === "ask" && d.auto && d.settings.get().approvalMode !== "ask") {
-        const where = { sessionId: ctx.sessionId, conversationId: ctx.conversationId, taskId: ctx.taskId, agentId: ctx.agentId, workspace: ctx.workspace, machine: d.machineName?.(ctx.machineId ?? "local") ?? ctx.machineId ?? "local" };
+        const ref = d.store.getSession(ctx.sessionId)?.brainRef;
+        const where = { sessionId: ctx.sessionId, conversationId: ctx.conversationId, taskId: ctx.taskId, agentId: ctx.agentId, workspace: ctx.workspace, machine: d.machineName?.(ctx.machineId ?? "local") ?? ctx.machineId ?? "local", ...(ref ? { brain: parseBrainRef(ref).brainId } : {}) };
         const verdict = await d.auto.decide(autoAction(action, safe, decided.reason), where);
         if (verdict.decision === "allow") {
           decided = { decision: "allow", reason: `auto mode: allowed at stage ${verdict.stage}` };

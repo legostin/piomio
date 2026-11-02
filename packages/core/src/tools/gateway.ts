@@ -161,10 +161,11 @@ export class ToolGateway {
       const summary = this.summarize(tool, input);
       const safe = this.d.redactor.value(input);
       // The person allowed this very call after auto mode had stopped it.
-      if (this.d.approvals.takeAllowance(s.id, name, safe)) return this.execute(s, tool, input, { ...ctx, approved: true });
+      const want = JSON.stringify(safe);
+      if (this.d.approvals.takeAllowance(s.id, name, (stored) => JSON.stringify(stored) === want)) return this.execute(s, tool, input, { ...ctx, approved: true });
       // Auto mode decides instead of a card, except for the tools that always show the person their own.
       if (this.d.auto && settings.approvalMode !== "ask" && !OWN_CARD_TOOLS.has(name)) {
-        const where = { sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, workspace: ctx.workspace, machine: this.d.machineName?.(ctx.machineId) ?? ctx.machineId };
+        const where = { sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, workspace: ctx.workspace, machine: this.d.machineName?.(ctx.machineId) ?? ctx.machineId, brain: parseBrainRef(s.brainRef).brainId };
         const verdict = await this.d.auto.decide({ tool: name, input: safe, summary, kind: "tool", effect: tool.effect, why: policy.reason }, where);
         if (verdict.decision === "allow") return this.execute(s, tool, input, { ...ctx, reviewed: true });
         if (verdict.decision === "block") {

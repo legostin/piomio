@@ -119,6 +119,48 @@ export function shellParts(line: string, env: ShellEnv): string[][] | undefined 
   return out;
 }
 
+const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
+
+/**
+ * The script a line hands to a shell (`/bin/zsh -lc '<script>'`: how Codex runs every command, and a way round a
+ * check for anyone), or undefined when the line is not one shell with `-c`.
+ */
+function shellScript(words: string[]): string | undefined {
+  const [name, ...args] = words;
+  if (!SHELLS.has(name.slice(name.lastIndexOf("/") + 1))) return undefined;
+  const flag = args.findIndex((a) => /^-[a-z]*c[a-z]*$/.test(a));
+  // Flags before it may only make it a login or interactive shell; nothing may follow the script ($0, $1…).
+  if (flag < 0 || flag !== args.length - 2 || !/^-[lice]+$/.test(args[flag])) return undefined;
+  return args.slice(0, flag).every((a) => /^-[lie]+$|^--login$/.test(a)) ? args[flag + 1] : undefined;
+}
+
+/** shellParts with what a shell's `-c` script runs in place of the shell; undefined when any of it is not plain. */
+export function commandParts(line: string, env: ShellEnv, depth = 0): string[][] | undefined {
+  const parts = shellParts(line, env);
+  if (!parts) return undefined;
+  const out: string[][] = [];
+  for (const words of parts) {
+    const script = shellScript(words);
+    if (script === undefined) {
+      // A shell given anything else (a script file, flags we do not know) runs what nobody here can see.
+      if (SHELLS.has(words[0].slice(words[0].lastIndexOf("/") + 1)) && words.length > 1) return undefined;
+      out.push(words);
+      continue;
+    }
+    const inner = depth < 3 ? commandParts(script, env, depth + 1) : undefined;
+    if (!inner) return undefined;
+    out.push(...inner);
+  }
+  return out;
+}
+
+/** The line as the person would type it: a single `zsh -lc '<script>'` shows as its script. */
+export function shownCommand(line: string): string {
+  const parts = shellParts(line, { home: "~", tmp: "$TMPDIR" });
+  const script = parts?.length === 1 ? shellScript(parts[0]) : undefined;
+  return script === undefined ? line : shownCommand(script);
+}
+
 const any = () => true;
 const without = (bad: RegExp) => (args: string[]) => !args.some((a) => bad.test(a));
 const positional = (args: string[]) => args.filter((a) => !a.startsWith("-"));
@@ -246,7 +288,7 @@ function gitReads(args: string[]): boolean {
 
 /** True when every command of the line only reads (see READERS); paths are checked apart (deniedPathIn). */
 export function readOnlyCommand(line: string, env: ShellEnv): boolean {
-  const parts = shellParts(line, env);
+  const parts = commandParts(line, env);
   return !!parts && parts.every(([name, ...args]) => !name.includes("/") && Object.hasOwn(READERS, name) && READERS[name](args));
 }
 
@@ -270,7 +312,7 @@ function roughWords(line: string, env: ShellEnv): string[] {
  * Letter case does not count (macOS disks ignore it).
  */
 export function deniedPathIn(line: string, denied: string[], exempt: string[], env: ShellEnv): string | undefined {
-  const words = (shellParts(line, env) ?? [roughWords(line, env)]).flat();
+  const words = (commandParts(line, env) ?? [roughWords(line, env)]).flat();
   for (const w of words) {
     const low = w.toLowerCase();
     for (const d of denied) {
@@ -321,7 +363,7 @@ function publishingPush(args: string[]): string | undefined {
 
 export function publishingCommand(line: string): string | undefined {
   for (const [re, what] of PUBLISH) if (re.test(line)) return what;
-  const parts = shellParts(line, { home: "~", tmp: "/tmp" });
+  const parts = commandParts(line, { home: "~", tmp: "/tmp" });
   if (!parts) return /\bgit\b[^;&|\n]*\bpush\b/.test(line) ? "a push" : undefined;
   for (const [name, ...args] of parts) {
     if (name === "git") {

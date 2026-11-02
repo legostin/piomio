@@ -127,13 +127,18 @@ export class ApprovalService {
   }
 
   /**
-   * The person allowed this very call after auto mode stopped it: true once, for the same session, tool and input
-   * (as stored, redacted), and the allowance is used up.
+   * The person allowed this very call after auto mode stopped it: true once, for the same session and tool and an
+   * input `same` takes for it (as stored, redacted), and the allowance is used up.
    */
-  takeAllowance(sessionId: string, tool: string, input: unknown): boolean {
-    const want = JSON.stringify(input);
+  takeAllowance(sessionId: string, tool: string, same: (input: unknown) => boolean): boolean {
     const rows = this.db.prepare("select id, input from approvals where session_id = ? and tool = ? and status = 'approved' and auto is not null").all(sessionId, tool) as { id: string; input: string }[];
-    const hit = rows.find((r) => r.input === want);
+    const hit = rows.find((r) => {
+      try {
+        return same(JSON.parse(r.input));
+      } catch {
+        return false;
+      }
+    });
     if (!hit) return false;
     this.db.prepare("update approvals set status = 'executed' where id = ?").run(hit.id);
     this.bus.emit("approval.resolved", this.get(hit.id));

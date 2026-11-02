@@ -11,8 +11,8 @@ import { truncate } from "@piomio/shared";
 import { moneyIn, sendsOrPublishes } from "./asked.ts";
 import { publishingCommand } from "./commands.ts";
 
-/** One answer of the reviewer model for a prompt. */
-export type Reviewer = (prompt: string, stage: 1 | 2) => Promise<string>;
+/** One answer of the reviewer model for a prompt, on the brain `prefer` when it can (the reviewed session's own). */
+export type Reviewer = (prompt: string, stage: 1 | 2, prefer?: string) => Promise<string>;
 
 export interface AutoAction {
   tool: string;
@@ -34,6 +34,8 @@ export interface AutoWhere {
   agentId: string;
   workspace: string;
   machine: string;
+  /** The session's brain ("codex"): it reviews its own agent's actions when it can. */
+  brain?: string;
 }
 
 export type AutoVerdict =
@@ -226,9 +228,9 @@ export class AutoMode {
     const ms = this.d.timeoutMs ?? TIMEOUT_MS;
     try {
       const ctx = this.d.context(w);
-      const first = parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 1, o), 1), ms), 1);
+      const first = parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 1, o), 1, w.brain), ms), 1);
       if (first?.decision === "allow") return first;
-      return parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 2, o), 2), ms), 2) ?? { decision: "person", reason: "the review gave no clear answer" };
+      return parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 2, o), 2, w.brain), ms), 2) ?? { decision: "person", reason: "the review gave no clear answer" };
     } catch (e: any) {
       return { decision: "person", reason: `the review failed: ${e?.message ?? e}` };
     }

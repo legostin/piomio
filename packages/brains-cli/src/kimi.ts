@@ -223,6 +223,8 @@ class KimiSession implements BrainSessionImpl {
   private opening?: Promise<void>;
   /** The hub's recap goes before the next prompt: the session to resume was gone. */
   private recapDue = false;
+  /** Why the hub said no this turn: Kimi's answer has no room for it, so the next turn starts with it. */
+  private told: string[] = [];
   private parser?: KimiUpdateParser;
   private events?: EventQueue<BrainEvent>;
   private interrupted = false;
@@ -254,13 +256,15 @@ class KimiSession implements BrainSessionImpl {
 
   /** The hub's MCP server through the stdio bridge, as ACP passes MCP servers. */
   private mcpServers(): unknown[] {
+    // A bare session (auto mode's reviewer) has no hub to call.
+    if (this.o.bare) return [];
     const [command, ...args] = this.o.mcp.bridgeCommand.length ? this.o.mcp.bridgeCommand : ["piomio-mcp-bridge"];
     return [{ name: "piomio", command, args, env: [{ name: "PIOMIO_URL", value: this.o.mcp.url }, { name: "PIOMIO_TOKEN_FILE", value: join(this.dir, "token") }] }];
   }
 
   /** Confined, a front desk or under a machine's policy: Kimi asks before writes and commands. Otherwise it goes ahead. */
   private wantedMode(): string {
-    return this.o.confine || this.o.frontDesk || this.p.allow ? "default" : "yolo";
+    return this.o.confine || this.o.frontDesk || this.o.bare || this.p.allow ? "default" : "yolo";
   }
 
   private open(): Promise<void> {
@@ -338,18 +342,25 @@ class KimiSession implements BrainSessionImpl {
     if (tool === "AskUserQuestion") return { outcome: { outcome: "cancelled" } };
     // The hub checks its own tools itself.
     if (tool.startsWith("mcp__piomio__")) return pick(true);
-    // A dialog's front desk only looks: what Kimi asks about there (writes, commands) is a task's work.
-    if (this.o.frontDesk) return pick(false);
+    // A dialog's front desk only looks: what Kimi asks about there (writes, commands) is a task's work. A bare session
+    // only answers in text.
+    if (this.o.frontDesk || this.o.bare) return pick(false);
     const raw = this.parser?.calls.get(String(tc.toolCallId ?? ""))?.input;
     const input = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
     const confine = this.o.confine;
-    if (confine) return pick(await askHub(this.o.mcp, confine.permissionTool, `kimi.${tool}`, input));
+    if (confine) {
+      const a = await askHub(this.o.mcp, confine.permissionTool, `kimi.${tool}`, input);
+      if (!a.allow && a.message) this.told.push(a.message);
+      return pick(a.allow);
+    }
     return pick(this.p.allow ? this.p.allow(tool, input, this.o.workspace) : true);
   }
 
   private prompt(turn: BrainTurn): unknown[] {
-    const text = this.recapDue && turn.recap ? `${turn.recap}\n\n---\n${turn.text}` : turn.text;
+    const said = this.recapDue && turn.recap ? `${turn.recap}\n\n---\n${turn.text}` : turn.text;
     this.recapDue = false;
+    const text = this.told.length ? `[System] Last turn the hub said no: ${this.told.join(" ")}\n\n${said}` : said;
+    this.told = [];
     const blocks: unknown[] = [{ type: "text", text }];
     for (const a of turn.attachments ?? []) {
       try {

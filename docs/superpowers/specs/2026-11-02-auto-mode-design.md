@@ -100,6 +100,32 @@ Background work of an agent that may only suggest (initiative < 2) stays as it i
   stage-1 process is kept ready (`warm()`), so a review does not wait for the CLI to start; a fresh session per review,
   so reviews never see each other.
 
+## Codex and Kimi (added the same day)
+
+The person asked for auto mode "for Codex and Kimi too, on the cheapest model", and for GPT-6.1 Luna on Codex:
+
+- **The reviewer runs on any local signed-in CLI brain**: the reviewed session's own (Codex reviews a Codex agent,
+  Kimi a Kimi agent) when it can, else Claude Code, Codex, Kimi in that order; a brain that fails (not signed in, no
+  Kimi Code plan, over a limit) hands the review to the next and rests 5 minutes. Both stages use the brain's cheapest
+  model (Claude Code: Haiku); the second look asks for more effort. Codex takes its newest Luna: the account has no
+  GPT-6.1 Luna yet (Codex answers "not supported when using Codex with a ChatGPT account", also in 0.166), so it is
+  GPT-6 Luna with the ChatGPT app's Codex and GPT-5.6 Luna with an older npm one; GPT-6.1 Luna is taken once listed.
+  Bare Codex: `mcp_servers={}`, the shell tool, plugins, apps, memories, hooks and sub-agents off, read-only, an
+  ephemeral thread with the reviewer prompt as its base instructions. Bare Kimi: no MCP servers, every permission
+  request refused.
+- **Codex runs every command as `/bin/zsh -lc '<script>'`.** The command checks (`policy/commands.ts`) read a
+  shell's `-c` script as its own commands, for every brain (it was also a way round them); the card, the rules and the
+  reviewer see the script.
+- **Codex's and Kimi's approval answers have no room for a reason**: the hub's reason reaches a Codex agent as input
+  steered into the turn, a Kimi agent at the start of its next turn.
+- **"Allow" on a blocked line matches the action** (the command or path), not the request: Claude Code words its
+  `description` and Codex its `reason` anew every time.
+- **Codex reads were open**: its `workspace-write` sandbox reads the whole disk. Confined, Codex now runs under a
+  permission profile (`default_permissions`, extending `:workspace` or `:read-only`) that denies what Claude Code's
+  sandbox denies (credentials, the hub's data, other agents' folders), reads the agent's earlier folders, and has no
+  network; the thread gets no `sandbox` (it would win over the profile), and a thread that reports full access is not
+  started. `codex exec` (Codex without the app-server, older than profiles) keeps `sandbox_mode`.
+
 ## What the agent and the person see
 
 - **Allowed**: the action runs; audit `auto.decision` with the verdict, stage, model and ms.

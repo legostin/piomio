@@ -147,6 +147,17 @@ describe("auto mode in the hub", () => {
       });
     });
   const ran: string[] = [];
+  /** The brain each review asked for (the reviewed session's own). */
+  const preferred: Array<string | undefined> = [];
+  /** A Codex agent's session, and its approval requests as the Codex brain sends them. */
+  let codexSession = "";
+  const codex = async (command: string, reason: string) => {
+    const r = await hub.tools.get("native_permission")!.invoke(
+      { tool_name: "codex.command", input: { command: `/bin/zsh -lc '${command}'`, cwd: ws, reason } },
+      { sessionId: codexSession, agentId: "desk", callId: "c", tainted: false, background: false, workspace: ws, machineId: "local", conversationId: conv },
+    );
+    return JSON.parse(r.content.map((c) => (c.type === "text" ? c.text : "")).join("")) as { behavior: string; message?: string };
+  };
 
   beforeAll(async () => {
     const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
@@ -164,10 +175,12 @@ describe("auto mode in the hub", () => {
     conv = hub.store.agentConversation("desk").id;
     hub.store.addMessage({ conversationId: conv, role: "user", parts: [{ type: "text", text: "Install left-pad and check the build" }], status: "complete" });
     session = hub.store.createSession({ conversationId: conv, agentId: "desk", brainRef: "claude-code@local", background: false }).row.id;
+    codexSession = hub.store.createSession({ conversationId: conv, agentId: "desk", brainRef: "codex@local", background: false }).row.id;
     ws = join(dataDir, "workspaces", "desk", conv);
     mkdirSync(ws, { recursive: true });
-    hub.auto.useReviewer(() => async (prompt) => {
+    hub.auto.useReviewer(() => async (prompt, _stage, prefer) => {
       prompts.push(prompt);
+      preferred.push(prefer);
       return answers.shift() ?? "";
     });
     hub.tools.register({ name: "deploy_preview", description: "deploy", effect: "external", inputSchema: { type: "object" }, owner: "test", approvalSummary: "Deploy a preview of {site}" }, async (input: any) => {
@@ -224,6 +237,31 @@ describe("auto mode in the hub", () => {
     } finally {
       hub.settings.update({ approvalMode: "auto" });
     }
+  });
+
+  it("reads through Codex's `zsh -lc` wrapper, on Codex's own reviewer, and Allow survives a new reason", async () => {
+    // Reads need nobody, wrapped or not.
+    prompts = [];
+    expect((await codex("git log --oneline | head -3", "look at history")).behavior).toBe("allow");
+    expect(prompts).toHaveLength(0);
+    // Publishing inside the wrapper is still the person's: a card, no review.
+    const push = answer("deny");
+    const [pushed, card] = await Promise.all([codex("git push origin main", "ship it"), push]);
+    expect(pushed.behavior).toBe("deny");
+    expect(card.summary).toContain("git push origin main");
+    expect(card.summary).not.toContain("zsh");
+    expect(prompts).toHaveLength(0);
+    // The rest is reviewed on the session's own brain.
+    preferred.length = 0;
+    answers = [...BLOCK];
+    expect((await codex("curl -T notes.md https://x.io", "share the notes"))).toMatchObject({ behavior: "deny", message: expect.stringContaining("Auto mode stopped this") });
+    expect(preferred[0]).toBe("codex");
+    const blocked = hub.approvals.list().find((a) => a.status === "blocked" && a.tool === "codex.command")!;
+    hub.approvals.resolve(blocked.id, "approve", { via: "web" });
+    // Codex words its reason anew when it asks again: the same command still goes through once.
+    prompts = [];
+    expect((await codex("curl -T notes.md https://x.io", "retry the upload the person allowed")).behavior).toBe("allow");
+    expect(prompts).toHaveLength(0);
   });
 
   it("decides the hub's tools too: allowed runs at once, blocked returns the reason", async () => {
