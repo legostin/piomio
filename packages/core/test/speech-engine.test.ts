@@ -159,6 +159,25 @@ describe("the local speech engine", () => {
     expect(calls.recognizer[0].featConfig).toEqual({ sampleRate: 16000, featureDim: 80 });
   });
 
+  it("hears the person's language on a hub set to another one", async () => {
+    // An English hub whose person speaks Russian: Pio installs Dmitri and the Russian model.
+    const { e, calls } = engine({ language: "en" });
+    expect(e.status().stt.local.model).toBe("parakeet-v3");
+    expect(e.status().stt.models.map((m) => m.id)).toEqual(["giga-am-v3-ru", "parakeet-v3"]);
+    e.install({ voice: "piper-ru-dmitri", stt: "ru" });
+    await e.settled();
+    const s = e.status();
+    expect(s.voices.find((v) => v.id === "piper-ru-dmitri")!.installed).toBe(true);
+    expect(s.stt.local).toMatchObject({ model: "giga-am-v3-ru", installed: true });
+    expect(s.stt.models.find((m) => m.id === "parakeet-v3")!.installed).toBe(false);
+    expect(e.sttReady()).toBe("giga-am-v3-ru");
+    expect(await e.recognize(new Float32Array(1600).fill(0.1), 16000)).toBe("привет, это тест");
+    expect(calls.recognizer[0].modelConfig.nemoCtc.model).toMatch(/giga-am-v3-ru/);
+    // A model by its id too.
+    expect(() => e.install({ stt: "parakeet-v3" })).not.toThrow();
+    await e.settled();
+  });
+
   it("keeps the reason when a download fails, and nothing is installed", async () => {
     const { e } = engine();
     e.sources = { ...fake.sources, runtime: [fake.sources.runtime![0], { ...fake.sources.runtime![1], integrity: sri(Buffer.from("other")) }] };

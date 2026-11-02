@@ -107,9 +107,20 @@ export class SpeechEngine implements LocalSpeechToText {
     return Number.isFinite(s) && s >= MIN_SPEED && s <= MAX_SPEED ? s : 1;
   }
 
-  /** The local speech-to-text model for the hub language. */
+  /**
+   * The local speech-to-text model: the hub language's when it is installed, else one that is (the person may speak
+   * another language than the hub's: Pio installs the model for theirs), else the hub language's to install.
+   */
   sttModel(): SttSpec {
-    return defaultSttModel(this.d.language(), this.sources.stt);
+    const own = defaultSttModel(this.d.language(), this.sources.stt);
+    return this.modelReady(own) ? own : (this.sources.stt.find((m) => this.modelReady(m)) ?? own);
+  }
+
+  /** What `install`'s `stt` names: true (the current model), a model id or a language code. */
+  private sttFor(v: unknown): SttSpec | undefined {
+    if (v === true) return this.sttModel();
+    if (typeof v !== "string" || !v) return undefined;
+    return this.sources.stt.find((m) => m.id === v) ?? defaultSttModel(v, this.sources.stt);
   }
 
   sttReady(): string | undefined {
@@ -136,7 +147,11 @@ export class SpeechEngine implements LocalSpeechToText {
         license: v.license,
         installed: this.modelReady(v),
       })),
-      stt: { provider: this.d.sttProvider(), local: { model: stt.id, installed: this.modelReady(stt), size: stt.size } },
+      stt: {
+        provider: this.d.sttProvider(),
+        local: { model: stt.id, installed: this.modelReady(stt), size: stt.size },
+        models: this.sources.stt.map((m) => ({ id: m.id, langs: m.langs, size: m.size, installed: this.modelReady(m) })),
+      },
       ...(this.current ? { downloading: { ...this.current } } : {}),
     };
   }
@@ -171,7 +186,8 @@ export class SpeechEngine implements LocalSpeechToText {
 
   /**
    * Starts the downloads in the background: the runtime when missing, then the voice (`voice`, else the current one)
-   * and, with `stt: true`, the hub language's speech-to-text model (`stt` alone: no voice). Returns the status at once.
+   * and, with `stt`, a speech-to-text model (true: the current one; a model id; a language code: the model for it), `stt`
+   * alone installing no voice. Returns the status at once.
    */
   install(opts: { voice?: unknown; stt?: unknown } = {}, locale?: Locale): SpeechStatus {
     const voiceId = opts.voice === undefined || opts.voice === null || opts.voice === "" ? undefined : String(opts.voice);
@@ -182,8 +198,9 @@ export class SpeechEngine implements LocalSpeechToText {
       return this.status(locale);
     }
     const specs: ModelSpec[] = [];
-    if (!(opts.stt === true && voiceId === undefined)) specs.push(this.findVoice(voiceId ?? this.voiceId())!);
-    if (opts.stt === true) specs.push(this.sttModel());
+    const stt = this.sttFor(opts.stt);
+    if (!(stt && voiceId === undefined)) specs.push(this.findVoice(voiceId ?? this.voiceId())!);
+    if (stt) specs.push(stt);
     const items: Item[] = [...(this.runtimeReady() ? [] : [{ id: "runtime" }]), ...specs.filter((s) => !this.modelReady(s)).map((s) => ({ id: s.id, spec: s }))];
     const fresh = items.filter((i) => !this.queue.some((q) => q.id === i.id));
     if (fresh.length) {

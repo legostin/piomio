@@ -6,6 +6,7 @@ import { speakable } from "../ui/src/voice/speakable.ts";
 import { Vad, type VadEvent } from "../ui/src/voice/vad.ts";
 import { downsample, encodeWav } from "../ui/src/voice/wav.ts";
 import { desktopOf, toScreen } from "../ui/src/desktop.ts";
+import { brief, langOf, personLang, voiceFor } from "../ui/src/voice/lang.ts";
 
 const RATE = 16_000;
 const FRAME = 320; // 20 ms
@@ -110,5 +111,32 @@ describe("the desktop app around the window", () => {
     // A Retina window at (100, 50) points, captured at 2 px per point and scaled to half: 1 px = 1 pt.
     expect(toScreen(200, 100, { origin: { x: 100, y: 50 }, scale: 1 })).toEqual({ x: 300, y: 150 });
     expect(toScreen(200, 100, { origin: { x: 0, y: 0 }, scale: 2 })).toEqual({ x: 100, y: 50 });
+  });
+});
+
+describe("the person's language", () => {
+  const voices = [
+    { id: "piper-ru-dmitri", lang: "ru", gender: "male" as const, installed: true },
+    { id: "piper-ru-irina", lang: "ru", gender: "female" as const, installed: false },
+    { id: "piper-en-ryan", lang: "en", gender: "male" as const, installed: true },
+  ];
+  it("comes from their own words, not the hub's setting", () => {
+    expect(langOf("Пио, что тут не так?")).toBe("ru");
+    expect(langOf("Open the Figma file")).toBe("en");
+    expect(langOf("Сохрани в Google Docs")).toBe("ru");
+    expect(personLang(["hello", "Пио, глянь сюда"], "en")).toBe("ru");
+    expect(personLang([], "en")).toBe("en");
+  });
+  it("picks the voice of the words: the hub's pick when it speaks them, else a male one", () => {
+    expect(voiceFor("ru", voices, "piper-en-ryan", true)?.id).toBe("piper-ru-dmitri");
+    expect(voiceFor("ru", voices, "piper-ru-irina", false)?.id).toBe("piper-ru-irina");
+    expect(voiceFor("ru", voices, "piper-ru-irina", true)?.id).toBe("piper-ru-dmitri");
+    expect(voiceFor("de", voices, "piper-en-ryan", true)).toBeUndefined();
+  });
+  it("shows the first sentences of a long reply beside the face", () => {
+    const long = "Готово: сегодня 184 визита, и 165 из них пришли из Сингапура. Ещё 13 из Китая, по два из США. Отказы 99,5 %, так что это почти наверняка боты.";
+    expect(brief(long, 110)).toBe("Готово: сегодня 184 визита, и 165 из них пришли из Сингапура. Ещё 13 из Китая, по два из США.");
+    expect(brief("Коротко.")).toBe("Коротко.");
+    expect(brief("слово ".repeat(60)).endsWith("…")).toBe(true);
   });
 });

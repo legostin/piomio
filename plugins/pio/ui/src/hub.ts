@@ -19,7 +19,7 @@ export interface SpeechStatus {
   voice: string;
   speed: number;
   voices: VoiceInfo[];
-  stt: { provider: string; local: { model: string; installed: boolean; size: number } };
+  stt: { provider: string; local: { model: string; installed: boolean; size: number }; models?: Array<{ id: string; langs: string[]; size: number; installed: boolean }> };
   downloading?: { item: string; received: number; total: number };
 }
 
@@ -67,7 +67,7 @@ export class SpeechApi {
     return this.ui.api.get<SpeechStatus>("/api/speech");
   }
 
-  install(o: { voice?: string; stt?: boolean }): Promise<SpeechStatus> {
+  install(o: { voice?: string; stt?: boolean | string }): Promise<SpeechStatus> {
     return this.ui.api.post<SpeechStatus>("/api/speech/install", o);
   }
 

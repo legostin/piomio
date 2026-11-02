@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultSttModel, defaultVoice, runtimePackages, STT_MODELS, VOICES, type RuntimePackage, type VoiceSpec } from "../src/speech/catalog.ts";
 import { encodeWav, isWav, parseWav } from "../src/speech/wav.ts";
-import { installModel, installRuntime, InstallError, modelInstalled, runtimeInstalled, sweepPartial, type Progress } from "../src/speech/install.ts";
+import { download, DOWNLOAD, installModel, installRuntime, InstallError, modelInstalled, runtimeInstalled, sweepPartial, type Progress } from "../src/speech/install.ts";
+import { createServer } from "node:http";
 import { fileServer, modelArchive, npmTarball, sha256, sri } from "./speech-fixtures.ts";
 
 describe("WAV", () => {
@@ -164,6 +165,49 @@ describe("speech downloads", () => {
     expect(missing.reason).toBe("extract");
     expect(missing.message).toMatch(/has no voice\.onnx/);
     expect(readdirSync(models)).toEqual([voice.id]);
+  });
+
+  it("goes on from where a dropped download stopped, and starts over when the server ignores the range", async () => {
+    const body = Buffer.alloc(200_000, 7);
+    for (let i = 0; i < body.length; i++) body[i] = (i * 31) % 251;
+    const ranges: string[] = [];
+    let honour = true;
+    let drops = 0;
+    const server = createServer((req, res) => {
+      const range = /^bytes=(\d+)-$/.exec(req.headers.range ?? "");
+      ranges.push(req.headers.range ?? "");
+      const from = range && honour ? Number(range[1]) : 0;
+      res.writeHead(from ? 206 : 200, { "content-length": body.length - from });
+      // The first answer breaks off midway, as a stalled CDN does.
+      if (drops < 1) {
+        drops++;
+        res.write(body.subarray(from, from + 80_000));
+        setTimeout(() => res.destroy(), 20);
+        return;
+      }
+      res.end(body.subarray(from));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/big`;
+    const was = { ...DOWNLOAD };
+    DOWNLOAD.pauseMs = 5;
+    try {
+      const file = join(dir, "big.bin");
+      await download(url, file, { size: body.length, sha256: sha256(body) });
+      expect(readFileSync(file).equals(body)).toBe(true);
+      expect(ranges[0]).toBe("");
+      expect(ranges[1]).toMatch(/^bytes=\d+-$/);
+      // A server that sends the whole file again: the download starts over and still checks out.
+      honour = false;
+      drops = 0;
+      ranges.length = 0;
+      await download(url, file, { size: body.length, sha256: sha256(body) });
+      expect(readFileSync(file).equals(body)).toBe(true);
+      expect(ranges).toHaveLength(2);
+    } finally {
+      Object.assign(DOWNLOAD, was);
+      server.close();
+    }
   });
 
   it("sweeps what a stopped download left", () => {

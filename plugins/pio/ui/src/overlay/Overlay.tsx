@@ -10,6 +10,7 @@ import { FOLLOW_MS, forPio, type ListenMode } from "../voice/gate.ts";
 import { Mic } from "../voice/mic.ts";
 import { Speaker } from "../voice/speaker.ts";
 import { speakable } from "../voice/speakable.ts";
+import { brief, langOf, personLang, voiceFor } from "../voice/lang.ts";
 import { CSS } from "./styles.ts";
 
 const AGENT = "pio";
@@ -20,6 +21,8 @@ const HEARTBEAT_MS = 15_000;
 const WATCH_MS = 2_000;
 /** How long a line of Pio's stays beside the face. */
 const LINE_MS = 12_000;
+/** What of a reply is said out loud: its first sentences (the rest is in the card and the chat). */
+const SPEAK_MAX = 320;
 const SWITCHES = "pio.switches";
 /** What the engine weighs (sherpa-onnx and the phonemizer), shown before the download with the voice and the model. */
 const RUNTIME_BYTES = 20e6;
@@ -139,19 +142,21 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     live.current.followUntil = Date.now() + FOLLOW_MS;
     setPopup(text);
     if (!live.current.sw.voice) return;
-    const words = speakable(text);
+    const words = speakable(text, SPEAK_MAX);
     if (!words) return;
+    // The voice of the reply's own language (the hub may be set to another one).
+    const lang = langOf(words);
     void (async () => {
       const s = live.current.speech;
-      const voice = s?.voices.find((v) => v.id === s.voice);
-      if (s?.runtime === "ready" && voice?.installed) {
+      const voice = s?.runtime === "ready" ? voiceFor(lang, s.voices, s.voice, true) : undefined;
+      if (voice) {
         try {
-          return await speaker.play(await api.say(words));
+          return await speaker.play(await api.say(words, voice.id));
         } catch {
           /* the system's voice below */
         }
       }
-      speaker.system(words, ui.i18n.locale);
+      speaker.system(words, lang);
     })();
   };
 
@@ -399,10 +404,17 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   };
 
   const face: Face = sw.control ? "driving" : speaking ? "speaking" : hearing ? "hearing" : thinking ? "thinking" : sw.voice ? "listening" : sw.watching ? "watching" : "idle";
-  const voice = speech?.voices.find((v) => v.id === speech.voice);
-  const sttNeeded = sttMissing && !speech?.stt.local.installed;
-  const needsVoice = sw.voice && speech && (speech.runtime !== "ready" || !voice?.installed || sttNeeded);
-  const voiceBytes = (speech?.runtime === "ready" ? 0 : RUNTIME_BYTES) + (voice && !voice.installed ? voice.size : 0) + (speech && !speech.stt.local.installed ? speech.stt.local.size : 0);
+  // What to download: the voice and the speech-to-text model of the person's language, not the hub's.
+  const lang = personLang(
+    lines.filter((l) => l.me).map((l) => l.text),
+    ui.i18n.locale,
+  );
+  const voice = speech ? voiceFor(lang, speech.voices, speech.voice, false) : undefined;
+  const hears = speech?.stt.models?.find((m) => m.langs.length === 1 && m.langs[0] === lang) ?? speech?.stt.models?.find((m) => m.langs.includes(lang));
+  const sttNeeded = sttMissing && !!hears && !hears.installed;
+  const needsVoice = sw.voice && speech && (speech.runtime !== "ready" || (voice && !voice.installed) || sttNeeded);
+  const voiceBytes = (speech?.runtime === "ready" ? 0 : RUNTIME_BYTES) + (voice && !voice.installed ? voice.size : 0) + (hears && !hears.installed ? hears.size : 0);
+  const install = () => void api.install({ ...(voice ? { voice: voice.id } : {}), stt: hears?.id ?? true }).then(setSpeech, () => {});
   const progress = speech?.downloading && speech.downloading.total > 0 ? Math.round((speech.downloading.received / speech.downloading.total) * 100) : undefined;
 
   return (
@@ -414,7 +426,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
         </div>
         {mode === "line" && popup && (
           <div className="pio-line" onClick={() => setMode("card")}>
-            {speakable(popup, 400) || popup}
+            {brief(speakable(popup, 600) || popup)}
           </div>
         )}
         {mode === "card" && (
@@ -442,11 +454,11 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
             {sttNeeded && !needsVoice && <Note text={t("overlay.voice.noStt")} />}
             {needsVoice &&
               (speech.runtime === "failed" ? (
-                <Note text={t("overlay.voice.failed", { error: speech.error ?? "" })} action={t("overlay.voice.installButton")} onAction={() => void api.install({ voice: speech.voice, stt: true }).then(setSpeech, () => {})} />
+                <Note text={t("overlay.voice.failed", { error: speech.error ?? "" })} action={t("overlay.voice.installButton")} onAction={install} />
               ) : progress !== undefined || speech.runtime === "downloading" ? (
                 <Note text={t("overlay.voice.installing", { percent: progress ?? 0 })} />
               ) : (
-                <Note text={t("overlay.voice.install", { size: megabytes(voiceBytes) })} action={t("overlay.voice.installButton")} onAction={() => void api.install({ voice: speech.voice, stt: true }).then(setSpeech, () => {})} />
+                <Note text={t("overlay.voice.install", { size: megabytes(voiceBytes) })} action={t("overlay.voice.installButton")} onAction={install} />
               ))}
             {note && <Note text={note.text} action={note.open ? t("overlay.perm.open") : undefined} onAction={note.open ? () => void desk.openSettings(note.open!) : undefined} onClose={() => setNote(undefined)} />}
             <div className="pio-lines">

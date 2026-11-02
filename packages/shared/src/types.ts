@@ -1351,8 +1351,10 @@ export interface SpeechStatus {
   voices: VoiceInfo[];
   stt: {
     provider: TranscriptionProvider;
-    /** The local speech-to-text model for the hub language; size is its download in bytes. */
+    /** The local speech-to-text model it hears with (the hub language's, else an installed one); size in bytes. */
     local: { model: string; installed: boolean; size: number };
+    /** Every local speech-to-text model, the languages it hears and whether it is installed (install `stt` takes an id). */
+    models: Array<{ id: string; langs: string[]; size: number; installed: boolean }>;
   };
   /** The download in progress (item: "runtime", a voice id or a speech-to-text model id). */
   downloading?: { item: string; received: number; total: number };

@@ -18,59 +18,113 @@ export type InstallFailure = "download" | "integrity" | "extract";
 
 export class InstallError extends Error {
   reason: InstallFailure;
-  constructor(reason: InstallFailure, message: string) {
+  /** A dropped connection or a busy server: worth trying again from where it stopped. */
+  transient: boolean;
+  constructor(reason: InstallFailure, message: string, transient = false) {
     super(message);
     this.reason = reason;
+    this.transient = transient;
   }
 }
 
-/** A download that sends nothing for this long is given up. */
-const IDLE_MS = 60_000;
+/** A download that sends nothing for this long is cut off, and tried again from where it stopped. */
+export const DOWNLOAD = { idleMs: 60_000, pauseMs: 1000 };
+/** Tries of one download: a stall or a dropped connection goes on from the last byte (HTTP Range). */
+const ATTEMPTS = 6;
 
 /** sha256 as hex, or an npm integrity string ("sha512-<base64>"). */
 export type Digest = { sha256: string } | { integrity: string };
 
-/** Downloads `url` into `file`, checking its size and digest; throws InstallError. `signal` stops it (the hub stops). */
+function host(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => (clearTimeout(t), resolve()), { once: true });
+  });
+}
+
+/**
+ * Downloads `url` into `file`, checking its size and digest; throws InstallError. A stall or a dropped connection goes
+ * on from the last byte received (a server that ignores the range starts it over). `signal` stops it (the hub stops).
+ */
 export async function download(url: string, file: string, expect: { size: number } & Digest, onProgress?: (p: Progress) => void, signal?: AbortSignal): Promise<void> {
+  const algo = "sha256" in expect ? "sha256" : "sha512";
+  const got = { hash: createHash(algo), received: 0 };
+  const fh = await open(file, "w", 0o644);
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await fetchInto(url, fh, got, algo, expect.size, onProgress, signal);
+        break;
+      } catch (e) {
+        const retry = e instanceof InstallError && e.transient && !signal?.aborted && attempt < ATTEMPTS;
+        if (!retry) throw e;
+        await pause(Math.min(30_000, DOWNLOAD.pauseMs * 2 ** attempt), signal);
+      }
+    }
+  } finally {
+    await fh.close();
+  }
+  if (got.received !== expect.size) throw new InstallError("integrity", `${url} has ${got.received} bytes, expected ${expect.size}`);
+  const ok = "sha256" in expect ? got.hash.digest("hex") === expect.sha256.toLowerCase() : `sha512-${got.hash.digest("base64")}` === expect.integrity;
+  if (!ok) throw new InstallError("integrity", `${url} does not match its pinned checksum`);
+}
+
+/** One request of a download: the rest of the file after `got.received` bytes. */
+async function fetchInto(
+  url: string,
+  fh: Awaited<ReturnType<typeof open>>,
+  got: { hash: ReturnType<typeof createHash>; received: number },
+  algo: string,
+  size: number,
+  onProgress: ((p: Progress) => void) | undefined,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   const ctl = new AbortController();
   const stop = () => ctl.abort();
   signal?.addEventListener("abort", stop, { once: true });
   if (signal?.aborted) ctl.abort();
-  let idle = setTimeout(stop, IDLE_MS);
-  const hash = createHash("sha256" in expect ? "sha256" : "sha512");
-  let received = 0;
+  let idle = setTimeout(stop, DOWNLOAD.idleMs);
   try {
     let res: Response;
     try {
-      res = await fetch(url, { signal: ctl.signal, redirect: "follow" });
+      res = await fetch(url, { signal: ctl.signal, redirect: "follow", ...(got.received ? { headers: { range: `bytes=${got.received}-` } } : {}) });
     } catch (e: any) {
-      throw new InstallError("download", `${host(url)} is unreachable (${e?.cause?.code ?? e?.name ?? "network error"})`);
+      // Unreachable from the start is an answer; after part of the file, the network dropped.
+      throw new InstallError("download", `${host(url)} is unreachable (${e?.cause?.code ?? e?.name ?? "network error"})`, got.received > 0);
     }
-    if (!res.ok || !res.body) throw new InstallError("download", `${host(url)} answered ${res.status}`);
-    const fh = await open(file, "w", 0o644);
+    if (!res.ok || !res.body) throw new InstallError("download", `${host(url)} answered ${res.status}`, res.status >= 500 || res.status === 408 || res.status === 429);
+    // The server sends the whole file again: start over.
+    if (got.received && res.status !== 206) {
+      got.hash = createHash(algo);
+      got.received = 0;
+      await fh.truncate(0);
+    }
     try {
       for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
         clearTimeout(idle);
-        idle = setTimeout(stop, IDLE_MS);
-        received += chunk.length;
-        if (received > expect.size) throw new InstallError("integrity", `${url} is larger than expected (${expect.size} bytes)`);
-        hash.update(chunk);
-        await fh.write(chunk);
-        onProgress?.({ received, total: expect.size });
+        idle = setTimeout(stop, DOWNLOAD.idleMs);
+        if (got.received + chunk.length > size) throw new InstallError("integrity", `${url} is larger than expected (${size} bytes)`);
+        got.hash.update(chunk);
+        await fh.write(chunk, 0, chunk.length, got.received);
+        got.received += chunk.length;
+        onProgress?.({ received: got.received, total: size });
       }
     } catch (e: any) {
       if (e instanceof InstallError) throw e;
-      throw new InstallError("download", `the download from ${host(url)} broke off after ${received} bytes (${e?.cause?.code ?? e?.name ?? "error"})`);
-    } finally {
-      await fh.close();
+      throw new InstallError("download", `the download from ${host(url)} broke off after ${got.received} bytes (${e?.cause?.code ?? e?.name ?? "error"})`, true);
     }
   } finally {
     clearTimeout(idle);
     signal?.removeEventListener("abort", stop);
   }
-  if (received !== expect.size) throw new InstallError("integrity", `${url} has ${received} bytes, expected ${expect.size}`);
-  const ok = "sha256" in expect ? hash.digest("hex") === expect.sha256.toLowerCase() : `sha512-${hash.digest("base64")}` === expect.integrity;
-  if (!ok) throw new InstallError("integrity", `${url} does not match its pinned checksum`);
 }
 
 /** The system's tar (Windows 10+ ships bsdtar as tar.exe; GNU tar elsewhere would read "C:" as a host). */
@@ -123,14 +177,6 @@ export function sweepPartial(dir: string): void {
     return;
   }
   for (const name of names) if (/\.(part|old)-[0-9a-f]{8}$/.test(name)) rmSync(join(dir, name), { recursive: true, force: true });
-}
-
-function host(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
 }
 
 // ---------- the runtime: npm packages side by side in <runtime>/node_modules ----------

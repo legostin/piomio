@@ -5,7 +5,8 @@ export const CSS = `
 .pio-root{position:fixed;inset:0;display:flex;font-family:var(--font-sans,-apple-system,system-ui,sans-serif);color:var(--fg,#1d1a17);user-select:none;-webkit-user-select:none}
 .pio-root[data-x=right]{justify-content:flex-end}
 .pio-root[data-y=bottom]{align-items:flex-end}
-.pio-stack{display:flex;gap:10px;align-items:flex-end;padding:8px}
+.pio-root *{box-sizing:border-box}
+.pio-stack{display:flex;gap:10px;align-items:flex-end;padding:8px;width:100%;max-width:100%}
 .pio-root[data-x=right] .pio-stack{flex-direction:row-reverse}
 .pio-root[data-y=top] .pio-stack{align-items:flex-start}
 .pio-face{position:relative;flex:none;width:56px;height:56px;border-radius:50%;cursor:grab;
@@ -31,7 +32,7 @@ export const CSS = `
   padding:14px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 16px);overflow:hidden;animation:pio-in .18s ease-out}
 @keyframes pio-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
 .pio-line{flex:1;min-width:0;background:var(--surface,#fff);border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.2),0 0 0 1px rgba(0,0,0,.05);
-  padding:11px 14px;font-size:13.5px;line-height:1.4;max-height:calc(100vh - 16px);overflow:hidden;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;animation:pio-in .18s ease-out;cursor:default}
+  padding:11px 14px;font-size:13.5px;line-height:1.4;max-height:calc(100vh - 16px);overflow:hidden;overflow-wrap:anywhere;animation:pio-in .18s ease-out;cursor:pointer}
 .pio-head{display:flex;align-items:center;gap:8px}
 .pio-name{font-weight:650;font-size:14px}
 .pio-state{font-size:12px;color:var(--muted,#8a817a);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
