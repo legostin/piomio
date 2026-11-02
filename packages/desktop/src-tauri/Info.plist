@@ -4,6 +4,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Piomio listens while you show an agent a task in its browser, so your words go into the demonstration.</string>
+  <string>Piomio listens while you show an agent a task in its browser, so your words go into the demonstration, and while Pio's voice is on, so you can talk to Pio.</string>
 </dict>
 </plist>

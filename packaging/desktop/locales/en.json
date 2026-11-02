@@ -52,5 +52,12 @@
   "app.error.failed": "Piomio keeps stopping. Show the log to see why, or try again.",
   "app.error.portBusy": "Port {port} is taken by another program, so Piomio cannot start. Close that program and try again.",
   "app.error.noRuntime": "Piomio's files are damaged. Install Piomio again.",
-  "app.error.retry": "Try again"
+  "app.error.retry": "Try again",
+  "pio.name": "Pio",
+  "pio.control.title": "Let Pio use the mouse and keyboard?",
+  "pio.control.reason": "Pio wants to: {reason}",
+  "pio.control.body": "Pio will move the mouse, click and type on this computer. To take control back, press Esc or move the mouse. It ends by itself after 10 minutes.",
+  "pio.control.allow": "Allow",
+  "pio.control.deny": "Don't allow",
+  "pio.frame.label": "Pio is driving — press Esc to take back"
 }
