@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "item/completed",
+  "params": {
+    "threadId": "thread-image",
+    "turnId": "turn-image",
+    "item": {
+      "type": "imageGeneration",
+      "id": "image-1",
+      "status": "completed",
+      "revisedPrompt": "A test image",
+      "result": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "transparentBackground": false,
+      "failure": null,
+      "savedPath": "/private/codex/generated_images/image-1.png"
+    }
+  }
+}

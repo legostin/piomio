@@ -869,6 +869,10 @@ export interface BrainSessionOptions {
 
 export type BrainEvent =
   | { type: "text"; delta: string }
+  /** Generated raster image bytes (base64), not a local file path. Large images use ordered chunks, starting at 0. */
+  | { type: "image"; id: string; data: string; chunk?: { index: number; total: number } }
+  /** A recoverable output problem: show it and log a short warning, without failing the whole turn. */
+  | { type: "warning"; message: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
   | { type: "usage"; inputTokens?: number; outputTokens?: number; costUsd?: number }

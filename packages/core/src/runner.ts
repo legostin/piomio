@@ -34,6 +34,7 @@ import { agentName } from "./agents.ts";
 import { hubLocale, LocalizedError, t } from "./i18n.ts";
 import { captureNote, type CaptureResult, type SecretIntake } from "./secrets.ts";
 import { readWorkspaceImage } from "./media.ts";
+import { BrainImages, saveBrainImage } from "./brain-images.ts";
 import { clockTime, TurnClock } from "./clock.ts";
 import { busy, situation, TASK_STATE } from "./situation.ts";
 import type { UserLocations } from "./user-location.ts";
@@ -2387,8 +2388,33 @@ export class SessionRunner {
       },
     });
 
+    const images = new BrainImages();
+    const imageWarning = (message: string) => {
+      const safe = this.d.redactor.text(message);
+      console.warn(`[brain image] ${safe}`);
+      parts.push({ type: "error", message: safe });
+      produced = true;
+      flush(true);
+    };
     const onEvent = (e: BrainEvent) => {
       switch (e.type) {
+        case "image": {
+          try {
+            const image = images.push(e);
+            if (!image) break;
+            const src = saveBrainImage(join(this.d.config.dataDir, "workspaces"), this.workspacePath({ agentId: agent.id, conversationId: conv.id, taskId: task?.id }), image);
+            produced = true;
+            this.showToPerson(conv.id, { type: "images", items: [{ src }] }, task?.id);
+            flush(true);
+          } catch {
+            // No raw frame or exception text: neither base64 nor paths from a remote brain belong in logs.
+            imageWarning("Generated image could not be saved or its data was invalid; it was not shown.");
+          }
+          break;
+        }
+        case "warning":
+          imageWarning(e.message);
+          break;
         case "text": {
           if (voiceFrozen) break;
           const delta = this.d.redactor.text(e.delta);
@@ -2467,6 +2493,7 @@ export class SessionRunner {
       error = e.message;
       fatal = true;
     } finally {
+      if (images.finish()) imageWarning("Generated image transfer was incomplete; it was not shown.");
       this.activeTurns.delete(conv.id);
       this.streamingMessage.delete(conv.id);
       activity?.end(turnKey);

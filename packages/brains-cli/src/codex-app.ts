@@ -2,6 +2,7 @@
 // turn/start; turn/steer adds the user's input to the turn in progress, which takes it at its next step.
 
 import type { BrainEvent, BrainTurn } from "@piomio/shared";
+import { brainImageEvents } from "@piomio/shared";
 import { EventQueue, runLines, type RunningProcess } from "./proc.ts";
 import type { HubAnswer } from "./hub-permission.ts";
 
@@ -14,6 +15,7 @@ export class CodexAppParser {
   full = false;
   completed = false;
   private streamed = new Set<string>();
+  private images = new Set<string>();
   private input = 0;
   private output = 0;
   turnId?: string;
@@ -38,6 +40,11 @@ export class CodexAppParser {
       }
       case "item/completed": {
         const it = p.item ?? {};
+        if (it.type === "imageGeneration" && it.status === "completed" && typeof it.id === "string" && !this.images.has(it.id)) {
+          this.images.add(it.id);
+          if (typeof it.result === "string" && it.result) out.push(...brainImageEvents(it.id, it.result));
+          else out.push({ type: "warning", message: `Codex generated an image but returned no inline data${it.savedPath ? " (savedPath is present)" : ""}; it was not shown. Save it in the task's workspace and use show_images.` });
+        }
         if (it.type === "agentMessage") {
           if (!this.streamed.has(it.id) && it.text) out.push({ type: "text", delta: String(it.text) });
           out.push({ type: "text", delta: "\n" });

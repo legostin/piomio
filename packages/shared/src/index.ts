@@ -10,4 +10,5 @@ export * from "./thinking.ts";
 export * from "./models.ts";
 export * from "./pages.ts";
 export * from "./key-providers.ts";
+export * from "./brain-images.ts";
 export * from "./commands.ts";
