@@ -2,13 +2,13 @@
 // as the agent's menu in the team list does (chat/AgentMenu.tsx): the default agent's successor first, then a confirmation.
 
 import { useEffect, useState } from "react";
-import { ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CornerDownRight, Monitor, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import type { AgentAvatar as AgentAvatarValue, AgentDef, Computer } from "@piomio/shared";
 import { AVATAR_COLORS, AVATAR_PALETTE, AVATAR_SHAPES, defaultAvatar } from "@piomio/shared/avatar";
 import { useStore } from "../lib/store";
 import { api, errorText } from "../lib/api";
 import { agents, hubEvents, refreshAgents } from "../state/app";
-import { activeBrain, brainName, brainReady, brains, brainStatus, ensureBrains, findBrain, normalizeBrainRef } from "../state/brains";
+import { activeBrain, brainMachine, brainName, brainReady, brains, brainStatus, ensureBrains, findBrain, normalizeBrainRef } from "../state/brains";
 import { addAgent, clearPanelIntent, panel } from "../state/panel";
 import { toast } from "../state/toast";
 import { t, type MessageKey } from "../i18n";
@@ -120,16 +120,23 @@ export function AgentsPage() {
               {a.archived && <Badge tone="warning">{t("agents.archived")}</Badge>}
               {a.model && <Badge>{a.model}</Badge>}
               {(() => {
+                // Bound: the computer and its brain, one plate; else the brain that would answer now.
+                if (a.machines?.length) {
+                  const row = a.brains.map((r) => findBrain(brainList, r)).find(Boolean);
+                  const brain = row ? withoutHost(row.label) : (a.brains[0] ?? t("brainPicker.none"));
+                  const names = computerNames(a.machines, computers);
+                  return (
+                    <Badge tone={brainReady(row) ? "success" : "warning"} className="max-w-full min-w-0">
+                      <Monitor className="size-3 shrink-0" />
+                      <span className="truncate" title={`${names} → ${brain}`}>
+                        {t("agents.boundTo", { computer: names, brain })}
+                      </span>
+                    </Badge>
+                  );
+                }
                 const on = activeBrain(a.brains, brainList);
                 return <Badge tone={on ? "success" : "warning"}>{on ? on.label : t("brainPicker.none")}</Badge>;
               })()}
-              {!!a.machines?.length && (
-                <Badge className="max-w-full min-w-0">
-                  <span className="truncate" title={computerNames(a.machines, computers)}>
-                    {t("agents.onlyOn", { names: computerNames(a.machines, computers) })}
-                  </span>
-                </Badge>
-              )}
             </div>
             {own[a.id]?.length ? (
               <div className="mt-2 flex flex-wrap gap-1.5" aria-label={t("agents.ownSkills")}>
@@ -256,35 +263,75 @@ function BrainsEditor({ value, onChange }: { value: string[]; onChange: (v: stri
   );
 }
 
-/** The computers an agent thinks on, as toggles (none chosen: anywhere); another replica of the hub shows only when chosen. */
-function ComputersPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+/** A brain's name without the computer it runs on ("Claude Code @ LEGOSTIN-PC" → "Claude Code"). */
+const withoutHost = (label: string) => label.replace(/ @ .+$/, "");
+
+/** The brain refs of a computer: the hub's own comes first in GET /api/computers and names its brains "@local". */
+const refMachine = (id: string, computers: Computer[]) => (id === computers[0]?.id ? "local" : id);
+
+const chip = (on: boolean) =>
+  cx(
+    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-sm transition",
+    on ? "border-accent bg-accent-soft text-accent-text" : "border-border text-muted hover:bg-surface-2 hover:text-fg",
+  );
+
+/**
+ * Where the agent thinks: anywhere (the first ready brain of an ordered list), or a computer and a brain on it, to
+ * which it is then bound (AgentDef.machines): only there, and while that computer is off its chat says so.
+ * Another replica of the hub shows only when chosen.
+ */
+function WhereItThinks({ value, onChange }: { value: { brains: string[]; machines: string[] }; onChange: (v: { brains: string[]; machines: string[] }) => void }) {
+  const list = useStore(brains);
+  useEffect(() => ensureBrains(), []);
   const computers = useComputers();
   if (!computers) return <Loading />;
+  const chosen = value.machines[0];
   const shown: Computer[] = [
-    ...computers.filter((c) => !c.standby || value.includes(c.id)),
-    ...value.filter((id) => !computers.some((c) => c.id === id)).map((id) => ({ id, name: id, online: false })),
+    ...computers.filter((c) => !c.standby || value.machines.includes(c.id)),
+    ...value.machines.filter((id) => !computers.some((c) => c.id === id)).map((id) => ({ id, name: id, online: false })),
   ];
-  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  const brainsOn = (id: string) => (list ?? []).filter((b) => brainMachine(b.ref) === refMachine(id, computers));
+  const pick = (id: string | undefined) => {
+    if (!id) return onChange({ brains: value.brains, machines: [] });
+    const there = brainsOn(id);
+    const kept = value.brains.find((r) => brainMachine(r) === refMachine(id, computers));
+    const first = kept ?? there.find(brainReady)?.ref ?? there[0]?.ref;
+    onChange({ machines: [id], brains: first ? [first] : [] });
+  };
+  const there = chosen ? brainsOn(chosen) : [];
   return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("agents.computers")}>
-      {shown.map((c) => {
-        const on = value.includes(c.id);
-        return (
-          <button
-            key={c.id}
-            type="button"
-            aria-pressed={on}
-            onClick={() => toggle(c.id)}
-            className={cx(
-              "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-sm transition",
-              on ? "border-accent bg-accent-soft text-accent-text" : "border-border text-muted hover:bg-surface-2 hover:text-fg",
-            )}
-          >
+    <div className="flex flex-col gap-2.5">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("agents.computers")}>
+        <button type="button" aria-pressed={!chosen} onClick={() => pick(undefined)} className={chip(!chosen)}>
+          {t("agents.anywhere")}
+        </button>
+        {shown.map((c) => (
+          <button key={c.id} type="button" aria-pressed={chosen === c.id} onClick={() => pick(c.id)} className={chip(chosen === c.id)}>
+            <Monitor className="size-3.5" />
             {c.name}
             {!c.online && <span className="text-xs text-muted">{t("agents.computerOffline")}</span>}
           </button>
-        );
-      })}
+        ))}
+      </div>
+      {!chosen ? (
+        <BrainsEditor value={value.brains} onChange={(b) => onChange({ brains: b, machines: [] })} />
+      ) : there.length ? (
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t("agents.brainThere")}>
+          <CornerDownRight className="size-4 text-muted" aria-hidden />
+          {there.map((b) => {
+            const on = !!value.brains[0] && normalizeBrainRef(value.brains[0]) === normalizeBrainRef(b.ref);
+            const st = brainStatus(b);
+            return (
+              <button key={b.ref} type="button" aria-pressed={on} onClick={() => onChange({ machines: [chosen], brains: [b.ref] })} className={chip(on)} title={b.probe?.detail}>
+                {withoutHost(b.label)}
+                {!brainReady(b) && <Badge tone={st.tone}>{st.label}</Badge>}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="text-sm text-muted">{t("agents.noBrainsThere")}</div>
+      )}
     </div>
   );
 }
@@ -442,6 +489,15 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
         <Field group label={t("agents.initiative")}>
           <InitiativeChoice value={initiative} onChange={setInitiative} />
         </Field>
+        <Field group label={t("agents.where")} hint={t(machines.length ? "agents.whereBoundHint" : "agents.whereAnyHint")}>
+          <WhereItThinks
+            value={{ brains, machines }}
+            onChange={(v) => {
+              setBrains(v.brains);
+              setMachines(v.machines);
+            }}
+          />
+        </Field>
         <div className="rounded-2xl border border-border">
           <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium">
             {more ? <ChevronDown className="size-4 text-muted" /> : <ChevronRight className="size-4 text-muted" />}
@@ -452,12 +508,6 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
             <div className="flex flex-col gap-5 border-t border-border p-3">
               <Field label={t("agents.id")} hint={t("agents.idFixed")}>
                 <Input value={agent.id} disabled className="font-mono" />
-              </Field>
-              <Field group label={t("agents.brains")} hint={t("agents.brainsHint")}>
-                <BrainsEditor value={brains} onChange={setBrains} />
-              </Field>
-              <Field group label={t("agents.computers")} hint={t("agents.computersHint")}>
-                <ComputersPicker value={machines} onChange={setMachines} />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label={t("agents.model")} hint={t("agents.modelHint")}>

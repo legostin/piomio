@@ -82,7 +82,7 @@ The new agent's id is made from its name. An existing agent is never replaced. A
 
 Talk to the agent itself: "call yourself Ada", "answer shorter", "show me how you look". It changes its own name, description, face, initiative and instructions, and shows a **How I look** card with the face pickers and **How proactive**. After it has read outside content (a web page, an email), it asks you on a card first. The assistant can change any agent the same way.
 
-The same is on the **Agents** page: **Settings** → **Agents**. Each card shows the face, name, description and badges: the initiative, **built-in** or **yours**, the brain in use, **only on …** for agents bound to computers, and the agent's own skills. **Edit** opens **Name**, the face, **Description**, **Prompt** and **Initiative**; **More settings** adds **ID**, **Brains, in order**, **Computers**, **Model**, **Policy profile**, **Tools**, **Skills** and **Background runs per day**.
+The same is on the **Agents** page: **Settings** → **Agents**. Each card shows the face, name, description and badges: the initiative, **built-in** or **yours**, the brain in use (for an agent bound to a computer, the computer and its brain: **LEGOSTIN-PC → Claude Code**), and the agent's own skills. **Edit** opens **Name**, the face, **Description**, **Prompt**, **Initiative** and **Where it thinks**; **More settings** adds **ID**, **Model**, **Policy profile**, **Tools**, **Skills** and **Background runs per day**.
 
 ## Initiative
 
@@ -124,7 +124,7 @@ Archiving or deleting the default agent first asks who takes its place.
 
 ## Agents on particular computers
 
-An agent can be bound to computers: "let the coder work only on my laptop". It then uses only those computers' brains, never others, and its tasks don't go anywhere else. While none of them is online, its dialog says so; your message stays there, and you send it again once a computer is back. The same is under **Agent settings** → **More settings** → **Computers**: nothing chosen means any computer. Computers are covered in [Machines and other computers](machines.md).
+An agent can be bound to computers: "let the coder work only on my laptop". It then uses only those computers' brains, never others, and its tasks don't go anywhere else. While none of them is online, its dialog says so; your message stays there, and you send it again once a computer is back. The same is under **Agent settings** → **Where it thinks**: pick a computer, then a brain on it, and the agent thinks only there, with that brain. **Anywhere** keeps the ordered list of brains instead. Computers are covered in [Machines and other computers](machines.md).
 
 ## What an agent knows
 

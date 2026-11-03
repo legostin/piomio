@@ -190,6 +190,18 @@ describe("agents bound to computers (integration)", () => {
     await say(c, `CALL hub_agent_save {"id":"coder","machines":["box"]}`);
     await idle(c);
     expect(hub.agents.get("coder")!.machines).toEqual(["mach_box"]);
+
+    // Bound, it needs a brain there: one only the hub has is refused, with what the computer offers.
+    await say(c, `CALL hub_agent_save {"id":"coder","brains":["nope@local"]}`);
+    await idle(c);
+    expect(await lastAssistant(c)).toMatch(/Not saved: none of the agent's brains runs on box\. Give brains from there \(fake@mach_box\)/);
+    expect(hub.agents.get("coder")!.brains).toEqual(["fake@local"]);
+    await say(c, `CALL hub_agent_save {"id":"coder","brains":["fake@mach_box"]}`);
+    await idle(c);
+    expect(hub.agents.get("coder")!.brains).toEqual(["fake@mach_box"]);
+    await say(c, `CALL hub_agent_save {"id":"coder","brains":["fake@local"]}`);
+    await idle(c);
+    expect(hub.agents.get("coder")!.brains).toEqual(["fake@local"]);
   });
 
   it("lists the computers an agent may be bound to: the hub's own first, the machines, other replicas on standby", async () => {

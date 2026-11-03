@@ -116,7 +116,7 @@ Under the team in the sidebar, the **Machines** line shows a dot for every compu
 
 ## Agents bound to computers
 
-By default an agent works on any computer. To keep one to particular computers, pick them under **Computers** in the agent's settings, or say "let Ada work only on my laptop". A bound agent thinks only with those computers' brains and never moves elsewhere: while none of them is online, its chat says so and your message waits for you to send it again. "Let Ada work anywhere again" undoes it.
+By default an agent works on any computer. To keep one to a computer, pick it under **Where it thinks** in the agent's settings, then a brain on it, or say "let Ada work only on my laptop, with Codex"; the assistant asks with buttons which computer and which brain. A bound agent thinks only with those computers' brains and never moves elsewhere: while none of them is online, its chat says so and your message waits for you to send it again. "Let Ada work anywhere again" undoes it.
 
 When the assistant hands work to a teammate, it also picks the computer, and asks you only when the choice isn't clear. A task placed on a computer runs on that computer's brain.
 
