@@ -112,7 +112,7 @@ Commands are off on a new computer, so its programs (Blender, a build) don't sta
 
 ## Who works where right now
 
-Under the team in the sidebar, the **Machines** block lists every computer, the hub's own included, with a dot: online or offline. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, or "needs you" while it waits for your approval. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.
+Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, or "needs you" while it waits for your approval. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.
 
 ## Agents bound to computers
 

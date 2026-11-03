@@ -1,9 +1,12 @@
-// The machines in the sidebar: the hub's computer and the paired ones, a dot for each, and under a busy one who works
-// there and what they do right now. A row opens that dialog, group chat or task. Kept current by "machines.activity".
-// A machine with an update on offer (a server's hub, a node older than the hub) has "Update" on its row.
+// The machines in the sidebar: closed, one line with a dot for each computer (and how many are at work); open, the hub's
+// computer and the paired ones, and under a busy one who works there and what they do right now. A row opens that
+// dialog, group chat or task. Kept current by "machines.activity". A machine with an update on offer (a server's hub, a
+// node older than the hub) has "Update" on its row, and a dot on the closed line.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
+import { ChevronRight } from "lucide-react";
+import { machinesOpen, setMachinesOpen } from "../state/prefs";
 import type { AgentDef, MachineActivity, MachineWork, WorkStep } from "@piomio/shared";
 import { useStore } from "../lib/store";
 import { agentPath, groupPath } from "../lib/team";
@@ -85,6 +88,7 @@ export function MachinesBlock({ onNavigate }: { onNavigate?: () => void }) {
   const agentList = useStore(agents);
   const members = useStore(team);
   const s = useStore(session);
+  const open = useStore(machinesOpen);
   useEffect(() => ensureMachineActivity(), []);
   const byId = useMemo(() => new Map((agentList ?? []).map((a) => [a.id, a])), [agentList]);
   const dialogs = useMemo(() => new Map((members ?? []).map((m) => [m.conversationId, m.agentId])), [members]);
@@ -96,14 +100,35 @@ export function MachinesBlock({ onNavigate }: { onNavigate?: () => void }) {
     return agentId ? agentPath(agentId, s?.defaultAgent) : groupPath(w.conversationId);
   };
 
+  const working = list.reduce((n, m) => n + m.work.length, 0);
+  const update = list.some((m) => m.update && !m.updating);
   return (
-    <section aria-label={t("nav.machines")} className="max-h-[40%] shrink-0 overflow-y-auto px-2 pb-2">
-      <div className="pt-1 pb-1 pl-3 text-[12px] font-medium text-muted">{t("nav.machines")}</div>
-      <ul className="flex flex-col gap-0.5">
-        {list.map((m) => (
-          <MachineRow key={m.id} machine={m} byId={byId} pathOf={pathOf} onNavigate={onNavigate} />
-        ))}
-      </ul>
+    <section aria-label={t("nav.machines")} className="max-h-[40%] shrink-0 overflow-y-auto px-2 pb-1">
+      <button
+        type="button"
+        onClick={() => setMachinesOpen(!open)}
+        aria-expanded={open}
+        className="press flex w-full items-center gap-2 rounded-xl py-1 pr-2.5 pl-3 text-left text-[12px] font-medium text-muted hover:bg-surface/55 hover:text-fg"
+      >
+        <span>{t("nav.machines")}</span>
+        {!open && (
+          <span className="flex items-center gap-1" aria-hidden>
+            {list.map((m) => (
+              <span key={m.id} title={m.name} className={cx("size-1.5 rounded-full", !m.online ? "ring-1 ring-muted/60" : m.work.length ? "live-dot" : "bg-success")} />
+            ))}
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate text-right">{!open && working > 0 ? t("machines.working", { n: working }) : ""}</span>
+        {!open && update && <span className="size-1.5 shrink-0 rounded-full bg-accent" title={t("machines.update")} />}
+        <ChevronRight className={cx("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
+      </button>
+      {open && (
+        <ul className="flex flex-col gap-0.5">
+          {list.map((m) => (
+            <MachineRow key={m.id} machine={m} byId={byId} pathOf={pathOf} onNavigate={onNavigate} />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

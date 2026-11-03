@@ -60,11 +60,12 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { liveViews } = usePluginRegistry();
   const live = useStore(liveWindow);
   const inboxOpen = p.open && p.section === "notifications";
+  // One row of icons: the live views (the agents' browser), the Inbox, tasks and the settings; their names on hover.
   const item = (on: boolean) =>
-    cx(
-      "press flex w-full items-center gap-2.5 rounded-xl px-3 py-[7px] text-left text-[13.5px] font-medium",
-      on ? "bg-surface text-fg shadow-card" : "text-muted hover:bg-surface/60 hover:text-fg",
-    );
+    cx("press relative flex size-10 items-center justify-center rounded-xl", on ? "bg-surface text-fg shadow-card" : "text-muted hover:bg-surface/60 hover:text-fg");
+  const count = (n: number) => (
+    <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-none font-semibold text-white tabular-nums">{n}</span>
+  );
   return (
     <>
       <div className="min-h-0 flex-1">
@@ -75,7 +76,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <PluginSidebarItems />
         <SidebarPanels />
       </div>
-      <div className="flex flex-col gap-0.5 px-2 pt-1 pb-3">
+      <nav className="flex items-center justify-between gap-1 px-3 pt-1 pb-3">
         {liveViews.map((v) => (
           <button
             key={v.key}
@@ -86,10 +87,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               onNavigate?.();
             }}
             aria-pressed={live.expanded === v.key}
+            aria-label={v.title}
+            title={v.title}
             className={item(live.expanded === v.key)}
           >
-            <Icon name={v.icon} className="size-[17px]" />
-            <span className="min-w-0 flex-1 truncate">{v.title}</span>
+            <Icon name={v.icon} className="size-[18px]" />
           </button>
         ))}
         <button
@@ -100,11 +102,12 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             onNavigate?.();
           }}
           aria-pressed={inboxOpen}
+          aria-label={t("nav.notifications")}
+          title={t("nav.notifications")}
           className={item(inboxOpen)}
         >
-          <Inbox className="size-[17px]" />
-          <span className="min-w-0 flex-1 truncate">{t("nav.notifications")}</span>
-          {!!s?.inboxUnread && <span className="rounded-full bg-accent px-1.5 text-[11px] leading-[18px] font-semibold text-white tabular-nums">{s.inboxUnread}</span>}
+          <Inbox className="size-[18px]" />
+          {!!s?.inboxUnread && count(s.inboxUnread)}
         </button>
         <button
           type="button"
@@ -114,16 +117,12 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             onNavigate?.();
           }}
           aria-pressed={tasksOpen}
+          aria-label={t("nav.tasks")}
+          title={activeTasks > 0 ? `${t("nav.tasks")} · ${t("team.activeTasks", { n: activeTasks })}` : t("nav.tasks")}
           className={item(tasksOpen)}
         >
-          <ListChecks className="size-[17px]" />
-          <span className="min-w-0 flex-1 truncate">{t("nav.tasks")}</span>
-          {activeTasks > 0 && (
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-accent-text tabular-nums" title={t("team.activeTasks", { n: activeTasks })}>
-              <span className="live-dot size-1.5 rounded-full" />
-              {activeTasks}
-            </span>
-          )}
+          <ListChecks className="size-[18px]" />
+          {activeTasks > 0 && <span className="live-dot absolute top-1.5 right-1.5 size-1.5 rounded-full" aria-hidden />}
         </button>
         <button
           type="button"
@@ -133,12 +132,13 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             onNavigate?.();
           }}
           aria-pressed={p.open && !tasksOpen && !inboxOpen}
+          aria-label={t("nav.settings")}
+          title={t("nav.settings")}
           className={item(p.open && !tasksOpen && !inboxOpen)}
         >
-          <Settings className="size-[17px]" />
-          {t("nav.settings")}
+          <Settings className="size-[18px]" />
         </button>
-      </div>
+      </nav>
     </>
   );
 }

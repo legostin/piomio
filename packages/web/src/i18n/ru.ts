@@ -717,6 +717,7 @@ export default {
   "machines.revokeText": "Ключ машины будет отозван — демон больше не сможет подключиться. Чтобы вернуть машину, привяжите её заново.",
   "machines.revoked": "Машина отключена",
   "machines.online": "онлайн",
+  "machines.working": "{n, plural, one {# работает} few {# работают} many {# работают} other {# работают}}",
   "machines.update": "Обновить",
   "machines.updating": "Обновляется…",
   "machines.updateTo": "Обновить до Piomio {version}",

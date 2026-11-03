@@ -48,3 +48,17 @@ export function setSidebarTab(tab: SidebarTab): void {
     /* private mode: the choice lasts until reload */
   }
 }
+
+const MACHINES = "ob.sidebar.machines";
+
+/** The sidebar's machines block is open (its rows and who works there); closed, one line of dots. */
+export const machinesOpen = createStore<boolean>(read(MACHINES));
+
+export function setMachinesOpen(on: boolean): void {
+  machinesOpen.set(on);
+  try {
+    localStorage.setItem(MACHINES, on ? "1" : "0");
+  } catch {
+    /* private mode: the choice lasts until reload */
+  }
+}
