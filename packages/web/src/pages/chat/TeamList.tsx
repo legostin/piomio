@@ -137,15 +137,15 @@ function DefaultAgentCard({
 }
 
 /**
- * The always-on companion (Pio) flying beside the default agent: its small face bobbing at the big one's side, its name
- * and what it does now under it. A tap opens its chat and, in the desktop app, brings its face back onto the screen
- * (the face's ✕ puts it away).
+ * The always-on companion (Pio) flying beside the default agent: its small face bobbing at the big one's upper left,
+ * a dot on it while it watches, listens, speaks or drives (its name and state on hover). A tap opens its chat and, in
+ * the desktop app, brings its face back onto the screen (the face's ✕ puts it away).
  */
-function CompanionFace({ agent, member, active, menu, onNavigate }: { agent: AgentDef; member?: TeamMember; active: boolean; menu: AgentMenuApi; onNavigate?: () => void }) {
+function CompanionFace({ agent, member, active, onSurface, menu, onNavigate }: { agent: AgentDef; member?: TeamMember; active: boolean; onSurface: boolean; menu: AgentMenuApi; onNavigate?: () => void }) {
   const unread = member?.unread ?? 0;
   const running = !!member?.running;
   const presence = member?.presence;
-  const state = running && !presence ? t("team.working") : presence ? t(`team.presence.${presence}`) : undefined;
+  const state = running && !presence ? t("team.working") : presence ? t(`team.presence.${presence}`) : t("team.companionIdle");
   const triggers = useMenuTriggers(agent.id, menu);
   const open = () => {
     const app = desktopApp();
@@ -157,22 +157,21 @@ function CompanionFace({ agent, member, active, menu, onNavigate }: { agent: Age
       href={agentPath(agent.id, undefined)}
       onClick={open}
       aria-current={active ? "page" : undefined}
-      title={`${agent.name} · ${state ?? t("team.companionIdle")}`}
-      className={cx("press absolute top-2 z-10 flex w-16 flex-col items-center gap-0.5 rounded-2xl py-1", NO_CALLOUT)}
-      style={{ left: "calc(50% - 106px)" }}
+      aria-label={`${agent.name} · ${state}`}
+      title={`${agent.name} · ${state}`}
+      className={cx("press absolute top-[7px] z-10 rounded-full", NO_CALLOUT)}
+      style={{ left: "calc(50% - 64px)" }}
       {...triggers}
     >
-      <span className="owl-fly relative">
-        <span className={cx("absolute -inset-1 rounded-full", presence ? "animate-pulse ring-2 ring-accent/55" : active || menu.openFor === agent.id ? "ring-2 ring-accent/35" : undefined)} aria-hidden />
-        <AgentAvatar avatar={agent.avatar} id={agent.id} name={agent.name} size={34} running={running} />
+      <span className={cx("owl-fly relative block rounded-full", (active || menu.openFor === agent.id) && "ring-2 ring-accent/40 ring-offset-2", onSurface ? "ring-offset-surface" : "ring-offset-canvas")}>
+        <AgentAvatar avatar={agent.avatar} id={agent.id} name={agent.name} size={30} running={running && !presence} />
+        {presence && <span className={cx("live-dot absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2", onSurface ? "ring-surface" : "ring-canvas")} aria-hidden />}
         {unread > 0 && (
-          <span className="absolute -top-1.5 -right-2.5">
+          <span className="absolute -top-2 -right-2.5">
             <UnreadBadge n={unread} />
           </span>
         )}
       </span>
-      <span className={cx("mt-0.5 max-w-full truncate text-[11.5px] leading-tight", unread ? "font-bold" : "font-semibold")}>{agent.name}</span>
-      {state && <span className="max-w-full truncate text-[10.5px] leading-tight font-medium text-accent-text">{state}</span>}
     </Link>
   );
 }
@@ -402,7 +401,9 @@ export function TeamList({
             )}
             {lead && (
               <DefaultAgentCard agent={lead.agent} member={lead.member} active={lead.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate}>
-                {companion && <CompanionFace agent={companion.agent} member={companion.member} active={companion.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />}
+                {companion && (
+                  <CompanionFace agent={companion.agent} member={companion.member} active={companion.agent.id === activeAgentId} onSurface={lead.agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />
+                )}
               </DefaultAgentCard>
             )}
             {lead && !companion && (s?.waitingPlugins ?? []).map((p) => (
