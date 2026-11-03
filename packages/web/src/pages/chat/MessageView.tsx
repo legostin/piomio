@@ -1,6 +1,8 @@
 // Rendering of one message and its parts. Plugins can override whole messages (chat.message) or tool cards
 // (chat.toolResult); overrides run inside an error boundary that falls back to the core rendering.
 
+import { ApprovalActions } from "./ApprovalActions";
+import { NetworkApprovalCard } from "./NetworkApprovalCard";
 import { memo, useState } from "react";
 import { Check, CircleAlert, CornerUpLeft, FilePen, FileText, Mic, Play, ShieldAlert, SquareTerminal, X } from "lucide-react";
 import type { AgentDef, ApprovalStatus, Message, MessagePart } from "@piomio/shared";
@@ -72,47 +74,6 @@ function approvalWords(part: Extract<MessagePart, { type: "approval" }>): { head
   }
 }
 
-/** The card's buttons, as in any agent: allow once, allow always (a rule from the card), or deny. */
-function ApprovalActions({ approvalId }: { approvalId: string }) {
-  const [busy, setBusy] = useState<"approve" | "always" | "deny" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const answer = async (kind: "approve" | "always" | "deny") => {
-    setBusy(kind);
-    setError(null);
-    try {
-      await api.post(`/api/approvals/${encodeURIComponent(approvalId)}`, { decision: kind === "deny" ? "deny" : "approve", remember: kind === "always" });
-    } catch (e) {
-      setError(t("message.approval.failed", { error: errorText(e) }));
-      setBusy(null);
-    }
-  };
-  return (
-    <div className="mt-3 flex flex-col gap-1.5">
-      <div className="flex gap-2">
-        <Button variant="primary" className="flex-1" loading={busy === "approve"} disabled={busy !== null} onClick={() => void answer("approve")}>
-          {t("message.approval.approve")}
-        </Button>
-        <Button variant="secondary" className="flex-1" loading={busy === "deny"} disabled={busy !== null} onClick={() => void answer("deny")}>
-          {t("message.approval.deny")}
-        </Button>
-      </div>
-      <button
-        type="button"
-        className="self-center px-2 py-1 text-xs font-medium text-muted hover:text-fg disabled:opacity-50"
-        disabled={busy !== null}
-        onClick={() => void answer("always")}
-      >
-        {t("message.approval.always")}
-      </button>
-      {error && (
-        <div className="text-xs break-words text-danger" role="alert">
-          {error}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** An action the person asked for in their own words: their words were the yes, so only a quiet line of what was done. */
 function AskedLine({ part }: { part: Extract<MessagePart, { type: "approval" }> }) {
   const [open, setOpen] = useState(false);
@@ -175,6 +136,7 @@ function BlockedLine({ part }: { part: Extract<MessagePart, { type: "approval" }
 }
 
 function ApprovalCard({ part }: { part: Extract<MessagePart, { type: "approval" }> }) {
+  if (part.ask?.kind === "network") return <NetworkApprovalCard part={part} />;
   if (part.auto) return <BlockedLine part={part} />;
   if (part.asked) return <AskedLine part={part} />;
   const known = APPROVAL[part.status];

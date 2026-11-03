@@ -52,13 +52,13 @@ export const AGENT_SETTABLE = [
 const SECRET_KEY = /key|token|secret|password/i;
 
 /** Tools that only put a card in front of the user, who then decides: fine even after outside content was read. */
-const CARDS = new Set(["secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
+const CARDS = new Set(["network_request", "secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
 const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete", "machine_commands"]);
 /** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. */
 export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n));
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
-export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign"];
+export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign", "hub_network_request"];
 
 /** The person said "always" (or "don't ask") in their own words. */
 const ALWAYS_WORDS = /\balways\b|\bwithout asking\b|\bdon'?t ask\b|\u0432\u0441\u0435\u0433\u0434\u0430|\u043d\u0435 \u0441\u043f\u0440\u0430\u0448\u0438\u0432|\u0431\u0435\u0437 (?:\u0441\u043f\u0440\u043e\u0441\u0430|\u0432\u043e\u043f\u0440\u043e\u0441|\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434)/iu;
@@ -165,6 +165,15 @@ export function registerHubTools(hub: Hub): void {
   };
   const obj = (properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema => ({ type: "object", properties, ...(required.length ? { required } : {}) });
 
+  reg({
+    name: "network_request", effect: "read",
+    description: "Ask the person to allow a public host for this local brain session. Uses the network card: once for this session, always in the host allowlist, or deny. Never grants permission to publish, send or run commands. Waits up to 90 seconds. Private/LAN/metadata addresses are refused. Also use this after a proxy 403 to get a clear outcome.",
+    inputSchema: obj({ host: { type: "string", description: "Exact DNS name or public IP, without a URL or wildcard" }, port: { type: "integer", minimum: 1, maximum: 65535 } }, ["host"]),
+  }, async (i, ctx) => {
+    await hub.egress.requestHost(ctx.sessionId, String(i.host ?? ""), Number(i.port ?? 443));
+    return text(`Network access to ${i.host}:${i.port ?? 443} is allowed. Commands and external actions still need their own approval.`);
+  });
+
   // ---------- settings ----------
 
   reg({ name: "settings_get", effect: "read", description: "Read the hub settings: timezone, language, default agent, quiet hours, digest times, limits.", inputSchema: obj({}) }, () => json(hub.settings.get()));
@@ -180,7 +189,7 @@ export function registerHubTools(hub: Hub): void {
         'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card); ' +
         'voice {voice: a voice id from hub_speech_status, speed: 0.5–2} (how the hub\'s local voice speaks); ' +
         'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install). ' +
-        "Network allowlists and a custom speech-to-text server can only be changed by the user in the settings panel.",
+        "Propose a network host via hub_network_request; only its card or the user settings can change the network allowlist. A custom speech-to-text server can only be changed by the user in settings.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
     },
     async (i, ctx) => {

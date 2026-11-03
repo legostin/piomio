@@ -7,7 +7,8 @@ import { createClaudeCodeProvider, createCodexProvider } from "../src/index.ts";
 import { confinedNetwork, confinedProxyEnv } from "../src/network.ts";
 
 const proxy = "http://test-credential:x@127.0.0.1:41789";
-const domains = ["github.com", "*.github.com", "*.githubusercontent.com", "registry.npmjs.org", "extra.example"];
+// The authenticated hub decides destinations live; the sandbox must forward unknown hosts to it.
+const domains = ["*"];
 function options(): BrainSessionOptions {
   return {
     sessionId: "network-test", agent: {} as any, workspace: mkdtempSync(join(tmpdir(), "brain-network-ws-")),
@@ -74,7 +75,7 @@ describe("confined brain networking", () => {
     const network = started.args.find((a: string) => a.startsWith("permissions.piomio.network="));
     for (const value of ["enabled=true", "allow_upstream_proxy=true", "allow_local_binding=false", "enable_socks5=false", 'mode="full"', 'proxy_url="http://127.0.0.1:0"']) expect(network).toContain(value);
     for (const host of domains) expect(network).toContain(`${JSON.stringify(host)}="allow"`);
-    expect(network).not.toContain('"*"="allow"');
+    expect(network).toContain('"*"="allow"');
     expect(network).not.toContain('"127.0.0.1"="allow"');
     expect(JSON.stringify(started)).not.toContain("test-credential");
   });

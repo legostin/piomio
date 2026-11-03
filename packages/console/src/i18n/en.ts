@@ -2,6 +2,10 @@
 // Flat keys, {name} placeholders; plural forms are separated by "|" (one|other).
 
 export const en = {
+  "approvals.network.scope": "Once: this host and port for the current session (90 seconds to answer)",
+  "approvals.network.always": "Always adds the host for all agents. External actions still need separate approval.",
+  "approvals.network.ip": "This is an IP address; its owner may change. Always trusts this address for all agents.",
+
   // ---------- app ----------
   "app.title": "Security console · Piomio",
   "app.name": "Security console",

@@ -3,6 +3,15 @@
 // (see packages/shared/src/i18n.ts). Keys are grouped by screen.
 
 export default {
+  "message.network.title": "Network access",
+  "message.network.once": "Allow once",
+  "message.network.scope": "Once allows this host and port for the current session. The connection waits up to 90 seconds.",
+  "message.network.always": "Always adds this host to the allowlist for all agents and ports. External actions still need their own permission.",
+  "message.network.ip": "This is an IP address. Its owner may change; allowing it always trusts that address for all agents.",
+  "message.network.agent": "Agent: {agent}",
+  "message.network.task": "Task: {task}",
+  "settings.egressBuiltIn": "Built-in hosts for models, packages and GitHub",
+
   // shared words
   "common.loading": "Loading…",
   "common.retry": "Retry",
@@ -876,7 +885,7 @@ export default {
   "settings.brainConcurrencyHint": "How many tasks and agent threads run at once on one “brain@machine” pair; the rest wait in line, and your own conversations never wait",
   "settings.brainConcurrencyName": "Parallel sessions",
   "settings.egress": "Extra allowed hosts",
-  "settings.egressHint": "Where brains may connect besides the default list (Anthropic, OpenAI, GitHub, npm…). Wildcards like *.example.com",
+  "settings.egressHint": "Additional hosts for all agents: example.com or *.example.com. Add or remove entries and save. A network card can add a host with Always allow.",
   "settings.security": "Security",
   "settings.securityText": "Password, passkeys, vault, rules and the audit log live in a separate security console: the main page and plugins can't reach them.",
   "settings.app.title": "This app",

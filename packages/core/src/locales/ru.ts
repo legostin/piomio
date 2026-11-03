@@ -1,6 +1,9 @@
 import type en from "./en.ts";
 
 export default {
+  "network.ask": "Разрешить соединение с {host}:{port}?",
+  "network.badList": "Укажите имена хостов или публичные IP, при необходимости с *. в начале. URL, порты и приватные адреса не допускаются.",
+
   // auth
   "auth.required": "Требуется вход",
   "auth.consoleRequired": "Требуется вход в пульт безопасности",

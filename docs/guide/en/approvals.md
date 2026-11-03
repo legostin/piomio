@@ -44,6 +44,10 @@ How long it waits:
 - After **Approval lifetime, h** (24 by default) the request expires and nothing is done.
 - A brain's own request (its commands and files, see below) waits up to 10 minutes; then the brain hears "no" and asks you in its reply.
 
+### Network permission
+
+A new public host has its own card: agent, task, host and port, with **Allow once**, **Always allow** and **Deny**. It waits for 90 seconds; once is scoped to the current session and port, always adds the exact host to `brainEgressAllow`. It never creates an action rule. A denied or expired connection is never executed later. See [The network filter](security.md#the-network-filter).
+
 ### Other places to answer
 
 - **Telegram.** If you [connected Telegram](telegram.md), each card also comes there with **✅ Approve** and **❌ Deny**. By default it names only the agent and the tool, with a link to the console; **Show details in Telegram** in **Settings** → **General** → **Approvals** adds the full action. The buttons are signed and work once. There is no "always" in Telegram.

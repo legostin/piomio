@@ -166,12 +166,12 @@ function ApprovalCard({ a, highlighted, now }: { a: ApprovalView; highlighted: b
     if (highlighted) ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [highlighted]);
 
-  const resolve = async (decision: "approve" | "deny") => {
+  const resolve = async (decision: "approve" | "deny", permanent = false) => {
     setBusy(decision);
     try {
-      await api.resolveApproval(a.id, { decision });
+      await api.resolveApproval(a.id, { decision, remember: permanent });
       dropPending(a.id);
-      toast(decision === "approve" ? t("approvals.approvedOnce") : t("approvals.denied"));
+      toast(decision === "approve" ? t(permanent ? "approvals.rememberedToast" : "approvals.approvedOnce") : t("approvals.denied"));
       if (highlighted) navigate("#/approvals");
     } catch (e) {
       toast(errorText(e), "error");
@@ -193,6 +193,9 @@ function ApprovalCard({ a, highlighted, now }: { a: ApprovalView; highlighted: b
           </Callout>
         )}
 
+        {a.ask?.kind === "network" && <Callout tone="warn" title={t("approvals.network.scope")}>
+          {t(a.ask.ipLiteral ? "approvals.network.ip" : "approvals.network.always")}
+        </Callout>}
         <ToolLine tool={a.tool} description={a.toolDescription} />
         <InputView input={a.input} />
         <Meta a={a} />
@@ -203,7 +206,7 @@ function ApprovalCard({ a, highlighted, now }: { a: ApprovalView; highlighted: b
           {t("approvals.approveOnce")}
         </Button>
         <div className="grid grid-cols-2 gap-2 sm:contents">
-          <Button icon={<Repeat className="size-4" />} disabled={!!busy} onClick={() => setRemember(true)}>
+          <Button icon={<Repeat className="size-4" />} disabled={!!busy} onClick={() => a.ask?.kind === "network" ? void resolve("approve", true) : setRemember(true)}>
             <span className="sm:hidden">{t("approvals.always.short")}</span>
             <span className="hidden sm:inline">{t("approvals.always.long")}</span>
           </Button>

@@ -2,6 +2,9 @@
 // Syntax: {name} placeholders, "{n, plural, one {…} other {…}}" plurals (see packages/shared/src/i18n.ts).
 
 export default {
+  "network.ask": "Allow network access to {host}:{port}?",
+  "network.badList": "Enter host names or public IPs, optionally with a leading *. wildcard. URLs, ports and private addresses are not allowed.",
+
   // auth
   "auth.required": "Sign-in required",
   "auth.consoleRequired": "Sign in to the security console",

@@ -1,5 +1,7 @@
 // Hub composition root: builds every core service, wires them together, starts/stops servers.
 
+import { wireNetworkApprovals } from "./network-approvals.ts";
+import { networkPattern } from "./egress.ts";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, MachineInfo, TaskStatus, ThinkingView } from "@piomio/shared";
@@ -476,6 +478,7 @@ export class Hub {
     });
     this.machines.registerTools(this.tools);
     registerHubTools(this);
+    wireNetworkApprovals({ egress: this.egress, approvals: this.approvals, settings: this.settings, store: this.store, audit: this.audit, agents: this.agents, note: (r, message) => this.runner.networkDenied(r.sessionId, r.conversationId, message) });
     registerFeedTools({
       registry: this.tools,
       feeds: this.feeds,
@@ -536,6 +539,12 @@ export class Hub {
   /** Every settings change (web UI or the assistant's hub tools): validation, audit, language broadcast, live UI refresh. */
   updateSettings(patch: Record<string, unknown>, actor: string): CoreSettings {
     const p = { ...patch };
+    if ("brainEgressAllow" in p) {
+      try {
+        if (!Array.isArray(p.brainEgressAllow) || p.brainEgressAllow.length > 500 || !p.brainEgressAllow.every((v) => typeof v === "string")) throw new Error();
+        p.brainEgressAllow = [...new Set(p.brainEgressAllow.map(networkPattern))];
+      } catch { throw new LocalizedError("network.badList", undefined, 400); }
+    }
     if ("language" in p) {
       const l = normalizeLocale(p.language);
       if (!l) throw new LocalizedError("settings.badLanguage", { value: String(p.language) }, 400);
@@ -557,6 +566,7 @@ export class Hub {
     const before = this.settings.get().language;
     this.audit.append(actor, "settings.update", undefined, { keys: Object.keys(p) });
     const next = this.settings.update(p as Partial<CoreSettings>);
+    if ("brainEgressAllow" in p) this.audit.append(actor, "egress.allow.update", undefined, { hosts: next.brainEgressAllow });
     if (next.language !== before) {
       this.plugins.broadcastLocale(next.language);
       this.machines.broadcastLocale(next.language);

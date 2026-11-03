@@ -62,6 +62,8 @@ export class ApprovalService {
   onDeferredDenied?: (a: Approval) => Promise<void>;
   /** The person allowed an action auto mode had stopped: the agent hears it may try again. */
   onBlockedAllowed?: (a: Approval) => Promise<void>;
+  /** Network permission persists a host, never a tool/action rule. Runs before resolving the card. */
+  onNetworkRemember?: (a: Approval) => void;
 
   constructor(db: Db, bus: EventBus, audit: AuditLog, rules: RuleStore) {
     this.db = db;
@@ -193,8 +195,13 @@ export class ApprovalService {
     if (a.status === "blocked" && decision === "approve") return this.allowBlocked(a, opts.via);
     if (a.status !== "pending") throw new LocalizedError("approval.alreadyResolved", { status: a.status }, 409);
     const status: ApprovalStatus = decision === "approve" ? "approved" : "denied";
+    const network = a.ask?.kind === "network";
+    if (network && decision === "approve" && opts.remember) {
+      if (!this.onNetworkRemember) throw new Error("Network permission service unavailable");
+      this.onNetworkRemember(a);
+    }
     this.db.prepare("update approvals set status = ?, resolved_at = ?, resolved_via = ? where id = ?").run(status, nowIso(), opts.via, id);
-    if (decision === "approve") {
+    if (decision === "approve" && !network) {
       this.rules.addKnownTargets(extractTargets(a.input));
       if (opts.remember && !NO_STANDING_YES.has(a.tool)) {
         const base = opts.rule ?? suggestRule(a.tool, a.input, a.agentId);
@@ -209,12 +216,26 @@ export class ApprovalService {
     this.waiters.delete(id);
     if (waiters.length > 0) {
       for (const w of waiters) w(status === "approved" ? "approved" : "denied");
+    } else if (network) {
+      // A socket may have gone away, or the hub restarted. Never replay a network approval as a tool.
     } else if (status === "approved") {
       void this.onDeferredApproved?.(updated).catch((e) => console.error("[approvals] deferred execution failed", e));
     } else {
       void this.onDeferredDenied?.(updated).catch(() => {});
     }
     return updated;
+  }
+
+  /** A live request ended: close its card without scheduling deferred execution. */
+  expire(id: string): void {
+    const a = this.get(id);
+    if (!a || a.status !== "pending") return;
+    this.db.prepare("update approvals set status = 'expired', resolved_at = ?, resolved_via = 'timeout' where id = ?").run(nowIso(), id);
+    this.audit.append("core", "approval.expire", a.tool, { id });
+    const waiters = this.waiters.get(id) ?? [];
+    this.waiters.delete(id);
+    for (const waiter of waiters) waiter("denied");
+    this.bus.emit("approval.resolved", this.get(id));
   }
 
   /** "Allow" on a line auto mode left: the agent may run that call once (takeAllowance) and hears so. */

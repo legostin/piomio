@@ -150,11 +150,15 @@ export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "ex
  * `reason` is the agent's own words for why, when it gave some.
  */
 export interface ApprovalAsk {
-  kind: "command" | "read" | "write" | "tool";
+  kind: "command" | "read" | "write" | "tool" | "network";
   detail: string;
   reason?: string;
   /** A command that reaches the network: the host. */
   host?: string;
+  port?: number;
+  ipLiteral?: boolean;
+  agent?: string;
+  task?: string;
 }
 
 /**
@@ -837,7 +841,7 @@ export interface BrainSessionOptions {
     allowRead: string[];
     allowWrite?: string[];
     permissionTool: string;
-    /** The hub's egress allowlist. Requires its authenticated loopback proxy in env; absent means no network. */
+    /** Local sandbox routes these hosts to the authenticated hub proxy. ["*"] lets the hub ask about new hosts. */
     network?: { allowedDomains: string[] };
   };
   /**

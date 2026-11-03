@@ -1,6 +1,7 @@
 // The authenticated hub API, shared by the web UI (cookie sessions, port 8080) and the phones (device port, bearer
 // tokens). The caller adds its own auth hook first; everything here assumes the request comes from the owner.
 
+import { DEFAULT_BRAIN_EGRESS } from "../settings.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -678,7 +679,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   });
 
   // ----- settings -----
-  api.get("/api/settings", async () => hub.settings.get());
+  api.get("/api/settings", async () => ({ ...hub.settings.get(), brainEgressBuiltIn: DEFAULT_BRAIN_EGRESS }));
   api.patch("/api/settings", async (req) => hub.updateSettings((req.body ?? {}) as Record<string, unknown>, "user"));
   // Which speech-to-text service voice messages go to now (none: not set up).
   api.get("/api/transcription", async () => {

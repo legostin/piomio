@@ -23,6 +23,7 @@ interface CoreSettings {
   digestTimes: string[];
   notifyRatePerHour: number;
   brainEgressAllow: string[];
+  brainEgressBuiltIn?: string[];
   channelApprovalDetails: boolean;
   brainConcurrency: number;
   approvalInlineWaitSec: number;
@@ -291,6 +292,10 @@ export function SettingsPage() {
               <Input type="number" min={1} value={nums.brainConcurrency} onChange={(e) => setNums((n) => ({ ...n, brainConcurrency: e.target.value }))} />
             </Field>
             <Field group label={t("settings.egress")} hint={t("settings.egressHint")}>
+              <details className="mb-3 text-xs text-muted">
+                <summary className="cursor-pointer">{t("settings.egressBuiltIn")}</summary>
+                <div className="mt-2 break-words font-mono">{form.brainEgressBuiltIn?.join(", ")}</div>
+              </details>
               <TagInput value={form.brainEgressAllow} onChange={(v) => set("brainEgressAllow", v)} placeholder="api.example.com" />
             </Field>
           </div>

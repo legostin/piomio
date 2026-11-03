@@ -648,6 +648,15 @@ export class SessionRunner {
     this.tellAgent(conv.id, `[System] The user stored ${r.title} in the vault as vault://${r.vaultId}${r.pluginId ? ` and plugin ${r.pluginId} now uses it` : ""}. Carry on with what it was needed for.`);
   }
 
+  /** Proxy errors can lose their reason inside curl/TLS clients. Give the active brain the exact hub outcome. */
+  networkDenied(sessionId: string, conversationId: string, text: string): void {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.conversationId !== conversationId) return;
+    this.d.store.addMessage({ conversationId, role: "system", parts: [{ type: "text", text }], status: "complete", taskId: row.taskId });
+    const active = this.activeTurns.get(conversationId);
+    if (active?.row.id === sessionId) void active.handle.steer(this.turnInput(row, text, {})).catch(() => {});
+  }
+
   /**
    * Something the user did outside the conversation (a card) that the agent should hear about: a note and a turn.
    * `taint`: the note carries outside content (a plugin's, e.g. what a web page showed): its session is marked first.
@@ -733,7 +742,10 @@ export class SessionRunner {
       this.groupEpoch.set(conversationId, (this.groupEpoch.get(conversationId) ?? 0) + 1);
     }
     const a = this.activeTurns.get(conversationId);
-    if (a) void a.handle.interrupt();
+    if (a) {
+      this.d.egress.cancelRequests(`brain:${a.row.id}`);
+      void a.handle.interrupt();
+    }
     return !!a || round;
   }
 
@@ -1769,7 +1781,7 @@ export class SessionRunner {
     const env: Record<string, string> = {};
     if (local) {
       this.d.egress.revokeOwner(`brain:${row.id}`);
-      const proxyToken = this.d.egress.issueToken(`brain:${row.id}`, DEFAULT_BRAIN_EGRESS);
+      const proxyToken = this.d.egress.issueToken(`brain:${row.id}`, DEFAULT_BRAIN_EGRESS, { sessionId: row.id, conversationId: conv.id, agentId: agent.id, taskId: task?.id });
       const proxy = `http://${proxyToken}:x@127.0.0.1:${this.d.config.egressPort}`;
       Object.assign(env, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" });
     }
@@ -1802,7 +1814,7 @@ export class SessionRunner {
         ? { confine: {
             ...confinement(this.d.config.dataDir, workspace, local && ref.brainId === "claude-code" ? this.d.claudePluginDirs() : []),
             permissionTool: NATIVE_PERMISSION_TOOL,
-            network: { allowedDomains: [...DEFAULT_BRAIN_EGRESS, ...s.brainEgressAllow] },
+            network: { allowedDomains: ["*"] },
           } }
         : {}),
       // On a paired computer that allows commands, its brain asks the hub about them (auto mode, the person).

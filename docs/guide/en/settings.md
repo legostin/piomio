@@ -17,7 +17,7 @@ Just say it: "turn on quiet hours from 22:00", "my time zone is Europe/Berlin", 
 - auto mode, or asking you every time (turning auto mode on shows you a card first, see [Approvals and auto mode](approvals.md));
 - speech to text for voice messages (except your own server), and the voice and speed for reading aloud; it also downloads the local speech engine ("install local speech recognition"), see [Voice](#voice).
 
-It also connects plugins and services, changes their settings and makes agents. The rest of the **General** page is yours alone: the network allowlists, the approval timings, the details in Telegram and your own speech-to-text server. Ask for those, and the assistant points you to the panel.
+It also connects plugins and services, changes their settings and makes agents. The rest of the **General** page is yours alone: the network allowlists, the approval timings, the details in Telegram and your own speech-to-text server. The assistant can propose adding a host via a network permission card; other changes to these lists are made in the panel.
 
 ## The Settings panel
 
@@ -63,7 +63,7 @@ See [Approvals and auto mode](approvals.md).
 ### Brains
 
 - **Parallel sessions per brain** (2, from 1 to 16): how many tasks and agent threads run at once on one brain on one computer. The rest wait in line; your own conversations never wait.
-- **Extra allowed hosts**: where brains may connect besides the default list (Anthropic, OpenAI, Kimi, GitHub, npm and the like). Wildcards like `*.example.com` work.
+- **Extra allowed hosts**: where brains may connect besides the default list (Anthropic, OpenAI, Kimi, GitHub, npm and the like). Wildcards like `*.example.com` work. The built-in list is visible here too. New public hosts can be proposed in chat via a network permission card; Always allow adds the host here. Remove an entry and save to stop new connections using that permanent permission.
 
 ### Voice
 

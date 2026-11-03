@@ -3,6 +3,15 @@
 import type en from "./en";
 
 export default {
+  "message.network.title": "Доступ к сети",
+  "message.network.once": "Разрешить один раз",
+  "message.network.scope": "Один раз — этот хост и порт на текущий сеанс. Соединение ждёт до 90 секунд.",
+  "message.network.always": "«Всегда» добавит хост в белый список для всех агентов и портов. Внешние действия требуют отдельного разрешения.",
+  "message.network.ip": "Это IP-адрес. Его владелец может измениться; «Всегда» разрешит этот адрес всем агентам.",
+  "message.network.agent": "Агент: {agent}",
+  "message.network.task": "Задача: {task}",
+  "settings.egressBuiltIn": "Встроенные хосты моделей, пакетов и GitHub",
+
   // shared words
   "common.loading": "Загрузка…",
   "common.retry": "Повторить",
@@ -876,7 +885,7 @@ export default {
   "settings.brainConcurrencyHint": "Сколько задач и переписок агентов идёт одновременно на одной паре «интеллект@машина»; остальные ждут в очереди, а разговоры с вами не ждут никогда",
   "settings.brainConcurrencyName": "Параллельных сессий",
   "settings.egress": "Дополнительные разрешённые хосты",
-  "settings.egressHint": "Куда интеллекту можно ходить в сеть помимо стандартного списка (Anthropic, OpenAI, GitHub, npm…). Маски вида *.example.com",
+  "settings.egressHint": "Дополнительные хосты для всех агентов: example.com или *.example.com. Добавьте или удалите запись и сохраните. Кнопка «Всегда» на сетевой карточке тоже добавляет хост.",
   "settings.security": "Безопасность",
   "settings.securityText": "Пароль, passkey, vault, правила и журнал аудита живут в отдельном пульте безопасности — основная страница и плагины не имеют к ним доступа.",
   "settings.app.title": "Это приложение",

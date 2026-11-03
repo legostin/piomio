@@ -20,7 +20,7 @@ function viaProxy(proxyPort: number, token: string | undefined, url: string): Pr
 
 describe("isPrivateAddress", () => {
   it("covers v4, v6 and v4-in-v6 forms", () => {
-    for (const ip of ["127.0.0.1", "10.1.2.3", "192.168.0.10", "172.20.0.1", "169.254.169.254", "100.64.1.1", "::1", "fe80::1", "fd00::5", "::ffff:127.0.0.1", "::ffff:7f00:1", "64:ff9b::a00:1", "2002:c0a8:1::1"]) {
+    for (const ip of ["168.63.129.16", "0:0:0:0:0:ffff:7f00:1", "127.0.0.1", "10.1.2.3", "192.168.0.10", "172.20.0.1", "169.254.169.254", "100.64.1.1", "::1", "fe80::1", "fd00::5", "::ffff:127.0.0.1", "::ffff:7f00:1", "64:ff9b::a00:1", "2002:c0a8:1::1"]) {
       expect(isPrivateAddress(ip), ip).toBe(true);
     }
     for (const ip of ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111", "::ffff:8.8.8.8"]) expect(isPrivateAddress(ip), ip).toBe(false);
