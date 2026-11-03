@@ -182,6 +182,7 @@ describe("Pio's tools", () => {
       relay,
       prefs: () => prefs,
       setPrefs: async (p) => (prefs = cleanPrefs(p, prefs)),
+      show: () => sent.push({ action: "show" }),
     });
     const call = async (name: string, input: unknown) => (await reg.get(name)!.handler(input, {} as never)) as ToolResult;
     return { bodies, sent, reg, call };
@@ -190,7 +191,7 @@ describe("Pio's tools", () => {
 
   it("are Pio's alone", () => {
     const { reg } = tools();
-    expect([...reg.keys()].sort()).toEqual(["click", "drag", "key", "look", "open", "read", "scroll", "settings", "type"]);
+    expect([...reg.keys()].sort()).toEqual(["click", "drag", "key", "look", "open", "read", "scroll", "settings", "show", "type"]);
     for (const t of reg.values()) expect(t.agents).toEqual([AGENT]);
     expect(reg.get("look")?.effect).toBe("read");
     expect(reg.get("click")?.availability).toBe("interactive");

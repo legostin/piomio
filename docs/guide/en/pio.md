@@ -21,7 +21,7 @@ next to you**.
 Once Pio is on, two things appear:
 
 - **Its face** in a corner of your screen, above every window. Drag it wherever you like.
-- **Its chat**, pinned small above your team in the sidebar. Everything you say to Pio and everything it says is there.
+- **Its chat**: in the sidebar Pio's small face flies beside your main assistant, with what it is doing under its name. Everything you say to Pio and everything it says is there.
   Pio's chat is its own: what you discuss with Pio does not fill the other agents' chats.
 
 ## The face and its card
@@ -32,7 +32,8 @@ Hover over the face to open its card:
   and keeps only the last few windows, in memory, never on disk.
 - **Voice**: you talk to Pio and it answers out loud (see below).
 - **Hand over control**: Pio may use the mouse and keyboard (see below).
-- A field to type to Pio, its last lines, **Open chat** and ✕ to hide the face.
+- A field to type to Pio, its last lines, **Open chat** and ✕ to hide the face. To bring it back, click Pio next to your
+  main assistant in the sidebar, or tell Pio "come back".
 
 The ring around the face shows what Pio is doing: watching, listening, hearing you, thinking, speaking, or driving
 (red). The same word shows next to Pio in the sidebar.

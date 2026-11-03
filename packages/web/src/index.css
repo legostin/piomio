@@ -747,21 +747,19 @@
   .owl-alive {
     animation: owl-glow 2.4s ease-in-out infinite;
   }
-  /* The always-on companion's card above the team (pages/chat/TeamList.tsx) floats: a slow rise and fall, its shadow
-     growing as it rises. */
-  @keyframes owl-hover {
+  /* The always-on companion flying beside the default agent (pages/chat/TeamList.tsx): a slow rise, fall and sway. */
+  @keyframes owl-fly {
     0%,
     100% {
-      transform: translateY(0);
-      box-shadow: var(--shadow), 0 8px 16px -12px rgb(70 45 10 / 0.22);
+      transform: translate(0, 0) rotate(-4deg);
     }
     50% {
-      transform: translateY(-2px);
-      box-shadow: var(--shadow), 0 14px 22px -12px rgb(70 45 10 / 0.3);
+      transform: translate(1px, -5px) rotate(3deg);
     }
   }
-  .owl-hover {
-    animation: owl-hover 5.5s ease-in-out infinite;
+  .owl-fly {
+    animation: owl-fly 4.8s ease-in-out infinite;
+    filter: drop-shadow(0 7px 5px rgb(70 45 10 / 0.16));
   }
   .owl-alive .owl-pupil {
     animation: owl-look 3.6s var(--ease-out) infinite;
@@ -821,7 +819,7 @@
     .animate-slide,
     .animate-pop,
     .owl-alive,
-    .owl-hover,
+    .owl-fly,
     .owl-alive .owl-pupil,
     .owl-alive .owl-eye,
     .owl-alive .owl-smile,

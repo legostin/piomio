@@ -74,7 +74,7 @@ describe("the Pio plugin in a hub", () => {
     const session = (agentId: string) =>
       hub.store.createSession({ conversationId: hub.store.agentConversation(agentId).id, agentId, brainRef: "fake@local", background: false }).row;
     const seen = (agentId: string) => hub.gateway.listFor(session(agentId)).map((t) => t.name).filter((n) => n.startsWith("pio_"));
-    expect(seen("pio").sort()).toEqual(["pio_click", "pio_drag", "pio_key", "pio_look", "pio_open", "pio_read", "pio_scroll", "pio_settings", "pio_type"]);
+    expect(seen("pio").sort()).toEqual(["pio_click", "pio_drag", "pio_key", "pio_look", "pio_open", "pio_read", "pio_scroll", "pio_settings", "pio_show", "pio_type"]);
     expect(seen("desk")).toEqual([]);
   });
 

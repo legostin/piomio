@@ -42,6 +42,8 @@ export interface ToolDeps {
   relay: Relay;
   prefs(): Prefs;
   setPrefs(p: Partial<Prefs>): Promise<Prefs>;
+  /** Ask the desktop app's hub window to show the face again. */
+  show(): void;
 }
 
 const NO_WINDOW = "Your window is not open on any computer now (the Piomio desktop app shows it on a Mac or PC), so you cannot see or touch the screen.";
@@ -187,6 +189,18 @@ export function registerTools(ctx: Pick<PluginContext, "tools">, d: ToolDeps): v
     availability: "interactive",
     inputSchema: { type: "object", properties: { target: { type: "string", maxLength: 500 } }, required: ["target"] },
     handler: (i: { target: string }) => act("open", { target: String(i.target ?? "") }, `Opened ${i.target}.`),
+  });
+
+  reg({
+    name: "show",
+    description:
+      'Bring your face back onto the person\'s screen when they hid it (the ✕ in your card) or ask for you ("покажись", "вернись", "come back"). Works where the Piomio desktop app\'s window is open.',
+    effect: "local-write",
+    inputSchema: { type: "object", properties: {} },
+    handler: () => {
+      d.show();
+      return text("Asked the desktop app to show your face again: it appears in a moment where Piomio's window is open.");
+    },
   });
 
   reg({

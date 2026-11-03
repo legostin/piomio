@@ -45,7 +45,8 @@ export class SpeechApi {
   }
 
   private async send(path: string, body: BodyInit, type: string, retry = true): Promise<Response> {
-    const r = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "content-type": type, "x-csrf": await this.token() }, body });
+    // The page's no-referrer policy would send "Origin: null", which the hub refuses: same-origin here, as @piomio/ui does.
+    const r = await fetch(path, { method: "POST", credentials: "same-origin", referrerPolicy: "same-origin", headers: { "content-type": type, "x-csrf": await this.token() }, body });
     if (r.status === 403 && retry) {
       await this.token(true);
       return this.send(path, body, type, false);

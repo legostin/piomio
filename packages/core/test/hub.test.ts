@@ -135,6 +135,13 @@ describe("hub (integration)", () => {
     expect((await app.raw("POST", "/api/auth/desktop", { ticket }, { origin: "https://evil.example" })).status).toBe(403);
     await app.req("POST", "/api/auth/desktop", { ticket });
     expect((await app.raw("GET", "/api/bootstrap")).status).toBe(200);
+    // The app's other window signs in with its own ticket over the same cookies: the session stays, and so does the
+    // CSRF token a page open in the first window holds.
+    const csrf = (await app.req("GET", "/api/bootstrap")).csrf;
+    const second = "u".repeat(43);
+    hub.desktopTickets.add(second);
+    await app.req("POST", "/api/auth/desktop", { ticket: second });
+    expect((await app.req("GET", "/api/bootstrap")).csrf).toBe(csrf);
     const other = new Client(hub.config.publicUrl);
     expect((await other.raw("POST", "/api/auth/desktop", { ticket })).status).toBe(401);
     expect((await other.raw("POST", "/api/auth/desktop", { ticket: "nope" })).status).toBe(401);

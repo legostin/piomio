@@ -68,7 +68,7 @@ export function upload<T = any>(path: string, data: Blob, opts: UploadOptions = 
   });
 }
 
-async function send<T>(method: Method, path: string, payload?: { type: string; body: BodyInit }, signal?: AbortSignal): Promise<T> {
+async function send<T>(method: Method, path: string, payload?: { type: string; body: BodyInit }, signal?: AbortSignal, retry = true): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json", "x-piomio-locale": locale };
   const init: RequestInit = {
     method,
@@ -87,6 +87,16 @@ async function send<T>(method: Method, path: string, payload?: { type: string; b
   let res: Response;
   try {
     res = await fetch(path, init);
+    // Another window of the desktop app signed in anew (the windows share their cookies): this page's token is the old
+    // session's. It takes the current one and tries once more.
+    if (res.status === 403 && method !== "GET" && retry && (await res.clone().text()).includes("CSRF")) {
+      const b = await fetch("/api/bootstrap", { headers: { accept: "application/json" }, credentials: "same-origin" });
+      const fresh = b.ok ? ((await b.json()) as { csrf?: string }).csrf : undefined;
+      if (fresh && fresh !== csrfToken) {
+        csrfToken = fresh;
+        return send<T>(method, path, payload, signal, false);
+      }
+    }
   } catch (e) {
     if (signal?.aborted) throw e;
     throw new ApiError(0, t("app.offline"));

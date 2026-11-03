@@ -139,6 +139,12 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
         hub.audit.append("user", "auth.failure", "desktop", { ip: clientIp(req) });
         throw new AuthError(401, "auth.badDesktopTicket");
       }
+      // The app's windows share their cookies (the hub window, Pio's): one signed in already, its session stays, so a
+      // page open in the other window keeps its CSRF token.
+      if (hub.auth.session(req.cookies[COOKIE], "main")) {
+        hub.audit.append("user", "auth.desktop", undefined, { kept: true });
+        return { ok: true };
+      }
       const { token } = hub.auth.createSession("main");
       hub.audit.append("user", "auth.desktop");
       setCookie(reply, token);

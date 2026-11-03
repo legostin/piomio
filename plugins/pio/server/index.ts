@@ -100,7 +100,7 @@ const plugin: PluginModule = {
       return { context: screenBlock(bodies.active(), Date.now()) };
     });
 
-    registerTools(ctx, { bodies, relay, prefs: () => prefs, setPrefs });
+    registerTools(ctx, { bodies, relay, prefs: () => prefs, setPrefs, show: () => ctx.ui.emit("show", {}) });
 
     let looking = false;
     const tick = async () => {
