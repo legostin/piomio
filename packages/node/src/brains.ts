@@ -117,6 +117,16 @@ export interface BrainHostOptions {
   log?: (msg: string) => void;
   /** The user's own PATH (their login shell's), read before each probe; a service starts with a short one. */
   userPath?: { refresh(): Promise<boolean>; dirs(): string[] };
+  /** How long a turn waits for the person's files to come over from the hub (file sync); 20 s by default. */
+  filesWaitMs?: number;
+}
+
+/** The person's files reach this machine with the hub's file sync, every few seconds: wait for them a little. */
+export async function filesArrived(workspace: string, files: string[], waitMs: number): Promise<boolean> {
+  const missing = () => files.some((f) => !existsSync(join(workspace, f)));
+  const end = Date.now() + waitMs;
+  while (missing() && Date.now() < end) await new Promise((r) => setTimeout(r, 200));
+  return !missing();
 }
 
 export class BrainHost {
@@ -343,6 +353,8 @@ export class BrainHost {
     const s = this.sessions.get(p.sessionId);
     if (!s) throw new Error(`Unknown brain session: ${p.sessionId}`);
     try {
+      // The hub's note tells the brain to look again if a file is late: the turn goes on either way.
+      if (p.turn.attachments?.length) await filesArrived(s.workspace, p.turn.attachments, this.o.filesWaitMs ?? 20_000);
       for await (const event of s.session.send(p.turn)) emit(event);
     } catch (e: any) {
       emit({ type: "error", message: e?.message ?? String(e), fatal: true });
@@ -351,8 +363,9 @@ export class BrainHost {
 
   /** More input for the turn in progress; false sends it as the next turn. */
   async steer(p: { sessionId: string; turn: BrainTurn }): Promise<boolean> {
-    const s = this.sessions.get(p.sessionId)?.session;
-    return !!(s?.steer && (await s.steer(p.turn)));
+    const s = this.sessions.get(p.sessionId);
+    if (s && p.turn.attachments?.length) await filesArrived(s.workspace, p.turn.attachments, this.o.filesWaitMs ?? 20_000);
+    return !!(s?.session.steer && (await s.session.steer(p.turn)));
   }
 
   /** Get ready for a turn soon (a dialog the person opened). */

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +67,25 @@ describe("BrainHost", () => {
     expect(mcp.env.PIOMIO_URL).toBe("http://hub.test:8080/mcp");
     await host.closeAll();
     expect(host.sessionCount).toBe(0);
+  });
+
+  it("waits for the person's files to come over from the hub before the turn, and goes on if one never does", async () => {
+    const ws = join(userHome, "piomio-workspace", "a", "c2");
+    const opts = { sessionId: "s2", agent, workspace: "a/c2", mcp: { url: "http://hub.test/mcp", token: "t", bridgeCommand: [] }, systemPrompt: "sys", env: {}, background: false };
+    await host.create({ brainId: "claude-code", opts });
+    // File sync brings it a moment later.
+    setTimeout(() => { mkdirSync(join(ws, "attachments"), { recursive: true }); writeFileSync(join(ws, "attachments", "shot.jpeg"), "jpeg"); }, 300);
+    const events: BrainEvent[] = [];
+    await host.send({ sessionId: "s2", turn: { text: "what is this", attachments: ["attachments/shot.jpeg"] } }, (e) => events.push(e));
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+    expect(statSync(join(ws, "env.json")).mtimeMs).toBeGreaterThanOrEqual(statSync(join(ws, "attachments", "shot.jpeg")).mtimeMs);
+    const late = new BrainHost({ home, policy, hubUrl: "http://hub.test:8080", bridgeCommand: ["bridge-cmd"], filesWaitMs: 100 });
+    await late.create({ brainId: "claude-code", opts: { ...opts, sessionId: "s3" } });
+    const done: BrainEvent[] = [];
+    await late.send({ sessionId: "s3", turn: { text: "and this", attachments: ["attachments/never.jpeg"] } }, (e) => done.push(e));
+    expect(done.at(-1)).toMatchObject({ type: "done" });
+    await late.closeAll();
+    await host.closeAll();
   });
 
   it("refuses hub values that would turn into CLI flags", async () => {

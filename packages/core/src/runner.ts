@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
 import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
+import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { confinement } from "./native-permissions.ts";
 import { NATIVE_PERMISSION_TOOL } from "./tools/native-permission.ts";
 import type { Config } from "./config.ts";
@@ -2031,7 +2032,11 @@ export class SessionRunner {
     let paths: string[] = [];
     if (opts.attachments?.length) {
       const local = parseBrainRef(row.brainRef).machineId === "local";
-      const seen = local ? forSession(opts.attachments, join(this.d.config.dataDir, "workspaces"), this.workspacePath(row)) : opts.attachments.map((part): SessionFile => ({ part }));
+      // Another computer's folder is this hub's copy of it (file sync): what is put here reaches it in seconds, but
+      // a file too big to sync stays here.
+      const synced = (part: AttachmentPart) => local || (part.size ?? 0) <= MAX_SYNC_FILE_BYTES; // attachmentNote says why
+      const placed = forSession(opts.attachments.filter(synced), join(this.d.config.dataDir, "workspaces"), this.workspacePath(row));
+      const seen = opts.attachments.map((part): SessionFile => placed.find((f) => f.part === part) ?? { part });
       const files = seen.map((f) => (opts.speech?.[f.part.path] ? { ...f, speech: opts.speech[f.part.path] } : f));
       text = [text, attachmentNote(files, { remote: !local })].filter(Boolean).join("\n\n");
       paths = files.flatMap((f) => (f.path ? [f.path] : []));

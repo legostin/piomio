@@ -86,7 +86,9 @@ interface DbRow {
 type Plan = "agree" | "take" | "keep" | "theirs-win" | "ours-win";
 type Outcome = "done" | "again" | "later" | "skip";
 
-const DEFAULT_MAX = 200 * 1024 * 1024;
+/** A bigger file is left out of the sync (FileSyncOptions.maxFileBytes): it stays where it was made. */
+export const MAX_SYNC_FILE_BYTES = 200 * 1024 * 1024;
+const DEFAULT_MAX = MAX_SYNC_FILE_BYTES;
 const PAGE = 500;
 const HISTORY = 16;
 const SHA_RE = /^[0-9a-f]{64}$/;

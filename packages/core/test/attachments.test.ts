@@ -109,8 +109,17 @@ describe("attachments", () => {
         "Open them with your file tools when the request needs them.]",
       ].join("\n"),
     );
-    expect(attachmentNote([{ part: photo }, { part: voice }], { remote: true })).toBe(
-      "[The user attached 2 files. They are stored on the hub, not on this machine: receipt.jpg (image/jpeg, 1.2 MB); voice.ogg (audio/ogg, 47 KB, voice message 1:12).]",
+    // Another computer: the hub's copy of its folder syncs there, a file too big to sync stays on the hub.
+    const film = { type: "attachment" as const, path: "assistant/c1/attachments/film.mov", name: "film.mov", mimeType: "video/quicktime", size: 300 * 1024 * 1024 };
+    expect(attachmentNote([{ part: photo, path: "attachments/receipt.jpg" }, { part: film }, { part: old }], { remote: true })).toBe(
+      [
+        "[The user attached 3 files, saved in your working folder:",
+        "- attachments/receipt.jpg (image/jpeg, 1.2 MB)",
+        "- film.mov (video/quicktime, 300 MB): stays on the hub, too big to copy to this computer",
+        "- old.pdf (no longer available)",
+        "They come over from the hub: if one is not there yet, wait a few seconds and look again.",
+        "Open them with your file tools when the request needs them.]",
+      ].join("\n"),
     );
     expect(attachmentNote([])).toBe("");
   });

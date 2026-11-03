@@ -6,6 +6,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 import type { AttachmentKind, MessagePart } from "@piomio/shared";
+import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { IMAGE_TYPES } from "./media.ts";
 
 /** Largest file the hub takes in one upload (Telegram hands bots at most 20 MB anyway). */
@@ -215,17 +216,20 @@ function heard(f: SessionFile): string {
   return f.speech ? `, ${f.speech}` : "";
 }
 
-/** The English note that tells the brain which files came with the user's message and where they are. */
+/**
+ * The English note that tells the brain which files came with the user's message and where they are. `remote`: the
+ * brain works on another computer, whose folder is the hub's copy of it (file sync): a file comes over in seconds,
+ * one without a path was too big to sync.
+ */
 export function attachmentNote(files: SessionFile[], opts: { remote?: boolean } = {}): string {
   if (!files.length) return "";
   const one = files.length === 1;
   const what = one ? "a file" : `${files.length} files`;
-  if (opts.remote) {
-    const list = files.map((f) => `${f.part.name} (${describe(f.part)})${heard(f)}`).join("; ");
-    return `[The user attached ${what}. ${one ? "It is" : "They are"} stored on the hub, not on this machine: ${list}.]`;
-  }
-  const lines = files.map((f) => (f.path ? `- ${f.path} (${describe(f.part)})${heard(f)}` : `- ${f.part.name} (no longer available)`));
+  const missing = (f: SessionFile) =>
+    opts.remote && (f.part.size ?? 0) > MAX_SYNC_FILE_BYTES ? ` (${describe(f.part)})${heard(f)}: stays on the hub, too big to copy to this computer` : " (no longer available)";
+  const lines = files.map((f) => (f.path ? `- ${f.path} (${describe(f.part)})${heard(f)}` : `- ${f.part.name}${missing(f)}`));
   const them = one ? "it" : "them";
   const setup = files.some((f) => f.speech === SPEECH_NOT_SET_UP) ? [SPEECH_SETUP_HINT] : [];
-  return [`[The user attached ${what}, saved in your working folder:`, ...lines, ...setup, `Open ${them} with your file tools when the request needs ${them}.]`].join("\n");
+  const synced = opts.remote ? [`${one ? "It comes" : "They come"} over from the hub: if ${one ? "it" : "one"} is not there yet, wait a few seconds and look again.`] : [];
+  return [`[The user attached ${what}, saved in your working folder:`, ...lines, ...setup, ...synced, `Open ${them} with your file tools when the request needs ${them}.]`].join("\n");
 }

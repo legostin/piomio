@@ -106,7 +106,7 @@ A picture waiting in the field has a pen button (**Mark up**). It opens the pict
 
 ### Where files go
 
-A file you send is saved in the agent's folder for that chat, in the hub's data folder: `workspaces/<agent>/<chat>/attachments/`. The agent gets its path and can open it with its own tools.
+A file you send is saved in the agent's folder for that chat, in the hub's data folder: `workspaces/<agent>/<chat>/attachments/`. The agent gets its path and can open it with its own tools. When the agent thinks on another computer, the file comes over to its folder there with the hub's file sync, within seconds; only a file over 200 MB stays on the hub.
 
 ### The media viewer
 
