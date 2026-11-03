@@ -143,6 +143,8 @@ describe("the hub's commands (integration)", () => {
     await until(() => hub.brains.has("fake@local") && hub.brains.has("fake2:a@local"), "fake brains to register");
     await web.req("POST", "/api/auth/setup", { token: hub.auth.setupToken, password: "integration-pass-1" });
     web.csrf = (await web.req("GET", "/api/bootstrap")).csrf;
+    // No quiet hours: the hub runs in UTC, and from 23:00 to 08:00 a paused goal's notice would wait for the digest.
+    await web.req("PATCH", "/api/settings", { quietHours: { enabled: false, start: "23:00", end: "08:00" } });
     dialog = ((await web.req("GET", "/api/team")) as Array<{ agentId: string; conversationId: string }>).find((m) => m.agentId === "assistant")!.conversationId;
   });
 
