@@ -62,7 +62,7 @@ They think through the official Claude Code, Codex and Kimi Code CLIs, signed in
   &nbsp;&nbsp;
   <img src="packages/site/src/assets/iphone/en-1-chat.jpg" width="250" alt="Ada’s chat on the iPhone: an email waiting for your yes">
 </p>
-<p align="center"><sub><b>The iPhone app</b> is coming to TestFlight soon, with every chat and card, and Face ID for approvals.</sub></p>
+<p align="center"><sub><b>The iPhone app</b> is in beta on <a href="https://testflight.apple.com/join/g4hCfeXA">TestFlight</a>, with every chat and card, and Face ID for approvals.</sub></p>
 
 ## Install
 
@@ -90,7 +90,7 @@ Install Piomio on this computer and set it up for me. Follow https://piomio.io/s
 
 It works out what the machine is, installs Piomio and asks you only what is yours to decide ([what it will do](https://piomio.io/setup.md)). On a Mac or PC, Piomio then works with that same Claude Code, Codex or Kimi Code: no second sign-in. Codex says it can't ask before downloading? Choose "Ask for approval" in its `/permissions`.
 
-**On your iPhone.** The app is coming to TestFlight soon. It pairs with your hub through a QR code, and approvals need Face ID.
+**On your iPhone.** The app is in beta on [TestFlight](https://testflight.apple.com/join/g4hCfeXA) (iOS 26 or later). It pairs with your hub through a QR code, and approvals need Face ID.
 
 **On more computers.** Each one joins with a one-time code. The agents can then use its files, its own Claude Code or Codex (signed in there with your own account), and its commands if you allow them. See [Machines and other computers](https://piomio.io/en/docs/machines/).
 
@@ -102,7 +102,7 @@ It works out what the machine is, installs Piomio and asks you only what is your
 - **Let it run by itself.** Reminders, schedules, page watchers and news channels work in the background. Each one decides whether to stay quiet, add to the digest, notify you or ask.
 - **Teach it.** Show it a browser task once. It keeps that as a skill and does it when asked, or on a schedule.
 - **Work side by side.** Pio, a small face over every app on your Mac or PC, sees which window you work in, talks and listens with a local open-source voice, speaks up when it has something useful, and takes the mouse and keyboard when you hand them over.
-- **Wherever you are.** You get the same chats in the desktop app for macOS and Windows, in any browser and in Telegram, and soon in the iPhone app. One private link reaches your hub from anywhere, and there are no ports to open.
+- **Wherever you are.** You get the same chats in the desktop app for macOS and Windows, in any browser, in Telegram and in the iPhone app. One private link reaches your hub from anywhere, and there are no ports to open.
 
 ## How it works
 

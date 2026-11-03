@@ -206,7 +206,7 @@ export function Iphone() {
           <div className="reveal">
             <p className="flex items-center gap-2.5 text-[13px] font-bold tracking-[0.14em] text-accent-text uppercase">
               {t("iphone.eyebrow")}
-              <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-[11.5px] tracking-normal normal-case">{t("iphone.soon")}</span>
+              <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-[11.5px] tracking-normal normal-case">{t(data.testflightUrl ? "iphone.beta" : "iphone.soon")}</span>
             </p>
             <h2 className="mt-3 font-display text-[clamp(1.9rem,3.8vw,3.1rem)] leading-[1.06] font-extrabold tracking-[-0.02em] text-balance">{t("iphone.title")}</h2>
             <p className="mt-4 max-w-[34rem] text-[17px] leading-relaxed text-fg-2 text-pretty">{t("iphone.lead")}</p>
@@ -221,10 +221,13 @@ export function Iphone() {
           </ul>
           <div className="reveal mt-9">
             {data.testflightUrl ? (
-              <a href={data.testflightUrl} className="candy inline-flex items-center gap-2.5 rounded-full px-6 py-3.5 text-[16px] font-semibold">
-                <Apple size={18} />
-                {t("iphone.testflight")}
-              </a>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <a href={data.testflightUrl} className="candy inline-flex items-center gap-2.5 rounded-full px-6 py-3.5 text-[16px] font-semibold">
+                  <Apple size={18} />
+                  {t("iphone.testflight")}
+                </a>
+                <span className="text-[14px] text-muted">{t("iphone.requires")}</span>
+              </div>
             ) : (
               <span aria-disabled="true" className="inline-flex cursor-default items-center gap-2.5 rounded-full bg-surface-2 px-6 py-3.5 text-[16px] font-semibold text-muted">
                 <Apple size={18} />

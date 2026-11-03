@@ -6,7 +6,7 @@ description: Piomio on your iPhone: the team, every chat with its cards, tasks, 
 
 The Piomio app for iPhone is your hub in your pocket: the team, every chat with all its cards, tasks, the Inbox and approvals that need Face ID. The phone runs no brains. It connects to your hub, wherever that runs: your Mac or PC, or a server.
 
-> The app is coming to TestFlight soon; the link will be on [piomio.io](https://piomio.io). It needs an iPhone with iOS 26 or later.
+> The app is in beta on TestFlight: open [the invitation](https://testflight.apple.com/join/g4hCfeXA) on the iPhone, install Apple's TestFlight app if it asks, and press **Install**. It needs an iPhone with iOS 26 or later.
 
 ## What's in the app
 

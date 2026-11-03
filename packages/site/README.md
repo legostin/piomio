@@ -42,7 +42,8 @@ does not reach its end; `--only mail,send`, `--lang ru` and `--speed 4` narrow t
 ## Common changes
 
 **The TestFlight link.** Put the public link (`https://testflight.apple.com/join/…`) into `testflightUrl` in
-`site.config.ts`. While it is empty the button says “Soon in TestFlight” and does nothing.
+`site.config.ts`. While it is empty the badge says “Soon” and the button “Soon in TestFlight” and does nothing; with
+the link the badge says “Beta”.
 
 **A domain.** On GitHub Pages the site lives at `https://legostin.github.io/piomio/`. To connect a domain:
 
