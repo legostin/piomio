@@ -57,7 +57,7 @@ hub's origin (remote capability added at runtime like `hub-window-drag`).
 `"enter"`, `"esc"`; `target` for `open`: an app name or an http(s) URL.
 
 App → page: `window.dispatchEvent(new CustomEvent("piomio-desktop", { detail }))` with
-`{ type: "pio-control-ended", why: "esc"|"mouse"|"timeout"|"ended" }` and `{ type: "pio-hotkey", state:
+`{ type: "pio-control-ended", why: "esc"|"timeout"|"ended" }` and `{ type: "pio-hotkey", state:
 "pressed"|"released" }`.
 
 Main window → app: navigation to `<scheme>://pio?show=1` / `?show=0` (deeplink.rs `WindowAction::Pio(bool)`).
@@ -105,9 +105,10 @@ locales via query param), `Cargo.toml` adds `enigo = "0.6"`, `tauri-plugin-globa
 `macos/*.lproj/InfoPlist.strings` keep the microphone text and say Pio listens too.
 
 - [ ] `pio_control_begin`: native dialog (tauri-plugin-dialog, blocking on a thread) with the reason; yes → state
-  `Control { until: now+10 min, expect: cursor }`, open click-through window `pio-frame` over the screen
-  (`set_ignore_cursor_events(true)`), register Esc global shortcut, start a 50 ms cursor watch thread: cursor away from
-  `expect` by > 4 pt (not by our own action) → end("mouse"); past `until` → end("timeout").
+  `Control { until: now+10 min }`, open click-through window `pio-frame` over the screen
+  (`set_ignore_cursor_events(true)`), register Esc global shortcut, start a 50 ms watch thread: past `until` →
+  end("timeout"). (The person's own mouse does not end control: it was tried and got in the way of using the
+  computer beside Pio.)
 - [ ] `pio_act`: refused (`"control is off"`) unless on; enigo moves/clicks/types/keys/scrolls; `open` runs `open -a`
   / `open <url>` (Windows `cmd /c start`); every action updates `expect`. Key names map (cmd/ctrl/alt/option/shift,
   enter, esc, tab, space, backspace, delete, arrows, f1–f12, letters/digits).

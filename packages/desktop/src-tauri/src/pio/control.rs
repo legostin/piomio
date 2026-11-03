@@ -1,13 +1,16 @@
 //! Pio at the mouse and keyboard. Only after the person says yes in a native dialog (a page cannot draw one), for at
 //! most 10 minutes, with a red frame around the screen (window "pio-frame": ui/frame.html, click-through). Esc (a
-//! global shortcut while control lasts), the person's own mouse or the time limit ends it, and the bubble's page hears
-//! why. Also ⌥Space (Alt+Space on Windows), push-to-talk, while the page wants it.
+//! global shortcut while control lasts), the switch in Pio's card or the time limit ends it, and the bubble's page
+//! hears why; the person's own mouse and keyboard stay theirs to use meanwhile. Also ⌥Space (Alt+Space on Windows),
+//! push-to-talk, while the page wants it.
 
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use enigo::{Axis, Button, Direction, Enigo, Key, Keyboard, Mouse};
+#[cfg(not(target_os = "macos"))]
+use enigo::Button;
+use enigo::{Axis, Direction, Enigo, Key, Keyboard, Mouse};
 use serde_json::json;
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -20,17 +23,22 @@ use crate::i18n::texts;
 pub const FRAME: &str = "pio-frame";
 /// The longest control lasts.
 pub const LIMIT: Duration = Duration::from_secs(10 * 60);
-/// How far the cursor may stray from where Pio left it before it counts as the person's own hand (screen points).
-const SLACK: f64 = 4.0;
-/// After an action the cursor's place is learned for this long (events land a moment later; the system may clamp it).
-const SETTLE: Duration = Duration::from_millis(250);
 const TICK: Duration = Duration::from_millis(50);
+/// A mouse button stays down this long: a down and up with no gap is a click some apps let pass.
+const HOLD: Duration = Duration::from_millis(40);
+/// Between the clicks of a double-click.
+const BETWEEN: Duration = Duration::from_millis(60);
+/// A posted move lands a moment later: before a scroll at a point, the cursor is polled this often, this many times.
+const POLL: Duration = Duration::from_millis(5);
+const POLLS: u32 = 40;
+/// A drag's moves between its ends, and the pause before each.
+const DRAG_STEPS: u32 = 10;
+const DRAG_STEP: Duration = Duration::from_millis(15);
 pub const OFF: &str = "control is off";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Why {
   Esc,
-  Mouse,
   Timeout,
   Ended,
 }
@@ -39,14 +47,13 @@ impl Why {
   pub fn as_str(self) -> &'static str {
     match self {
       Why::Esc => "esc",
-      Why::Mouse => "mouse",
       Why::Timeout => "timeout",
       Why::Ended => "ended",
     }
   }
 }
 
-/// Control's state; the clock and the cursor come from the caller.
+/// Control's state; the clock comes from the caller.
 #[derive(Debug, Default)]
 pub struct Machine {
   on: Option<Session>,
@@ -57,18 +64,13 @@ pub struct Machine {
 struct Session {
   id: u64,
   until: Instant,
-  /// Where Pio left the cursor.
-  expect: (f64, f64),
-  /// Actions under way: the watch looks away from the cursor meanwhile.
-  acting: u32,
-  settle: Instant,
 }
 
 impl Machine {
   /// Control starts; returns its id.
-  pub fn begin(&mut self, now: Instant, cursor: Option<(f64, f64)>) -> u64 {
+  pub fn begin(&mut self, now: Instant) -> u64 {
     self.next += 1;
-    self.on = Some(Session { id: self.next, until: now + LIMIT, expect: cursor.unwrap_or_default(), acting: 0, settle: now + SETTLE });
+    self.on = Some(Session { id: self.next, until: now + LIMIT });
     self.next
   }
 
@@ -80,40 +82,10 @@ impl Machine {
     self.on.as_ref().is_some_and(|s| now < s.until)
   }
 
-  /// An action starts; false when control is off.
-  pub fn acting(&mut self, now: Instant) -> bool {
-    match &mut self.on {
-      Some(s) if now < s.until => {
-        s.acting += 1;
-        true
-      }
-      _ => false,
-    }
-  }
-
-  /// An action is done: where it left the cursor is learned while it settles.
-  pub fn acted(&mut self, now: Instant) {
-    if let Some(s) = &mut self.on {
-      s.acting = s.acting.saturating_sub(1);
-      s.settle = now + SETTLE;
-    }
-  }
-
-  /// The watch's look every tick: the time is up, or the cursor is away from where Pio left it.
-  pub fn check(&mut self, now: Instant, cursor: Option<(f64, f64)>) -> Option<Why> {
-    let s = self.on.as_mut()?;
-    if now >= s.until {
-      return Some(Why::Timeout);
-    }
-    let c = cursor?;
-    if s.acting > 0 {
-      return None;
-    }
-    if now < s.settle {
-      s.expect = c;
-      return None;
-    }
-    ((c.0 - s.expect.0).hypot(c.1 - s.expect.1) > SLACK).then_some(Why::Mouse)
+  /// The watch's look every tick: the time is up. (The person's own mouse never ends control: it stays theirs to
+  /// use beside Pio; Esc, the card's switch or the time limit ends it.)
+  pub fn check(&self, now: Instant) -> Option<Why> {
+    self.on.as_ref().filter(|s| now >= s.until).map(|_| Why::Timeout)
   }
 
   /// Ends control; false when it was off.
@@ -232,6 +204,11 @@ pub fn parse_keys(s: &str) -> Result<Combo, String> {
   }
   let key = key_name(&key).ok_or_else(|| format!("unknown key {key:?}"))?;
   Ok(Combo { mods, key })
+}
+
+/// Esc alone: Pio's own, meant for the person's app, which the global shortcut on Esc would take for the person's.
+pub fn bare_esc(c: &Combo) -> bool {
+  c.mods.is_empty() && c.key == KeyName::Named(Named::Escape)
 }
 
 /// `pio_act`'s arguments.
@@ -421,7 +398,7 @@ async fn ask(app: &AppHandle, reason: &str) -> bool {
 }
 
 fn start(app: &AppHandle) {
-  let id = app.state::<Pio>().control.machine.lock().unwrap().begin(Instant::now(), cursor());
+  let id = app.state::<Pio>().control.machine.lock().unwrap().begin(Instant::now());
   // The dialog made Piomio the active app: keys go to the person's app again.
   super::screen::give_back_focus();
   if let Err(e) = open_frame(app) {
@@ -434,18 +411,17 @@ fn start(app: &AppHandle) {
   std::thread::spawn(move || watch(&app, id));
 }
 
-/// Every tick: the time limit and the person's own mouse.
+/// Every tick: the time limit.
 fn watch(app: &AppHandle, id: u64) {
   loop {
     std::thread::sleep(TICK);
-    let cursor = cursor();
     let pio = app.state::<Pio>();
     let why = {
-      let mut m = pio.control.machine.lock().unwrap();
+      let m = pio.control.machine.lock().unwrap();
       if m.session() != Some(id) {
         return;
       }
-      m.check(Instant::now(), cursor)
+      m.check(Instant::now())
     };
     if let Some(why) = why {
       end(app, why);
@@ -511,13 +487,10 @@ pub async fn act(app: AppHandle, a: Act) -> Result<(), String> {
 }
 
 fn run(app: &AppHandle, step: Step) -> Result<(), String> {
-  let pio = app.state::<Pio>();
-  if !pio.control.machine.lock().unwrap().acting(Instant::now()) {
+  if !app.state::<Pio>().control.machine.lock().unwrap().is_on(Instant::now()) {
     return Err(OFF.into());
   }
-  let done = perform(app, step);
-  pio.control.machine.lock().unwrap().acted(Instant::now());
-  done
+  perform(app, step)
 }
 
 fn perform(app: &AppHandle, step: Step) -> Result<(), String> {
@@ -533,6 +506,19 @@ fn perform(app: &AppHandle, step: Step) -> Result<(), String> {
         on_main(app, move |e| e.text(&chunk).map_err(|e| e.to_string()))?;
       }
       Ok(())
+    }
+    // Pio's own Esc is for the person's app (a dialog, a menu): the shortcut that ends control lets go of the key
+    // meanwhile, else it would take Pio's Esc for the person's and keep it from the app.
+    Step::Keys(combo) if bare_esc(&combo) => {
+      let _ = app.global_shortcut().unregister(esc());
+      let done = on_main(app, move |e| press(e, &combo));
+      std::thread::sleep(HOLD);
+      if app.state::<Pio>().control.machine.lock().unwrap().is_on(Instant::now()) {
+        if let Err(e) = app.global_shortcut().register(esc()) {
+          eprintln!("piomio: Esc for Pio: {e}");
+        }
+      }
+      done
     }
     Step::Open(Target::Url(url)) => app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string()),
     Step::Open(Target::App(name)) => open_app(app, &name),
@@ -557,33 +543,18 @@ fn quiet() -> enigo::Settings {
 }
 
 fn input(e: &mut Enigo, step: &Step) -> Result<(), String> {
-  let err = |x: enigo::InputError| x.to_string();
   match step {
-    Step::Click { at, button, count } => {
-      move_to(e, *at)?;
-      let b = if *button == Btn::Right { Button::Right } else { Button::Left };
-      for _ in 0..*count {
-        e.button(b, Direction::Click).map_err(err)?;
-      }
-      Ok(())
-    }
+    Step::Click { at, button, count } => click(e, *at, *button, *count),
     Step::Move(at) => move_to(e, *at),
-    Step::Drag { from, to } => {
-      move_to(e, *from)?;
-      e.button(Button::Left, Direction::Press).map_err(err)?;
-      let moved = (1..=10).try_for_each(|i| {
-        std::thread::sleep(Duration::from_millis(15));
-        let f = i as f64 / 10.0;
-        move_to(e, (from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f))
-      });
-      let up = e.button(Button::Left, Direction::Release).map_err(err);
-      moved.and(up)
-    }
+    Step::Drag { from, to } => drag(e, *from, *to),
     Step::Keys(combo) => press(e, combo),
     Step::Scroll { at, dx, dy } => {
       if let Some(at) = at {
         move_to(e, *at)?;
+        // The scroll goes where the cursor is: once the move has landed.
+        settle(*at, cursor, POLLS, || std::thread::sleep(POLL));
       }
+      let err = |x: enigo::InputError| x.to_string();
       if *dy != 0 {
         e.scroll(*dy, Axis::Vertical).map_err(err)?;
       }
@@ -594,6 +565,37 @@ fn input(e: &mut Enigo, step: &Step) -> Result<(), String> {
     }
     Step::Type(_) | Step::Open(_) => Ok(()),
   }
+}
+
+/// A posted move lands a moment later. Looks at `cursor` until it is at `at` (within a point) or `tries` looks are
+/// spent, `pause` between them: whether it got there.
+fn settle(at: (f64, f64), mut cursor: impl FnMut() -> Option<(f64, f64)>, tries: u32, pause: impl Fn()) -> bool {
+  for i in 0..tries {
+    if cursor().is_some_and(|c| near(c, at)) {
+      return true;
+    }
+    if i + 1 < tries {
+      pause();
+    }
+  }
+  false
+}
+
+fn near((ax, ay): (f64, f64), (bx, by): (f64, f64)) -> bool {
+  (ax - bx).abs() <= 1.0 && (ay - by).abs() <= 1.0
+}
+
+/// A drag's moves: `DRAG_STEPS` points after `from`, the last exactly `to`.
+fn path(from: (f64, f64), to: (f64, f64)) -> Vec<(f64, f64)> {
+  (1..=DRAG_STEPS)
+    .map(|i| {
+      if i == DRAG_STEPS {
+        return to;
+      }
+      let f = f64::from(i) / f64::from(DRAG_STEPS);
+      (from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f)
+    })
+    .collect()
 }
 
 /// Holds the modifiers, taps the key, lets the modifiers go (even when the key failed).
@@ -710,7 +712,88 @@ fn cursor() -> Option<(f64, f64)> {
   e.location().ok().map(|(x, y)| (x as f64, y as f64))
 }
 
-#[cfg(not(windows))]
+/// macOS: a mouse event with its point in it, posted as if from the hardware. The window server takes a posted move
+/// a moment to apply, and enigo makes its clicks at the cursor's place as read back right after the move, which is
+/// where the cursor was before (its newer versions keep the point themselves for the same reason): so the clicks
+/// and drags here carry the point Pio aimed at.
+#[cfg(target_os = "macos")]
+fn post_mouse(ty: objc2_core_graphics::CGEventType, (x, y): (f64, f64), button: objc2_core_graphics::CGMouseButton, clicks: i64) -> Result<(), String> {
+  use objc2_core_foundation::CGPoint;
+  use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapLocation};
+  let e = CGEvent::new_mouse_event(None, ty, CGPoint { x, y }, button).ok_or("could not make the mouse event")?;
+  if clicks > 0 {
+    CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventClickState, clicks);
+  }
+  CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&e));
+  Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn move_to(_e: &mut Enigo, at: (f64, f64)) -> Result<(), String> {
+  use objc2_core_graphics::{CGEventType, CGMouseButton};
+  post_mouse(CGEventType::MouseMoved, at, CGMouseButton::Left, 0)
+}
+
+/// The move, then each click's down and up at the same point, held a moment.
+#[cfg(target_os = "macos")]
+fn click(e: &mut Enigo, at: (f64, f64), button: Btn, count: u8) -> Result<(), String> {
+  use objc2_core_graphics::{CGEventType, CGMouseButton};
+  let (down, up, b) = match button {
+    Btn::Left => (CGEventType::LeftMouseDown, CGEventType::LeftMouseUp, CGMouseButton::Left),
+    Btn::Right => (CGEventType::RightMouseDown, CGEventType::RightMouseUp, CGMouseButton::Right),
+  };
+  move_to(e, at)?;
+  std::thread::sleep(HOLD);
+  for n in 1..=i64::from(count.max(1)) {
+    if n > 1 {
+      std::thread::sleep(BETWEEN);
+    }
+    post_mouse(down, at, b, n)?;
+    std::thread::sleep(HOLD);
+    post_mouse(up, at, b, n)?;
+  }
+  Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn drag(e: &mut Enigo, from: (f64, f64), to: (f64, f64)) -> Result<(), String> {
+  use objc2_core_graphics::{CGEventType, CGMouseButton};
+  move_to(e, from)?;
+  std::thread::sleep(HOLD);
+  post_mouse(CGEventType::LeftMouseDown, from, CGMouseButton::Left, 1)?;
+  for p in path(from, to) {
+    std::thread::sleep(DRAG_STEP);
+    post_mouse(CGEventType::LeftMouseDragged, p, CGMouseButton::Left, 1)?;
+  }
+  std::thread::sleep(HOLD);
+  post_mouse(CGEventType::LeftMouseUp, to, CGMouseButton::Left, 1)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn click(e: &mut Enigo, at: (f64, f64), button: Btn, count: u8) -> Result<(), String> {
+  let err = |x: enigo::InputError| x.to_string();
+  move_to(e, at)?;
+  let b = if button == Btn::Right { Button::Right } else { Button::Left };
+  for _ in 0..count.max(1) {
+    e.button(b, Direction::Click).map_err(err)?;
+  }
+  Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn drag(e: &mut Enigo, from: (f64, f64), to: (f64, f64)) -> Result<(), String> {
+  let err = |x: enigo::InputError| x.to_string();
+  move_to(e, from)?;
+  e.button(Button::Left, Direction::Press).map_err(err)?;
+  let moved = path(from, to).into_iter().try_for_each(|p| {
+    std::thread::sleep(DRAG_STEP);
+    move_to(e, p)
+  });
+  let up = e.button(Button::Left, Direction::Release).map_err(err);
+  moved.and(up)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn move_to(e: &mut Enigo, (x, y): (f64, f64)) -> Result<(), String> {
   e.move_mouse(x.round() as i32, y.round() as i32, enigo::Coordinate::Abs).map_err(|e| e.to_string())
 }
@@ -761,6 +844,8 @@ fn open_app(app: &AppHandle, name: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+  use std::cell::Cell;
+
   use super::*;
 
   fn ms(base: Instant, n: u64) -> Instant {
@@ -772,55 +857,83 @@ mod tests {
     let t = Instant::now();
     let mut m = Machine::default();
     assert!(!m.is_on(t));
-    assert!(!m.acting(t));
-    assert_eq!(m.check(t, Some((1.0, 1.0))), None);
+    assert_eq!(m.check(t), None);
     assert!(!m.end());
   }
 
   #[test]
-  fn the_persons_mouse_ends_control() {
+  fn the_persons_own_mouse_does_not_end_control() {
     let t = Instant::now();
     let mut m = Machine::default();
-    let id = m.begin(t, Some((100.0, 100.0)));
+    let id = m.begin(t);
     assert_eq!(m.session(), Some(id));
     assert!(m.is_on(t));
-    // Settling: the cursor's place is learned.
-    assert_eq!(m.check(ms(t, 50), Some((110.0, 100.0))), None);
-    assert_eq!(m.check(ms(t, 300), Some((112.0, 102.0))), None);
-    assert_eq!(m.check(ms(t, 350), Some((130.0, 100.0))), Some(Why::Mouse));
+    // Whatever the cursor does, the watch sees nothing to end control for until the time is up.
+    for at in [ms(t, 50), ms(t, 300), t + Duration::from_secs(5 * 60)] {
+      assert_eq!(m.check(at), None);
+      assert!(m.is_on(at));
+    }
+    // The card's switch (or Esc) ends it.
     assert!(m.end());
     assert_eq!(m.session(), None);
-  }
-
-  #[test]
-  fn pios_own_moves_do_not_count() {
-    let t = Instant::now();
-    let mut m = Machine::default();
-    m.begin(t, Some((0.0, 0.0)));
-    assert!(m.acting(ms(t, 400)));
-    assert_eq!(m.check(ms(t, 450), Some((500.0, 500.0))), None);
-    m.acted(ms(t, 500));
-    // The event lands a moment later, or the system clamps it: learned while settling.
-    assert_eq!(m.check(ms(t, 550), Some((499.0, 500.0))), None);
-    assert_eq!(m.check(ms(t, 700), Some((500.0, 500.0))), None);
-    assert_eq!(m.check(ms(t, 800), Some((500.0, 500.0))), None);
-    assert_eq!(m.check(ms(t, 850), Some((503.0, 501.0))), None);
-    assert_eq!(m.check(ms(t, 900), Some((520.0, 500.0))), Some(Why::Mouse));
+    assert!(!m.is_on(ms(t, 400)));
   }
 
   #[test]
   fn control_ends_after_ten_minutes() {
     let t = Instant::now();
     let mut m = Machine::default();
-    m.begin(t, None);
+    m.begin(t);
     assert!(m.is_on(t + LIMIT - Duration::from_secs(1)));
+    assert_eq!(m.check(t + LIMIT - Duration::from_secs(1)), None);
     assert!(!m.is_on(t + LIMIT));
-    assert!(!m.acting(t + LIMIT));
-    assert_eq!(m.check(t + LIMIT, None), Some(Why::Timeout));
+    assert_eq!(m.check(t + LIMIT), Some(Why::Timeout));
     // A new grant is a new session.
     let first = m.session();
     m.end();
-    assert_ne!(m.begin(t, None), first.unwrap());
+    assert_ne!(m.begin(t), first.unwrap());
+  }
+
+  #[test]
+  fn waits_for_a_posted_move_to_land() {
+    // The window server shows the old place twice, then the new one.
+    let reads = Cell::new(0);
+    let cursor = || {
+      reads.set(reads.get() + 1);
+      Some(if reads.get() < 3 { (10.0, 10.0) } else { (500.0, 300.5) })
+    };
+    let pauses = Cell::new(0);
+    assert!(settle((500.0, 300.0), cursor, 40, || pauses.set(pauses.get() + 1)));
+    assert_eq!((reads.get(), pauses.get()), (3, 2));
+    // Never there (clamped by the system, say): gives up after its looks, with no pause after the last.
+    let reads = Cell::new(0);
+    let stuck = || {
+      reads.set(reads.get() + 1);
+      Some((10.0, 10.0))
+    };
+    let pauses = Cell::new(0);
+    assert!(!settle((500.0, 300.0), stuck, 4, || pauses.set(pauses.get() + 1)));
+    assert_eq!((reads.get(), pauses.get()), (4, 3));
+    // No cursor to read at all.
+    assert!(!settle((1.0, 1.0), || None, 2, || {}));
+  }
+
+  #[test]
+  fn a_drag_runs_from_its_start_to_its_end() {
+    let p = path((100.0, 200.0), (300.0, 100.0));
+    assert_eq!(p.len(), DRAG_STEPS as usize);
+    assert_eq!(p[0], (120.0, 190.0));
+    assert_eq!(*p.last().unwrap(), (300.0, 100.0));
+    assert!(p.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 > w[1].1));
+    assert!(path((5.0, 5.0), (5.0, 5.0)).iter().all(|&q| q == (5.0, 5.0)));
+  }
+
+  #[test]
+  fn pios_own_esc_is_told_from_shortcuts() {
+    assert!(bare_esc(&parse_keys("esc").unwrap()));
+    assert!(bare_esc(&parse_keys("Escape").unwrap()));
+    assert!(!bare_esc(&parse_keys("cmd+esc").unwrap()));
+    assert!(!bare_esc(&parse_keys("enter").unwrap()));
   }
 
   #[test]

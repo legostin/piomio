@@ -56,7 +56,7 @@
   "pio.name": "Pio",
   "pio.control.title": "Let Pio use the mouse and keyboard?",
   "pio.control.reason": "Pio wants to: {reason}",
-  "pio.control.body": "Pio will move the mouse, click and type on this computer. To take control back, press Esc or move the mouse. It ends by itself after 10 minutes.",
+  "pio.control.body": "Pio will move the mouse, click and type on this computer. To take control back, press Esc or the switch in Pio's card. It ends by itself after 10 minutes.",
   "pio.control.allow": "Allow",
   "pio.control.deny": "Don't allow",
   "pio.frame.label": "Pio is driving — press Esc to take back"

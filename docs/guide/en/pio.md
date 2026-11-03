@@ -95,7 +95,8 @@ Your computer asks to confirm in its own window, which no page can fake. Then:
 
 - a red frame goes around the screen while Pio drives;
 - Pio looks, clicks, types, presses keys, scrolls and opens apps or sites, one small step at a time;
-- **Esc**, any move of your own mouse, or 10 minutes take control back at once; so does the switch in the card.
+- **Esc** or the switch in the card takes control back at once, and after 10 minutes it ends by itself. Your own
+  mouse and keyboard keep working meanwhile: moving the mouse does not stop Pio.
 
 Pio does only what you asked. It never types passwords, card numbers or codes, and it does not send, pay, delete or
 publish unless that is exactly what you asked for. Every step is in the hub's security log.

@@ -36,7 +36,8 @@ export interface Capture {
   scale: number;
 }
 
-export type DesktopEvent = { type: "pio-control-ended"; why: "esc" | "mouse" | "timeout" | "ended" } | { type: "pio-hotkey"; state: "pressed" | "released" };
+/** Control ended: Esc, the ten minutes, or the person (the card's switch, the window closing). */
+export type DesktopEvent = { type: "pio-control-ended"; why: "esc" | "timeout" | "ended" } | { type: "pio-hotkey"; state: "pressed" | "released" };
 
 export interface PioDesktop {
   scheme: string;

@@ -51,8 +51,9 @@ agents' dialogs stay clean.
     at most 1440 px. macOS: `screencapture`; Windows: xcap.
   - `pio_frame { expanded }`, `pio_permissions` (screen recording, accessibility) and `pio_open_settings`.
   - `pio_control_begin` → a **native** confirmation ("Let Pio use the mouse and keyboard?"): the page cannot fake it.
-    Then a red frame around the screen (a click-through window), Esc as a global shortcut, and a watch on the cursor:
-    Esc, the person's own mouse movement or 10 minutes end control (`pio-control-ended` event to the page).
+    Then a red frame around the screen (a click-through window) and Esc as a global shortcut: Esc, the card's switch
+    or 10 minutes end control (`pio-control-ended` event to the page); the person's own mouse does not, it stays
+    theirs to use meanwhile.
   - `pio_act { action: click|double_click|right_click|move|drag|type|key|scroll|open, ... }` (enigo; `open` starts an
     app or a URL), refused unless control is on.
   - Push-to-talk: ⌥Space as a global shortcut while voice is on (pressed/released events).
@@ -110,7 +111,7 @@ agents' dialogs stay clean.
 ## Security
 
 - Captures only while co-working is on, never stored; the overlay's native commands exist only in the `pio` window
-  and only for the hub's origin; control only after the native confirmation, ended by Esc, the mouse or time.
+  and only for the hub's origin; control only after the native confirmation, ended by Esc, the card's switch or time.
 - What Pio sees on screen marks its session tainted, so the hub's egress guards apply to anything it sends out.
 
 ## Testing
