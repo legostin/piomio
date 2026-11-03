@@ -13,6 +13,7 @@ import type { Locale, Translate } from "@piomio/shared/i18n";
 import { capture, childEnv, runLines, textOfToolContent, type RunningProcess } from "./proc.ts";
 import { brainsT } from "./messages.ts";
 import { parseClaudeBrowserLogin, runCliLogin } from "./login.ts";
+import { confinedNetwork, confinedProxyEnv } from "./network.ts";
 
 const MCP_PREFIX = "mcp__piomio__";
 
@@ -247,18 +248,22 @@ function withHubTools(tools: string[]): string[] {
 
 /**
  * Claude Code's sandbox for a confined session (macOS Seatbelt): commands write in the workspace and the temp folders,
- * read anything but `denyRead` (except `allowRead`), and reach no network; one that needs more retries outside the
- * sandbox, which the permission tool decides. No sandbox, no session: it never falls back to running unsandboxed.
+ * read anything but `denyRead` (except `allowRead`), and reach only the hub's allowlist through its egress proxy.
+ * A command that needs more asks the permission tool before retrying outside the sandbox. No sandbox, no session:
+ * it never falls back to running unsandboxed.
  */
-export function sandboxSettings(confine: NonNullable<BrainSessionOptions["confine"]>): Record<string, unknown> {
+export function sandboxSettings(confine: NonNullable<BrainSessionOptions["confine"]>, allowedDomains?: string[]): Record<string, unknown> {
   return {
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
-      autoAllowBashIfSandboxed: true,
+      // A networked command can publish even while staying in its folder. Keep the hub's command review in play.
+      autoAllowBashIfSandboxed: !allowedDomains,
       allowUnsandboxedCommands: true,
       filesystem: { denyRead: confine.denyRead, allowRead: confine.allowRead, ...(confine.allowWrite?.length ? { allowWrite: confine.allowWrite } : {}) },
-      network: { allowedDomains: [] },
+      // Keep Claude's proxy: it enforces the OS boundary and uses HTTP(S)_PROXY as its authenticated upstream.
+      // httpProxyPort would replace that proxy, and sandbox clients would no longer supply the hub's credential.
+      network: { allowedDomains: allowedDomains ?? [], strictAllowlist: true },
     },
   };
 }
@@ -361,7 +366,7 @@ class ClaudeCodeSession implements BrainSessionImpl {
       JSON.stringify({ mcpServers: opts.bare ? {} : { piomio: { type: "stdio", command, args, env: { PIOMIO_URL: opts.mcp.url, PIOMIO_TOKEN_FILE: tokenFile } } } }),
     );
     writePrivate(join(this.dir, "prompt.md"), opts.systemPrompt);
-    if (opts.confine) writePrivate(join(this.dir, "settings.json"), JSON.stringify(sandboxSettings(opts.confine)));
+    if (opts.confine) writePrivate(join(this.dir, "settings.json"), JSON.stringify(sandboxSettings(opts.confine, confinedNetwork(opts)?.allowedDomains)));
   }
 
   private args(caps: ClaudeCaps): string[] {
@@ -447,6 +452,7 @@ class ClaudeCodeSession implements BrainSessionImpl {
     const env = childEnv(process.env, {
       ...this.o.env,
       ...(await this.p.authEnv?.()),
+      ...confinedProxyEnv(this.o),
       DISABLE_AUTOUPDATER: "1",
       CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1",
       // A permission question may wait for the person for minutes (tools/native-permission.ts).

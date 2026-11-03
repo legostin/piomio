@@ -50,6 +50,7 @@ if (args[0] === "login" && args.includes("--device-auth")) {
   }
   appServer();
 } else if (args[0] === "exec") {
+  if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ args })}\n`);
   let input = "";
   process.stdin.on("data", (c) => (input += c));
   process.stdin.on("end", () => {

@@ -832,7 +832,14 @@ export interface BrainSessionOptions {
    * that, the brain asks the hub through the MCP tool `permissionTool`, which may ask the person. Unset: no sandbox
    * (a remote machine, or a hub isolated by unix users).
    */
-  confine?: { denyRead: string[]; allowRead: string[]; allowWrite?: string[]; permissionTool: string };
+  confine?: {
+    denyRead: string[];
+    allowRead: string[];
+    allowWrite?: string[];
+    permissionTool: string;
+    /** The hub's egress allowlist. Requires its authenticated loopback proxy in env; absent means no network. */
+    network?: { allowedDomains: string[] };
+  };
   /**
    * The hub's MCP tool a brain on a paired computer asks about what that computer's policy does not let it do by
    * itself, when the policy allows commands there (a node's Claude Code: Bash); auto mode or the person answers.

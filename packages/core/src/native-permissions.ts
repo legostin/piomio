@@ -57,8 +57,8 @@ const WRITE = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined);
 
-/** A Claude Code tool call as an action. Paths are resolved against `cwd`. */
-export function classifyClaudeTool(tool: string, input: unknown, cwd: string): NativeAction {
+/** A Claude Code tool call as an action. A task's networked Bash needs command review even inside its sandbox. */
+export function classifyClaudeTool(tool: string, input: unknown, cwd: string, reviewSandboxed = false): NativeAction {
   const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const at = (p: string | undefined) => (p ? resolve(cwd, expandHome(p)) : cwd);
   if (FREE.has(tool)) return { kind: "free", tool };
@@ -66,7 +66,7 @@ export function classifyClaudeTool(tool: string, input: unknown, cwd: string): N
   if (READ.has(tool)) return { kind: "read", tool, path: at(str(i.file_path) ?? str(i.notebook_path) ?? str(i.path)) };
   if (WRITE.has(tool)) return { kind: "write", tool, path: at(str(i.file_path) ?? str(i.notebook_path)) };
   if (tool === "Bash") {
-    if (i.dangerouslyDisableSandbox !== true) return { kind: "sandboxed", tool, command: str(i.command) ?? "" };
+    if (i.dangerouslyDisableSandbox !== true && !reviewSandboxed) return { kind: "sandboxed", tool, command: str(i.command) ?? "" };
     return { kind: "command", tool, command: str(i.command) ?? "", cwd, reason: str(i.description) };
   }
   return { kind: "other", tool, input };

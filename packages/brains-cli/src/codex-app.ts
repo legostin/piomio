@@ -169,6 +169,8 @@ export interface AppServerSetup {
   threadId?: string;
   /** Ask the hub about what the sandbox would not let through; without it every approval is declined. */
   ask?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>;
+  /** Networked tasks review commands even when they stay inside the sandbox. */
+  approvalPolicy?: "never" | "on-request" | "untrusted";
   /** Thread settings in place of `sandbox`: a permission profile chosen by `-c default_permissions` (codex.ts). */
   profile?: boolean;
   /** A bare thread: kept nowhere, the hub's instructions in place of AGENTS.md (BrainSessionOptions.bare). */
@@ -325,7 +327,7 @@ export class CodexAppTurn {
       // A `sandbox` here would win over the permission profile the config chose.
       const thread = {
         cwd: this.s.cwd,
-        approvalPolicy: this.s.ask ? "on-request" : "never",
+        approvalPolicy: this.s.approvalPolicy ?? (this.s.ask ? "on-request" : "never"),
         ...(this.s.profile ? {} : { sandbox: this.s.sandbox }),
         ...(this.s.model ? { model: this.s.model } : {}),
         ...(this.s.bare ? { ephemeral: true, baseInstructions: this.s.bare.instructions } : {}),

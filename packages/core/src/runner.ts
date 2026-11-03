@@ -1799,7 +1799,11 @@ export class SessionRunner {
       ...(!task && !conv.taskId && conv.kind !== "task" ? { frontDesk: true } : {}),
       // The brain's own shell and file tools stay in its folder; the rest it asks for (native-permissions.ts).
       ...(local && this.d.config.sandboxBrains
-        ? { confine: { ...confinement(this.d.config.dataDir, workspace, local && ref.brainId === "claude-code" ? this.d.claudePluginDirs() : []), permissionTool: NATIVE_PERMISSION_TOOL } }
+        ? { confine: {
+            ...confinement(this.d.config.dataDir, workspace, local && ref.brainId === "claude-code" ? this.d.claudePluginDirs() : []),
+            permissionTool: NATIVE_PERMISSION_TOOL,
+            network: { allowedDomains: [...DEFAULT_BRAIN_EGRESS, ...s.brainEgressAllow] },
+          } }
         : {}),
       // On a paired computer that allows commands, its brain asks the hub about them (auto mode, the person).
       ...(!local ? { askTool: NATIVE_PERMISSION_TOOL } : {}),

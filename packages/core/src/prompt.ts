@@ -191,7 +191,7 @@ export function buildSystemPrompt(c: PromptContext): string {
   if (c.task) lines.push(...(c.thread ? inAThread(c.thread) : IN_A_TASK));
   if (!c.machine || c.machine.local) {
     lines.push(
-      "- Internet: use `web_search`, `web_fetch` and the `browser_*` tools. Direct network access from your shell and built-in fetch tools is limited to model APIs, package registries and GitHub; if a job truly needs more, ask the user to add the host to `brainEgressAllow` in settings.",
+      "- Internet: use `web_search`, `web_fetch` and the `browser_*` tools. Shell networking goes through a proxy limited to model APIs, package registries and GitHub; if a job truly needs more, ask the user to add the host to `brainEgressAllow` in settings. For Git inside a sandbox use HTTPS (for example `git fetch https://github.com/owner/repo.git main`): ordinary SSH does not use the HTTP proxy and your SSH keys stay closed. Networked shell commands may need the hub's review even inside your folder. A worktree also writes its source repository's shared `.git`; creating one may need approval. If Git cannot traverse your folder's closed parent directories, use a task-specific temporary checkout/worktree, keeping the hub's data closed.",
     );
   }
   if (c.nativeSkills) {

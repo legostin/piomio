@@ -85,6 +85,12 @@ Brains and plugins reach the network through the hub's egress proxy, each with i
 
 Agents can't change these lists from the chat.
 
+On macOS, tasks using Claude Code or Codex connect through the CLI's sandbox proxy, which forwards to the hub's authenticated egress proxy. Both filters use the brain allowlist; direct connections and arbitrary localhost ports stay closed. GitHub and its API and download hosts are already included. A newly opened session picks up extra hosts added in settings; removing a host takes effect at the hub immediately.
+
+Use HTTPS for Git in a task, for example `git fetch https://github.com/owner/repo.git main`. Ordinary SSH does not use `HTTPS_PROXY`, and the sandbox cannot read your SSH keys. Authenticated pushes may need an approved command outside the sandbox; allowing a hostname does not grant credentials or approve publication. Networked shell commands go through command review, including commands inside the workspace. Older Codex versions that fall back to `codex exec` keep networking disabled; update Codex to use sandbox networking.
+
+Git worktrees also write the source repository's shared `.git` directory. A worktree inside the task folder does not grant write access to a repository elsewhere. Creating one can require approval. The CLI also protects Git configuration and hooks. If Git cannot traverse the closed parent directories of the hub's workspace, use a task-specific temporary checkout/worktree; do not open the hub's whole data directory or disable its sandbox.
+
 ## Other computers
 
 - A computer joins with a one-time invite, valid for an hour. It makes an Ed25519 key; the hub keeps the public half and challenges the computer with it on every connect.

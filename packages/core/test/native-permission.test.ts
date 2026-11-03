@@ -68,6 +68,16 @@ describe("what a brain's own tools may do", () => {
   const scope = { workspace: ws, home, readRoots: [agentRoot(ws)!], denied: confinement("/data", ws, [], home).denyRead };
   const d = (tool: string, input: unknown) => decideNative(classifyClaudeTool(tool, input, ws), scope).decision;
 
+  it("reviews a task's networked sandbox commands: pushes and scripts can act outside the folder", () => {
+    const decision = (command: string) => decideNative(classifyClaudeTool("Bash", { command }, ws, true), scope).decision;
+    for (const command of ["git push origin main", "git push origin feature-x", "git -C repo push origin HEAD:main", "python3 publish.py", "curl -X POST https://api.github.com/repos/x/y/issues", "git fetch origin main"])
+      expect(decision(command), command).toBe("ask");
+    expect(decision("git status --short")).toBe("allow");
+    expect(classifyClaudeTool("Bash", { command: "git push", description: "Publish the branch" }, ws, true)).toMatchObject({ kind: "command", reason: "Publish the branch" });
+    // Offline sessions that never sent the call for review still have their old contained-command semantics.
+    expect(d("Bash", { command: "echo hello" })).toBe("allow");
+  });
+
   it("works inside its folder and the temp folders, reads system files, asks for the rest of the home", () => {
     expect(d("Write", { file_path: "notes.md" })).toBe("allow");
     expect(d("Edit", { file_path: `${ws}/x/y.ts` })).toBe("allow");

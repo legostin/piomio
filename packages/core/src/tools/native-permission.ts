@@ -60,10 +60,10 @@ function classifyCodex(kind: string, input: Record<string, unknown>, cwd: string
 }
 
 /** What a brain asks about, as an action. */
-function classify(tool: string, input: Record<string, unknown>, workspace: string): NativeAction {
+function classify(tool: string, input: Record<string, unknown>, workspace: string, reviewSandboxed = false): NativeAction {
   if (tool.startsWith("codex.")) return classifyCodex(tool, input, workspace);
   if (tool.startsWith("kimi.")) return classifyKimiTool(tool.slice(5), input, workspace);
-  return classifyClaudeTool(tool, input, workspace);
+  return classifyClaudeTool(tool, input, workspace, reviewSandboxed);
 }
 
 /**
@@ -140,7 +140,10 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       const given = i.input && typeof i.input === "object" ? (i.input as Record<string, unknown>) : {};
       // Codex runs every command as `zsh -lc '<script>'`: the person's rules, the card and the reviewer see the script.
       const input = tool === "codex.command" && typeof given.command === "string" ? { ...given, command: shownCommand(given.command) } : given;
-      const action = classify(tool, input, ctx.workspace);
+      // Claude's networked sandbox asks about Bash even when it stays inside the workspace. With egress available,
+      // such a command may publish: give it the same review as Codex's `untrusted` command approvals. The CLI's
+      // no-network front desk retains its existing handling.
+      const action = classify(tool, input, ctx.workspace, !!ctx.taskId);
       const { denyRead } = confinement(d.dataDir, ctx.workspace);
       const own = agentRoot(ctx.workspace);
       const readRoots = [...(own ? [own] : []), ...(opened.get(ctx.sessionId) ?? [])];
@@ -180,8 +183,8 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       }
       const safe = d.redactor.value(input);
       // The person allowed this very call after auto mode had stopped it.
-      const key = actionKey(classify(tool, safe as Record<string, unknown>, ctx.workspace), safe);
-      const same = (stored: unknown) => !!stored && typeof stored === "object" && actionKey(classify(tool, stored as Record<string, unknown>, ctx.workspace), stored) === key;
+      const key = actionKey(classify(tool, safe as Record<string, unknown>, ctx.workspace, !!ctx.taskId), safe);
+      const same = (stored: unknown) => !!stored && typeof stored === "object" && actionKey(classify(tool, stored as Record<string, unknown>, ctx.workspace, !!ctx.taskId), stored) === key;
       if (decided.decision === "ask" && d.approvals.takeAllowance(ctx.sessionId, tool, same)) decided = { decision: "allow", reason: "the person allowed it after auto mode stopped it" };
       // Background work of an agent that may only suggest has nobody to ask.
       const agent = d.agents.get(ctx.agentId);
