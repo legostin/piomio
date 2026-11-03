@@ -10,6 +10,7 @@ const state = (brains: SetupBrain[], usable = false, firstRun = false, starting 
   firstRun,
   starting,
   vault: "absent",
+  apiKeys: false,
   telegram: false,
   machines: 0,
   done: [],
