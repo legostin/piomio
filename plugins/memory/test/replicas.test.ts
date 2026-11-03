@@ -1,13 +1,22 @@
 // Memory on two hubs: the data folder travels by the hubs' real file sync (packages/replica), the working state
 // through the plugin storage (one map here: the hubs' databases replicate plugin_kv row by row).
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, utimesSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { FileSync, type FileChange, type FilePeer } from "@piomio/replica";
 import { startPlugin, type PluginHarness } from "@piomio/testkit";
+import { Memory } from "../server/memory.ts";
+import type { Storage } from "../server/state.ts";
+
+// The in-process service tests drive refresh explicitly. Child-process plugin tests below still use real fs.watch.
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  const { EventEmitter } = await import("node:events");
+  return { ...fs, watch: vi.fn(() => Object.assign(new EventEmitter(), { close() {}, unref() {} })) };
+});
 
 const DIR = join(import.meta.dirname, "..");
 const hasGit = (() => {
@@ -19,9 +28,16 @@ const hasGit = (() => {
   }
 })();
 
-const running: PluginHarness[] = [];
+const running: Array<{ stop(): Promise<void> }> = [];
+const syncs: FileSync[] = [];
 afterEach(async () => {
-  for (const h of running.splice(0)) await h.stop();
+  try {
+    for (const h of running.splice(0)) await h.stop();
+    for (const sync of syncs.splice(0)) await sync.close();
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
 });
 
 async function start(dataDir: string, storage: Map<string, unknown>, settings: Record<string, unknown> = {}): Promise<PluginHarness> {
@@ -30,7 +46,7 @@ async function start(dataDir: string, storage: Map<string, unknown>, settings: R
   return h;
 }
 
-async function stop(h: PluginHarness): Promise<void> {
+async function stop(h: { stop(): Promise<void> }): Promise<void> {
   running.splice(running.indexOf(h), 1);
   await h.stop();
 }
@@ -52,12 +68,18 @@ function files(dir: string, rel = ""): string[] {
   return out.sort();
 }
 
-async function until(what: () => boolean | Promise<boolean>, ms = 8000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!(await what())) {
-    if (Date.now() > end) throw new Error("timed out");
-    await new Promise((r) => setTimeout(r, 100));
-  }
+/** Same service as the plugin, with a shared storage map and an awaitable refresh boundary. */
+async function startMemory(dataDir: string, kv: Map<string, unknown>, git = true): Promise<Memory> {
+  const storage: Storage = {
+    get: async <T>(key: string) => kv.get(key) as T | undefined,
+    set: async (key, value) => { kv.set(key, value); },
+    delete: async (key) => { kv.delete(key); },
+    list: async (prefix = "") => [...kv].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })),
+  };
+  const memory = new Memory({ dataDir, storage, git, warn: () => {}, changed: () => {} });
+  running.push(memory);
+  await memory.start();
+  return memory;
 }
 
 interface Hub {
@@ -72,6 +94,7 @@ function hub(name: string): Hub {
   const dataDir = join(base, "plugins-data", "memory");
   mkdirSync(dataDir, { recursive: true });
   const sync = new FileSync({ roots: [{ name: "plugins-data/memory", dir: dataDir }], stateFile: join(base, "replica", "files.db"), self: name });
+  syncs.push(sync);
   return { name, dataDir, sync };
 }
 
@@ -130,35 +153,76 @@ describe("memory on hub replicas", () => {
     const mac = hub("mac");
     const vps = hub("vps");
     const kv = new Map<string, unknown>();
-    const h0 = await start(mac.dataDir, kv);
-    const anna = pathOf(await h0.invokeText("remember", { fact: "The user's sister Anna lives in Perm.", about: ["Anna"], kind: "person" }));
+    const h0 = await startMemory(mac.dataDir, kv);
+    const { path: anna } = await h0.remember({ fact: "The user's sister Anna lives in Perm.", about: ["Anna"], kind: "person" }, { agentId: "assistant" });
     await stop(h0);
     await settle(mac, vps);
 
-    // A split: both lead and both work on the same fact.
-    const m = await start(mac.dataDir, kv);
-    const v = await start(vps.dataDir, kv);
-    await m.invokeText("remember", { fact: "The user's sister Anna lives in Perm." }, { agentId: "assistant", conversationId: "c_mac" });
-    await new Promise((r) => setTimeout(r, 30));
-    await v.invokeText("remember", { fact: "The user's sister Anna lives in Perm." }, { agentId: "coder", conversationId: "c_vps" });
-    const tea = pathOf(await m.invokeText("remember", { fact: "The user drinks green tea in the morning.", kind: "preference" }));
-    const run = pathOf(await v.invokeText("remember", { fact: "The user runs five kilometres on Saturdays.", kind: "self" }));
+    // A split: both lead and both work on the same fact. Fixed mtimes choose the winner without a sleep.
+    const m = await startMemory(mac.dataDir, kv);
+    const v = await startMemory(vps.dataDir, kv);
+    await m.remember({ fact: "The user's sister Anna lives in Perm." }, { agentId: "assistant", conversationId: "c_mac" });
+    await v.remember({ fact: "The user's sister Anna lives in Perm." }, { agentId: "coder", conversationId: "c_vps" });
+    utimesSync(join(mac.dataDir, "memory", anna), 1_800_000_000, 1_800_000_000);
+    utimesSync(join(vps.dataDir, "memory", anna), 1_800_000_001, 1_800_000_001);
+    const { path: tea } = await m.remember({ fact: "The user drinks green tea in the morning.", kind: "preference" }, { agentId: "assistant" });
+    const { path: run } = await v.remember({ fact: "The user runs five kilometres on Saturdays.", kind: "self" }, { agentId: "coder" });
     await settle(mac, vps);
 
-    // Each running plugin takes in the other's facts, and the conflict copy the sync made is folded back.
-    for (const [x, d] of [
-      [m, mac.dataDir],
-      [v, vps.dataDir],
-    ] as const) {
-      await until(async () => (await x.invokeText("search", { query: "tea" })).includes(tea) && (await x.invokeText("search", { query: "kilometres" })).includes(run));
-      await until(() => !files(d).some((f) => f.includes("(conflict")));
+    // Search reads the scanned facts before foldConflicts finishes. Even disappearance of the conflict copy is
+    // too early: MEMORY.md is written afterwards. Capture that exact former readiness condition, without timing.
+    expect(files(mac.dataDir).some((f) => f.includes("(conflict"))).toBe(true);
+    const writeIndex = m.store.writeIndex.bind(m.store);
+    let premature: { searchable: boolean; conflicts: boolean; indexed: boolean } | undefined;
+    vi.spyOn(m.store, "writeIndex").mockImplementationOnce(() => {
+      premature = {
+        searchable: m.find("tea").some((f) => f.fact.path === tea) && m.find("kilometres").some((f) => f.fact.path === run),
+        conflicts: files(mac.dataDir).some((f) => f.includes("(conflict")),
+        indexed: read(mac.dataDir, "memory/MEMORY.md").includes(run),
+      };
+      writeIndex();
+    });
+
+    // Await the whole merge, index rebuild and history commit, independently of OS watcher delivery or git speed.
+    for (const [x, d] of [[m, mac.dataDir], [v, vps.dataDir]] as const) {
+      expect(await x.refresh()).toBe(true);
+      expect(x.find("tea").map((f) => f.fact.path)).toContain(tea);
+      expect(x.find("kilometres").map((f) => f.fact.path)).toContain(run);
+      expect(files(d).some((f) => f.includes("(conflict"))).toBe(false);
       expect(read(d, `memory/${anna}`)).toContain("c_mac");
       expect(read(d, `memory/${anna}`)).toContain("c_vps");
+      expect(read(d, "memory/MEMORY.md")).toContain(tea);
       expect(read(d, "memory/MEMORY.md")).toContain(run);
+      expect(gitLog(d)[0]).toBe("memory: sync");
+      expect(execFileSync("git", ["-c", "safe.directory=*", "status", "--porcelain"], { cwd: join(d, "memory"), encoding: "utf8" }).trim()).toBe("");
+      expect(await x.refresh()).toBe(false);
     }
+    expect(premature).toEqual({ searchable: true, conflicts: false, indexed: false });
     await settle(mac, vps);
     expect(files(mac.dataDir).filter((f) => !f.startsWith("memory/.git/") && f !== "index.db")).toEqual(files(vps.dataDir).filter((f) => !f.startsWith("memory/.git/") && f !== "index.db"));
     expect(files(mac.dataDir).some((f) => f.includes("(conflict"))).toBe(false);
+  });
+
+  it.each(["watch", "poll"] as const)("refreshes changed facts through %s", async (mode) => {
+    vi.useFakeTimers();
+    if (mode === "poll") vi.mocked(watch).mockImplementationOnce(() => { throw new Error("EMFILE"); });
+    const dataDir = mkdtempSync(join(tmpdir(), "owl-memory-refresh-"));
+    const m = await startMemory(dataDir, new Map(), false);
+    const changed = Promise.withResolvers<void>();
+    m.o.changed = (_path, action) => { if (action === "sync") changed.resolve(); };
+    mkdirSync(join(dataDir, "memory", "you"), { recursive: true });
+    writeFileSync(join(dataDir, "memory", "you", "running.md"), "# Running\n\nThe user runs five kilometres on Saturdays.\n");
+    if (mode === "watch") {
+      const listener = vi.mocked(watch).mock.calls.at(-1)![2] as (event: string, name: string) => void;
+      listener("rename", "you/running.md");
+    } else {
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(read(dataDir, "memory/MEMORY.md")).not.toContain("you/running.md");
+    await vi.advanceTimersByTimeAsync(1000);
+    await changed.promise;
+    expect(read(dataDir, "memory/MEMORY.md")).toContain("you/running.md");
+    expect(m.find("kilometres").map((f) => f.fact.path)).toContain("you/running.md");
   });
 
   it("takes in the state.db of earlier versions and the copies the file sync made of it", async () => {
