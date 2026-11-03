@@ -22,7 +22,7 @@
   "overlay.state.thinking": "Думаю…",
   "overlay.state.speaking": "Говорю",
   "overlay.state.driving": "Управляю",
-  "overlay.perm.screen": "Чтобы видеть окна, Пио нужна «Запись экрана».",
+  "overlay.perm.screen": "Чтобы видеть окна, Пио нужна «Запись экрана». Если для Piomio она уже включена, выключите и включите её снова и перезапустите Piomio.",
   "overlay.perm.accessibility": "Чтобы управлять мышью и клавиатурой, Пио нужен «Универсальный доступ».",
   "overlay.perm.open": "Открыть настройки",
   "overlay.voice.install": "Голос Пио скачивается один раз (около {size}).",
@@ -33,5 +33,8 @@
   "overlay.voice.insecure": "Голос работает, когда Piomio открывает хаб по localhost или https.",
   "overlay.voice.noStt": "Речь пока не во что превращать в текст: скачайте голос.",
   "overlay.error": "Пио не смог: {error}",
-  "overlay.noChat": "Чат Пио ещё не готов."
+  "overlay.noChat": "Чат Пио ещё не готов.",
+  "overlay.tab.chat": "Чат",
+  "overlay.tab.settings": "Настройки",
+  "overlay.empty": "Скажите «Пио, …» или напишите здесь."
 }

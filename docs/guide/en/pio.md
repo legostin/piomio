@@ -26,17 +26,17 @@ Once Pio is on, two things appear:
 
 ## The face and its card
 
-Hover over the face to open its card:
+Hover over the face to open its card. On top, **Open chat** and ✕ to hide the face (to bring it back, click Pio next to
+your main assistant in the sidebar, or tell Pio "come back"). Below, two tabs: **Chat**, Pio's lines with a field to
+type to it, and **Settings**, with a dot when something there needs you:
 
 - **Work together**: Pio sees which app and window are active (their names and titles). It checks every two seconds
   and keeps only the last few windows, in memory, never on disk.
 - **Voice**: you talk to Pio and it answers out loud (see below).
 - **Hand over control**: Pio may use the mouse and keyboard (see below).
-- A field to type to Pio, its last lines, **Open chat** and ✕ to hide the face. To bring it back, click Pio next to your
-  main assistant in the sidebar, or tell Pio "come back".
 
 The ring around the face shows what Pio is doing: watching, listening, hearing you, thinking, speaking, or driving
-(red). The same word shows next to Pio in the sidebar.
+(red). In the sidebar a dot on Pio's face says it is busy; its name and state show on hover.
 
 When Pio says something while the card is closed, its line pops out next to the face for a few seconds.
 

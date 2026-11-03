@@ -29,7 +29,7 @@ export const CSS = `
 @keyframes pio-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(1.07)}}
 @keyframes pio-spin{to{transform:rotate(360deg)}}
 .pio-card{flex:1;min-width:0;background:var(--surface,#fff);border-radius:18px;box-shadow:0 2px 8px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.07);
-  padding:14px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 22px);overflow:hidden;animation:pio-in .18s ease-out}
+  padding:14px;display:flex;flex-direction:column;gap:10px;height:calc(100vh - 22px);overflow:hidden;animation:pio-in .18s ease-out}
 @keyframes pio-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
 .pio-line{flex:1;min-width:0;background:var(--surface,#fff);border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.07);
   padding:11px 14px;font-size:13.5px;line-height:1.4;max-height:calc(100vh - 22px);overflow:hidden;overflow-wrap:anywhere;animation:pio-in .18s ease-out;cursor:pointer}
@@ -38,6 +38,12 @@ export const CSS = `
 .pio-state{font-size:12px;color:var(--muted,#8a817a);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pio-x{border:0;background:transparent;color:var(--muted,#8a817a);font-size:12px;padding:4px 6px;border-radius:8px;cursor:pointer}
 .pio-x:hover{background:rgba(127,127,127,.12);color:var(--fg,#1d1a17)}
+.pio-tabs{display:flex;gap:2px;padding:2px;border-radius:11px;background:rgba(127,127,127,.12)}
+.pio-tabs button{flex:1;position:relative;border:0;background:transparent;color:var(--muted,#8a817a);font:inherit;font-size:12.5px;font-weight:560;padding:5px 8px;border-radius:9px;cursor:pointer}
+.pio-tabs button[aria-selected=true]{background:var(--surface,#fff);color:var(--fg,#1d1a17);box-shadow:0 1px 2px rgba(0,0,0,.1)}
+.pio-dot{position:absolute;top:5px;right:9px;width:6px;height:6px;border-radius:50%;background:var(--accent,#e8891a)}
+.pio-settings{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.pio-empty{margin:auto;color:var(--muted,#8a817a);font-size:12.5px;text-align:center;padding:0 12px}
 .pio-switch{display:flex;align-items:center;gap:10px;padding:7px 4px;border-radius:12px;cursor:pointer}
 .pio-switch:hover{background:rgba(127,127,127,.08)}
 .pio-switch b{display:block;font-size:13.5px;font-weight:560}
@@ -51,7 +57,7 @@ export const CSS = `
 .pio-note{font-size:12px;line-height:1.35;color:var(--muted,#8a817a);background:rgba(127,127,127,.08);border-radius:10px;padding:7px 9px;display:flex;gap:8px;align-items:center}
 .pio-note span{flex:1}
 .pio-note button,.pio-send{border:0;border-radius:9px;background:var(--accent,#e8891a);color:#fff;font-size:12px;font-weight:600;padding:5px 9px;cursor:pointer}
-.pio-lines{flex:1;min-height:40px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:1.38;user-select:text;-webkit-user-select:text}
+.pio-lines{flex:1;min-height:40px;overflow-y:auto;display:flex;flex-direction:column;gap:7px;font-size:13.5px;line-height:1.4;user-select:text;-webkit-user-select:text}
 .pio-msg{max-width:88%;padding:6px 10px;border-radius:14px;background:rgba(127,127,127,.1);white-space:pre-wrap;overflow-wrap:anywhere}
 .pio-msg.me{align-self:flex-end;background:rgba(232,137,26,.16)}
 .pio-hearing{align-self:flex-end;font-size:12px;color:var(--muted,#8a817a);font-style:italic}

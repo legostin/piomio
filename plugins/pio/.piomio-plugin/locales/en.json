@@ -22,7 +22,7 @@
   "overlay.state.thinking": "Thinking…",
   "overlay.state.speaking": "Speaking",
   "overlay.state.driving": "Driving",
-  "overlay.perm.screen": "To see your windows Pio needs Screen Recording.",
+  "overlay.perm.screen": "To see your windows Pio needs Screen Recording. If it is on for Piomio already, turn it off and on again, then restart Piomio.",
   "overlay.perm.accessibility": "To use the mouse and keyboard Pio needs Accessibility.",
   "overlay.perm.open": "Open Settings",
   "overlay.voice.install": "Pio's voice is downloaded once (about {size}).",
@@ -33,5 +33,8 @@
   "overlay.voice.insecure": "Voice works when Piomio opens the hub at localhost or over https.",
   "overlay.voice.noStt": "Nothing turns speech into text yet: download the voice.",
   "overlay.error": "Pio could not do it: {error}",
-  "overlay.noChat": "Pio's chat is not ready yet."
+  "overlay.noChat": "Pio's chat is not ready yet.",
+  "overlay.tab.chat": "Chat",
+  "overlay.tab.settings": "Settings",
+  "overlay.empty": "Say “Pio, …” or type here."
 }

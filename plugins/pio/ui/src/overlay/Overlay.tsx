@@ -90,6 +90,13 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const [popup, setPopup] = useState<string>();
   const [draft, setDraft] = useState("");
   const [perms, setPerms] = useState<{ screen: boolean; accessibility: boolean }>();
+  /**
+   * A window title came through: Screen Recording works, whatever the permission check says (macOS answers it from
+   * the app's start, and a re-signed app's old switch looks on while it is not).
+   */
+  const [seesTitles, setSeesTitles] = useState(false);
+  const [tab, setTab] = useState<"chat" | "settings">("chat");
+  const linesBox = useRef<HTMLDivElement>(null);
   const [speech, setSpeech] = useState<SpeechStatus>();
   const [note, setNote] = useState<{ text: string; open?: "screen" | "accessibility" | "microphone" }>();
   const [listen, setListen] = useState<ListenMode>("name");
@@ -270,6 +277,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
       try {
         const f = await desk.frontmost();
         if (!f?.app) return;
+        if (f.title) setSeesTitles(true);
         const key = `${f.app}\n${f.title ?? ""}`;
         if (key === last) return;
         last = key;
@@ -367,6 +375,11 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     );
   }, [mode]);
 
+  // The chat shows its newest lines.
+  useEffect(() => {
+    linesBox.current?.scrollTo({ top: linesBox.current.scrollHeight });
+  }, [lines, hearing, tab, mode]);
+
   // What Pio said and the person saw here (the card, a line beside the face) is read: no unread count for it in Piomio.
   const readUpTo = useRef("");
   useEffect(() => {
@@ -444,6 +457,9 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const sttNeeded = sttMissing && !!hears && !hears.installed;
   const needsVoice = sw.voice && speech && (speech.runtime !== "ready" || (voice && !voice.installed) || sttNeeded);
   const voiceBytes = (speech?.runtime === "ready" ? 0 : RUNTIME_BYTES) + (voice && !voice.installed ? voice.size : 0) + (hears && !hears.installed ? hears.size : 0);
+  const screenMissing = sw.watching && !!perms && !perms.screen && !seesTitles;
+  // Something in the settings needs the person: a dot on its tab.
+  const attention = screenMissing || !!needsVoice || sttNeeded || !!note;
   const install = () => void api.install({ ...(voice ? { voice: voice.id } : {}), stt: hears?.id ?? true }).then(setSpeech, () => {});
   const progress = speech?.downloading && speech.downloading.total > 0 ? Math.round((speech.downloading.received / speech.downloading.total) * 100) : undefined;
 
@@ -471,34 +487,49 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
                 ✕
               </button>
             </div>
-            <Switch label={t("overlay.workTogether")} hint={t("overlay.workTogetherHint")} on={sw.watching} onToggle={() => setSw((s) => ({ ...s, watching: !s.watching }))} />
-            <Switch label={t("overlay.voice")} hint={t("overlay.voiceHint")} on={sw.voice} onToggle={() => setSw((s) => ({ ...s, voice: !s.voice }))} />
-            <Switch
-              label={sw.control ? t("overlay.controlOn") : t("overlay.control")}
-              hint={t("overlay.controlHint")}
-              on={sw.control}
-              red
-              onToggle={() => void toggleControl()}
-            />
-            {sw.watching && perms && !perms.screen && <Note text={t("overlay.perm.screen")} action={t("overlay.perm.open")} onAction={() => void desk.openSettings("screen")} />}
-            {sttNeeded && !needsVoice && <Note text={t("overlay.voice.noStt")} />}
-            {needsVoice &&
-              (speech.runtime === "failed" ? (
-                <Note text={t("overlay.voice.failed", { error: speech.error ?? "" })} action={t("overlay.voice.installButton")} onAction={install} />
-              ) : progress !== undefined || speech.runtime === "downloading" ? (
-                <Note text={t("overlay.voice.installing", { percent: progress ?? 0 })} />
-              ) : (
-                <Note text={t("overlay.voice.install", { size: megabytes(voiceBytes) })} action={t("overlay.voice.installButton")} onAction={install} />
-              ))}
-            {note && <Note text={note.text} action={note.open ? t("overlay.perm.open") : undefined} onAction={note.open ? () => void desk.openSettings(note.open!) : undefined} onClose={() => setNote(undefined)} />}
-            <div className="pio-lines">
-              {lines.map((l) => (
-                <div key={l.id} className={l.me ? "pio-msg me" : "pio-msg"}>
-                  {l.me ? l.text : speakable(l.text, 1200) || l.text}
-                </div>
-              ))}
-              {hearing && <div className="pio-hearing">{t("overlay.state.hearing")}</div>}
+            <div className="pio-tabs" role="tablist">
+              <button type="button" role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}>
+                {t("overlay.tab.chat")}
+              </button>
+              <button type="button" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>
+                {t("overlay.tab.settings")}
+                {attention && <i className="pio-dot" aria-hidden />}
+              </button>
             </div>
+            {tab === "settings" ? (
+              <div className="pio-settings">
+                <Switch label={t("overlay.workTogether")} hint={t("overlay.workTogetherHint")} on={sw.watching} onToggle={() => setSw((s) => ({ ...s, watching: !s.watching }))} />
+                <Switch label={t("overlay.voice")} hint={t("overlay.voiceHint")} on={sw.voice} onToggle={() => setSw((s) => ({ ...s, voice: !s.voice }))} />
+                <Switch
+                  label={sw.control ? t("overlay.controlOn") : t("overlay.control")}
+                  hint={t("overlay.controlHint")}
+                  on={sw.control}
+                  red
+                  onToggle={() => void toggleControl()}
+                />
+                {screenMissing && <Note text={t("overlay.perm.screen")} action={t("overlay.perm.open")} onAction={() => void desk.openSettings("screen")} />}
+                {sttNeeded && !needsVoice && <Note text={t("overlay.voice.noStt")} />}
+                {needsVoice &&
+                  (speech.runtime === "failed" ? (
+                    <Note text={t("overlay.voice.failed", { error: speech.error ?? "" })} action={t("overlay.voice.installButton")} onAction={install} />
+                  ) : progress !== undefined || speech.runtime === "downloading" ? (
+                    <Note text={t("overlay.voice.installing", { percent: progress ?? 0 })} />
+                  ) : (
+                    <Note text={t("overlay.voice.install", { size: megabytes(voiceBytes) })} action={t("overlay.voice.installButton")} onAction={install} />
+                  ))}
+                {note && <Note text={note.text} action={note.open ? t("overlay.perm.open") : undefined} onAction={note.open ? () => void desk.openSettings(note.open!) : undefined} onClose={() => setNote(undefined)} />}
+              </div>
+            ) : (
+              <div className="pio-lines" ref={linesBox}>
+                {lines.length === 0 && <div className="pio-empty">{t("overlay.empty")}</div>}
+                {lines.map((l) => (
+                  <div key={l.id} className={l.me ? "pio-msg me" : "pio-msg"}>
+                    {l.me ? l.text : speakable(l.text, 1200) || l.text}
+                  </div>
+                ))}
+                {hearing && <div className="pio-hearing">{t("overlay.state.hearing")}</div>}
+              </div>
+            )}
             <form className="pio-form" onSubmit={submit}>
               <input className="pio-input" value={draft} placeholder={t("overlay.placeholder")} onChange={(e) => setDraft(e.target.value)} />
               <button type="submit" className="pio-send" disabled={!draft.trim()}>
