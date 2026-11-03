@@ -888,7 +888,13 @@ export type BrainEvent =
 
 export interface BrainTurn {
   text: string;
+  /** The person's files, relative to the session's folder. */
   attachments?: string[];
+  /**
+   * For a brain on another computer: where the hub keeps each attachment (`source`, under its `workspaces`) and its
+   * sha256, so the machine fetches what its folder lacks before the turn instead of waiting for file sync.
+   */
+  files?: { path: string; source: string; sha: string }[];
   /**
    * What came before in this conversation (a summary and the recent turns), for a session that was to resume but cannot
    * (its history is gone, or too full to go on): the brain starts afresh with it before `text`. Ignored otherwise.

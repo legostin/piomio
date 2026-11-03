@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,11 +25,16 @@ describe("the person's files for a brain on another computer", () => {
       expect(said.text).toContain("- attachments/shot.jpeg (image/jpeg, 4 B)");
       expect(said.text).toContain("wait a few seconds and look again");
       expect(said.text).not.toContain("not on this machine");
+      // The machine fetches it from the hub right away: where the hub keeps it and its sha256.
+      const sha = createHash("sha256").update("jpeg").digest("hex");
+      expect(said.files).toEqual([{ path: "attachments/shot.jpeg", source: `assistant/${dialog.id}/attachments/shot.jpeg`, sha }]);
 
       // A task's folder gets its own copy, which syncs to the task's computer.
       const task = hub.store.createTask({ agentId: "assistant", title: "Look", goal: "x", createdBy: "agent", background: false, parentConversationId: dialog.id });
       const taskFolder = hub.runner.workspacePath({ agentId: "assistant", taskId: task.id, conversationId: task.conversationId });
-      expect(turn({ taskId: task.id, conversationId: task.conversationId }, [shot]).attachments).toEqual(["attachments/shot.jpeg"]);
+      const forTask = turn({ taskId: task.id, conversationId: task.conversationId }, [shot]);
+      expect(forTask.attachments).toEqual(["attachments/shot.jpeg"]);
+      expect(forTask.files).toEqual([{ path: "attachments/shot.jpeg", source: `assistant/${task.id}/attachments/shot.jpeg`, sha }]);
       expect(existsSync(join(taskFolder, "attachments", "shot.jpeg"))).toBe(true);
 
       // Too big to sync: it stays on the hub, and the note says so.
@@ -36,6 +42,7 @@ describe("the person's files for a brain on another computer", () => {
       writeFileSync(join(folder, "attachments", "film.mov"), "mov");
       const big = turn({}, [film]);
       expect(big.attachments).toBeUndefined();
+      expect(big.files).toBeUndefined();
       expect(big.text).toContain("film.mov (video/quicktime, 300 MB): stays on the hub, too big to copy to this computer");
     } finally {
       await hub.stop();

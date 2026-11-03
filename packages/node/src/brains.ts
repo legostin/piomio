@@ -1,8 +1,9 @@
 // Brains on this machine: Claude Code / Codex / Kimi Code CLIs logged in with the owner's subscriptions.
 // Same brain.* contract as plugin processes (packages/plugin-sdk/src/runner.ts), driven over the hub WebSocket.
 
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrainEvent, BrainSessionOptions, BrainTurn, MachineBrainId, MachineInfo, MachineModel, NodeSetup, ProbeResult } from "@piomio/shared";
 import { brainWire, cheapestModel, keyProvider, profileFrom } from "@piomio/shared";
@@ -119,6 +120,8 @@ export interface BrainHostOptions {
   userPath?: { refresh(): Promise<boolean>; dirs(): string[] };
   /** How long a turn waits for the person's files to come over from the hub (file sync); 20 s by default. */
   filesWaitMs?: number;
+  /** A file of the hub's `workspaces` (path under it, sha256), read from the hub now (BrainTurn.files). */
+  fetchFile?: (path: string, sha: string) => Promise<Uint8Array | undefined>;
 }
 
 /** The person's files reach this machine with the hub's file sync, every few seconds: wait for them a little. */
@@ -127,6 +130,25 @@ export async function filesArrived(workspace: string, files: string[], waitMs: n
   const end = Date.now() + waitMs;
   while (missing() && Date.now() < end) await new Promise((r) => setTimeout(r, 200));
   return !missing();
+}
+
+/**
+ * The turn's files the session's folder does not hold yet, fetched from the hub and put in place before the brain
+ * starts; file sync later finds the same bytes. What cannot be fetched is left to the sync (filesArrived).
+ */
+export async function bringFiles(workspace: string, files: NonNullable<BrainTurn["files"]>, fetch: NonNullable<BrainHostOptions["fetchFile"]>): Promise<void> {
+  for (const f of files) {
+    const abs = resolve(workspace, f.path);
+    const rel = relative(workspace, abs);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel) || !/^[0-9a-f]{64}$/.test(f.sha)) continue;
+    if (existsSync(abs) && createHash("sha256").update(readFileSync(abs)).digest("hex") === f.sha) continue;
+    const bytes = await fetch(f.source, f.sha).catch(() => undefined);
+    if (!bytes || createHash("sha256").update(bytes).digest("hex") !== f.sha) continue;
+    mkdirSync(dirname(abs), { recursive: true });
+    const part = `${abs}.${process.pid}.part`;
+    writeFileSync(part, bytes);
+    renameSync(part, abs);
+  }
 }
 
 export class BrainHost {
@@ -353,8 +375,7 @@ export class BrainHost {
     const s = this.sessions.get(p.sessionId);
     if (!s) throw new Error(`Unknown brain session: ${p.sessionId}`);
     try {
-      // The hub's note tells the brain to look again if a file is late: the turn goes on either way.
-      if (p.turn.attachments?.length) await filesArrived(s.workspace, p.turn.attachments, this.o.filesWaitMs ?? 20_000);
+      await this.bring(s.workspace, p.turn);
       for await (const event of s.session.send(p.turn)) emit(event);
     } catch (e: any) {
       emit({ type: "error", message: e?.message ?? String(e), fatal: true });
@@ -364,8 +385,15 @@ export class BrainHost {
   /** More input for the turn in progress; false sends it as the next turn. */
   async steer(p: { sessionId: string; turn: BrainTurn }): Promise<boolean> {
     const s = this.sessions.get(p.sessionId);
-    if (s && p.turn.attachments?.length) await filesArrived(s.workspace, p.turn.attachments, this.o.filesWaitMs ?? 20_000);
+    if (s) await this.bring(s.workspace, p.turn);
     return !!(s?.session.steer && (await s.session.steer(p.turn)));
+  }
+
+  /** The person's files for a turn: straight from the hub when it says which, else as file sync brings them. */
+  private async bring(workspace: string, turn: BrainTurn): Promise<void> {
+    if (turn.files?.length && this.o.fetchFile) await bringFiles(workspace, turn.files, this.o.fetchFile);
+    // The hub's note tells the brain to look again if a file is late: the turn goes on either way.
+    if (turn.attachments?.length) await filesArrived(workspace, turn.attachments, this.o.filesWaitMs ?? 20_000);
   }
 
   /** Get ready for a turn soon (a dialog the person opened). */

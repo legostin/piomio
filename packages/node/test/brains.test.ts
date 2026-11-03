@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,6 +87,32 @@ describe("BrainHost", () => {
     expect(done.at(-1)).toMatchObject({ type: "done" });
     await late.closeAll();
     await host.closeAll();
+  });
+
+  it("fetches the person's files from the hub before the turn, only into its folder and only the bytes it was told", async () => {
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    const asked: string[] = [];
+    const fetching = new BrainHost({
+      home, policy, hubUrl: "http://hub.test:8080", bridgeCommand: ["bridge-cmd"], filesWaitMs: 100,
+      fetchFile: async (path) => (asked.push(path), path.endsWith("bad.jpeg") ? Buffer.from("other bytes") : Buffer.from("jpeg")),
+    });
+    const ws = join(userHome, "piomio-workspace", "a", "c4");
+    await fetching.create({ brainId: "claude-code", opts: { sessionId: "s4", agent, workspace: "a/c4", mcp: { url: "http://hub.test/mcp", token: "t", bridgeCommand: [] }, systemPrompt: "sys", env: {}, background: false } });
+    const files = [
+      { path: "attachments/shot.jpeg", source: "a/c4/attachments/shot.jpeg", sha: sha("jpeg") },
+      { path: "attachments/bad.jpeg", source: "a/c4/attachments/bad.jpeg", sha: sha("jpeg") },
+      { path: "../escape.jpeg", source: "a/escape.jpeg", sha: sha("jpeg") },
+    ];
+    await fetching.send({ sessionId: "s4", turn: { text: "look", attachments: ["attachments/shot.jpeg"], files } }, () => {});
+    expect(readFileSync(join(ws, "attachments", "shot.jpeg"), "utf8")).toBe("jpeg");
+    expect(statSync(join(ws, "env.json")).mtimeMs).toBeGreaterThanOrEqual(statSync(join(ws, "attachments", "shot.jpeg")).mtimeMs);
+    expect(existsSync(join(ws, "attachments", "bad.jpeg"))).toBe(false);
+    expect(existsSync(join(ws, "..", "escape.jpeg"))).toBe(false);
+    expect(asked).toEqual(["a/c4/attachments/shot.jpeg", "a/c4/attachments/bad.jpeg"]);
+    // Already there with the same bytes: nothing is fetched again.
+    await fetching.send({ sessionId: "s4", turn: { text: "again", attachments: ["attachments/shot.jpeg"], files: files.slice(0, 1) } }, () => {});
+    expect(asked).toHaveLength(2);
+    await fetching.closeAll();
   });
 
   it("refuses hub values that would turn into CLI flags", async () => {

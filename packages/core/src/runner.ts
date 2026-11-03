@@ -1,7 +1,8 @@
 // Session runner: turns user messages, delegated tasks and trigger runs into brain sessions.
 // Handles brain selection and fallback, streaming into messages, tasks, deferred approvals and recovery.
 
-import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
 import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
@@ -212,6 +213,8 @@ const THREAD_FRESH_MS = 60 * 60_000;
 const BRAINS_CHANGED_KEY = "brainsChangedAt";
 /** What plugins may add before one turn's input (turn.context), in characters. */
 const MAX_TURN_CONTEXT = 12_000;
+/** The person's files up to this size a machine fetches from the hub before the turn (BrainTurn.files); bigger ones come with file sync. */
+const FETCH_NOW_BYTES = 50 * 1024 * 1024;
 /** Workspace images a channel gets inline with one reply, in all. */
 const MAX_INLINE_MEDIA_BYTES = 40 * 1024 * 1024;
 /** Words before a text delta read again for its pictures: an image whose address the delta finishes (2048 at most). */
@@ -2030,16 +2033,24 @@ export class SessionRunner {
   /** What the brain gets for a turn (or as input joining one): the text with its files' note and the current time. */
   private turnInput(row: SessionRow, text: string, opts: Pick<TurnOpts, "attachments" | "speech">): BrainTurn {
     let paths: string[] = [];
+    let fetch: NonNullable<BrainTurn["files"]> = [];
     if (opts.attachments?.length) {
       const local = parseBrainRef(row.brainRef).machineId === "local";
       // Another computer's folder is this hub's copy of it (file sync): what is put here reaches it in seconds, but
       // a file too big to sync stays here.
       const synced = (part: AttachmentPart) => local || (part.size ?? 0) <= MAX_SYNC_FILE_BYTES; // attachmentNote says why
-      const placed = forSession(opts.attachments.filter(synced), join(this.d.config.dataDir, "workspaces"), this.workspacePath(row));
+      const folder = this.workspacePath(row);
+      const placed = forSession(opts.attachments.filter(synced), join(this.d.config.dataDir, "workspaces"), folder);
       const seen = opts.attachments.map((part): SessionFile => placed.find((f) => f.part === part) ?? { part });
       const files = seen.map((f) => (opts.speech?.[f.part.path] ? { ...f, speech: opts.speech[f.part.path] } : f));
       text = [text, attachmentNote(files, { remote: !local })].filter(Boolean).join("\n\n");
       paths = files.flatMap((f) => (f.path ? [f.path] : []));
+      // The machine fetches them right away rather than wait for the sync; a big one is still left to the sync.
+      if (!local) fetch = paths.flatMap((path) => {
+        const abs = join(folder, path);
+        if (!existsSync(abs) || statSync(abs).size > FETCH_NOW_BYTES) return [];
+        return [{ path, source: `${row.agentId}/${this.workspaceKey(row)}/${path}`, sha: createHash("sha256").update(readFileSync(abs)).digest("hex") }];
+      });
     }
     // Where the agent is and what it and its team are doing, when that changed since this session last heard it.
     const self = this.situationOf(row);
@@ -2049,7 +2060,7 @@ export class SessionRunner {
     }
     const now = this.clock.line(row.id, this.d.settings.get().timezone);
     if (now) text = `${now}\n${text}`;
-    return { text, ...(paths.length ? { attachments: paths } : {}) };
+    return { text, ...(paths.length ? { attachments: paths } : {}), ...(fetch.length ? { files: fetch } : {}) };
   }
 
   /** The `[You now]` block for a session's next turn (situation.ts). */

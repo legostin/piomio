@@ -48,7 +48,14 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     (port) => o.log(t("gateway.ready", { port })),
     (e) => o.log(`gateway: ${e?.message ?? e}`),
   );
-  const brains = new BrainHost({ home: o.home, policy, gateway, hubUrl: config.hubUrl, bridgeCommand: o.bridgeCommand, log: o.log, userPath: o.userPath });
+  const brains = new BrainHost({
+    home: o.home, policy, gateway, hubUrl: config.hubUrl, bridgeCommand: o.bridgeCommand, log: o.log, userPath: o.userPath,
+    // The person's files for a turn, straight from the hub, in the same pieces file sync reads them in.
+    fetchFile: async (path, sha) => {
+      const peer = service?.leaderPeer();
+      return peer ? readInPieces((q) => peer.request<PieceAnswer>("files.read", q, { timeoutMs: 120_000 }), "workspaces", path, sha) : undefined;
+    },
+  });
   // The daemon's own home (key, policy) is never reachable through fs.*/exec, even if an allowed dir contains it.
   service = new NodeService({ policy, brains, log: o.log, guard: { deny: [o.home] } });
   const clientFor = (hubUrl: string, secondary: boolean) =>
