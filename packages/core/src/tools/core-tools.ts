@@ -651,6 +651,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
       const list: unknown[] = Array.isArray(i.images) ? i.images : i.url || i.path ? [i] : [];
       if (!list.length) return text("Give images: [{url} or {path}, …].", true);
       if (list.length > MAX_IMAGES) return text(`At most ${MAX_IMAGES} images at once; split them into several calls.`, true);
+      const more = d.startedWorkspaces?.(ctx.conversationId) ?? [];
       const items: ImageItem[] = [];
       const problems: string[] = [];
       for (const [n, raw] of list.entries()) {
@@ -659,17 +660,22 @@ export function registerCoreTools(d: CoreToolDeps): void {
         let src: string | undefined;
         if (typeof it.path === "string" && it.path.trim()) {
           let path = it.path.trim();
-          // Made on another computer: the hub's copy of the task's folder has it once the hub pulled it (every few seconds).
+          // Remote absolute paths may name this session OR a task this conversation started. Map to the matching
+          // hub folder before waiting; relative paths still belong only to the current session.
           if (ctx.machineId !== "local") {
-            const rel = folderRelative(path, ctx.workspace);
-            if (!rel) {
-              problems.push(`${label}: ${path} is not in your task's folder; save the picture there and show it by its path`);
+            let mapped: string | undefined;
+            for (const folder of [ctx.workspace, ...more]) {
+              const rel = folderRelative(path, folder);
+              if (rel) { mapped = resolve(folder, rel); break; }
+            }
+            if (!mapped) {
+              problems.push(`${label}: ${path} is not in your workspace or your tasks' folders; save the picture there and show it by its path`);
               continue;
             }
-            await arrived(resolve(ctx.workspace, rel), REMOTE_FILE_WAIT_MS);
-            path = rel;
+            await arrived(mapped, REMOTE_FILE_WAIT_MS);
+            path = mapped;
           }
-          const r = workspaceImage(path, ctx.workspace, d.workspacesRoot, d.startedWorkspaces?.(ctx.conversationId));
+          const r = workspaceImage(path, ctx.workspace, d.workspacesRoot, more);
           if (typeof r !== "string") {
             problems.push(`${label}: ${r.error}`);
             continue;
