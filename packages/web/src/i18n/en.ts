@@ -717,6 +717,8 @@ export default {
   "machines.revokeText": "The machine's key will be revoked and the daemon won't be able to connect anymore. To bring the machine back, pair it again.",
   "machines.revoked": "Machine disconnected",
   "machines.online": "online",
+  "machines.updateApp": "Update Piomio to {version}",
+  "machines.updatingApp": "Piomio is updating…",
   "machines.working": "{n, plural, one {# at work} other {# at work}}",
   "machines.update": "Update",
   "machines.updating": "Updating…",

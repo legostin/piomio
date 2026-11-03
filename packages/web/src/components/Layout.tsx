@@ -21,7 +21,7 @@ import { CommandPalette } from "./CommandPalette";
 import { Icon } from "./icon";
 import { LiveViewWindow } from "./LiveViewWindow";
 import { SettingsPanel } from "./SettingsPanel";
-import { MachinesBlock } from "./MachinesBlock";
+import { AppUpdateButton, MachinesBlock } from "./MachinesBlock";
 import { OwlMark, type OwlMood } from "./OwlMark";
 import { TeamList } from "../pages/chat/TeamList";
 import { t } from "../i18n";
@@ -76,6 +76,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <PluginSidebarItems />
         <SidebarPanels />
       </div>
+      <AppUpdateButton />
       <nav className="flex items-center justify-between gap-1 px-3 pt-1 pb-3">
         {liveViews.map((v) => (
           <button

@@ -24,7 +24,7 @@ Piomio never updates behind your back. When a new release is out, you see an **U
 
 The app looks for a new release a minute after it starts and then every six hours. It downloads a new one in the background, but installs nothing until you say so. There are three ways to say so:
 
-- **In the sidebar.** Under **Machines**, this computer's row shows **Update**. Press it.
+- **In the sidebar.** Above the row of icons at the bottom, **Update Piomio to …** appears. Press it. (Other computers' updates are on their rows under **Machines**.)
 - **In the chat.** When a new version is out, the assistant tells you and offers buttons to update now or not now. It brings up each version once, and no more than once a day. You can also just write "update Piomio".
 - **In the icon's menu.** The update item says **Install update …** once a release is downloaded. **Check for updates** looks right away.
 

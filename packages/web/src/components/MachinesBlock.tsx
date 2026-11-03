@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ChevronRight } from "lucide-react";
+import { ArrowUpCircle, ChevronRight } from "lucide-react";
 import { machinesOpen, setMachinesOpen } from "../state/prefs";
 import type { AgentDef, MachineActivity, MachineWork, WorkStep } from "@piomio/shared";
 import { useStore } from "../lib/store";
@@ -64,6 +64,39 @@ function UpdateButton({ machine }: { machine: MachineActivity }) {
     <button type="button" onClick={update} title={t("machines.updateTo", { version: machine.update })} className="shrink-0 text-[12px] font-medium text-accent-text hover:underline">
       {t("machines.update")}
     </button>
+  );
+}
+
+/**
+ * The hub's own computer has a newer Piomio (the desktop app's release, a server's): a plain line above the sidebar's
+ * icons, so the update is seen without opening Machines. "Updating…" until the hub runs the new version.
+ */
+export function AppUpdateButton() {
+  const list = useStore(machineActivity);
+  const [asked, setAsked] = useState("");
+  useEffect(() => ensureMachineActivity(), []);
+  const self = list?.find((m) => m.id === "local");
+  if (!self?.update) return null;
+  const busy = self.updating || asked === self.update;
+  const update = () => {
+    setAsked(self.update!);
+    api.post(`/api/machines/${encodeURIComponent(self.id)}/update`).catch((e: unknown) => {
+      setAsked("");
+      toast(errorText(e), "error");
+    });
+  };
+  return (
+    <div className="px-3 pb-1.5">
+      <button
+        type="button"
+        onClick={update}
+        disabled={busy}
+        className="press flex w-full items-center gap-2.5 rounded-xl bg-accent-soft px-3 py-2 text-left text-[13px] font-semibold text-accent-text hover:brightness-[0.97] disabled:opacity-80"
+      >
+        <ArrowUpCircle className={cx("size-[17px] shrink-0", busy && "animate-pulse")} />
+        <span className="min-w-0 flex-1 truncate">{busy ? t("machines.updatingApp") : t("machines.updateApp", { version: self.update })}</span>
+      </button>
+    </div>
   );
 }
 
