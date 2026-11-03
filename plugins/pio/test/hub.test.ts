@@ -86,4 +86,19 @@ describe("the Pio plugin in a hub", () => {
     hub.plugins.uiMessage("pio", { type: "bye", body: "w1" });
     await until(() => hub.team.member("pio").presence === undefined, "gone");
   });
+
+  it("answers each heartbeat, and takes the window and Pio's chat it carries", async () => {
+    const seen: unknown[] = [];
+    hub.bus.on("plugin.event", (e) => e.pluginId === "pio" && e.channel === "seen" && seen.push(e.payload));
+    const conv = hub.store.agentConversation("pio").id;
+    // A heartbeat from a window the plugin has never heard of (the hub restarted, or the computer slept past a minute).
+    hub.plugins.uiMessage("pio", { type: "state", body: "w2", watching: true, conversationId: conv, window: { app: "Figma", title: "Landing v3" } });
+    await until(() => seen.length > 0, "the heartbeat's answer");
+    expect(seen[0]).toEqual({ body: "w2" });
+    // The window came with it: Pio's next turn knows what is on the screen.
+    const r = await hub.hooks.run("turn.context", { sessionId: "s", agentId: "pio", conversationId: conv, text: "hi", fromUser: true }, (p) => p);
+    expect(r.results.map((x) => x?.context).join("\n")).toContain('Figma — "Landing v3"');
+    hub.plugins.uiMessage("pio", { type: "bye", body: "w2" });
+    await until(() => hub.team.member("pio").presence === undefined, "gone");
+  });
 });

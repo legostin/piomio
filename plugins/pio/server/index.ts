@@ -19,7 +19,18 @@ const PREFS_KEY = "prefs";
 /** What a Pio window sends (ui plugin.send). */
 type FromWindow =
   | { type: "hello"; body: string; conversationId?: string }
-  | { type: "state"; body: string; watching?: boolean; voice?: boolean; control?: boolean; hearing?: boolean; speaking?: boolean }
+  | {
+      type: "state";
+      body: string;
+      watching?: boolean;
+      voice?: boolean;
+      control?: boolean;
+      hearing?: boolean;
+      speaking?: boolean;
+      /** Pio's chat and the person's window, so a body the hub forgot comes back whole from one heartbeat. */
+      conversationId?: string;
+      window?: { app?: unknown; title?: unknown };
+    }
   | { type: "window"; body: string; app: string; title?: string }
   | { type: "bye"; body: string }
   | { type: "open"; body: string }
@@ -65,7 +76,14 @@ const plugin: PluginModule = {
           ctx.ui.emit("prefs", prefs);
           break;
         case "state":
+          // A heartbeat carries the whole picture: a window the hub forgot (a restart, the computer asleep past GONE_MS)
+          // is back with its switches, the person's window and Pio's chat, not only its presence.
           bodies.state(m.body, m);
+          if (m.window && typeof m.window === "object" && typeof m.window.app === "string")
+            bodies.window(m.body, m.window.app.slice(0, 120), typeof m.window.title === "string" ? m.window.title.slice(0, 300) : undefined);
+          if (typeof m.conversationId === "string") conversationId = m.conversationId;
+          // Answered, so the window knows the way to the plugin is open (its socket may look fine while it is not).
+          ctx.ui.emit("seen", { body: m.body });
           break;
         case "window":
           bodies.window(m.body, String(m.app ?? "").slice(0, 120), typeof m.title === "string" ? m.title.slice(0, 300) : undefined);

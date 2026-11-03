@@ -20,6 +20,9 @@ export const CSS = `
 .pio-face[data-state=thinking]::after{border-color:#e8891a transparent #e8891a transparent;animation:pio-spin 1.1s linear infinite}
 .pio-face[data-state=speaking]::after{border-color:#ffb547;animation:pio-pulse .7s ease-in-out infinite}
 .pio-face[data-state=driving]::after{border-color:#e5484d;border-width:3px;animation:pio-pulse 1.4s ease-in-out infinite}
+.pio-face[data-state=deaf]::after{border-color:rgba(229,72,77,.75);border-style:dashed}
+.pio-face[data-state=offline]::after{border-color:rgba(138,129,122,.8);border-style:dotted}
+.pio-face[data-state=deaf] .pio-eye,.pio-face[data-state=offline] .pio-eye{height:8px;top:20px}
 .pio-eye{position:absolute;top:18px;width:8px;height:11px;border-radius:50%;background:#fff;animation:pio-blink 5.5s infinite}
 .pio-eye::after{content:"";position:absolute;left:2px;top:3px;width:4.5px;height:5.5px;border-radius:50%;background:#2b1a08}
 .pio-eye.l{left:14px}.pio-eye.r{right:14px}

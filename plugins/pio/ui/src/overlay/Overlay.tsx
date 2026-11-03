@@ -7,7 +7,7 @@ import type { Message, PiomioUI, UiEvent } from "@piomio/ui";
 import { desk, desktopOf, onDesktop, toScreen, type Capture } from "../desktop.ts";
 import { HttpError, SpeechApi, type SpeechStatus } from "../hub.ts";
 import { asksToLook, FOLLOW_MS, forPio, type ListenMode } from "../voice/gate.ts";
-import { Mic } from "../voice/mic.ts";
+import { Mic, type MicTrouble } from "../voice/mic.ts";
 import { Speaker } from "../voice/speaker.ts";
 import { speakable } from "../voice/speakable.ts";
 import { brief, langOf, personLang, voiceFor } from "../voice/lang.ts";
@@ -16,7 +16,8 @@ import { CSS } from "./styles.ts";
 const AGENT = "pio";
 const SIZES = { bubble: { width: 72, height: 72 }, line: { width: 380, height: 150 }, card: { width: 380, height: 560 } } as const;
 type Mode = keyof typeof SIZES;
-type Face = "idle" | "watching" | "listening" | "hearing" | "thinking" | "speaking" | "driving";
+/** What the face shows; "deaf" (voice on, the mic hears nothing) and "offline" (the hub does not answer) tell the truth over "listening". */
+type Face = "idle" | "watching" | "listening" | "hearing" | "thinking" | "speaking" | "driving" | "deaf" | "offline";
 const HEARTBEAT_MS = 15_000;
 const WATCH_MS = 2_000;
 /** How long a line of Pio's stays beside the face. */
@@ -102,10 +103,30 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const [listen, setListen] = useState<ListenMode>("name");
   /** Speech-to-text answered that it has no engine: the local one is offered with the voice. */
   const [sttMissing, setSttMissing] = useState(false);
+  /** The mic hears nothing, and why (mic.ts): the face says so instead of "listening". */
+  const [deaf, setDeaf] = useState<MicTrouble>();
+  /** A phrase went to the hub and came back with an error: said in the card until the next one is heard. */
+  const [sttError, setSttError] = useState<string>();
+  /** The hub has not answered the window's heartbeats: the way to Pio is down, whatever the socket says. */
+  const [hubAway, setHubAway] = useState(false);
   const [side, setSide] = useState(sideOf);
   const api = useMemo(() => new SpeechApi(ui), [ui]);
   // What the event handlers read now (they are set up once).
-  const live = useRef({ conv, sw, listen, speech, lang: ui.i18n.locale as string, followUntil: 0, keyHeld: false, lastCap: undefined as Capture | undefined, spoken: new Set<string>() });
+  const live = useRef({
+    conv,
+    sw,
+    listen,
+    speech,
+    lang: ui.i18n.locale as string,
+    followUntil: 0,
+    keyHeld: false,
+    lastCap: undefined as Capture | undefined,
+    spoken: new Set<string>(),
+    /** When the plugin last answered a heartbeat ("seen"). */
+    seenAt: Date.now(),
+    /** The person's active window, as last reported (sent again with every heartbeat). */
+    window: undefined as { app: string; title?: string } | undefined,
+  });
   Object.assign(live.current, { conv, sw, listen, speech });
 
   const speaker = useMemo(
@@ -117,7 +138,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
       }),
     [],
   );
-  const mic = useMemo(() => new Mic((wav, held) => void heard(wav, held), setHearing), []);
+  const mic = useMemo(() => new Mic({ onPhrase: (wav, held) => void heard(wav, held), onHearing: setHearing, onHealth: (ok, why) => setDeaf(ok ? undefined : why) }), []);
 
   /** A picture of the person's window for a message that asks Pio to look (the asking is the consent). */
   const windowShot = async (c: string): Promise<string[]> => {
@@ -154,10 +175,14 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const heard = async (wav: Uint8Array, held: boolean) => {
     try {
       const text = await api.transcribe(wav, live.current.lang);
+      setSttError(undefined);
       const words = forPio(text, live.current.listen, { keyHeld: held, now: Date.now(), followUntil: live.current.followUntil });
       if (words) await ask(words);
     } catch (e) {
-      if (e instanceof HttpError && (e.status === 503 || e.status === 409)) setSttMissing(true);
+      if (e instanceof HttpError && (e.status === 503 || e.status === 409)) return setSttMissing(true);
+      // A phrase that went nowhere must not look like one that was not for Pio: the card says what happened.
+      const signedOut = e instanceof HttpError && (e.status === 401 || e.status === 403);
+      setSttError(signedOut ? t("overlay.voice.sessionLost") : t("overlay.voice.sttError", { error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -256,9 +281,15 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     };
   }, []);
 
-  // The switches and what Pio does now, to the hub (and a heartbeat: a window that stops talking is gone).
+  // The switches and what Pio does now, to the hub, and every HEARTBEAT_MS: a window that stops talking is gone, and one
+  // the hub forgot (it restarted, the computer slept) is back whole from one heartbeat, which carries the person's
+  // window and Pio's chat too. The plugin answers each one ("seen"): three unanswered mean the way to it is down.
   useEffect(() => {
-    const send = () => ui.plugin.send({ type: "state", body, ...sw, hearing, speaking });
+    const send = () => {
+      setHubAway(Date.now() - live.current.seenAt > HEARTBEAT_MS * 3);
+      const { conv: conversationId, window } = live.current;
+      ui.plugin.send({ type: "state", body, ...sw, hearing, speaking, ...(conversationId ? { conversationId } : {}), ...(window ? { window } : {}) });
+    };
     send();
     const timer = setInterval(send, HEARTBEAT_MS);
     try {
@@ -281,7 +312,9 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
         const key = `${f.app}\n${f.title ?? ""}`;
         if (key === last) return;
         last = key;
-        ui.plugin.send({ type: "window", body, app: f.app, ...(f.title ? { title: f.title } : {}) });
+        const w = { app: f.app, ...(f.title ? { title: f.title } : {}) };
+        live.current.window = w;
+        ui.plugin.send({ type: "window", body, ...w });
       } catch {
         /* the app is busy; next time */
       }
@@ -289,7 +322,10 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     void look();
     void desk.permissions().then(setPerms, () => {});
     const timer = setInterval(() => void look(), WATCH_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      live.current.window = undefined;
+    };
   }, [sw.watching]);
 
   // Voice: the mic, push to talk, and whether the hub's local voice is there.
@@ -346,9 +382,16 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
       );
     });
     const offPrefs = ui.plugin.on("prefs", (p: { listen?: ListenMode }) => p?.listen && setListen(p.listen));
+    // The plugin heard a heartbeat of this window: the way to it is open.
+    const offSeen = ui.plugin.on("seen", (p: { body?: string }) => {
+      if (p?.body !== body) return;
+      live.current.seenAt = Date.now();
+      setHubAway(false);
+    });
     return () => {
       offAct();
       offPrefs();
+      offSeen();
     };
   }, []);
 
@@ -445,7 +488,9 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     if (d) location.href = `${d.scheme}://open`;
   };
 
-  const face: Face = sw.control ? "driving" : speaking ? "speaking" : hearing ? "hearing" : thinking ? "thinking" : sw.voice ? "listening" : sw.watching ? "watching" : "idle";
+  // Voice on but nothing heard: said before "listening" would be.
+  const deafWhy = sw.voice ? deaf : undefined;
+  const face: Face = sw.control ? "driving" : hubAway ? "offline" : speaking ? "speaking" : hearing ? "hearing" : thinking ? "thinking" : deafWhy ? "deaf" : sw.voice ? "listening" : sw.watching ? "watching" : "idle";
   // What to download: the voice and the speech-to-text model of the person's language, not the hub's.
   const lang = personLang(
     lines.filter((l) => l.me).map((l) => l.text),
@@ -459,7 +504,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const voiceBytes = (speech?.runtime === "ready" ? 0 : RUNTIME_BYTES) + (voice && !voice.installed ? voice.size : 0) + (hears && !hears.installed ? hears.size : 0);
   const screenMissing = sw.watching && !!perms && !perms.screen && !seesTitles;
   // Something in the settings needs the person: a dot on its tab.
-  const attention = screenMissing || !!needsVoice || sttNeeded || !!note;
+  const attention = screenMissing || !!needsVoice || sttNeeded || !!note || hubAway || !!deafWhy || !!sttError;
   const install = () => void api.install({ ...(voice ? { voice: voice.id } : {}), stt: hears?.id ?? true }).then(setSpeech, () => {});
   const progress = speech?.downloading && speech.downloading.total > 0 ? Math.round((speech.downloading.received / speech.downloading.total) * 100) : undefined;
 
@@ -508,6 +553,15 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
                   onToggle={() => void toggleControl()}
                 />
                 {screenMissing && <Note text={t("overlay.perm.screen")} action={t("overlay.perm.open")} onAction={() => void desk.openSettings("screen")} />}
+                {hubAway && <Note text={t("overlay.hub.away")} />}
+                {deafWhy && (
+                  <Note
+                    text={t(`overlay.voice.deaf.${deafWhy}`)}
+                    action={deafWhy === "noMic" ? t("overlay.perm.open") : t("overlay.voice.retry")}
+                    onAction={deafWhy === "noMic" ? () => void desk.openSettings("microphone") : () => mic.restart()}
+                  />
+                )}
+                {sttError && <Note text={sttError} onClose={() => setSttError(undefined)} />}
                 {sttNeeded && !needsVoice && <Note text={t("overlay.voice.noStt")} />}
                 {needsVoice &&
                   (speech.runtime === "failed" ? (

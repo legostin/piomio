@@ -36,7 +36,9 @@ type to it, and **Settings**, with a dot when something there needs you:
 - **Hand over control**: Pio may use the mouse and keyboard (see below).
 
 The ring around the face shows what Pio is doing: watching, listening, hearing you, thinking, speaking, or driving
-(red). In the sidebar a dot on Pio's face says it is busy; its name and state show on hover.
+(red). A red dashed ring means the microphone has gone quiet (the computer slept, a headset came or went) and Pio is
+opening it again; a grey dotted one means the hub is out of reach. The card's **Settings** tab says what to do. In the
+sidebar a dot on Pio's face says it is busy; its name and state show on hover.
 
 When Pio says something while the card is closed, its line pops out next to the face for a few seconds.
 

@@ -63,6 +63,9 @@ agents' dialogs stay clean.
 
 - While **Work together** is on, the overlay asks `pio_frontmost` every 2 s and sends changes to the plugin
   (`observe`). The plugin keeps a short timeline per computer (in memory only).
+- Every 15 s the overlay sends its state (the switches, the current window, Pio's chat) and the plugin answers each
+  one (`seen`): a window the hub forgot (a restart, the computer asleep for over a minute) is back whole with the next
+  heartbeat, and three unanswered heartbeats make the face say the hub is out of reach instead of "listening".
 - `pio_look { target? }` (read): the plugin asks the overlay for a capture and returns the image in the tool result.
   Nothing is stored. Screen content is outside content: the session is marked tainted (`_meta.taint`).
 - The watch loop: a window that stayed ≥ 15 s after a change, or ~5 min on one window, makes a quiet turn:
@@ -90,6 +93,9 @@ agents' dialogs stay clean.
 - **Listening** in the overlay: the mic with echo cancellation, an energy-based voice detector cuts phrases (700 ms
   of silence, 20 s max); each phrase is transcribed; it goes to Pio when it names Pio ("Пио", "Pio"), while ⌥Space is
   held, or within 20 s after Pio spoke. Everything else is dropped unsaved. Pio stops speaking when the person starts.
+- The mic looks after itself (`mic.ts`): a capture WebKit ended or muted (the computer slept, a headset came or went)
+  or a context it suspended is noticed within 5 s, woken, and opened again after 10 s; meanwhile the face says it
+  cannot hear instead of "listening", and a phrase the hub could not transcribe is said in the card.
 - Voice needs a secure page: the hub at localhost or https.
 
 ## Control
