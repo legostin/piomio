@@ -5,6 +5,8 @@
 export interface DesktopApp {
   /** "piomio", or "piomio-test" in the test build. */
   scheme: string;
+  /** Native app version, supplied by new desktop shells (independent of the serving hub). */
+  version?: string;
   test: boolean;
   /** macOS: the window has no title bar; its buttons sit over the page's top-left corner. */
   overlayTitleBar: boolean;
@@ -16,7 +18,7 @@ export interface DesktopApp {
 export function desktopApp(w: unknown = globalThis): DesktopApp | undefined {
   const d = (w as { piomioDesktop?: Partial<DesktopApp> }).piomioDesktop;
   return d && typeof d.scheme === "string" && /^piomio(-test)?$/.test(d.scheme)
-    ? { scheme: d.scheme, test: d.test === true, overlayTitleBar: d.overlayTitleBar === true, pio: d.pio === true }
+    ? { scheme: d.scheme, test: d.test === true, overlayTitleBar: d.overlayTitleBar === true, pio: d.pio === true, ...(typeof d.version === "string" && d.version ? { version: d.version } : {}) }
     : undefined;
 }
 

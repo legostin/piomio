@@ -12,6 +12,11 @@ use crate::app::AppState;
 pub const MAIN: &str = "main";
 pub const SETUP: &str = "setup";
 
+/// Version comes from the installed shell, even when its page is served by a remote hub.
+fn desktop_hello(scheme: &str, test: bool, overlay: bool, version: &str) -> String {
+  format!("window.piomioDesktop = Object.freeze({{ scheme: {scheme:?}, test: {test}, overlayTitleBar: {overlay}, version: {version:?} }});")
+}
+
 pub fn same_origin(a: &Url, b: &Url) -> bool {
   a.scheme() == b.scheme() && a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default()
 }
@@ -56,7 +61,7 @@ pub fn open_main(app: &AppHandle, url: Url) -> tauri::Result<()> {
     )?;
   }
   // The hub's settings page offers "Quit" and "Reset Piomio…" when it runs in this window (deeplink.rs).
-  let hello = format!("window.piomioDesktop = Object.freeze({{ scheme: {scheme:?}, test: {}, overlayTitleBar: {overlay} }});", flavor.test);
+  let hello = desktop_hello(scheme, flavor.test, overlay, &app.package_info().version.to_string());
   let builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::External(url))
     .title(&app.package_info().name)
     .initialization_script(hello)
@@ -184,6 +189,12 @@ pub fn dock(app: &AppHandle, visible: bool) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn announces_the_installed_shell_version() {
+    assert_eq!(desktop_hello("piomio", false, true, "0.2.25"),
+      "window.piomioDesktop = Object.freeze({ scheme: \"piomio\", test: false, overlayTitleBar: true, version: \"0.2.25\" });");
+  }
 
   #[test]
   fn compares_origins() {

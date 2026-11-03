@@ -3,6 +3,12 @@
 // (see packages/shared/src/i18n.ts). Keys are grouped by screen.
 
 export default {
+  "version.hub": "Hub: v{version}",
+  "version.machine": "Hub computer: {name}",
+  "version.desktop": "Desktop app: v{version}",
+  "version.desktopUnknown": "Desktop app: version unavailable",
+  "version.different": "Hub and desktop versions differ",
+  "version.update": "Update available: v{version}",
   "message.network.title": "Network access",
   "message.network.once": "Allow once",
   "message.network.scope": "Once allows this host and port for the current session. The connection waits up to 90 seconds.",

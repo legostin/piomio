@@ -25,6 +25,7 @@ import { AppUpdateButton, MachinesBlock } from "./MachinesBlock";
 import { OwlMark, type OwlMood } from "./OwlMark";
 import { TeamList } from "../pages/chat/TeamList";
 import { t } from "../i18n";
+import { AppVersion } from "./AppVersion";
 
 interface Shell {
   openDrawer: () => void;
@@ -71,6 +72,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <div className="min-h-0 flex-1">
         <TeamList activeAgentId={agentForPath(loc, s?.defaultAgent)} activeConversationId={chatForPath(loc)} activeFeedId={feedForPath(loc)} onNavigate={onNavigate} />
       </div>
+      <div className="shrink-0 px-5 py-1"><AppVersion /></div>
       <MachinesBlock onNavigate={onNavigate} />
       <div className="flex flex-col gap-2 px-3 empty:hidden">
         <PluginSidebarItems />
@@ -157,6 +159,7 @@ export function HeaderActions() {
       <div className="hidden items-center gap-2 empty:hidden @3xl/top:flex">
         <PluginStatusItems />
       </div>
+      <div className="md:hidden"><AppVersion /></div>
       <ConnectionBadge />
       <VaultBadge />
       <ApprovalsBadge />

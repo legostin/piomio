@@ -2,8 +2,10 @@
 # and the tests): the patch version goes up (the root package.json and package-lock.json's two root versions), the
 # commit "Piomio X.Y.Z" lands on main with the tag vX.Y.Z, and release.yml publishes the installers.
 # A push whose checks fail releases nothing.
+# [skip release] in ANY commit of a push defers that whole push; checks still run. The next unmarked push
+# compares with the current version tag, so deferred code goes into the next release. Do not use [skip ci].
 # What doesn't ship releases nothing: the site, the docs, Markdown at the root, tests and test helpers, and the
-# workflows that build none of it (see ships() below). Neither does a push that raised the version itself (a release
+# workflows that build none of it (see scripts/release-on-push.mjs). Neither does a push that raised the version itself (a release
 # made by hand). Run this workflow by hand to release a minor or major version.
 # Pushes close together make one release: a newer one waiting replaces an older one, and each release takes main as it
 # is when it starts.
@@ -33,45 +35,14 @@ jobs:
       release: ${{ steps.check.outputs.release }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # All push commits for [skip release], and the last release tag for accumulated changes.
+          fetch-depth: 0
       - name: Does this push change what ships?
         id: check
         env:
           BEFORE: ${{ github.event.before }}
-        run: |
-          release() { echo "release=$1" >>"$GITHUB_OUTPUT"; }
-          v=$(node -p "require('./package.json').version")
-          # The commits the tag v<version> names (lightweight, or annotated and peeled).
-          tagged=$(git ls-remote --tags origin | awk -v t="refs/tags/v$v" '$2 == t || $2 == t "^{}" { print $1 }')
-          if [ -z "$tagged" ] || echo "$tagged" | grep -qx "$GITHUB_SHA"; then
-            echo "v$v is this push's own release"
-            release false; exit 0
-          fi
-          ships() {
-            case "$1" in
-              packages/site/*|packages/testkit/*|docs/*) return 1 ;;
-              .github/workflows/site.yml|.github/workflows/release-on-push.yml|.github/workflows/checks.yml) return 1 ;;
-              .github/workflows/*) return 0 ;;
-              .github/*|*/test/*|*.test.ts|*.test.tsx) return 1 ;;
-              */*) return 0 ;;
-              *.md|LICENSE) return 1 ;;
-              *) return 0 ;;
-            esac
-          }
-          # Without the commit before the push (a new branch, a history rewritten away) every file counts.
-          if ! git fetch -q --depth=1 origin "$BEFORE" 2>/dev/null; then
-            echo "no $BEFORE to compare with"
-            release true; exit 0
-          fi
-          files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
-          while IFS= read -r f; do
-            if [ -n "$f" ] && ships "$f"; then
-              echo "ships: $f"
-              release true; exit 0
-            fi
-          done <<<"$files"
-          echo "nothing that ships changed:"
-          echo "$files"
-          release false
+        run: node scripts/release-on-push.mjs
 
   # Every push to main is checked, whether it releases or not.
   checks:

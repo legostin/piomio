@@ -34,6 +34,8 @@ export interface ChannelEntry {
 export interface Bootstrap {
   csrf: string;
   version: string;
+  /** The serving hub computer; absent on older hubs. */
+  hubName?: string;
   publicUrl: string;
   consoleUrl: string;
   /** The default agent's dialog (what "/" opens). */

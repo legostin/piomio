@@ -3,6 +3,12 @@
 import type en from "./en";
 
 export default {
+  "version.hub": "Хаб: v{version}",
+  "version.machine": "Компьютер хаба: {name}",
+  "version.desktop": "Десктоп-приложение: v{version}",
+  "version.desktopUnknown": "Десктоп-приложение: версия недоступна",
+  "version.different": "Версии хаба и приложения различаются",
+  "version.update": "Доступно обновление: v{version}",
   "message.network.title": "Доступ к сети",
   "message.network.once": "Разрешить один раз",
   "message.network.scope": "Один раз — этот хост и порт на текущий сеанс. Соединение ждёт до 90 секунд.",

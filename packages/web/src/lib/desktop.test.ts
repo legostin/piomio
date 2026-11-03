@@ -17,6 +17,8 @@ describe("desktop app links", () => {
 
   it("knows the app window it runs in", () => {
     expect(desktopApp({})).toBeUndefined();
+    expect(desktopApp({ piomioDesktop: { scheme: "piomio", version: "0.2.25" } })?.version).toBe("0.2.25");
+    expect(desktopApp({ piomioDesktop: { scheme: "piomio", version: 25 } })?.version).toBeUndefined();
     expect(desktopApp({ piomioDesktop: { scheme: "piomio", test: false } })).toEqual({ scheme: "piomio", test: false, overlayTitleBar: false, pio: false });
     expect(desktopApp({ piomioDesktop: { scheme: "piomio-test", test: true } })).toEqual({ scheme: "piomio-test", test: true, overlayTitleBar: false, pio: false });
     expect(desktopApp({ piomioDesktop: { scheme: "piomio", pio: true } })?.pio).toBe(true);
