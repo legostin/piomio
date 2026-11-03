@@ -99,6 +99,8 @@ export interface RunnerDeps {
    * message; "done" when nothing more is to happen, else the prompt the turn gets instead of the person's words.
    */
   commands?: { run(conv: Conversation, text: string, opts: { channel?: string }): Promise<{ done: true } | { prompt: string } | undefined> };
+  /** The group chat is in the archive (groups-state.ts, set by the hub): it takes no message and starts no turn. */
+  groupArchived?: (conversationId: string) => boolean;
 }
 
 /** What the web UI passes as the channel of a typed message (not a registered channel). */
@@ -338,6 +340,8 @@ export class SessionRunner {
     if (conv.kind !== "group" && this.d.agents.isArchived(conv.agentId)) {
       throw new LocalizedError("agent.archivedChat", { name: this.agentLabel(conv.agentId) }, 409);
     }
+    // So does a group chat in the archive.
+    if (conv.kind === "group" && this.d.groupArchived?.(conv.id)) throw new LocalizedError("group.archivedChat", { title: conv.title }, 409);
     // Secrets come out first: message hooks, the stored message and the model only see vault:// references.
     const cap = this.d.secrets.capture(text, conversationId, "user");
     if (cap.stored.length || cap.withheld || cap.refused) opts.onCapture?.(cap);
@@ -792,6 +796,25 @@ export class SessionRunner {
     this.d.audit.append(t.createdBy === "user" ? "user" : `agent:${t.agentId}`, "task.create", task.id, { title: t.title, background: t.background, triggerId: t.triggerId });
     setImmediate(() => this.scheduleTasks());
     return task;
+  }
+
+  /**
+   * The group chat goes to the archive or away: its round stops and the tasks started there are cancelled. A deleted
+   * one (`close`) also closes its members' live brain sessions, whose rows go with it. `keepTurn`: a member asked for it
+   * in its turn, which ends as usual; nobody speaks after it.
+   */
+  stopGroup(conversationId: string, opts: { close?: boolean; keepTurn?: boolean } = {}): void {
+    if (opts.keepTurn) this.groupEpoch.set(conversationId, (this.groupEpoch.get(conversationId) ?? 0) + 1);
+    else this.interrupt(conversationId);
+    for (const t of this.d.store.listTasks({ status: OPEN_TASK, limit: 500 }).filter((t) => t.parentConversationId === conversationId)) this.cancelTask(t.id);
+    if (!opts.close) return;
+    const rows = this.d.store.db.prepare("select id from sessions where conversation_id = ?").all(conversationId) as Array<{ id: string }>;
+    for (const r of rows) void this.closeLive(r.id);
+  }
+
+  /** `fn` once the conversation's turns queued so far have ended (the round a member is speaking in, say). */
+  afterTurns(conversationId: string, fn: () => void): void {
+    void this.enqueue(conversationId, async () => fn());
   }
 
   /** The agent goes to sleep or leaves: the turn in its dialog stops and its unfinished tasks are cancelled. */
@@ -1949,6 +1972,8 @@ export class SessionRunner {
   }
 
   async runTurn(conv: Conversation, prompt: string, opts: TurnOpts): Promise<TurnResult> {
+    // A group chat in the archive sleeps: what comes back to it later (a task's report, an answered card) wakes nobody.
+    if (conv.kind === "group" && this.d.groupArchived?.(conv.id)) return { text: "", awaitingApproval: false };
     this.setTurning(conv.id, 1);
     try {
       return await this.turn(conv, prompt, opts);

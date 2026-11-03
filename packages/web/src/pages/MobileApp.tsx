@@ -19,6 +19,7 @@ import { LiveViewWindow } from "../components/LiveViewWindow";
 import { ChatView } from "./chat/ChatView";
 import { useReadMarker } from "./chat/AgentPage";
 import { ArchivedBar } from "./chat/AgentMenu";
+import { GroupArchivedBar } from "./chat/GroupMenu";
 import { t } from "../i18n";
 
 /** Tell the app the page is on screen (it hides its spinner), once. */
@@ -121,6 +122,7 @@ function MobileChat({ conversationId }: { conversationId: string }) {
   const members = useStore(team);
   const agentList = useStore(agents);
   const groupUnread = useSelector(groups, (list) => list?.find((g) => g.conversationId === conversationId)?.unread);
+  const archivedGroup = useSelector(groups, (list) => list?.find((g) => g.conversationId === conversationId && g.archived));
   const conv = useConversationMessages(conversationId);
   useEffect(() => {
     ensureTeam();
@@ -145,8 +147,8 @@ function MobileChat({ conversationId }: { conversationId: string }) {
     signalReady(conversationId);
   }, [conv.loaded, conversationId]);
 
-  // An archived agent's dialog: read only, with the way back to the team.
-  const archived = !!agent?.archived && meta?.kind === "main";
+  // An archived agent's dialog or group chat: read only, with the way back.
+  const archived = (!!agent?.archived && meta?.kind === "main") || !!archivedGroup;
 
   return (
     <ChatView
@@ -154,7 +156,7 @@ function MobileChat({ conversationId }: { conversationId: string }) {
       header={false}
       bottom={archived ? undefined : <SetupGate conversationId={conversationId} agentId={agentId} />}
       emptyHint={archived ? "" : agent && !isDefault && !isGroup ? t("agent.emptyHint", { name: agent.name }) : undefined}
-      dock={agent && archived ? <ArchivedBar agent={agent} /> : undefined}
+      dock={archivedGroup ? <GroupArchivedBar group={archivedGroup} /> : agent && archived ? <ArchivedBar agent={agent} /> : undefined}
     />
   );
 }

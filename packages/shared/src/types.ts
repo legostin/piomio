@@ -516,6 +516,8 @@ export interface GroupChat {
   /** While running: the member who has the floor, then those who answer after them. */
   speaking: string[];
   unread: number;
+  /** In the archive: out of the Groups list, and nobody writes there until it comes back. */
+  archived?: boolean;
 }
 
 // ---------- Tasks ----------
@@ -1387,6 +1389,8 @@ export type UiEvent =
   | { type: "conversation.updated"; data: Conversation }
   | { type: "team.updated"; data: TeamMember }
   | { type: "group.updated"; data: GroupChat }
+  /** A group chat was deleted for good, with its conversation. */
+  | { type: "group.deleted"; data: { conversationId: string } }
   | { type: "feed.updated"; data: Feed }
   | { type: "feed.deleted"; data: { id: string } }
   | { type: "feed.post"; data: FeedPost }

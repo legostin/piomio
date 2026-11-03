@@ -1,6 +1,6 @@
 ---
 title: The chat
-description: Talking to your agents: messages in a row, the live step line, stopping, buttons and cards, files, photos and voice, the hub's own /commands and group chats.
+description: Talking to your agents: messages in a row, the live step line, stopping, buttons and cards, files, photos and voice, the hub's own /commands, group chats and their archive.
 ---
 
 Every agent on your team has one long dialog with you. You write as you would to a person, and the agent answers, asks back with buttons, shows pictures and maps, and sends longer work to tasks on the side. The chat is the same in the desktop app, in a browser and in the iPhone app, which shows the same chat page. Telegram is covered in [Telegram](telegram.md), the phone in [The iPhone app](phone.md).
@@ -10,7 +10,7 @@ Every agent on your team has one long dialog with you. You write as you would to
 The sidebar has three tabs: **Agents**, **Groups** and **Channels**. A dot on a tab you are not looking at means something unread there.
 
 - **Agents**: your team. The default agent sits large on top with a star (**Default agent**); its dialog is the start page. Pinned agents come next, then the rest. Each row shows the last message, **Working…** while the agent is busy, and how many messages you have not read. **Add agent** at the end opens a short chat that makes a new one, and **Archive · N** holds the agents you put to sleep. Right-click a row, long-press it on the phone, or use **⋯** for the agent's menu. All of this is in [Agents and the team](agents.md).
-- **Groups**: chats with several agents at once (see [Group chats](#group-chats) below).
+- **Groups**: chats with several agents at once (see [Group chats](#group-chats) below). Each group has a menu too, and **Archive · N** at the end holds the groups you put away.
 - **Channels**: news feeds an agent edits for you, see [Channels](channels.md).
 
 Below the tabs are **Inbox**, **Tasks** (with a live count of active tasks) and **Settings**. Tasks and the Inbox are covered in [Tasks, schedules and the Inbox](tasks.md).
@@ -183,3 +183,13 @@ Each member reads what others said since its own last reply, up to the last 40 m
 > Group chats live in the web UI, the desktop app and the iPhone app. They are not mirrored to Telegram: only the default agent's dialog is.
 
 In an agent's own dialog `@` works too: it offers your teammates, and the agent writes to the one you name and tells you the answer.
+
+### Archive and delete
+
+Every group has a menu in the **Groups** tab: right-click it, long-press it on a touch screen, or use **⋯**. It has **Mark unread**, **Group settings**, **Archive** and **Delete**.
+
+**Archive** puts the group away. It leaves the **Groups** tab, the round in progress and the tasks started there stop, and nobody can write in it. Its messages stay. Archived groups wait behind **Archive · N** at the end of the tab; an archived group's chat shows **“Name” is in the archive** with **Restore** in place of the message box.
+
+**Delete** is for good: the chat goes with all its messages and the tasks started there. The confirmation offers **Archive instead**.
+
+The same works in the chat: ask the group's members or any agent ("put the trip group in the archive", "bring back the trip group", "delete the Scratch group"). An agent deletes a group only after you confirm on a card.

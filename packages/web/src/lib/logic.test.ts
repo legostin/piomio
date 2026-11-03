@@ -8,7 +8,7 @@ import { countdown, groupedCode, slugify } from "./format";
 import { mergeClasses } from "./classes";
 import { stickAfterScroll } from "./stick";
 import { sectionForPath } from "../components/nav";
-import { agentForPath, agentMenuActions, agentPath, companionOf, successorsOf, teamOrder } from "./team";
+import { agentForPath, agentMenuActions, agentPath, companionOf, groupMenuActions, successorsOf, teamOrder } from "./team";
 import { placeMenu } from "./menu";
 import { AVATAR_COLORS, AVATAR_SHAPES, defaultAvatar, parseAvatar } from "@piomio/shared/avatar";
 
@@ -217,6 +217,14 @@ describe("team sidebar", () => {
     expect(agentMenuActions({ isDefault: false, archived: true, unread: 0, hasMessages: true })).toEqual(["restore", "delete"]);
     // The companion comes and goes with its plugin: no pin, default, archive or delete.
     expect(agentMenuActions({ isDefault: false, companion: true, unread: 1, hasMessages: true })).toEqual(["read", "settings"]);
+  });
+
+  it("offers what fits the group chat in its menu", () => {
+    expect(groupMenuActions({ unread: 0, hasMessages: true })).toEqual(["unread", "settings", "archive", "delete"]);
+    expect(groupMenuActions({ unread: 3, hasMessages: true })).toEqual(["read", "settings", "archive", "delete"]);
+    expect(groupMenuActions({ unread: 0, hasMessages: false })).toEqual(["settings", "archive", "delete"]);
+    // In the archive it only comes back or goes for good.
+    expect(groupMenuActions({ archived: true, unread: 0, hasMessages: true })).toEqual(["restore", "delete"]);
   });
 
   it("finds who can take the default agent's place: active agents other than it", () => {

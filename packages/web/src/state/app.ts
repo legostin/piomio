@@ -97,7 +97,7 @@ export const tasks = createStore<Task[] | null>(null);
 export const agents = createStore<AgentDef[] | null>(null);
 /** Each agent's dialog and what happens there (`/api/team`, kept current by "team.updated"). */
 export const team = createStore<TeamMember[] | null>(null);
-/** Group chats and what happens there (`/api/groups`, kept current by "group.updated"). */
+/** Group chats and what happens there, the archived ones too (`/api/groups?all=1`, kept current by "group.updated"). */
 export const groups = createStore<GroupChat[] | null>(null);
 /** The hub's computer and the paired machines with what runs there (`/api/machines/activity`, "machines.activity"). */
 export const machineActivity = createStore<MachineActivity[] | null>(null);
@@ -341,6 +341,9 @@ function handleEvent(e: UiEvent): void {
     case "group.updated":
       groups.set((list) => (list ? upsertGroup(list, e.data) : list));
       break;
+    case "group.deleted":
+      forgetGroup(e.data.conversationId);
+      break;
     case "feed.updated":
     case "feed.deleted":
     case "feed.post":
@@ -510,7 +513,7 @@ export function refreshGroups(): Promise<GroupChat[] | null> {
   groupsLoading ??= (async () => {
     try {
       const askedAt = Date.now();
-      const list = withoutStaleUnread(await api.get<GroupChat[]>("/api/groups"), askedAt);
+      const list = withoutStaleUnread(await api.get<GroupChat[]>("/api/groups?all=1"), askedAt);
       groups.set(list);
       return list;
     } catch {
@@ -525,6 +528,17 @@ export function refreshGroups(): Promise<GroupChat[] | null> {
 /** Load the group chats once (several views ask at start-up; one request answers them all). */
 export function ensureGroups(): void {
   if (!groups.get() && !groupsLoading) void refreshGroups();
+}
+
+/** A group chat deleted for good: out of the lists, its messages with it. */
+export function forgetGroup(conversationId: string): void {
+  groups.set((list) => (list ? list.filter((g) => g.conversationId !== conversationId) : list));
+  conversations.set((list) => list.filter((c) => c.id !== conversationId));
+  messages.set((all) => {
+    if (!all[conversationId]) return all;
+    const { [conversationId]: _, ...rest } = all;
+    return rest;
+  });
 }
 
 /** A new group chat with these agents (the first one leads). */

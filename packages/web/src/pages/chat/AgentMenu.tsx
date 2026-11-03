@@ -46,8 +46,8 @@ const LABELS: Record<AgentMenuAction, MessageKey> = {
   delete: "agentMenu.delete",
 };
 
-/** A hub call from the menu: its error, in the hub's words, as a toast. */
-function run(work: Promise<unknown>, done?: string): Promise<boolean> {
+/** A hub call from a menu (an agent's, a group's): its error, in the hub's words, as a toast. */
+export function run(work: Promise<unknown>, done?: string): Promise<boolean> {
   return work.then(
     () => {
       if (done) toast(done, "success");
@@ -329,16 +329,21 @@ export function MoreButton({ label, open, onOpen, className }: { label: string; 
 
 /** Instead of the composer in an archived agent's dialog: nobody writes there until it comes back. */
 export function ArchivedBar({ agent }: { agent: Pick<AgentDef, "id" | "name"> }) {
+  return <RestoreBar text={t("agent.archivedBar", { name: agent.name })} onRestore={() => run(archiveAgent(agent.id, false), t("agentMenu.restored", { name: agent.name }))} />;
+}
+
+/** Instead of the composer where nobody writes until it comes back from the archive (an agent's dialog, a group chat). */
+export function RestoreBar({ text, onRestore }: { text: string; onRestore: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   const restore = async () => {
     setBusy(true);
-    await run(archiveAgent(agent.id, false), t("agentMenu.restored", { name: agent.name }));
+    await onRestore();
     setBusy(false);
   };
   return (
     <div className="flex items-center gap-3 rounded-[26px] border border-hairline bg-surface py-1.5 pr-1.5 pl-4 shadow-pop">
       <Archive className="size-4 shrink-0 text-muted" />
-      <span className="min-w-0 flex-1 truncate text-[13.5px] text-muted">{t("agent.archivedBar", { name: agent.name })}</span>
+      <span className="min-w-0 flex-1 truncate text-[13.5px] text-muted">{text}</span>
       <Button size="sm" variant="primary" loading={busy} onClick={() => void restore()} icon={<ArchiveRestore className="size-3.5" />}>
         {t("agentMenu.restore")}
       </Button>

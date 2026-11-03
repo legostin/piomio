@@ -1,8 +1,9 @@
 // The sidebar's tabs: the team (every agent with its one long-lived dialog), the group chats and the channels. A row
 // shows who said what last, whether someone is working right now and how much is unread; "Add agent" opens the
 // new-agent form, "New group" the form for a chat with several agents, "New channel" the form for a channel.
-// The default agent sits large on top, the pinned under it; every agent has a menu (right click, a long press, "⋯"),
-// and the archived ones wait behind "Archive · N" at the end. The always-on companion (Pio) flies beside the default agent.
+// The default agent sits large on top, the pinned under it; every agent and group chat has a menu (right click, a long
+// press, "⋯"), and the archived ones wait behind "Archive · N" at the end of their tab. The always-on companion (Pio)
+// flies beside the default agent.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -24,16 +25,17 @@ import { cx, IconButton, Segmented, Spinner } from "../../components/ui";
 import { t } from "../../i18n";
 import { GroupDialog } from "./GroupDialog";
 import { MoreButton, useAgentMenu, type AgentMenuApi } from "./AgentMenu";
+import { useGroupMenu, type GroupMenuApi } from "./GroupMenu";
 import { ChannelList } from "../channels/ChannelList";
 
-/** Right click, a long press and the menu key open the agent's menu; iOS shows no link preview of its own. */
-function useMenuTriggers(agentId: string, menu: AgentMenuApi) {
-  const press = useLongPress((anchor) => menu.open(agentId, anchor));
+/** Right click, a long press and the menu key open the agent's (or group's) menu; iOS shows no link preview of its own. */
+function useMenuTriggers(id: string, menu: Pick<AgentMenuApi | GroupMenuApi, "open">) {
+  const press = useLongPress((anchor) => menu.open(id, anchor));
   return {
     ...press,
     onContextMenu: (e: React.MouseEvent<HTMLElement>) => {
       e.preventDefault();
-      menu.open(agentId, menuAnchorFor(e));
+      menu.open(id, menuAnchorFor(e));
     },
   };
 }
@@ -206,6 +208,18 @@ function ArchiveRow({ n, onOpen }: { n: number; onOpen: () => void }) {
   );
 }
 
+/** The archive's own header in the sidebar, with the way back. */
+function ArchiveHeader({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="flex items-center gap-1 pb-1">
+      <IconButton label={t("common.back")} onClick={onBack} className="size-8">
+        <ArrowLeft className="size-4" />
+      </IconButton>
+      <span className="text-[13.5px] font-semibold">{t("team.archive")}</span>
+    </div>
+  );
+}
+
 /** A row on the canvas; the open one is a sheet of paper lifted off it. */
 function rowClass(active: boolean): string {
   return cx(
@@ -247,7 +261,7 @@ function RowText({ title, time, unread, running, preview, pinned, menuOpen }: { 
   );
 }
 
-function GroupRow({ group, byId, active, onNavigate }: { group: GroupChat; byId: Map<string, AgentDef>; active: boolean; onNavigate?: () => void }) {
+function GroupRow({ group, byId, active, menu, onNavigate }: { group: GroupChat; byId: Map<string, AgentDef>; active: boolean; menu: GroupMenuApi; onNavigate?: () => void }) {
   const members = group.members.map((id) => byId.get(id) ?? { id, name: id, avatar: undefined });
   const name = (id: string | undefined) => (id ? (byId.get(id)?.name ?? id) : "");
   const last = group.lastMessage;
@@ -259,17 +273,35 @@ function GroupRow({ group, byId, active, onNavigate }: { group: GroupChat; byId:
         ? t("team.said", { name: name(last.agentId), text: last.text })
         : last.text
     : members.map((m) => m.name).join(", ");
+  const triggers = useMenuTriggers(group.conversationId, menu);
+  const menuOpen = menu.openFor === group.conversationId;
   return (
-    <Link href={groupPath(group.conversationId)} onClick={onNavigate} aria-current={active ? "page" : undefined} className={rowClass(active)}>
-      <AvatarPair agents={members} size={38} running={group.running} ring={active ? "bg-surface ring-surface" : "bg-canvas ring-canvas"} />
-      <RowText
-        title={group.title}
-        time={last ? shortTime(last.createdAt) : undefined}
-        unread={group.unread}
-        running={group.running ? (speaker ? t("group.speaking", { name: name(speaker) }) : t("team.working")) : undefined}
-        preview={preview}
-      />
-    </Link>
+    <div className="group/agent relative">
+      <Link
+        href={groupPath(group.conversationId)}
+        onClick={onNavigate}
+        aria-current={active ? "page" : undefined}
+        className={cx(rowClass(active), NO_CALLOUT, !active && menuOpen && "bg-surface/55")}
+        {...triggers}
+      >
+        <AvatarPair
+          agents={members}
+          size={38}
+          running={group.running}
+          ring={active ? "bg-surface ring-surface" : "bg-canvas ring-canvas"}
+          className={group.archived ? "opacity-75 saturate-50" : undefined}
+        />
+        <RowText
+          title={group.title}
+          time={last ? shortTime(last.createdAt) : undefined}
+          unread={group.unread}
+          running={group.running ? (speaker ? t("group.speaking", { name: name(speaker) }) : t("team.working")) : undefined}
+          preview={preview}
+          menuOpen={menuOpen}
+        />
+      </Link>
+      <MoreButton label={t("groupMenu.open", { title: group.title })} open={menuOpen} onOpen={(anchor) => menu.toggle(group.conversationId, anchor)} className="top-0.5 right-2" />
+    </div>
   );
 }
 
@@ -328,9 +360,11 @@ export function TeamList({
   const picked = useStore(sidebarTab);
   const s = useStore(session);
   const [creating, setCreating] = useState(false);
-  // The archived agents, opened from "Archive · N" in place of the team.
+  // The archived agents, opened from "Archive · N" in place of the team; the archived groups, the same in their tab.
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [groupArchiveOpen, setGroupArchiveOpen] = useState(false);
   const menu = useAgentMenu({ onNavigate });
+  const groupMenu = useGroupMenu();
   useEffect(() => {
     ensureAgents();
     ensureTeam();
@@ -338,16 +372,20 @@ export function TeamList({
     ensureFeeds();
   }, []);
   const byId = useMemo(() => new Map((agentList ?? []).map((a) => [a.id, a])), [agentList]);
-  const groupRows = useMemo(() => groupOrder(groupList ?? []), [groupList]);
+  const groupRows = useMemo(() => groupOrder((groupList ?? []).filter((g) => !g.archived)), [groupList]);
+  const archivedGroups = useMemo(() => groupOrder((groupList ?? []).filter((g) => g.archived)), [groupList]);
   const archived = useMemo(() => (agentList ?? []).filter((a) => a.archived).sort((a, b) => a.name.localeCompare(b.name)), [agentList]);
   // A group needs two agents: with one there is nobody to invite yet.
   const canGroup = (agentList ?? []).filter((a) => !a.archived).length >= 2;
   const openGroup = !!activeConversationId && groupRows.some((g) => g.conversationId === activeConversationId);
-  // Opening a channel or a group (a link, the address bar) shows its tab once; the user's own pick wins after that.
+  const openArchivedGroup = !!activeConversationId && archivedGroups.some((g) => g.conversationId === activeConversationId);
+  // Opening a channel or a group (a link, the address bar) shows its tab once (an archived group, in the archive); the
+  // user's own pick wins after that.
   useEffect(() => {
     if (activeFeedId) setSidebarTab("channels");
-    else if (openGroup) setSidebarTab("groups");
-  }, [activeFeedId, openGroup]);
+    else if (openGroup || openArchivedGroup) setSidebarTab("groups");
+    if (openArchivedGroup) setGroupArchiveOpen(true);
+  }, [activeFeedId, openGroup, openArchivedGroup]);
   const tab = picked;
 
   const entries = useMemo(() => {
@@ -367,6 +405,9 @@ export function TeamList({
   useEffect(() => {
     if (archiveOpen && agentList && !archived.length) setArchiveOpen(false);
   }, [archiveOpen, agentList, archived.length]);
+  useEffect(() => {
+    if (groupArchiveOpen && groupList && !archivedGroups.length) setGroupArchiveOpen(false);
+  }, [groupArchiveOpen, groupList, archivedGroups.length]);
   const unread: Record<SidebarTab, number> = {
     agents: (members ?? []).reduce((n, m) => n + (m.unread ?? 0), 0),
     groups: groupRows.reduce((n, g) => n + g.unread, 0),
@@ -418,24 +459,29 @@ export function TeamList({
         )}
         {tab === "agents" && archiveOpen && (
           <>
-            <div className="flex items-center gap-1 pb-1">
-              <IconButton label={t("common.back")} onClick={() => setArchiveOpen(false)} className="size-8">
-                <ArrowLeft className="size-4" />
-              </IconButton>
-              <span className="text-[13.5px] font-semibold">{t("team.archive")}</span>
-            </div>
+            <ArchiveHeader onBack={() => setArchiveOpen(false)} />
             {archived.map((agent) => (
               <MemberRow key={agent.id} agent={agent} href={agentPath(agent.id, undefined)} active={agent.id === activeAgentId} menu={menu} onNavigate={onNavigate} />
             ))}
             <p className="px-3 pt-2 text-xs leading-relaxed text-muted">{t("team.archiveHint")}</p>
           </>
         )}
-        {tab === "groups" && (
+        {tab === "groups" && !groupArchiveOpen && (
           <>
             {groupRows.map((g) => (
-              <GroupRow key={g.conversationId} group={g} byId={byId} active={g.conversationId === activeConversationId} onNavigate={onNavigate} />
+              <GroupRow key={g.conversationId} group={g} byId={byId} active={g.conversationId === activeConversationId} menu={groupMenu} onNavigate={onNavigate} />
             ))}
             {canGroup ? addRow(t("team.newGroup"), <UsersRound className="size-4" />, () => setCreating(true)) : agentList && <p className="px-3 pt-2 text-xs leading-relaxed text-muted">{t("team.groupsNeedTwo")}</p>}
+            {archivedGroups.length > 0 && <ArchiveRow n={archivedGroups.length} onOpen={() => setGroupArchiveOpen(true)} />}
+          </>
+        )}
+        {tab === "groups" && groupArchiveOpen && (
+          <>
+            <ArchiveHeader onBack={() => setGroupArchiveOpen(false)} />
+            {archivedGroups.map((g) => (
+              <GroupRow key={g.conversationId} group={g} byId={byId} active={g.conversationId === activeConversationId} menu={groupMenu} onNavigate={onNavigate} />
+            ))}
+            <p className="px-3 pt-2 text-xs leading-relaxed text-muted">{t("team.groupsArchiveHint")}</p>
           </>
         )}
         {tab === "channels" && <ChannelList activeId={activeFeedId} onNavigate={onNavigate} />}
@@ -443,6 +489,7 @@ export function TeamList({
       {/* Creating one opens it; the drawer on phones closes with the navigation. */}
       <GroupDialog open={creating} onClose={() => setCreating(false)} />
       {menu.element}
+      {groupMenu.element}
     </div>
   );
 }

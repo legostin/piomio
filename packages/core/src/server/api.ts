@@ -211,7 +211,17 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
 
   // ----- team: every agent with its long-lived dialog (created on first listing), and the group chats -----
   api.get("/api/team", async () => hub.team.list());
-  api.get("/api/groups", async () => hub.team.listGroups());
+  // The group chats; with ?all=1 the archived ones too (`archived: true`): the web's archive opens from there.
+  api.get("/api/groups", async (req) => hub.team.listGroups({ all: (req.query as { all?: string }).all === "1" }));
+  // The group's menu in the list (web, desktop): into the archive and back, or gone for good with its conversation.
+  api.post("/api/groups/:id/archive", async (req) => {
+    const archived = (req.body as { archived?: unknown } | undefined)?.archived !== false;
+    return hub.archiveGroup((req.params as { id: string }).id, archived, "user");
+  });
+  api.delete("/api/groups/:id", async (req) => {
+    hub.deleteGroup((req.params as { id: string }).id, "user");
+    return { ok: true };
+  });
 
   // ----- setup chats: "New channel", "Add agent" (setup-chats.ts) -----
   api.post("/api/setup-chats", async (req) => {

@@ -218,6 +218,37 @@ export class Store {
     return ids;
   }
 
+  /**
+   * Everything a deleted group chat leaves: its messages, sessions and approvals, the tasks started there (and the tasks
+   * those started) with their threads, and the notifications of all of them. Returns the conversations removed.
+   */
+  deleteGroupData(conversationId: string): string[] {
+    const ids = [conversationId];
+    const tasks: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      for (const r of this.db.prepare("select id, conversation_id from tasks where parent_conversation_id = ?").all(ids[i]) as Array<{ id: string; conversation_id: string }>) {
+        tasks.push(r.id);
+        if (!ids.includes(r.conversation_id)) ids.push(r.conversation_id);
+      }
+    }
+    this.db.exec("begin");
+    try {
+      for (const id of ids) {
+        for (const table of ["messages", "sessions", "approvals", "notifications"]) this.db.prepare(`delete from ${table} where conversation_id = ?`).run(id);
+        this.db.prepare("delete from conversations where id = ?").run(id);
+      }
+      for (const id of tasks) {
+        this.db.prepare("delete from notifications where task_id = ?").run(id);
+        this.db.prepare("delete from tasks where id = ?").run(id);
+      }
+      this.db.exec("commit");
+    } catch (e) {
+      this.db.exec("rollback");
+      throw e;
+    }
+    return ids;
+  }
+
   /** Finished messages from the agent or the system after the user's read marker. */
   unreadCount(id: string): number {
     const r = this.db

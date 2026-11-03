@@ -97,6 +97,17 @@ export function chatForPath(path: string): string | undefined {
   }
 }
 
+/** What a group chat's menu offers (right click, a long press, "⋯"), in the order shown. */
+export type GroupMenuAction = "unread" | "read" | "settings" | "archive" | "restore" | "delete";
+
+export function groupMenuActions(o: { archived?: boolean; unread: number; hasMessages: boolean }): GroupMenuAction[] {
+  if (o.archived) return ["restore", "delete"];
+  const out: GroupMenuAction[] = [];
+  if (o.unread > 0) out.push("read");
+  else if (o.hasMessages) out.push("unread");
+  return [...out, "settings", "archive", "delete"];
+}
+
 /** The latest activity first. */
 export function groupOrder<G extends { lastActivityAt: string; title: string }>(groups: G[]): G[] {
   return groups.slice().sort((a, b) => (a.lastActivityAt !== b.lastActivityAt ? (a.lastActivityAt < b.lastActivityAt ? 1 : -1) : a.title.localeCompare(b.title)));

@@ -74,6 +74,8 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
   // ----- the team and its dialogs -----
   r.route("GET", "/api/team", () => hub.team());
   r.route("GET", "/api/groups", () => hub.groups());
+  r.route("POST", "/api/groups/:id/archive", refuse);
+  r.route("DELETE", "/api/groups/:id", refuse);
   r.route("GET", "/api/agents", () => w().agents);
   r.route("GET", "/api/agents/:id", ({ params }) => w().agents.find((a) => a.id === params.id) ?? refuse());
   // How an agent thinks (the header's picker): its brains first, every kind of work on "auto".

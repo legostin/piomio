@@ -45,6 +45,7 @@ export class Team {
   private bus: EventBus;
   private isRunning: (conversationId: string) => boolean;
   private floor: (conversationId: string) => string[];
+  private archived: (conversationId: string) => boolean;
   private pending = new Set<string>();
   /** The always-on companion's live state, by agent (set by its plugin; never stored), and when it lapses. */
   private presences = new Map<string, { presence: AgentPresence; lapse: ReturnType<typeof setTimeout> }>();
@@ -58,6 +59,8 @@ export class Team {
     isRunning: (conversationId: string) => boolean;
     /** A group chat's member answering now, then the ones waiting for their turn. */
     floor?: (conversationId: string) => string[];
+    /** The group chat is in the archive (groups-state.ts). */
+    archived?: (conversationId: string) => boolean;
   }) {
     this.store = d.store;
     this.agents = d.agents;
@@ -65,6 +68,7 @@ export class Team {
     this.bus = d.bus;
     this.isRunning = d.isRunning;
     this.floor = d.floor ?? (() => []);
+    this.archived = d.archived ?? (() => false);
     d.bus.on("message.created", (m: Message) => this.changed(m.conversationId));
     d.bus.on("message.updated", (m: Message) => {
       if (m.status !== "streaming") this.changed(m.conversationId);
@@ -92,9 +96,12 @@ export class Team {
     this.changed(conversationId);
   }
 
-  /** Every group chat, the latest activity first. */
-  listGroups(): GroupChat[] {
-    return this.store.listGroups().map((c) => this.groupOf(c));
+  /** The group chats, the latest activity first: the archived ones (marked `archived`) only with `all`. */
+  listGroups(opts: { all?: boolean } = {}): GroupChat[] {
+    return this.store
+      .listGroups()
+      .filter((c) => opts.all || !this.archived(c.id))
+      .map((c) => this.groupOf(c));
   }
 
   /**
@@ -145,6 +152,7 @@ export class Team {
       running,
       speaking: running ? this.floor(conv.id) : [],
       unread: this.store.unreadCount(conv.id),
+      ...(this.archived(conv.id) ? { archived: true } : {}),
     };
   }
 

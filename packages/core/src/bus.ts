@@ -12,6 +12,8 @@ export type BusEvents = {
   "conversation.activity": { conversationId: string; running: boolean };
   "team.updated": TeamMember;
   "group.updated": GroupChat;
+  /** A group chat was deleted for good, with its conversation. */
+  "group.deleted": { conversationId: string };
   /** A channel changed (settings, a run started or ended, new posts, read) or was deleted (feeds.ts). */
   "feed.updated": Feed;
   "feed.deleted": { id: string };
@@ -119,6 +121,7 @@ export function toUiEvent(name: string, payload: any): UiEvent | null {
     case "conversation.updated":
     case "team.updated":
     case "group.updated":
+    case "group.deleted":
     case "feed.updated":
     case "feed.deleted":
     case "feed.post":

@@ -4,7 +4,7 @@ import { wireNetworkApprovals } from "./network-approvals.ts";
 import { networkPattern } from "./egress.ts";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, Invite, MachineInfo, TaskStatus, ThinkingView } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, TaskStatus, ThinkingView } from "@piomio/shared";
 import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
@@ -20,6 +20,7 @@ import { HookRegistry } from "./hooks.ts";
 import { ToolGateway } from "./tools/gateway.ts";
 import { AgentRegistry, agentFromMarkdown, agentMoved, agentName, brainMoved } from "./agents.ts";
 import { AgentsStateStore } from "./agents-state.ts";
+import { GroupsStateStore } from "./groups-state.ts";
 import { SkillHolders, SkillIndex } from "./skills.ts";
 import { PluginHost } from "./plugins/host.ts";
 import { EgressProxy } from "./egress.ts";
@@ -110,6 +111,8 @@ export class Hub {
   agents: AgentRegistry;
   /** Pinned, archived and deleted built-in agents (agents-state.ts). */
   agentsState: AgentsStateStore;
+  /** Group chats in the archive (groups-state.ts). */
+  groupsState: GroupsStateStore;
   skills = new SkillIndex();
   egress = new EgressProxy();
   brains = new BrainRegistry();
@@ -201,6 +204,7 @@ export class Hub {
     this.agents = new AgentRegistry(config.builtinAgentsDir, join(config.dataDir, "agents"));
     this.agentsState = new AgentsStateStore(this.settings);
     this.agents.state = () => this.agentsState.get();
+    this.groupsState = new GroupsStateStore(this.settings);
     this.channels = new ChannelRegistry(this.vault.redactor);
     this.notifier = new Notifier({
       db: this.db,
@@ -328,6 +332,7 @@ export class Hub {
       claudePluginDirs: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
       machineName: (id) => this.machines.name(id) ?? this.replicaName(id),
       machines: () => this.machines.list(),
+      groupArchived: (id) => this.groupsState.isArchived(id),
       here: () => this.here(),
       gpus: () => this.gpus,
       // The kinds of brain that can be here at all: the brain plugins' and the computers' (a missing one may come back).
@@ -382,6 +387,7 @@ export class Hub {
       bus: this.bus,
       isRunning: (id) => this.runner.isRunning(id),
       floor: (id) => this.runner.floor(id),
+      archived: (id) => this.groupsState.isArchived(id),
     });
     this.setupChats = new SetupChats({ store: this.store, bus: this.bus, settings: this.settings });
     this.feeds = new Feeds({
@@ -500,7 +506,15 @@ export class Hub {
       save: (a, actor) => this.saveAgent(a, actor),
       attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
     });
-    registerGroupTools({ registry: this.tools, store: this.store, agents: this.agents });
+    registerGroupTools({
+      registry: this.tools,
+      store: this.store,
+      agents: this.agents,
+      archive: (id, archived, opts) => this.archiveGroup(id, archived, "agent", opts),
+      remove: (id, opts) => this.deleteGroup(id, "agent", opts),
+      approvals: this.approvals,
+      approvalWaitMs: () => Math.max(120_000, this.settings.get().approvalInlineWaitSec * 1000),
+    });
     registerNativePermission({
       registry: this.tools,
       approvals: this.approvals,
@@ -892,6 +906,49 @@ export class Hub {
     this.bus.emit("agents.updated", {});
     this.bus.emit("skills.updated", {});
     return { defaultAgent };
+  }
+
+  /** A group chat by its conversation id. */
+  private group(id: string) {
+    const conv = this.store.getConversation(id);
+    if (conv?.kind !== "group") throw new LocalizedError("group.notFound", undefined, 404);
+    return conv;
+  }
+
+  /**
+   * The archive: the group chat sleeps (groups-state.ts). Out of the Groups list, its round and the tasks started there
+   * stop and nobody writes in it; its conversation stays, and it comes back as it was.
+   */
+  archiveGroup(id: string, archived: boolean, actor: string, opts: { fromTurn?: boolean } = {}): GroupChat {
+    const conv = this.group(id);
+    this.groupsState.set(id, archived);
+    if (archived) this.runner.stopGroup(id, { keepTurn: opts.fromTurn });
+    this.audit.append(actor, archived ? "group.archive" : "group.restore", id, { title: conv.title });
+    const g = this.team.groupOf(conv);
+    this.bus.emit("group.updated", g);
+    return g;
+  }
+
+  /**
+   * The group chat goes for good with its conversation: messages, the tasks started there with their threads,
+   * notifications. Asked for by a member in its turn there (`fromTurn`), it goes once that turn has ended.
+   */
+  deleteGroup(id: string, actor: string, opts: { fromTurn?: boolean } = {}): void {
+    const conv = this.group(id);
+    if (opts.fromTurn) {
+      this.runner.stopGroup(id, { keepTurn: true });
+      this.runner.afterTurns(id, () => {
+        if (this.store.getConversation(id)?.kind === "group") this.deleteGroup(id, actor);
+      });
+      return;
+    }
+    const unread = this.notifier.unreadCount();
+    this.runner.stopGroup(id, { close: true });
+    this.store.deleteGroupData(id);
+    this.groupsState.set(id, false);
+    this.audit.append(actor, "group.delete", id, { title: conv.title });
+    this.bus.emit("group.deleted", { conversationId: id });
+    this.notifier.inboxChanged(unread);
   }
 
   /** Skills, commands, agents and MCP servers come from enabled plugin layouts + data dir. */

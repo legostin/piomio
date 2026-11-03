@@ -1,24 +1,32 @@
-// Group chats from the chat itself: any agent makes a group or changes one (its name, who takes part, who leads) when
-// the person asks in their own words. The same as the group form in the UI, which stays as the other way.
-import type { Conversation, ToolDescriptor, ToolResult } from "@piomio/shared";
+// Group chats from the chat itself: any agent makes a group or changes one (its name, who takes part, who leads), puts
+// it in the archive or brings it back, or deletes it, when the person asks in their own words. The same as the group
+// form and the group's menu in the UI, which stay as the other way. A delete always waits for the person's yes on a card.
+import type { Conversation, GroupChat, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { GROUP_MAX_MEMBERS, GROUP_MIN_MEMBERS } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
 import type { Store } from "../store.ts";
 import type { AgentRegistry } from "../agents.ts";
+import type { ApprovalService } from "../approvals.ts";
 import { agentName } from "../agents.ts";
-import { hubLocale } from "../i18n.ts";
+import { hubLocale, t } from "../i18n.ts";
 
 export interface GroupToolDeps {
   registry: ToolRegistry;
   store: Store;
   agents: AgentRegistry;
+  /** Hub.archiveGroup / deleteGroup, as the agent; `fromTurn` when asked for in the group itself. */
+  archive: (id: string, archived: boolean, opts: { fromTurn?: boolean }) => GroupChat;
+  remove: (id: string, opts: { fromTurn?: boolean }) => void;
+  approvals: ApprovalService;
+  /** How long a tool waits for the person's answer on its card. */
+  approvalWaitMs: () => number;
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 const title = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 120) : "");
 
 export function registerGroupTools(d: GroupToolDeps): void {
-  const reg = (spec: Omit<ToolDescriptor, "owner">, fn: (input: any, ctx: any) => ToolResult) =>
+  const reg = (spec: Omit<ToolDescriptor, "owner">, fn: (input: any, ctx: ToolCallContext) => ToolResult | Promise<ToolResult>) =>
     d.registry.register({ ...spec, owner: "core" }, async (input, ctx) => fn(input ?? {}, ctx));
   const name = (id: string) => {
     const a = d.agents.get(id);
@@ -122,6 +130,78 @@ export function registerGroupTools(d: GroupToolDeps): void {
       if (!changed) return text(`Nothing to change: ${describe(g)}.`);
       const c = d.store.updateConversation(g.id, { ...(renamed ? { title: renamed } : {}), members }) ?? g;
       return text(`Updated the group ${describe(c)}.`);
+    },
+  );
+  reg(
+    {
+      name: "group_archive",
+      description:
+        "Put a group chat in the archive when the user asks (archived: true), or bring it back (archived: false). In the archive it is out of their Groups list " +
+        "(it waits under Archive at the end) and nobody writes there; its messages stay. Without `group` it is the group this chat is.",
+      effect: "local-write",
+      askWhenTainted: true,
+      inputSchema: {
+        type: "object",
+        properties: {
+          group: { type: "string", description: "The group's id or name (default: this chat)" },
+          archived: { type: "boolean" },
+        },
+        required: ["archived"],
+      },
+    },
+    (i, ctx) => {
+      const g = which(i.group, ctx);
+      if (typeof g === "string") return text(g, true);
+      const archived = i.archived !== false;
+      d.archive(g.id, archived, { fromTurn: g.id === ctx.conversationId });
+      return text(archived ? `“${g.title}” (${g.id}) is in the archive; nobody writes there until it comes back.` : `“${g.title}” (${g.id}) is back in the Groups list.`);
+    },
+  );
+
+  reg(
+    {
+      name: "group_delete",
+      description:
+        "Delete a group chat for good when the user asks: its messages and the tasks started there go with it (to keep them, group_archive instead). " +
+        "The user always confirms on a card, whatever their rules say. Without `group` it is the group this chat is: then it goes once your reply ends.",
+      effect: "local-write",
+      inputSchema: {
+        type: "object",
+        properties: { group: { type: "string", description: "The group's id or name (default: this chat)" } },
+      },
+    },
+    async (i, ctx) => {
+      if (ctx.background) return text("Deleting a group chat needs the user's yes in a chat with them, not background work.", true);
+      const g = which(i.group, ctx);
+      if (typeof g === "string") return text(g, true);
+      // Never on a rule or the person's words in passing: a deleted chat does not come back, so they confirm each time.
+      if (!ctx.approved) {
+        const approval = d.approvals.create({
+          sessionId: ctx.sessionId,
+          conversationId: ctx.conversationId,
+          taskId: ctx.taskId,
+          agentId: ctx.agentId,
+          tool: "group_delete",
+          input: i,
+          summary: t("group.deleteCard", { title: g.title }),
+          effect: "external",
+          tainted: ctx.tainted,
+        });
+        const outcome = await d.approvals.wait(approval.id, d.approvalWaitMs());
+        if (outcome === "timeout") {
+          try {
+            d.approvals.resolve(approval.id, "deny", { via: "timeout" });
+          } catch {
+            /* already answered */
+          }
+          return text("The user did not answer the card in time: nothing was deleted.", true);
+        }
+        if (outcome !== "approved") return text("The user declined: nothing was deleted.", true);
+        d.approvals.markExecuted(approval.id, text(`Group chat ${g.id} deleted.`));
+      }
+      const here = g.id === ctx.conversationId;
+      d.remove(g.id, { fromTurn: here });
+      return text(here ? `“${g.title}” goes for good once this reply ends.` : `Group chat “${g.title}” (${g.id}) deleted.`);
     },
   );
 }

@@ -55,8 +55,8 @@ const SECRET_KEY = /key|token|secret|password/i;
 const CARDS = new Set(["network_request", "secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
 const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete", "machine_commands"]);
-/** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. */
-export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n));
+/** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. group-tools.ts's group_delete too. */
+export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...[...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n), "group_delete"]);
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
 export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign", "hub_network_request"];
 
