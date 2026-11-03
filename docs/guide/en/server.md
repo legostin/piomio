@@ -216,7 +216,7 @@ set -a; . ~/.config/piomio/env; set +a; piomio devices pair
 
 ## Updates
 
-The hub checks GitHub for a new release every six hours. When there is one, the server's row in **Machines** shows **Update**, and the assistant offers it in the chat at most once a day. You can also just say "update Piomio".
+The hub checks GitHub for a new release every hour, and right away when you open Piomio or come back to it (at most every ten minutes). When there is one, the server's row in **Machines** shows **Update**, and the assistant offers it in the chat at most once a day. You can also just say "update Piomio".
 
 On the button the hub downloads the release, checks its signature, makes sure the new version starts, keeps a copy of the database and restarts. It is back in about a minute, and the assistant tells you what changed. If the new version doesn't come up three times in a row, the server goes back to the previous version with the database as it was before, and the assistant says so in the chat.
 

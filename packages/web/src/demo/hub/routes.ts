@@ -121,6 +121,7 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
     return { ok: true };
   });
   r.route("POST", "/api/conversations/:id/warm", () => ({ ok: true }));
+  r.route("POST", "/api/updates/check", () => ({ ok: true }));
   r.route("POST", "/api/conversations/:id/interrupt", () => ({ interrupted: false }));
   r.route("POST", "/api/messages/:id/choose", ({ params, body }) => {
     const m = hub.findMessage(params.id);

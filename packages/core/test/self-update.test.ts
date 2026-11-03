@@ -173,6 +173,23 @@ describe("the hub's own update", () => {
     expect(u.offerFor("local")).toEqual({ update: "0.3.0" });
   });
 
+  it("looks again when the person opens the app, but not more than once in ten minutes", async () => {
+    const names = [archiveName("0.3.0", "x64"), `${archiveName("0.3.0", "x64")}.sig`];
+    let now = Date.parse("2026-11-03T12:00:00Z");
+    let looks = 0;
+    const answer = jsonFetch(release("v0.3.0", names));
+    const { u } = updates(root("0.2.4"), { now: () => now, fetch: (async (...a: Parameters<typeof fetch>) => (looks++, answer(...a))) as typeof fetch });
+    await u.check();
+    expect(looks).toBe(1);
+    u.checkSoon();
+    now += 9 * 60_000;
+    u.checkSoon();
+    expect(looks).toBe(1);
+    now += 2 * 60_000;
+    u.checkSoon();
+    expect(looks).toBe(2);
+  });
+
   it("does not offer again a version the launcher had to go back from, and drops its tree", async () => {
     const r = root("0.2.4", "0.3.0");
     const names = [archiveName("0.3.0", "x64"), `${archiveName("0.3.0", "x64")}.sig`];

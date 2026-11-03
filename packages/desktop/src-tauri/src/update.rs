@@ -1,6 +1,6 @@
 //! Updates from the project's GitHub releases (tauri-plugin-updater): `latest.json` of the latest release, its files
 //! signed with the project's key (the public half is in tauri.conf.json, so nothing else installs). Checked a minute
-//! after start and then every six hours, downloaded in the background; installed only when the person picks
+//! after start and then every hour, downloaded in the background; installed only when the person picks
 //! "Install update" in the menu or presses Update in the hub (`--install-update`, install_now). The hub stops cleanly
 //! first; the new version starts it again.
 //! PIOMIO_UPDATE_URL points the check at another latest.json (a local test, the test build over plain http): the
@@ -15,7 +15,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use crate::app::{self, AppState};
 
 const FIRST_CHECK: Duration = Duration::from_secs(60);
-const EVERY: Duration = Duration::from_secs(6 * 3600);
+const EVERY: Duration = Duration::from_secs(3600);
 
 /// What a check came to.
 enum Checked {

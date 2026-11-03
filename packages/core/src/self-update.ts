@@ -35,7 +35,9 @@ export const UPDATE_PUBKEY =
 export const TRIAL_STARTS = 3;
 /** A new version that has not come up by then exits, and its start counts as failed. */
 export const TRIAL_MAX_MS = 3 * 60_000;
-const CHECK_EVERY_MS = 6 * 3600_000;
+const CHECK_EVERY_MS = 3600_000;
+/** The person opened the app or brought it to the front (checkSoon): a look at GitHub, at most this often. */
+const LOOK_GAP_MS = 10 * 60_000;
 /** Releases come often: the default agent offers one at most once a day (the button is there all along). */
 const OFFER_EVERY_MS = 24 * 3600_000;
 /** The desktop app has not restarted with the new version by then: the button comes back. */
@@ -254,6 +256,7 @@ export class HubUpdates {
   private desktopTimer?: NodeJS.Timeout;
   private machines = new Map<string, NodeJS.Timeout>();
   private timer?: NodeJS.Timeout;
+  private lastLook = 0;
 
   constructor(d: HubUpdatesDeps) {
     this.d = d;
@@ -274,7 +277,7 @@ export class HubUpdates {
     return !!this.kind;
   }
 
-  /** Checks now and every day. */
+  /** Checks now and every hour. */
   start(): void {
     if (!this.enabled || this.timer) return;
     void this.check().catch((e) => console.log(`[piomio] update check: ${e?.message ?? e}`));
@@ -297,6 +300,7 @@ export class HubUpdates {
   async check(): Promise<Offer | { version: string } | undefined> {
     const kind = this.kind;
     if (!kind) return undefined;
+    this.lastLook = (this.d.now ?? Date.now)();
     const { releasesRepo, version, updateUrl } = this.d.config;
     const latest =
       kind === "server"
@@ -323,6 +327,12 @@ export class HubUpdates {
       );
     }
     return offer;
+  }
+
+  /** The person opened the app or brought it to the front: a look now, so Update shows soon after a release. */
+  checkSoon(): void {
+    if (!this.enabled || (this.d.now ?? Date.now)() - this.lastLook < LOOK_GAP_MS) return;
+    void this.check().catch((e) => console.log(`[piomio] update check: ${e?.message ?? e}`));
   }
 
   /** The launcher went back from `version` (StartState.rolledBack): its tree goes, and it is not offered again. */

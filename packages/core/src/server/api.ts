@@ -522,6 +522,11 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   // One link connects a computer or a phone (invites.ts); a phone's chat may invite a computer too.
   api.post("/api/invites", async () => hub.createInvite());
   api.delete("/api/invites/:code", async (req) => ({ ok: hub.invites.revoke((req.params as { code: string }).code) }));
+  // The person opened the app or came back to it: the hub looks for a release (at most every ten minutes).
+  api.post("/api/updates/check", async () => {
+    hub.updates.checkSoon();
+    return { ok: true };
+  });
   // "Update" on a machine's row: this hub's own update on a server install ("local"), or a machine's daemon.
   api.post("/api/machines/:id/update", async (req) => {
     try {

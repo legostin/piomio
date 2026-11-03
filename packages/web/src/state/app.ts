@@ -237,8 +237,17 @@ export async function logout(): Promise<void> {
 
 // ---------- realtime ----------
 
+/** The app opened or came to the front: the hub looks for a release, so Update shows soon after one is out. */
+function lookForUpdates(): void {
+  if (document.visibilityState === "hidden" || mobileMode) return;
+  void api.post("/api/updates/check").catch(() => {});
+}
+
 function startSocket(): void {
   if (socket) return;
+  lookForUpdates();
+  window.addEventListener("focus", lookForUpdates);
+  document.addEventListener("visibilitychange", lookForUpdates);
   socket = new HubSocket({
     onEvent: handleEvent,
     onState: (s) => connection.set(s),
@@ -282,6 +291,8 @@ export function hubIsBack(): void {
 }
 
 function stopSocket(): void {
+  window.removeEventListener("focus", lookForUpdates);
+  document.removeEventListener("visibilitychange", lookForUpdates);
   socket?.stop();
   socket = undefined;
   connection.set("connecting");
