@@ -1,7 +1,7 @@
 // The mic looks after itself: it notices when the browser's capture ends, is muted or goes quiet (the computer slept, a
 // headset came or went), wakes or reopens it, and tells the window when it is deaf, so the face never claims to listen
 // while nothing is heard.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CHECK_MS, Mic, REOPEN_MS, SILENT_MS, type Capture, type CaptureHandlers, type MicTrouble } from "../ui/src/voice/mic.ts";
 
 const RATE = 16_000;
@@ -19,9 +19,15 @@ function rig(opts: { muted?: boolean } = {}) {
   let t = 1_000_000;
   const health: Array<MicTrouble | "ok"> = [];
   const phrases: Uint8Array[] = [];
+  const phrase = vi.fn((wav: Uint8Array) => { phrases.push(wav); });
+  const hearing = vi.fn();
+  const interrupt = vi.fn();
+  const isEcho = vi.fn(() => false);
   const mic = new Mic({
-    onPhrase: (wav) => phrases.push(wav),
-    onHearing: () => {},
+    onPhrase: phrase,
+    onHearing: hearing,
+    onInterrupt: interrupt,
+    isEcho,
     onHealth: (ok, why) => health.push(ok ? "ok" : why!),
     port: {
       async open(h) {
@@ -51,7 +57,7 @@ function rig(opts: { muted?: boolean } = {}) {
     tick?.();
     await flush();
   };
-  return { mic, captures, last, frame, go, jump, flush, health, phrases, fail: (e?: Error) => void (failWith = e), ticking: () => !!tick };
+  return { mic, captures, last, frame, go, jump, flush, health, phrases, phrase, hearing, interrupt, isEcho, fail: (e?: Error) => void (failWith = e), ticking: () => !!tick };
 }
 
 describe("the mic looks after itself", () => {
@@ -99,10 +105,10 @@ describe("the mic looks after itself", () => {
     expect(r.health).toEqual(["silent", "ok"]);
   });
 
-  it("leaves a mic alone while sound comes, Pio's own speech muted or not", async () => {
+  it("leaves a mic alone while frames come, including during playback", async () => {
     const r = rig();
     await r.mic.start();
-    r.mic.mute(true);
+    r.mic.setPlayback(true);
     await r.go(REOPEN_MS * 2, true);
     expect(r.captures).toHaveLength(1);
     expect(r.health).toEqual([]);
@@ -172,5 +178,80 @@ describe("the mic looks after itself", () => {
     expect(r.mic.on).toBe(false);
     expect(r.last().stopped).toBe(true);
     expect(r.ticking()).toBe(false);
+  });
+
+  it("keeps the watchdog healthy during echo rejection and still interrupts after reopening", async () => {
+    const r = rig();
+    await r.mic.start();
+    r.mic.setPlayback(true);
+    r.isEcho.mockReturnValue(true);
+    await r.go(REOPEN_MS * 2, true);
+    for (let i = 0; i < 50; i++) r.frame(0.2);
+    expect(r.health).toEqual([]);
+    expect(r.captures).toHaveLength(1);
+    expect(r.interrupt).not.toHaveBeenCalled();
+    expect(r.hearing).not.toHaveBeenCalledWith(true);
+    const first = r.last();
+    first.h.onLost("ended");
+    await r.flush();
+    expect(r.health).toEqual(["silent"]);
+    expect(r.hearing).toHaveBeenLastCalledWith(false);
+    r.isEcho.mockReturnValue(false);
+    for (let i = 0; i < 50; i++) first.h.onFrame(new Float32Array(320).fill(0.2));
+    expect(r.interrupt).not.toHaveBeenCalled();
+    for (let i = 0; i < 50; i++) r.frame(0.2);
+    for (let i = 0; i < 40; i++) r.frame();
+    expect(r.health).toEqual(["silent", "ok"]);
+    expect(r.interrupt).toHaveBeenCalledOnce();
+    expect(r.phrase.mock.calls[0].slice(1)).toEqual([false, true]);
+  });
+
+  it("clears a hearing face on capture loss and discards an unfinished phrase", async () => {
+    const r = rig();
+    await r.mic.start();
+    r.mic.setPlayback(true);
+    for (let i = 0; i < 10; i++) r.frame(0.2);
+    expect(r.hearing).toHaveBeenLastCalledWith(true);
+    await r.go(SILENT_MS);
+    expect(r.health).toEqual(["silent"]);
+    expect(r.hearing).toHaveBeenLastCalledWith(false);
+    // Frames resume before a reopen: start a new phrase, not the old partial one.
+    for (let i = 0; i < 10; i++) r.frame(0.2);
+    for (let i = 0; i < 40; i++) r.frame();
+    expect(r.health).toEqual(["silent", "ok"]);
+    expect(r.phrases).toEqual([]);
+    expect(r.interrupt).not.toHaveBeenCalled();
+    expect(r.captures).toHaveLength(1);
+  });
+
+  it("discards system-muted input and resumes held-key capture after reopening", async () => {
+    const r = rig();
+    await r.mic.start();
+    r.mic.setPlayback(true);
+    r.mic.hold(true);
+    r.frame(0.2);
+    r.last().h.onMuted(true);
+    expect(r.hearing).toHaveBeenLastCalledWith(false);
+    for (let i = 0; i < 50; i++) r.frame(0.2);
+    expect(r.interrupt).not.toHaveBeenCalled();
+    await r.go(REOPEN_MS, true);
+    expect(r.captures).toHaveLength(2);
+    r.frame(0.2);
+    r.mic.hold(false);
+    expect(r.health.at(-1)).toBe("ok");
+    expect(r.phrase.mock.calls[0].slice(1)).toEqual([true, true]);
+  });
+
+  it("clears stale mic trouble when voice is toggled off and on", async () => {
+    const r = rig();
+    await r.mic.start();
+    r.last().h.onMuted(true);
+    expect(r.health.at(-1)).toBe("muted");
+    r.mic.stop();
+    expect(r.health.at(-1)).toBe("ok");
+    await r.mic.start();
+    r.frame();
+    expect(r.health.at(-1)).toBe("ok");
+    expect(r.hearing).toHaveBeenLastCalledWith(false);
   });
 });

@@ -14,9 +14,12 @@ export interface VadOptions {
   ratio?: number;
   /** Speech is never quieter than this (RMS). */
   floorMin?: number;
+  /** Sustained speech before interrupting a reply; zero disables this event. */
+  confidenceMs?: number;
+  confidenceFloor?: number;
 }
 
-export type VadEvent = { type: "start" } | { type: "end"; samples: Float32Array } | { type: "drop" };
+export type VadEvent = { type: "start" } | { type: "confident" } | { type: "end"; samples: Float32Array } | { type: "drop" };
 
 export function rms(frame: Float32Array): number {
   let s = 0;
@@ -33,11 +36,14 @@ export class Vad {
   private length = 0;
   private quietFor = 0;
   private loudFor = 0;
+  private confidentFor = 0;
+  private confidenceQuiet = 0;
+  private confirmed = false;
   /** Sound just before a phrase starts (its first syllable). */
   private before: Float32Array[] = [];
 
   constructor(o: VadOptions) {
-    this.o = { silenceMs: 700, maxMs: 20_000, minSpeechMs: 250, ratio: 3, floorMin: 0.012, ...o };
+    this.o = { silenceMs: 700, maxMs: 20_000, minSpeechMs: 250, ratio: 3, floorMin: 0.012, confidenceMs: 0, confidenceFloor: 0.04, ...o };
   }
 
   /** Push to talk: held, everything is a phrase; let go, it ends now. */
@@ -76,6 +82,14 @@ export class Vad {
     if (loud) this.loudFor += ms;
     const lengthMs = (this.length / this.o.sampleRate) * 1000;
     if ((!this.held && this.quietFor >= this.o.silenceMs) || lengthMs >= this.o.maxMs) return this.finish(this.held);
+    if (loud && level >= this.o.confidenceFloor) {
+      this.confidentFor += ms;
+      this.confidenceQuiet = 0;
+    } else if ((this.confidenceQuiet += ms) > 100) this.confidentFor = 0;
+    if (!this.confirmed && this.o.confidenceMs > 0 && this.confidentFor >= this.o.confidenceMs) {
+      this.confirmed = true;
+      return { type: "confident" };
+    }
     return undefined;
   }
 
@@ -85,6 +99,9 @@ export class Vad {
     this.length = 0;
     this.quietFor = 0;
     this.loudFor = 0;
+    this.confidentFor = 0;
+    this.confidenceQuiet = 0;
+    this.confirmed = false;
   }
 
   private push(f: Float32Array): void {

@@ -4,7 +4,7 @@ export const SPEAK_MAX = 600;
 
 export function speakable(text: string, max = SPEAK_MAX): string {
   let s = text
-    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/```[\s\S]*?(?:```|$)/g, " ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")

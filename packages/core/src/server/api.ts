@@ -22,6 +22,7 @@ import { callbackParams } from "../connections.ts";
 import { machineHubUrl, qrSvg } from "../pairing.ts";
 import { attachmentFromPath, discardAttachment, formatSize, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveAttachment, type AttachmentPart } from "../attachments.ts";
 import { MAX_TRANSCRIBE_BYTES, TranscribeError } from "../transcribe.ts";
+import { heardPrefixes } from "../speech/interruption.ts";
 
 export interface ApiOptions {
   kind: "web" | "device";
@@ -183,6 +184,13 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     return { removed: discardAttachment(join(cfg.dataDir, "workspaces"), conv, path, (p) => hub.store.messagesMention(conv.id, JSON.stringify(p))) };
   });
   api.post("/api/conversations/:id/interrupt", async (req) => ({ interrupted: hub.runner.interrupt((req.params as any).id) }));
+  api.post("/api/conversations/:id/voice/interrupt", async (req, reply) => {
+    try {
+      return hub.runner.interruptVoice((req.params as { id: string }).id, heardPrefixes((req.body as { heard?: unknown })?.heard), { thinking: (req.body as { thinking?: unknown })?.thinking === true });
+    } catch {
+      return reply.code(400).send({ error: "invalid voice interruption" });
+    }
+  });
   // The person opened the dialog or is typing: its brain gets ready ahead of the message (runner.warm), in the background.
   api.post("/api/conversations/:id/warm", async (req) => {
     void hub.runner.warm((req.params as any).id);
@@ -692,8 +700,13 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   // The words of the text (Markdown dropped, at most 1000 characters) as one WAV; 409 until the voice is installed.
   api.post("/api/speech/say", async (req, reply) => {
     const b = (req.body ?? {}) as { text?: unknown; voice?: unknown; speed?: unknown };
-    const wav = await hub.speech.say(String(b.text ?? ""), { voice: b.voice, speed: b.speed });
-    return reply.header("content-type", "audio/wav").header("cache-control", "no-store").send(wav);
+    const ctl = new AbortController();
+    const close = () => { if (!reply.raw.writableEnded) ctl.abort(); };
+    reply.raw.on("close", close);
+    try {
+      const wav = await hub.speech.say(String(b.text ?? ""), { voice: b.voice, speed: b.speed, signal: ctl.signal });
+      return reply.header("content-type", "audio/wav").header("cache-control", "no-store").send(wav);
+    } finally { reply.raw.off("close", close); }
   });
   // A phrase the overlay heard (a 16 kHz mono WAV): its words, with whatever speech-to-text is set up.
   await api.register(async (up) => {

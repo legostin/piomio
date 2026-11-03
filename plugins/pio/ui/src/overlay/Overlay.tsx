@@ -6,9 +6,10 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { Message, PiomioUI, UiEvent } from "@piomio/ui";
 import { desk, desktopOf, onDesktop, toScreen, type Capture } from "../desktop.ts";
 import { HttpError, SpeechApi, type SpeechStatus } from "../hub.ts";
-import { asksToLook, FOLLOW_MS, forPio, type ListenMode } from "../voice/gate.ts";
+import { asksToLook, backchannel, FOLLOW_MS, forPio, type ListenMode } from "../voice/gate.ts";
 import { Mic, type MicTrouble } from "../voice/mic.ts";
 import { Speaker } from "../voice/speaker.ts";
+import { ReplyVoice } from "../voice/reply.ts";
 import { speakable } from "../voice/speakable.ts";
 import { brief, langOf, personLang, voiceFor } from "../voice/lang.ts";
 import { CSS } from "./styles.ts";
@@ -22,8 +23,6 @@ const HEARTBEAT_MS = 15_000;
 const WATCH_MS = 2_000;
 /** How long a line of Pio's stays beside the face. */
 const LINE_MS = 12_000;
-/** What of a reply is said out loud: its first sentences (the rest is in the card and the chat). */
-const SPEAK_MAX = 320;
 const SWITCHES = "pio.switches";
 /** What the engine weighs (sherpa-onnx and the phonemizer), shown before the download with the voice and the model. */
 const RUNTIME_BYTES = 20e6;
@@ -117,6 +116,9 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     sw,
     listen,
     speech,
+    thinking,
+    replySpoke: false,
+    interruption: undefined as Promise<void> | undefined,
     lang: ui.i18n.locale as string,
     followUntil: 0,
     keyHeld: false,
@@ -127,18 +129,51 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     /** The person's active window, as last reported (sent again with every heartbeat). */
     window: undefined as { app: string; title?: string } | undefined,
   });
-  Object.assign(live.current, { conv, sw, listen, speech });
+  Object.assign(live.current, { conv, sw, listen, speech, thinking });
 
   const speaker = useMemo(
     () =>
       new Speaker((on) => {
         setSpeaking(on);
-        mic.mute(on);
+        if (on) live.current.replySpoke = true;
+        mic.setPlayback(on);
         if (!on) live.current.followUntil = Date.now() + FOLLOW_MS;
       }),
     [],
   );
-  const mic = useMemo(() => new Mic({ onPhrase: (wav, held) => void heard(wav, held), onHearing: setHearing, onHealth: (ok, why) => setDeaf(ok ? undefined : why) }), []);
+  const replyVoice = useMemo(() => new ReplyVoice(async (words, signal) => {
+    const lang = langOf(words);
+    const s = live.current.speech;
+    const v = s?.runtime === "ready" ? voiceFor(lang, s.voices, s.voice, true) : undefined;
+    if (v) {
+      try {
+        const wav = await api.say(words, v.id, signal);
+        signal.throwIfAborted();
+        return await speaker.play(wav);
+      } catch (e) { if (signal.aborted) throw e; }
+    }
+    signal.throwIfAborted();
+    return speaker.system(words, lang);
+  }, () => speaker.stop()), []);
+  const mic = useMemo(() => new Mic({
+    onPhrase: (wav, held, duringReply) => void heard(wav, held, duringReply),
+    onHearing: setHearing,
+    onHealth: (ok, why) => setDeaf(ok ? undefined : why),
+    onInterrupt: () => { if (live.current.listen !== "key" || live.current.keyHeld) void interruptVoice().catch(() => {}); },
+    isEcho: (frame, rate) => speaker.isEcho(frame, rate),
+  }), []);
+
+  const interruptVoice = (): Promise<void> => {
+    if (!replyVoice.active) return live.current.interruption ?? Promise.resolve();
+    const heard = replyVoice.cancel(); // Stops sound and pending synthesis before any network wait.
+    live.current.followUntil = Date.now() + FOLLOW_MS;
+    const c = live.current.conv;
+    if (!c || !heard.length) return Promise.resolve();
+    const pending = ui.api.post(`/api/conversations/${encodeURIComponent(c)}/voice/interrupt`, { heard, thinking: !live.current.replySpoke }).then(() => {});
+    live.current.interruption = pending;
+    void pending.catch((e: unknown) => setNote({ text: t("overlay.error", { error: e instanceof Error ? e.message : String(e) }) }));
+    return pending;
+  };
 
   /** A picture of the person's window for a message that asks Pio to look (the asking is the consent). */
   const windowShot = async (c: string): Promise<string[]> => {
@@ -160,24 +195,33 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const ask = async (text: string) => {
     const c = live.current.conv;
     if (!c) return setNote({ text: t("overlay.noChat") });
-    speaker.stop();
+    const interrupted = interruptVoice();
+    replyVoice.cancel();
+    live.current.followUntil = Date.now() + FOLLOW_MS;
     setThinking(true);
     try {
+      await interrupted;
+      live.current.interruption = undefined;
+      live.current.replySpoke = false;
       const attachments = asksToLook(text) ? await windowShot(c) : [];
       await ui.api.post(`/api/conversations/${encodeURIComponent(c)}/messages`, { text, ...(attachments.length ? { attachments } : {}) });
     } catch (e) {
       setThinking(false);
+      setDraft(text);
+      live.current.interruption = undefined;
       setNote({ text: t("overlay.error", { error: e instanceof Error ? e.message : String(e) }) });
     }
   };
 
   /** A phrase from the mic: its words, if they are for Pio. */
-  const heard = async (wav: Uint8Array, held: boolean) => {
+  const heard = async (wav: Uint8Array, held: boolean, duringReply: boolean) => {
     try {
       const text = await api.transcribe(wav, live.current.lang);
       setSttError(undefined);
-      const words = forPio(text, live.current.listen, { keyHeld: held, now: Date.now(), followUntil: live.current.followUntil });
-      if (words) await ask(words);
+      if (duringReply && !held && backchannel(text)) return;
+      const followUntil = duringReply || live.current.thinking ? Date.now() + FOLLOW_MS : live.current.followUntil;
+      const words = forPio(text, live.current.listen, { keyHeld: held, now: Date.now(), followUntil });
+      if (words && !(duringReply && !held && backchannel(words))) await ask(words);
     } catch (e) {
       if (e instanceof HttpError && (e.status === 503 || e.status === 409)) return setSttMissing(true);
       // A phrase that went nowhere must not look like one that was not for Pio: the card says what happened.
@@ -190,23 +234,6 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   const said = (text: string) => {
     live.current.followUntil = Date.now() + FOLLOW_MS;
     setPopup(text);
-    if (!live.current.sw.voice) return;
-    const words = speakable(text, SPEAK_MAX);
-    if (!words) return;
-    // The voice of the reply's own language (the hub may be set to another one).
-    const lang = langOf(words);
-    void (async () => {
-      const s = live.current.speech;
-      const voice = s?.runtime === "ready" ? voiceFor(lang, s.voices, s.voice, true) : undefined;
-      if (voice) {
-        try {
-          return await speaker.play(await api.say(words, voice.id));
-        } catch {
-          /* the system's voice below */
-        }
-      }
-      speaker.system(words, lang);
-    })();
   };
 
   /** What the hub asks this window to do on the computer (Pio's tools). */
@@ -267,7 +294,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
       const msgs = await ui.api.get<Message[]>(`/api/conversations/${encodeURIComponent(me.conversationId)}/messages?limit=12`);
       if (!alive) return;
       const ls = msgs.flatMap((m) => lineOf(m) ?? []);
-      for (const l of ls) live.current.spoken.add(l.id);
+      for (const l of ls) { live.current.spoken.add(l.id); replyVoice.ignore(l.id); }
       setLines(ls.slice(-6));
     })().catch(() => alive && setNote({ text: t("overlay.noChat") }));
     void desk.permissions().then(setPerms, () => {});
@@ -342,7 +369,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
     void desk.hotkey(true).catch(() => {});
     return () => {
       mic.stop();
-      speaker.stop();
+      replyVoice.cancel();
       void desk.hotkey(false).catch(() => {});
     };
   }, [sw.voice]);
@@ -353,6 +380,12 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
       ui.events.on((e: UiEvent) => {
         const c = live.current.conv;
         if ((e.type === "message.created" || e.type === "message.updated") && e.data.conversationId === c) {
+          if (e.data.role === "assistant" && e.data.agentId === AGENT && !e.data.quiet) {
+            if (!replyVoice.active) live.current.replySpoke = false;
+            if (e.data.parts.some((p) => p.type === "text" && p.voiceInterrupted)) replyVoice.discard(e.data.id);
+            else if (live.current.sw.voice) replyVoice.observe(e.data.id, e.data.parts.flatMap((p) => p.type === "text" ? [p.text] : []).join(""), e.data.status !== "streaming");
+            else replyVoice.ignore(e.data.id);
+          }
           const l = lineOf(e.data);
           if (!l) return;
           setLines((ls) => upsert(ls, l));
@@ -360,7 +393,10 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
             live.current.spoken.add(l.id);
             said(l.text);
           }
+        } else if (e.type === "message.delta" && e.data.conversationId === c) {
+          replyVoice.delta(e.data.id, e.data.delta);
         } else if (e.type === "message.deleted" && e.data.conversationId === c) {
+          replyVoice.discard(e.data.id);
           setLines((ls) => ls.filter((l) => l.id !== e.data.id));
         } else if (e.type === "team.updated" && e.data.agentId === AGENT) {
           setThinking(e.data.running);
@@ -403,7 +439,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
         if (e.type === "pio-hotkey") {
           const on = e.state === "pressed";
           live.current.keyHeld = on;
-          if (on) speaker.stop();
+          if (on) void interruptVoice().catch(() => {});
           mic.hold(on);
         }
       }),

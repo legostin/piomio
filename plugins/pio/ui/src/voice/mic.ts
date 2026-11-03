@@ -41,8 +41,12 @@ export interface MicClock {
 }
 
 export interface MicOptions {
-  onPhrase(wav: Uint8Array, held: boolean): void;
+  onPhrase(wav: Uint8Array, held: boolean, duringReply: boolean): void;
   onHearing(on: boolean): void;
+  /** Sustained, sufficiently loud speech, including while Pio talks. */
+  onInterrupt?(): void;
+  /** Known output audio still reaching the mic after browser echo cancellation. */
+  isEcho?(frame: Float32Array, rate: number): boolean;
   /** The mic hears again (ok), or stopped hearing and why. Called on each change. */
   onHealth?(ok: boolean, why?: MicTrouble): void;
   port?: MicPort;
@@ -114,9 +118,11 @@ export class Mic {
   /** Each open and stop: an open that waited for the mic past a stop gives its capture back. */
   private turn = 0;
   private timer?: unknown;
-  /** Pio speaks: its own voice is not a phrase (unless the key is held). */
-  private quiet = false;
+  /** Playback is phrase metadata, never a reason to stop VAD or the capture watchdog. */
+  private playback = false;
+  private duringReply = false;
   private held = false;
+  private phraseHeld = false;
   private lastFrameAt = 0;
   private lastCheckAt = 0;
   private trackMuted = false;
@@ -162,12 +168,13 @@ export class Mic {
   /** Push to talk (⌥Space). */
   hold(on: boolean): void {
     this.held = on;
+    if (on) this.phraseHeld = true;
     if (this.vad) this.handle(this.vad.hold(on));
   }
 
-  /** While Pio speaks its own voice is not a phrase (unless the key is held). */
-  mute(on: boolean): void {
-    this.quiet = on;
+  /** Keep hearing the person while Pio speaks; AEC and the output reference reject echo. */
+  setPlayback(on: boolean): void {
+    this.playback = on;
   }
 
   stop(): void {
@@ -177,8 +184,8 @@ export class Mic {
     this.timer = undefined;
     this.close();
     this.held = false;
-    this.quiet = false;
-    this.trouble = undefined;
+    this.playback = false;
+    this.report(undefined);
     this.deafSince = undefined;
     this.o.onHearing(false);
   }
@@ -188,6 +195,9 @@ export class Mic {
     this.capture = undefined;
     this.vad = undefined;
     this.trackMuted = false;
+    this.phraseHeld = false;
+    this.duringReply = false;
+    this.o.onHearing(false);
   }
 
   private async open(): Promise<void> {
@@ -209,7 +219,8 @@ export class Mic {
     }
     this.close();
     this.capture = cap;
-    this.vad = new Vad({ sampleRate: cap.sampleRate });
+    this.vad = new Vad({ sampleRate: cap.sampleRate, confidenceMs: 300 });
+    if (this.held) this.handle(this.vad.hold(true));
     this.lastFrameAt = this.clock.now();
     this.deafSince = undefined;
     if (cap.muted) this.mutedBySystem(cap, true);
@@ -233,7 +244,9 @@ export class Mic {
       this.deafSince = undefined;
       this.report(undefined);
     }
-    if (this.quiet && !this.held) return;
+    // Health is based on capture frames, before echo rejection: a quiet room or Pio's own audio is not a dead mic.
+    if (this.trackMuted) return;
+    if (!this.held && this.o.isEcho?.(f, cap.sampleRate)) f = new Float32Array(f.length);
     if (this.vad) this.handle(this.vad.feed(f));
   }
 
@@ -284,13 +297,33 @@ export class Mic {
   private report(why: MicTrouble | undefined): void {
     if (why === this.trouble) return;
     this.trouble = why;
+    if (why) {
+      // A phrase cut off by sleep/mute must not leave the face stuck on "hearing" or join unrelated audio later.
+      this.vad = undefined;
+      this.phraseHeld = false;
+      this.duringReply = false;
+      this.o.onHearing(false);
+    } else if (this.capture && !this.vad) {
+      this.vad = new Vad({ sampleRate: this.capture.sampleRate, confidenceMs: 300 });
+      if (this.held) this.handle(this.vad.hold(true));
+    }
     this.o.onHealth?.(why === undefined, why);
   }
 
   private handle(e: VadEvent | undefined): void {
     if (!e) return;
-    if (e.type === "start") return this.o.onHearing(true);
+    if (e.type === "start") {
+      this.duringReply = this.playback;
+      this.phraseHeld = this.held;
+      return this.o.onHearing(true);
+    }
+    if (e.type === "confident") {
+      // The reply may be between sentences or still synthesizing. Its controller knows whether it is active.
+      this.o.onInterrupt?.();
+      return;
+    }
     this.o.onHearing(false);
-    if (e.type === "end" && this.capture) this.o.onPhrase(encodeWav(downsample(e.samples, this.capture.sampleRate)), this.held);
+    if (e.type === "end" && this.capture) this.o.onPhrase(encodeWav(downsample(e.samples, this.capture.sampleRate)), this.phraseHeld, this.duringReply);
+    this.phraseHeld = false;
   }
 }

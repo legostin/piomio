@@ -256,7 +256,7 @@ export interface AgentDraft {
 export type MessageRole = "user" | "assistant" | "system";
 
 export type MessagePart =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; /** A completed-playback prefix, sealed against late/repeated acknowledgements. */ voiceInterrupted?: boolean }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
   /**

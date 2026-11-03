@@ -84,7 +84,16 @@ Pio does not answer everything it hears. By default it answers:
 - your answer right after it spoke (for 20 seconds).
 
 The rest of what the mic hears is dropped and never saved. You can change that in Pio's chat: "listen only while I hold
-the key", or "hear everything I say". When you start speaking, Pio stops talking.
+the key", or "hear everything I say". While Pio talks, its microphone stays on with echo cancellation. Sustained,
+clear speech (roughly a third of a second) interrupts it; a brief "uh-huh" does not. Holding **⌥Space** interrupts
+immediately. Sentences start playing while the rest of the answer is still being written.
+
+An interruption stops playback and pending synthesis. The current brain turn is cancelled; Claude Code takes the
+recognized phrase through steering when it supports that. Words spoken while Pio is still thinking join its turn
+when supported, otherwise wait in the same conversation's queue. They never start a parallel turn.
+
+The interrupted reply in the chat keeps completed spoken fragments and an interruption marker. A sentence cut off
+midway is omitted: the local voice has no word timestamps, so Pio does not guess which of its words you heard.
 
 > Voice works when Piomio opens the hub at `localhost` (the hub on this computer) or over `https`.
 

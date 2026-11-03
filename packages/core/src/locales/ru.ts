@@ -89,6 +89,7 @@ export default {
   "choice.unavailable": "Этот ответ уже выбран",
   "message.blocked": "Сообщение заблокировано: {reason}",
   "message.interruptedByRestart": "Прервано перезапуском хаба",
+  "message.interruptedByUser": "Пользователь перебил",
   "attachment.tooLarge": "Файл больше {max}",
   "attachment.tooMany": "Не больше {max} файлов в одном сообщении",
   "attachment.invalid": "Этот файл не вложение этой переписки",

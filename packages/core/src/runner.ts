@@ -43,6 +43,7 @@ import { firstSpeakers, groupTurn, groupTurnText, handOff, MAX_HANDOFFS, USER_LA
 import { hubName } from "./pairing.ts";
 import { cardKind, delivered, deliveredNote, recap, type NotificationPart } from "./continuity.ts";
 import { ruleLine, WorkRules } from "./work-rules.ts";
+import { heardParts, type HeardPrefix } from "./speech/interruption.ts";
 
 export interface RunnerDeps {
   config: Config;
@@ -187,6 +188,10 @@ interface ActiveTurn {
   /** Close the reply so far and go on in a new message (after the message that just joined). */
   split(): void;
   channels: Set<string>;
+  voiceInterrupt(heard: Map<string, number>): boolean;
+  flush(): void;
+  voiceInterrupted?: boolean;
+  stopped?: boolean;
 }
 
 /** Tasks still going: what the starter's turns list as open. */
@@ -225,6 +230,7 @@ export class SessionRunner {
   private live = new Map<string, Live>();
   private queues = new Map<string, Promise<unknown>>();
   private activeTurns = new Map<string, ActiveTurn>();
+  private voiceContext = new Map<string, string>();
   private runningTasks = new Set<string>();
   private brainLoad = new Map<string, number>();
   /** Turns waiting for a busy brain: woken when any brain's turn ends. */
@@ -356,7 +362,9 @@ export class SessionRunner {
     const command = await this.d.commands?.run(conv, hooked.payload.text, { channel: opts.channel });
     if (command && "done" in command) return msg;
     const expanded = command?.prompt ?? this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
-    const prompt = [opts.context?.trim(), note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
+    const voiceContext = this.voiceContext.get(conversationId);
+    this.voiceContext.delete(conversationId);
+    const prompt = [opts.context?.trim(), voiceContext, note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
     // From the web UI: the user's words travel with a mirrored reply, so the phone shows the exchange.
     const fromWeb = !opts.channel || opts.channel === WEB_CHANNEL;
     const files = attachments.length ? { attachments } : {};
@@ -425,7 +433,7 @@ export class SessionRunner {
   /** More input for the turn running in the conversation: true when its brain took it (the reply goes on there). */
   private async steerInto(conversationId: string, text: string, opts: Pick<TurnOpts, "replyChannel" | "attachments" | "speech" | "taint" | "fromUser"> = {}): Promise<boolean> {
     const a = this.activeTurns.get(conversationId);
-    if (!a) return false;
+    if (!a || a.stopped) return false;
     // Outside content joining the turn marks its session before the brain can read it.
     if (opts.taint) this.markTainted(a.row);
     // What plugins add for this input (the memories that matter now), as for a turn of its own.
@@ -436,7 +444,13 @@ export class SessionRunner {
       if (this.activeTurns.get(conversationId) !== a) return false;
       if (extra) text = `${extra}\n\n${text}`;
     }
-    if (!(await a.handle.steer(this.turnInput(a.row, text, opts)))) return false;
+    if (!(await a.handle.steer(this.turnInput(a.row, text, opts)))) {
+      if (a.voiceInterrupted) {
+        a.stopped = true;
+        void a.handle.interrupt();
+      }
+      return false;
+    }
     if (this.activeTurns.get(conversationId) === a) {
       a.split();
       if (opts.replyChannel && opts.replyChannel !== WEB_CHANNEL) a.channels.add(opts.replyChannel);
@@ -682,7 +696,37 @@ export class SessionRunner {
     }
   }
 
-  /** Stop the turn in progress. In a group chat the members still waiting (this round and queued ones) do not answer either. */
+  /** Stop a spoken reply, retaining completed playback only. Claude accepts the coming words through steer. */
+  interruptVoice(conversationId: string, receipts: HeardPrefix[], opts: { thinking?: boolean } = {}): { mode: "steer" | "interrupted" | "idle" } {
+    const conv = this.d.store.getConversation(conversationId);
+    if (!conv || conv.kind === "group" || !this.d.agents.get(conv.agentId)?.companion) throw new Error("voice interruption requires a companion conversation");
+    const a = this.activeTurns.get(conversationId);
+    a?.flush();
+    const heard = new Map<string, number>();
+    for (const r of receipts) {
+      const m = this.d.store.getMessage(r.messageId);
+      if (!m || m.conversationId !== conversationId || m.role !== "assistant" || m.agentId !== conv.agentId || m.quiet) throw new Error("invalid playback message");
+      const length = m.parts.reduce((n, p) => n + (p.type === "text" ? p.text.length : 0), 0);
+      if (r.end > length && !m.parts.some((p) => p.type === "text" && p.voiceInterrupted)) throw new Error("invalid playback position");
+      heard.set(r.messageId, r.end);
+    }
+    const owns = a?.voiceInterrupt(heard);
+    if (!owns) for (const [id, end] of heard) {
+      const m = this.d.store.getMessage(id)!;
+      this.d.store.updateMessage(id, { parts: heardParts(m.parts, end, t("message.interruptedByUser")) });
+    }
+    if (heard.size) {
+      const words = [...heard.keys()].flatMap((id) => this.d.store.getMessage(id)?.parts.flatMap((p) => p.type === "text" ? [p.text] : []) ?? []).join("\n");
+      this.voiceContext.set(conversationId, `[Voice playback was interrupted. The person heard only these completed fragments (a partial sentence may also have sounded):\n${words.slice(0, 12000)}\nDo not assume the rest of the previous response was heard.]`);
+    }
+    if (!a || !owns) return { mode: "idle" };
+    a.voiceInterrupted = true;
+    if (opts.thinking || parseBrainRef(a.handle.ref).brainId === "claude-code") return { mode: "steer" };
+    a.stopped = true;
+    void a.handle.interrupt();
+    return { mode: "interrupted" };
+  }
+
   interrupt(conversationId: string): boolean {
     const round = this.floors.has(conversationId);
     if (round || this.d.store.getConversation(conversationId)?.kind === "group") {
@@ -2222,6 +2266,7 @@ export class SessionRunner {
     const effort = turn.effort ?? live.effort;
     /** The turn's messages: a quiet turn keeps or deletes them all at the end. */
     const made: string[] = [];
+    let voiceFrom = 0;
     const newMessage = (parts: MessagePart[] = []) => {
       const m = this.d.store.addMessage({
         conversationId: conv.id,
@@ -2255,6 +2300,7 @@ export class SessionRunner {
 
     let parts: MessagePart[] = [...answers];
     let fullText = "";
+    let voiceFrozen = false;
     let lastFlush = 0;
     let produced = false;
     let error: string | undefined;
@@ -2295,12 +2341,32 @@ export class SessionRunner {
       handle: live.handle,
       row,
       channels,
+      flush: () => flush(true),
+      voiceInterrupt: (heard) => {
+        if (!made.slice(voiceFrom).some((id) => heard.has(id))) return false;
+        if (voiceFrozen) return true;
+        voiceFrozen = true;
+        // The in-memory stream is cut too: a late final flush must not restore unspoken words.
+        for (const id of made.slice(voiceFrom)) {
+          const existing = this.d.store.getMessage(id);
+          if (!existing) continue;
+          const clipped = heardParts(id === msg.id ? mergeAttached(parts, current()) : existing.parts, heard.get(id) ?? 0, t("message.interruptedByUser"));
+          if (id === msg.id) parts = clipped;
+          this.d.store.updateMessage(id, { parts: clipped });
+        }
+        fullText = made.flatMap((id) => this.d.store.getMessage(id)?.parts.flatMap((p) => p.type === "text" ? [p.text] : []) ?? []).join("\n");
+        return true;
+      },
       split: () => {
         parts = mergeAttached(parts, current());
         this.d.store.updateMessage(msg.id, { parts, status: "complete" });
+        voiceFrom = made.length;
         msg = newMessage();
         this.streamingMessage.set(conv.id, msg.id);
         parts = [];
+        voiceFrozen = false;
+        const active = this.activeTurns.get(conv.id);
+        if (active) active.voiceInterrupted = false;
         lastFlush = 0;
       },
     });
@@ -2308,6 +2374,7 @@ export class SessionRunner {
     const onEvent = (e: BrainEvent) => {
       switch (e.type) {
         case "text": {
+          if (voiceFrozen) break;
           const delta = this.d.redactor.text(e.delta);
           produced = true;
           fullText += delta;

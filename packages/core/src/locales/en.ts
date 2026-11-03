@@ -90,6 +90,7 @@ export default {
   "choice.unavailable": "This answer was already given",
   "message.blocked": "Message blocked: {reason}",
   "message.interruptedByRestart": "Interrupted by a hub restart",
+  "message.interruptedByUser": "Interrupted by the user",
   "attachment.tooLarge": "The file is larger than {max}",
   "attachment.tooMany": "At most {max} files per message",
   "attachment.invalid": "This file is not an attachment of the conversation",

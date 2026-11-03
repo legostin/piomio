@@ -7,6 +7,11 @@ export type ListenMode = "name" | "key" | "all";
 /** After Pio spoke, the person's next words are an answer for this long. */
 export const FOLLOW_MS = 20_000;
 
+/** A listening acknowledgement, not a request to replace the reply. */
+export function backchannel(text: string): boolean {
+  return /^(?:угу|ага|м[гх]м|да|ясно|понятно|uh[ -]?huh|m+h+m+|yeah|yep|okay|ok)[.!?,…\s]*$/iu.test(text.trim());
+}
+
 // Pio as speech-to-text writes it: Пио, Пиа, Пиу, Пью, Пиё, Био, Pio, Pia, Peo, Pío, Bio (the wake phrase: "Пио, …").
 const SPELLINGS = "пио|пиo|пиа|пиу|пью|пиё|пийо|био|pio|pia|peo|pío|pyo|bio";
 const NAME = new RegExp(`(?<![\\p{L}\\p{N}])(?:${SPELLINGS})(?![\\p{L}\\p{N}])`, "iu");

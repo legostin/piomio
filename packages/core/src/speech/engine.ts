@@ -37,7 +37,7 @@ export interface LocalSpeechToText {
 }
 
 interface Backend {
-  say(voice: VoiceModel, text: string, speed: number): Promise<Buffer>;
+  say(voice: VoiceModel, text: string, speed: number, signal?: AbortSignal): Promise<Buffer>;
   recognize(model: SttModel, samples: Float32Array, sampleRate: number): Promise<string>;
   stop(): void;
 }
@@ -63,6 +63,7 @@ export class SpeechEngine implements LocalSpeechToText {
   private lastEmit = 0;
   private emitTimer?: NodeJS.Timeout;
   private backend?: Backend;
+  private speakingBackend?: Backend;
   /** The modules the backend was made with (none: the worker). */
   private backendFor?: () => VoiceModules;
   private stopped = new AbortController();
@@ -266,7 +267,7 @@ export class SpeechEngine implements LocalSpeechToText {
   // ---------- speaking and hearing ----------
 
   /** A WAV (16-bit PCM at the voice's rate) of the text's words; Markdown is dropped, the text cut at 1000 characters. */
-  async say(text: string, opts: { voice?: unknown; speed?: unknown } = {}): Promise<Buffer> {
+  async say(text: string, opts: { voice?: unknown; speed?: unknown; signal?: AbortSignal } = {}): Promise<Buffer> {
     const id = opts.voice === undefined || opts.voice === null || opts.voice === "" ? this.voiceId() : String(opts.voice);
     const v = this.findVoice(id);
     if (!v) throw new LocalizedError("speech.unknownVoice", { id }, 400);
@@ -275,7 +276,8 @@ export class SpeechEngine implements LocalSpeechToText {
     if (!words) throw new LocalizedError("speech.nothingToSay", undefined, 400);
     const n = opts.speed === undefined || opts.speed === null ? this.speed() : Number(opts.speed);
     const speed = Number.isFinite(n) ? Math.min(MAX_SPEED, Math.max(MIN_SPEED, n)) : this.speed();
-    return this.engine().say({ dir: this.modelDir(v), model: v.model, espeak: v.espeak }, words, speed);
+    opts.signal?.throwIfAborted();
+    return this.engine(true).say({ dir: this.modelDir(v), model: v.model, espeak: v.espeak }, words, speed, opts.signal);
   }
 
   /**
@@ -290,24 +292,33 @@ export class SpeechEngine implements LocalSpeechToText {
     return this.engine().recognize({ dir: this.modelDir(m), kind: m.kind, files: m.files }, samples, sampleRate);
   }
 
-  private engine(): Backend {
-    if (this.backend && this.backendFor === this.modules) return this.backend;
-    this.backend?.stop();
-    this.backendFor = this.modules;
+  private engine(speaking = false): Backend {
+    if (this.backendFor !== this.modules) {
+      this.backend?.stop();
+      this.speakingBackend?.stop();
+      this.backend = this.speakingBackend = undefined;
+      this.backendFor = this.modules;
+    }
+    const current = speaking ? this.speakingBackend : this.backend;
+    if (current) return current;
+    let backend: Backend;
     if (this.modules) {
       const b = new SherpaBackend(this.modules);
-      this.backend = {
-        say: async (voice, text, speed) => {
+      backend = {
+        say: async (voice, text, speed, signal) => {
+          signal?.throwIfAborted();
           const w = await b.say(voice, text, speed);
+          signal?.throwIfAborted();
           return encodeWav(w.samples, w.sampleRate);
         },
         recognize: (model, samples, rate) => b.recognize(model, samples, rate),
         stop: () => {},
       };
-    } else {
-      this.backend = new WorkerBackend(this.runtimeDir, (l) => this.d.log?.(l));
-    }
-    return this.backend;
+    } else backend = new WorkerBackend(this.runtimeDir, (l) => this.d.log?.(l));
+    // Cancelling synthesis must never kill the recognizer hearing the interruption.
+    if (speaking) this.speakingBackend = backend;
+    else this.backend = backend;
+    return backend;
   }
 
   /** The hub stops: downloads end (nothing half-done stays) and the worker goes. */
@@ -319,11 +330,15 @@ export class SpeechEngine implements LocalSpeechToText {
     this.emitTimer = undefined;
     this.backend?.stop();
     this.backend = undefined;
+    this.speakingBackend?.stop();
+    this.speakingBackend = undefined;
   }
 }
 
 /** The voice worker process, started on first use and ended after IDLE_MS unused. */
-class WorkerBackend implements Backend {
+export class WorkerBackend implements Backend {
+  private queue: Promise<unknown> = Promise.resolve();
+  private epoch = 0;
   private runtime: string;
   private log: (line: string) => void;
   private child?: ChildProcess;
@@ -357,7 +372,8 @@ class WorkerBackend implements Backend {
       else p.resolve(r);
     });
     const gone = (why: string) => {
-      if (this.child === child) this.child = undefined;
+      if (this.child !== child) return;
+      this.child = undefined;
       for (const p of this.pending.values()) p.reject(new Error(`the voice engine stopped (${why})`));
       this.pending.clear();
     };
@@ -366,25 +382,47 @@ class WorkerBackend implements Backend {
     return child;
   }
 
-  /** Sends `req` under a new id (the one given is replaced). */
-  private call(req: WorkerRequest): Promise<WorkerReply> {
-    const child = (this.child ??= this.start());
-    const id = ++this.seq;
-    clearTimeout(this.idle);
-    this.idle = setTimeout(() => this.stop(), IDLE_MS);
-    this.idle.unref();
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      child.send({ ...req, id }, (e) => {
-        if (!e) return;
-        this.pending.delete(id);
-        reject(new Error(`the voice engine cannot be reached (${e.message})`));
+  /** Native synthesis is serialized. A cancelled queued sentence never reaches the worker. */
+  private call(req: WorkerRequest, signal?: AbortSignal): Promise<WorkerReply> {
+    const epoch = this.epoch;
+    const run = this.queue.then(() => {
+      signal?.throwIfAborted();
+      if (epoch !== this.epoch) throw new Error("the voice engine stopped");
+      const child = (this.child ??= this.start());
+      const id = ++this.seq;
+      clearTimeout(this.idle);
+      this.idle = setTimeout(() => this.stop(), IDLE_MS);
+      this.idle.unref();
+      return new Promise<WorkerReply>((resolve, reject) => {
+        const cleanup = () => {
+          signal?.removeEventListener("abort", abort);
+          this.pending.delete(id);
+          clearTimeout(this.idle);
+          this.idle = setTimeout(() => this.stop(), IDLE_MS);
+          this.idle.unref();
+        };
+        const abort = () => {
+          cleanup();
+          if (this.child === child) this.child = undefined;
+          child.kill();
+          reject(signal?.reason ?? new Error("speech cancelled"));
+        };
+        this.pending.set(id, {
+          resolve: (value) => { cleanup(); resolve(value); },
+          reject: (error) => { cleanup(); reject(error); },
+        });
+        signal?.addEventListener("abort", abort, { once: true });
+        child.send({ ...req, id }, (e) => {
+          if (e) this.pending.get(id)?.reject(new Error(`the voice engine cannot be reached (${e.message})`));
+        });
       });
     });
+    this.queue = run.catch(() => {});
+    return run;
   }
 
-  async say(voice: VoiceModel, text: string, speed: number): Promise<Buffer> {
-    const r = await this.call({ id: 0, op: "say", voice, text, speed });
+  async say(voice: VoiceModel, text: string, speed: number, signal?: AbortSignal): Promise<Buffer> {
+    const r = await this.call({ id: 0, op: "say", voice, text, speed }, signal);
     return Buffer.from(r.wav ?? new Uint8Array());
   }
 
@@ -394,8 +432,12 @@ class WorkerBackend implements Backend {
   }
 
   stop(): void {
-    clearTimeout(this.idle);
-    this.child?.kill();
+    this.epoch++;
+    const child = this.child;
     this.child = undefined;
+    for (const p of [...this.pending.values()]) p.reject(new Error("the voice engine stopped"));
+    this.pending.clear();
+    clearTimeout(this.idle);
+    child?.kill();
   }
 }

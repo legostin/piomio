@@ -44,12 +44,14 @@ export class SpeechApi {
     return this.csrf;
   }
 
-  private async send(path: string, body: BodyInit, type: string, retry = true): Promise<Response> {
+  private async send(path: string, body: BodyInit, type: string, retry = true, signal?: AbortSignal): Promise<Response> {
     // The page's no-referrer policy would send "Origin: null", which the hub refuses: same-origin here, as @piomio/ui does.
-    const r = await fetch(path, { method: "POST", credentials: "same-origin", referrerPolicy: "same-origin", headers: { "content-type": type, "x-csrf": await this.token() }, body });
+    const token = await this.token();
+    signal?.throwIfAborted();
+    const r = await fetch(path, { method: "POST", credentials: "same-origin", referrerPolicy: "same-origin", headers: { "content-type": type, "x-csrf": token }, body, signal });
     if (r.status === 403 && retry) {
       await this.token(true);
-      return this.send(path, body, type, false);
+      return this.send(path, body, type, false, signal);
     }
     if (!r.ok) {
       let msg = `HTTP ${r.status}`;
@@ -90,8 +92,8 @@ export class SpeechApi {
     return String((await r.json())?.path ?? "");
   }
 
-  async say(text: string, voice?: string): Promise<ArrayBuffer> {
-    const r = await this.send("/api/speech/say", JSON.stringify({ text, ...(voice ? { voice } : {}) }), "application/json");
+  async say(text: string, voice?: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+    const r = await this.send("/api/speech/say", JSON.stringify({ text, ...(voice ? { voice } : {}) }), "application/json", true, signal);
     return r.arrayBuffer();
   }
 }
