@@ -32,6 +32,11 @@ if (args[0] === "--help") {
 }
 // Every run's arguments, for tests that check what the brain passed.
 if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify(args)}\n`);
+// The switches the brain set for each run.
+if (process.env.FAKE_ENV_FILE) {
+  const { DISABLE_AUTOUPDATER, DISABLE_TELEMETRY } = process.env;
+  appendFileSync(process.env.FAKE_ENV_FILE, `${JSON.stringify({ DISABLE_AUTOUPDATER, DISABLE_TELEMETRY })}\n`);
+}
 if (login) {
   console.log("Opening browser to sign in…");
   console.log("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&client_id=fake&response_type=code&state=xyz");

@@ -83,6 +83,15 @@ describe("Claude Code provider (fake CLI)", () => {
     expect(readFileSync(join(stateDir, "sessions", o.sessionId, "prompt.md"), "utf8")).toBe("SYSTEM");
   });
 
+  it("turns off the CLI's own telemetry on every run, so its log intake never asks the person for a host", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "owl-cc-env-")), "env.jsonl");
+    const s = await provider.createSession(opts({ env: { FAKE_ENV_FILE: file } }));
+    await collect(s.send({ text: "ping" }));
+    const runs = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(runs.length).toBeGreaterThan(0);
+    for (const r of runs) expect(r).toMatchObject({ DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1" });
+  });
+
   it("starts fresh when the resume id is gone", async () => {
     const s = await provider.createSession(opts({ resume: "missing" }));
     const ev = await collect(s.send({ text: "x" }));

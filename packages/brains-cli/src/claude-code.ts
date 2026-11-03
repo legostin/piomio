@@ -288,6 +288,10 @@ const MAX_WARM = 3;
 
 const TIMEOUT = Symbol("timeout");
 
+/** Every run of the CLI: no self-update, and none of its own telemetry (its Datadog log intake), which the egress
+ *  proxy would otherwise put to the person as a new host on every turn. */
+const CLAUDE_ENV = { DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1" };
+
 /** The lines of a process that outlives one turn: a timeout never loses a line, the next call gets it. */
 class LineReader {
   private it: AsyncIterator<string>;
@@ -453,7 +457,7 @@ class ClaudeCodeSession implements BrainSessionImpl {
       ...this.o.env,
       ...(await this.p.authEnv?.()),
       ...confinedProxyEnv(this.o),
-      DISABLE_AUTOUPDATER: "1",
+      ...CLAUDE_ENV,
       CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1",
       // A permission question may wait for the person for minutes (tools/native-permission.ts).
       ...(this.o.confine ? { MCP_TOOL_TIMEOUT: String(15 * 60_000) } : {}),
@@ -661,7 +665,7 @@ export function createClaudeCodeProvider(p: ClaudeCodeOptions): BrainProviderImp
   const currentCaps = async (): Promise<ClaudeCaps> => {
     const command = p.command?.() ?? "claude";
     if (caps?.key.startsWith(`${command}|`)) return caps.caps;
-    const env = childEnv(process.env, { DISABLE_AUTOUPDATER: "1" });
+    const env = childEnv(process.env, CLAUDE_ENV);
     const v = await capture(command, ["--version"], env);
     return v.code === 0 ? capsOf(command, v.stdout.trim().split(/\s+/)[0], env) : { snapshot: false };
   };
@@ -671,7 +675,7 @@ export function createClaudeCodeProvider(p: ClaudeCodeOptions): BrainProviderImp
     async probe(): Promise<ProbeResult> {
       const t = brainsT(p.locale?.());
       const command = p.command?.() ?? "claude";
-      const env = childEnv(process.env, { ...(await p.authEnv?.().catch(() => ({}))), DISABLE_AUTOUPDATER: "1" });
+      const env = childEnv(process.env, { ...(await p.authEnv?.().catch(() => ({}))), ...CLAUDE_ENV });
       const v = await capture(command, ["--version"], env);
       if (v.code !== 0) return { available: false, authenticated: false, detail: t("claude.notInstalledShort") };
       const version = v.stdout.trim().split(/\s+/)[0];
@@ -696,7 +700,7 @@ export function createClaudeCodeProvider(p: ClaudeCodeOptions): BrainProviderImp
       return runCliLogin({
         command: p.command?.() ?? "claude",
         args: ["auth", "login"],
-        env: childEnv(process.env, { ...env, DISABLE_AUTOUPDATER: "1", NO_COLOR: "1" }),
+        env: childEnv(process.env, { ...env, ...CLAUDE_ENV, NO_COLOR: "1" }),
         onUpdate,
         parse: parseClaudeBrowserLogin,
         timeoutMs: p.loginTimeoutMs ?? 15 * 60_000,

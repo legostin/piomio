@@ -13,7 +13,7 @@ import { brainsT } from "./messages.ts";
 import { parseCodexDeviceLogin, runCliLogin } from "./login.ts";
 import { AppServerUnsupported, CodexAppTurn, listCodexModels, parseCodexReset, type CodexModel } from "./codex-app.ts";
 import { askHub, type HubAnswer } from "./hub-permission.ts";
-import { confinedNetwork, confinedProxyEnv } from "./network.ts";
+import { confinedProxyEnv } from "./network.ts";
 
 export { parseCodexReset };
 
@@ -137,22 +137,21 @@ class CodexSession implements BrainSessionImpl {
     return confine && !this.o.frontDesk ? (tool, input) => askHub(this.o.mcp, confine.permissionTool, tool, input) : undefined;
   }
 
-  private approvalPolicy(): "never" | "on-request" | "untrusted" {
-    if (!this.ask()) return "never";
-    // Once commands have network access, containment alone no longer makes a push (or a script) safe.
-    return confinedNetwork(this.o) ? "untrusted" : "on-request";
+  private approvalPolicy(): "never" | "on-request" {
+    return this.ask() ? "on-request" : "never";
   }
 
   /**
    * Confined by the hub: a permission profile in place of `sandbox_mode`, so that what no agent may read (the
    * person's credentials, the hub's data) is closed to Codex's commands too, not only what it may write. The agent's
-   * earlier folders stay readable. Command networking uses Codex's managed proxy, chained to the hub's proxy.
+   * earlier folders stay readable. No command networking: once commands have it, containment alone no longer makes a
+   * push (or a script) safe, and Codex dropped `approval_policy="untrusted"`, the one way to send every command to
+   * the hub. A command that needs the network asks for it, and the hub reviews that (hub-permission.ts).
    */
   private profile(): string[] | undefined {
     const c = this.o.confine;
     if (!c) return undefined;
     const readOnly = this.sandbox() === "read-only";
-    const network = confinedNetwork(this.o);
     const files = new Map<string, string>();
     for (const p of c.denyRead) files.set(p, "deny");
     for (const p of c.allowRead) if (p !== this.o.workspace) files.set(p, "read");
@@ -161,11 +160,7 @@ class CodexSession implements BrainSessionImpl {
       `default_permissions="piomio"`,
       `permissions.piomio.extends=${tomlString(readOnly ? ":read-only" : ":workspace")}`,
       `permissions.piomio.filesystem={${[...files].map(([p, a]) => `${tomlString(p)}=${tomlString(a)}`).join(",")}}`,
-      ...(network ? [
-        // enabled alone opens unrestricted networking: the managed proxy feature MUST be enabled alongside it.
-        "features.network_proxy=true",
-        `permissions.piomio.network={enabled=true,proxy_url="http://127.0.0.1:0",enable_socks5=false,enable_socks5_udp=false,allow_upstream_proxy=true,allow_local_binding=false,mode="full",domains={${network.allowedDomains.map((h) => `${tomlString(h)}="allow"`).join(",")}}`,
-      ] : ["permissions.piomio.network.enabled=false"]),
+      "permissions.piomio.network.enabled=false",
     ];
   }
 
@@ -198,7 +193,7 @@ class CodexSession implements BrainSessionImpl {
       `mcp_servers.piomio.default_tools_approval_mode="approve"`,
       `approval_policy=${tomlString(this.approvalPolicy())}`,
       ...((!exec && this.profile()) || [`sandbox_mode=${tomlString(this.sandbox())}`]),
-      // Legacy exec cannot enforce a profile's domain rules. Do not turn its sandbox into unrestricted networking.
+      // Legacy exec has no profile: its sandbox stays offline too.
       ...(exec && this.o.confine ? ["sandbox_workspace_write.network_access=false"] : []),
       ...(this.o.effort ? [`model_reasoning_effort=${tomlString(this.o.effort)}`] : []),
       ...(this.p.extraConfig?.() ?? []),

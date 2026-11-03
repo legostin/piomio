@@ -85,7 +85,7 @@ Brains and plugins reach the network through the hub's egress proxy, each with i
 
 An agent can propose a public host with `hub_network_request`; the same network card asks you to decide. It cannot edit the allowlist directly.
 
-On the hub's Mac, Claude Code and Codex task sandboxes forward destinations to the authenticated hub proxy. The hub checks the live allowlist, including `brainEgressAllow`. An unknown public host opens a network permission card in the task chat and the dialog that started it. The connection waits up to 90 seconds:
+On the hub's Mac, Claude Code's task sandbox forwards destinations to the authenticated hub proxy. The hub checks the live allowlist, including `brainEgressAllow`. An unknown public host opens a network permission card in the task chat and the dialog that started it. The connection waits up to 90 seconds:
 
 - **Allow once** permits this exact host and port for the current brain session.
 - **Always allow** saves the exact host for all agents. A raw IP carries a warning because its owner can change.
@@ -95,7 +95,7 @@ Settings shows the built-in hosts and lets you add or remove extra entries, incl
 
 This flow is local to the hub. Paired computers still need an authenticated node-to-hub proxy tunnel, per-session grants and sandbox integration. Dialogs keep their existing read-only command policy: they can propose a host in chat and delegate shell work to a task.
 
-Use HTTPS for Git in a task, for example `git fetch https://github.com/owner/repo.git main`. Ordinary SSH does not use `HTTPS_PROXY`, and the sandbox cannot read your SSH keys. Authenticated pushes may need an approved command outside the sandbox; allowing a hostname does not grant credentials or approve publication. Networked shell commands go through command review, including commands inside the workspace. Older Codex versions that fall back to `codex exec` keep networking disabled; update Codex to use sandbox networking.
+Use HTTPS for Git in a task, for example `git fetch https://github.com/owner/repo.git main`. Ordinary SSH does not use `HTTPS_PROXY`, and the sandbox cannot read your SSH keys. Authenticated pushes may need an approved command outside the sandbox; allowing a hostname does not grant credentials or approve publication. Networked shell commands go through command review, including commands inside the workspace. Codex keeps networking off inside its sandbox: a command that needs the network asks to run outside it, and the hub reviews that.
 
 Git worktrees also write the source repository's shared `.git` directory. A worktree inside the task folder does not grant write access to a repository elsewhere. Creating one can require approval. The CLI also protects Git configuration and hooks. If Git cannot traverse the closed parent directories of the hub's workspace, use a task-specific temporary checkout/worktree; do not open the hub's whole data directory or disable its sandbox.
 
@@ -125,7 +125,7 @@ The log lives in the hub's own database. The chain shows tampering; it can't sto
 
 ## What leaves your machines
 
-- **The brains.** What an agent works on goes to its brain's provider through the official CLI, under your own plan: Anthropic for Claude Code, OpenAI for Codex, Moonshot for Kimi Code. Auto mode's reviews go there too. Each CLI signs in on its own computer; Piomio never takes or stores their tokens. If you turn on `PIOMIO_API_KEYS`, the API providers you add keys for get it as well.
+- **The brains.** What an agent works on goes to its brain's provider through the official CLI, under your own plan: Anthropic for Claude Code, OpenAI for Codex, Moonshot for Kimi Code. Auto mode's reviews go there too. Each CLI signs in on its own computer; Piomio never takes or stores their tokens. The hub turns off Claude Code's own telemetry for the agents' runs. If you turn on `PIOMIO_API_KEYS`, the API providers you add keys for get it as well.
 - **Composio.** Apps you connect through it carry a small badge with its name. Signing in and every request go through Composio's cloud, which keeps those apps' keys and sees what the agent reads and sends.
 - **Tailscale.** The link from anywhere runs on the hub's own Tailscale node in your tailnet. Piomio doesn't send Tailscale the node's logs. See [Access from anywhere](anywhere.md).
 - **What you connect.** Telegram, Google, the sites the agents' browser opens, a speech-to-text service if you set one up, GitHub when the hub looks for updates.
