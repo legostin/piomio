@@ -151,7 +151,8 @@ async function until<T>(fn: () => T | undefined | false | Promise<T | undefined 
   }
 }
 
-describe("browser plugin (headless Chromium)", () => {
+// A cold Chromium on a busy CI runner takes longer than the default 20 s to open its first page.
+describe("browser plugin (headless Chromium)", { timeout: 60_000 }, () => {
   let h: PluginHarness;
   let server: Server;
   let base: string;

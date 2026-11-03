@@ -18,7 +18,9 @@ describe("native image transfer", () => {
     const frames = brainImageEvents("large", data.toString("base64"));
     const images = new BrainImages();
     const results = frames.flatMap((f) => images.push(f as any) ?? []);
-    expect(results).toEqual([{ data, ext: "png" }]);
+    // Buffer.equals, not toEqual: a deep compare of 6 MB byte by byte takes most of a CI runner's 20 s.
+    expect(results.map((r) => r.ext)).toEqual(["png"]);
+    expect(results[0].data.equals(data)).toBe(true);
     expect(images.push(frames.at(-1) as any)).toBeUndefined();
     expect(images.finish()).toBe(false);
   });
