@@ -13,6 +13,7 @@ export default {
   "message.network.once": "Allow once",
   "message.network.scope": "Once allows this host and port for the current session. The connection waits up to 90 seconds.",
   "message.network.always": "Always adds this host to the allowlist for all agents and ports. External actions still need their own permission.",
+  "message.network.listed": "This host is on the allowlist, but the agent has read outside content: allowing lets this session send data there.",
   "message.network.ip": "This is an IP address. Its owner may change; allowing it always trusts that address for all agents.",
   "message.network.agent": "Agent: {agent}",
   "message.network.task": "Task: {task}",

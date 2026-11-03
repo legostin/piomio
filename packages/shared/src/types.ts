@@ -157,6 +157,8 @@ export interface ApprovalAsk {
   host?: string;
   port?: number;
   ipLiteral?: boolean;
+  /** A host on the allowlist, asked about because the session has read outside content: no "always" to offer. */
+  listed?: boolean;
   agent?: string;
   task?: string;
 }

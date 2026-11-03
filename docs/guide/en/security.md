@@ -85,17 +85,17 @@ Brains and plugins reach the network through the hub's egress proxy, each with i
 
 An agent can propose a public host with `hub_network_request`; the same network card asks you to decide. It cannot edit the allowlist directly.
 
-On the hub's Mac, Claude Code's task sandbox forwards destinations to the authenticated hub proxy. The hub checks the live allowlist, including `brainEgressAllow`. An unknown public host opens a network permission card in the task chat and the dialog that started it. The connection waits up to 90 seconds:
+On the hub's Mac, Claude Code and Codex task sandboxes forward destinations to the authenticated hub proxy. The hub checks the live allowlist, including `brainEgressAllow`. An unknown public host goes to auto mode's reviewer, once per session; when auto mode is off or the reviewer leaves it to you, it opens a network permission card in the task chat and the dialog that started it. After the session has read outside content (a web page, a mail, a file from elsewhere), every host except the brains' own model APIs is checked the same way, once per session: what a command sends there leaves your computer. The connection waits up to 90 seconds:
 
 - **Allow once** permits this exact host and port for the current brain session.
-- **Always allow** saves the exact host for all agents. A raw IP carries a warning because its owner can change.
+- **Always allow** saves the exact host for all agents. A raw IP carries a warning because its owner can change. A host already on the list has no such button: the card is about this session.
 - **Deny**, no answer or a closed connection stops the request. The proxy returns an explanation; denial and timeout also send the active agent a system note, since some TLS clients hide proxy response bodies.
 
 Settings shows the built-in hosts and lets you add or remove extra entries, including `*.example.com`. Saved changes apply to new connections immediately. Private, loopback and metadata addresses are not offered on ordinary network cards, even if a public name resolves to one. Approvals and changes are audited. Network permission creates no command/action rule and does not mark the destination as trusted content.
 
 This flow is local to the hub. Paired computers still need an authenticated node-to-hub proxy tunnel, per-session grants and sandbox integration. Dialogs keep their existing read-only command policy: they can propose a host in chat and delegate shell work to a task.
 
-Use HTTPS for Git in a task, for example `git fetch https://github.com/owner/repo.git main`. Ordinary SSH does not use `HTTPS_PROXY`, and the sandbox cannot read your SSH keys. Authenticated pushes may need an approved command outside the sandbox; allowing a hostname does not grant credentials or approve publication. Networked shell commands go through command review, including commands inside the workspace. Codex keeps networking off inside its sandbox: a command that needs the network asks to run outside it, and the hub reviews that.
+Use HTTPS for Git in a task, for example `git fetch https://github.com/owner/repo.git main`. Ordinary SSH does not use `HTTPS_PROXY`, and the sandbox cannot read your SSH keys. Authenticated pushes may need an approved command outside the sandbox; allowing a hostname does not grant credentials or approve publication. Claude Code's networked shell commands go through command review, including commands inside the workspace. Codex's are not reviewed one by one, so for Codex the host check above is the review.
 
 Git worktrees also write the source repository's shared `.git` directory. A worktree inside the task folder does not grant write access to a repository elsewhere. Creating one can require approval. The CLI also protects Git configuration and hooks. If Git cannot traverse the closed parent directories of the hub's workspace, use a task-specific temporary checkout/worktree; do not open the hub's whole data directory or disable its sandbox.
 

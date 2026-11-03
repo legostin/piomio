@@ -13,6 +13,7 @@ import { ApprovalService } from "../src/approvals.ts";
 import { Settings } from "../src/settings.ts";
 import { EgressProxy, networkHost, networkPattern } from "../src/egress.ts";
 import { wireNetworkApprovals } from "../src/network-approvals.ts";
+import { AutoMode, type Reviewer } from "../src/policy/auto.ts";
 
 async function until<T>(f: () => T | undefined): Promise<T> {
   for (let i = 0; i < 100; i++) { const v = f(); if (v) return v; await new Promise((r) => setTimeout(r, 5)); }
@@ -210,5 +211,83 @@ describe("network cards and proxy", () => {
     expect(text).toContain("Host new.example");
     const closed = connect(); const card = await pending(); closed.destroy();
     await until(() => approvals.get(card.id)?.status === "expired" || undefined);
+  });
+});
+
+describe("network decisions in auto mode and after outside content", () => {
+  let db: ReturnType<typeof openDb>;
+  let proxy: EgressProxy;
+  let approvals: ApprovalService;
+  let settings: Settings;
+  let store: Store;
+  let context: { sessionId: string; conversationId: string; agentId: string };
+  let answers: string[];
+  let reviews: string[];
+  const pending = () => until(() => approvals.list(["pending"])[0]);
+  const ask = (host = "new.example", port = 443) => proxy.requestHost(context.sessionId, host, port);
+  // Each review takes the next answer: stage 1 is ALLOW/BLOCK, stage 2 the JSON verdict.
+  const reviewer: Reviewer = async (prompt) => { reviews.push(prompt); return answers.shift() ?? "ALLOW"; };
+
+  beforeEach(() => {
+    db = openDb(join(mkdtempSync(join(tmpdir(), "network-auto-")), "hub.db"));
+    const bus = new EventBus(); store = new Store(db, bus); const audit = new AuditLog(db);
+    approvals = new ApprovalService(db, bus, audit, new RuleStore(db)); settings = new Settings(db, "UTC");
+    proxy = new EgressProxy(); proxy.extraBrainAllow = () => settings.get().brainEgressAllow;
+    const conversationId = store.agentConversation("developer").id;
+    const { row } = store.createSession({ conversationId, agentId: "developer", brainRef: "codex@local", background: false });
+    context = { sessionId: row.id, conversationId, agentId: "developer" };
+    proxy.issueToken(`brain:${row.id}`, ["github.com", "api.openai.com"], context);
+    answers = []; reviews = [];
+    const auto = new AutoMode({ reviewer: () => reviewer, context: () => ({ person: ["Fetch the repo and run its tests"], calls: [] }), dataDir: "/hub", language: () => "en", audit });
+    wireNetworkApprovals({ egress: proxy, approvals, settings, store, audit, auto, workspaceFor: () => "/hub/workspaces/developer/t1", timeoutMs: 200 });
+    vi.spyOn(proxy, "resolveTarget").mockResolvedValue(["93.184.216.34"]);
+  });
+  afterEach(async () => { await proxy.close(); db.close(); vi.restoreAllMocks(); });
+
+  it("the reviewer answers for a new host instead of a card, once per session and port", async () => {
+    await ask();
+    expect(approvals.list()).toHaveLength(0);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toContain("new.example:443");
+    await ask();
+    expect(reviews).toHaveLength(1);
+  });
+
+  it("a blocked host becomes a quiet line with the reason, and the person may still allow it once", async () => {
+    answers = ["BLOCK", '{"verdict":"block","rule":"exfiltration","reason":"The task does not need this site."}'];
+    await expect(ask()).rejects.toThrow("auto mode stopped it: [exfiltration] The task does not need this site.");
+    const line = approvals.list(["blocked"])[0];
+    expect(line).toMatchObject({ tool: "hub_network_request", input: { host: "new.example", port: 443 }, auto: { rule: "exfiltration" } });
+    approvals.resolve(line.id, "approve", { via: "web" });
+    await ask();
+    expect(reviews).toHaveLength(2);
+  });
+
+  it("what the reviewer hands over still gets the card, and ask mode skips the reviewer", async () => {
+    answers = ["BLOCK", '{"verdict":"person","rule":"unclear","reason":"Only you know this site."}'];
+    const first = ask(); approvals.resolve((await pending()).id, "approve", { via: "web" }); await first;
+    settings.update({ approvalMode: "ask" });
+    const second = ask("other.example"); approvals.resolve((await pending()).id, "approve", { via: "web" }); await second;
+    expect(reviews).toHaveLength(2);
+  });
+
+  it("after outside content a listed host is looked at once per session; the brains' own model hosts never", async () => {
+    await ask("github.com");
+    expect(reviews).toHaveLength(0);
+    store.updateSession(context.sessionId, { tainted: true });
+    await ask("api.openai.com");
+    expect(reviews).toHaveLength(0);
+    await ask("github.com");
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toContain("outside content");
+    await ask("github.com");
+    expect(reviews).toHaveLength(1);
+    // Ask mode: the card says the host is listed, and offers no "always".
+    settings.update({ approvalMode: "ask" });
+    const waiting = ask("github.com", 8443);
+    const card = await pending();
+    expect(card.ask).toMatchObject({ kind: "network", host: "github.com", port: 8443, listed: true });
+    approvals.resolve(card.id, "approve", { via: "web", remember: true }); await waiting;
+    expect(settings.get().brainEgressAllow).toEqual([]);
   });
 });

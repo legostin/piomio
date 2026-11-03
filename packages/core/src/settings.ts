@@ -37,7 +37,8 @@ export interface CoreSettings {
   voice: VoiceSettings;
 }
 
-export const DEFAULT_BRAIN_EGRESS = [
+/** The brains' CLIs themselves: their sign-in and model APIs. Never asked about, even after outside content (egress.ts). */
+export const BRAIN_MODEL_EGRESS = [
   "*.anthropic.com",
   "claude.ai",
   "*.claude.ai",
@@ -52,6 +53,10 @@ export const DEFAULT_BRAIN_EGRESS = [
   "*.kimi.com",
   "kimi.ai",
   "*.kimi.ai",
+];
+
+export const DEFAULT_BRAIN_EGRESS = [
+  ...BRAIN_MODEL_EGRESS,
   "*.googleapis.com",
   "openrouter.ai",
   "registry.npmjs.org",

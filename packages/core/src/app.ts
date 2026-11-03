@@ -478,7 +478,13 @@ export class Hub {
     });
     this.machines.registerTools(this.tools);
     registerHubTools(this);
-    wireNetworkApprovals({ egress: this.egress, approvals: this.approvals, settings: this.settings, store: this.store, audit: this.audit, agents: this.agents, note: (r, message) => this.runner.networkDenied(r.sessionId, r.conversationId, message) });
+    wireNetworkApprovals({
+      egress: this.egress, approvals: this.approvals, settings: this.settings, store: this.store, audit: this.audit, agents: this.agents,
+      note: (r, message) => this.runner.networkDenied(r.sessionId, r.conversationId, message),
+      auto: this.auto,
+      workspaceFor: (r) => this.runner.workspacePath(r),
+      machine: () => this.runner.computerName("local"),
+    });
     registerFeedTools({
       registry: this.tools,
       feeds: this.feeds,

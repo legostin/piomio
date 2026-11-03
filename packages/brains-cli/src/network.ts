@@ -14,7 +14,9 @@ export function confinedNetwork(opts: BrainSessionOptions): { allowedDomains: st
   if (!proxy || !url || url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || !url.username || !url.password || url.pathname !== "/" || url.search || url.hash) {
     throw new Error("Sandbox networking requires the hub's authenticated loopback egress proxy");
   }
-  return { allowedDomains: [...new Set(opts.confine.network.allowedDomains)], proxy };
+  // Codex's managed proxy reads the port up to the end ("41789/" is no port): it would ignore the upstream and dial
+  // destinations directly, past the hub. So no trailing slash, whatever the hub's env held.
+  return { allowedDomains: [...new Set(opts.confine.network.allowedDomains)], proxy: `http://${url.username}:${url.password}@${url.host}` };
 }
 
 /** All upstream proxy aliases agree; an inherited ALL_PROXY or no_proxy must not bypass the hub's filter. */

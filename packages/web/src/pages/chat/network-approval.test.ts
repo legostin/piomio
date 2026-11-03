@@ -16,6 +16,12 @@ describe("network permission card", () => {
     for (const word of ["new.example", "443", "Developer", "Check a new host", "90 seconds", "current session", "External actions", "Allow once", "Always allow", "Deny"]) expect(html).toContain(word);
     expect(html.match(/<button/g)).toHaveLength(3);
   });
+  it("a listed host after outside content says why it asks and offers no always", () => {
+    const html = render({ ...part, ask: { ...part.ask!, host: "github.com", listed: true } });
+    expect(html).toContain("outside content");
+    expect(html).not.toContain("Always allow");
+    expect(html.match(/<button/g)).toHaveLength(2);
+  });
   it("warns for a raw IP and removes buttons after the request expires", () => {
     const ip = { ...part, ask: { ...part.ask!, host: "1.1.1.1", ipLiteral: true } };
     expect(render(ip)).toContain("Its owner may change");

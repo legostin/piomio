@@ -74,6 +74,8 @@ export interface NetworkContext {
 export interface NetworkRequest extends NetworkContext {
   host: string;
   port: number;
+  /** On the allowlist: asked about only because the session has read outside content. */
+  listed?: boolean;
   signal: AbortSignal;
 }
 interface Grant {
@@ -99,6 +101,10 @@ export class EgressProxy {
   extraBrainAllow: () => string[] = () => [];
   privateAllow: () => string[] = () => [];
   requestApproval?: (request: NetworkRequest) => Promise<void>;
+  /** The session has read outside content: what a command sends even to a listed host leaves the computer. */
+  tainted: (context: NetworkContext) => boolean = () => false;
+  /** What the brains' CLIs themselves talk to (their model APIs): listed, and never asked about. */
+  ownHosts: string[] = [];
 
   /** Resolve once; pinnedLookup uses exactly these checked addresses, never a second DNS lookup. */
   async resolveTarget(host: string): Promise<string[]> {
@@ -154,7 +160,9 @@ export class EgressProxy {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid destination port");
     const verdict = this.allowed(token, host);
     const address = `${host}:${port}`;
-    if (verdict.ok || g.once.has(address)) {
+    // After outside content each listed host is asked about once per session, as an unknown one would be.
+    const look = verdict.ok && !!g.context && !this.ownHosts.some((p) => hostMatches(host, p)) && this.tainted(g.context);
+    if ((verdict.ok && !look) || g.once.has(address)) {
       const addrs = await this.resolveTarget(host);
       if (signal?.aborted || g.cancel.signal.aborted) throw new Error(`Host ${address} is not allowed: request cancelled`);
       return addrs;
@@ -172,10 +180,10 @@ export class EgressProxy {
       const cancel = new AbortController();
       const abort = () => cancel.abort();
       g.cancel.signal.addEventListener("abort", abort, { once: true });
-      const promise = this.requestApproval({ ...g.context, host, port, signal: cancel.signal }).then(() => {
+      const promise = this.requestApproval({ ...g.context, host, port, ...(look ? { listed: true } : {}), signal: cancel.signal }).then(() => {
         if (cancel.signal.aborted || !this.grants.has(token!)) throw new Error(`Host ${address} is not allowed: request cancelled`);
         // A permanent grant stays removable in settings: only a once decision needs a temporary allowance.
-        if (!this.allowed(token, host).ok) g.once.add(address);
+        if (look || !this.allowed(token, host).ok) g.once.add(address);
       }).finally(() => {
         this.pending.delete(key);
         g.cancel.signal.removeEventListener("abort", abort);

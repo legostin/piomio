@@ -13,9 +13,9 @@ export function NetworkApprovalCard({ part }: { part: Extract<MessagePart, { typ
       <div className="mt-2 text-xs text-muted">{t("message.network.agent", { agent: ask.agent ?? "" })}</div>
       {ask.task && <div className="mt-1 break-words text-xs text-muted">{t("message.network.task", { task: ask.task })}</div>}
       <p className="mt-2 text-xs text-muted">{t("message.network.scope")}</p>
-      <p className="mt-1 text-xs text-muted">{t("message.network.always")}</p>
+      <p className="mt-1 text-xs text-muted">{t(ask.listed ? "message.network.listed" : "message.network.always")}</p>
       {ask.ipLiteral && <p role="note" className="mt-2 text-xs font-medium text-warning">{t("message.network.ip")}</p>}
-      {pending ? <ApprovalActions approvalId={part.approvalId} network /> : <div className="mt-2 text-sm">{t(`approvalStatus.${part.status}`)}</div>}
+      {pending ? <ApprovalActions approvalId={part.approvalId} network always={!ask.listed} /> : <div className="mt-2 text-sm">{t(`approvalStatus.${part.status}`)}</div>}
     </section>
   );
 }

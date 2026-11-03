@@ -42,6 +42,13 @@ describe("confined brain networking", () => {
     expect(confinedProxyEnv({ ...o, confine: undefined })).toEqual({});
   });
 
+  it("hands the CLI the upstream without a trailing slash, which Codex's managed proxy cannot read", () => {
+    const o = options();
+    o.env.HTTPS_PROXY = `${proxy}/`;
+    expect(confinedNetwork(o)?.proxy).toBe(proxy);
+    expect(confinedProxyEnv(o).HTTPS_PROXY).toBe(proxy);
+  });
+
   it("Claude keeps its sandbox proxy, chains upstream and reviews networked Bash through the hub", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "claude-network-"));
     const o = options();
@@ -59,7 +66,7 @@ describe("confined brain networking", () => {
     expect(JSON.stringify(settings)).not.toContain("test-credential");
   });
 
-  it("Codex tasks keep command networking off: a networked command asks the hub to leave the sandbox", async () => {
+  it("Codex enables the managed proxy together with networking, no direct/LAN/SOCKS path, the hub's proxy deciding", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "codex-network-"));
     const o = options();
     const file = join(stateDir, "args.jsonl");
@@ -72,9 +79,13 @@ describe("confined brain networking", () => {
     // Codex rejects "untrusted" at start-up ("no longer supported"), so no session may name it.
     expect(started.approvalPolicy).toBe("on-request");
     expect(started.args).toContain('approval_policy="on-request"');
-    expect(started.args).toContain("permissions.piomio.network.enabled=false");
-    expect(started.args).not.toContain("features.network_proxy=true");
     expect(JSON.stringify(started)).not.toContain("untrusted");
+    expect(started.args).toContain("features.network_proxy=true");
+    const network = started.args.find((a: string) => a.startsWith("permissions.piomio.network="));
+    for (const value of ["enabled=true", "allow_upstream_proxy=true", "allow_local_binding=false", "enable_socks5=false", 'mode="full"', 'proxy_url="http://127.0.0.1:0"']) expect(network).toContain(value);
+    for (const host of domains) expect(network).toContain(`${JSON.stringify(host)}="allow"`);
+    expect(network).toContain('"*"="allow"');
+    expect(network).not.toContain('"127.0.0.1"="allow"');
     expect(JSON.stringify(started)).not.toContain("test-credential");
   });
 
