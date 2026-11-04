@@ -180,7 +180,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
 }
 
 /** The relay a hub uses when PIOMIO_PUSH_RELAY does not name another (or "off"): packages/push-relay, run by Piomio. */
-export const DEFAULT_PUSH_RELAY = "https://legost.in/piomio-push";
+export const DEFAULT_PUSH_RELAY = "https://relay.piomio.io";
 
 /** PIOMIO_PUSH_RELAY: "off" (or "0") for none, else the relay's URL; unset, Piomio's own. */
 function pushRelay(v: string | undefined): string | undefined {

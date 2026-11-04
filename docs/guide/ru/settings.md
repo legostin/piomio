@@ -157,7 +157,7 @@ await (await fetch("/api/settings", { method: "PATCH", headers: { "content-type"
 | `PIOMIO_DEVICE_HOST` | `0.0.0.0` | где слушает этот порт |
 | `PIOMIO_DEVICES` | включено | `0` закрывает порт для телефонов, и они ходят по ссылке |
 | `PIOMIO_DEVICE_URLS` | определяются сами | адреса для QR-кода привязки, через запятую, раньше найденных |
-| `PIOMIO_PUSH_RELAY` | `https://legost.in/piomio-push` | relay-сервер, который будит привязанные телефоны (он узнаёт только, что есть новое); `off` — без пушей |
+| `PIOMIO_PUSH_RELAY` | `https://relay.piomio.io` | relay-сервер, который будит привязанные телефоны (он узнаёт только, что есть новое); `off` — без пушей |
 | `PIOMIO_TAILNET_HOSTNAME` | `piomio` | имя узла в твоей сети Tailscale, первая часть ссылки |
 | `PIOMIO_TAILNET_BIN` | узел, который идёт с приложением | программа узла Tailscale для доступа из любого места |
 | `PIOMIO_REPLICA_NAME` | имя хоста | имя этой машины среди реплик хаба |

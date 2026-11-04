@@ -24,7 +24,7 @@ describe("what a device shows", () => {
   });
 
   it("uses Piomio's relay unless told otherwise", () => {
-    expect(loadConfig({}).pushRelay).toBe("https://legost.in/piomio-push");
+    expect(loadConfig({}).pushRelay).toBe("https://relay.piomio.io");
     expect(loadConfig({ PIOMIO_PUSH_RELAY: "https://relay.example/" }).pushRelay).toBe("https://relay.example");
     expect(loadConfig({ PIOMIO_PUSH_RELAY: "off" }).pushRelay).toBeUndefined();
     expect(loadConfig({}).desktopNotify).toBe(false);

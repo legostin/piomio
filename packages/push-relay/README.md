@@ -29,8 +29,8 @@ Node (20 and up).
 | `RELAY_HOST`, `RELAY_PORT` | where it listens, `127.0.0.1:8795` |
 | `RELAY_TRUST_PROXY` | `0` when it faces the internet itself (otherwise it takes the client's address from `X-Forwarded-For`) |
 
-`deploy/` has the systemd unit and the nginx location Piomio's own relay runs with (`https://legost.in/piomio-push`,
-the hubs' default `PIOMIO_PUSH_RELAY`):
+`deploy/` has the systemd unit and the nginx site Piomio's own relay runs with, `https://relay.piomio.io` (the hubs'
+default `PIOMIO_PUSH_RELAY`), on the server behind legost.in:
 
 ```sh
 npm run build -w @piomio/push-relay

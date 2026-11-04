@@ -157,7 +157,7 @@ The list you send replaces the old one, and it applies at once.
 | `PIOMIO_DEVICE_HOST` | `0.0.0.0` | where that port listens |
 | `PIOMIO_DEVICES` | on | `0` closes the phones' port; phones then come through the link |
 | `PIOMIO_DEVICE_URLS` | detected | addresses for the pairing QR, comma-separated, ahead of the detected ones |
-| `PIOMIO_PUSH_RELAY` | `https://legost.in/piomio-push` | the push relay that wakes paired phones (it hears only that there is something new); `off` sends no pushes |
+| `PIOMIO_PUSH_RELAY` | `https://relay.piomio.io` | the push relay that wakes paired phones (it hears only that there is something new); `off` sends no pushes |
 | `PIOMIO_TAILNET_HOSTNAME` | `piomio` | the node's name in your tailnet, the link's first label |
 | `PIOMIO_TAILNET_BIN` | the node that comes with the app | the Tailscale node program for access from anywhere |
 | `PIOMIO_REPLICA_NAME` | the host name | this machine's name among the hub's replicas |
