@@ -1581,8 +1581,9 @@ export class SessionRunner {
       this.d.store.addMessage({ conversationId: a.conversationId, role: "assistant", agentId: a.agentId, parts: [part], status: "complete" });
     }
     // A task's question for the person also shows where the person is: in the dialog that started it, under the
-    // task's line, so they answer without opening the task. A quiet line has nothing to answer: it stays in the task.
-    const dialog = quiet ? undefined : this.starterDialog(a.taskId);
+    // task's line, so they answer without opening the task. So does what auto mode stopped there: its "Allow" is the
+    // person's to press. Only a line of what the person asked for themselves stays in the task.
+    const dialog = asked ? undefined : this.starterDialog(a.taskId);
     if (dialog) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId: a.taskId! }, part], status: "complete" });
   }
 

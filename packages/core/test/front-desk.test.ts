@@ -127,6 +127,15 @@ describe("front desk (integration)", () => {
     expect(shown.parts).toEqual([{ type: "task", taskId: child.id }, { type: "approval", approvalId: a.id, summary: "Run: ps", status: "pending" }]);
     hub.approvals.resolve(a.id, "approve", { via: "console" });
     await until(() => (card()?.parts.find((p) => p.type === "approval") as any)?.status === "approved", "the answer in the dialog");
+    // What auto mode stopped in the sub-task goes up too, with its reason: "Allow" there lets the task run it.
+    const stopped = hub.approvals.block({ sessionId: "s", conversationId: child.conversationId, taskId: child.id, agentId: "desk", tool: "notion_update-page", input: { page_id: "p" }, summary: 'notion_update-page {"page_id":"p"}', effect: "external", tainted: false, auto: { rule: "Wrong record", reason: "It says the founder said no." } });
+    const line = () => hub.store.listMessages(dialog, { limit: 50 }).find((m) => m.parts.some((p) => p.type === "approval" && p.approvalId === stopped.id));
+    expect((await until(line, "the stopped action in the dialog")).parts).toEqual([
+      { type: "task", taskId: child.id },
+      { type: "approval", approvalId: stopped.id, summary: 'notion_update-page {"page_id":"p"}', status: "blocked", auto: { rule: "Wrong record", reason: "It says the founder said no." } },
+    ]);
+    hub.approvals.resolve(stopped.id, "approve", { via: "web" });
+    await until(() => (line()?.parts.find((p) => p.type === "approval") as any)?.status === "approved", "Allow in the dialog");
     // A task the person started from the Tasks page has no dialog to show it in. (The dialog itself keeps getting
     // messages meanwhile: these tasks run, and their results come back to it.)
     const own = hub.store.createTask({ agentId: "desk", title: "Mine", goal: "z", createdBy: "user", background: false });
