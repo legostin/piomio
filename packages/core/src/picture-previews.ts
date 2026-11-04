@@ -111,7 +111,7 @@ export class PicturePreviews {
       }
       this.pending.clear();
     };
-    w.on("error", (e) => failed(e.message));
+    w.on("error", (e) => { console.error("[worker error]", e, Object.getOwnPropertyDescriptors(e), process.execArgv); failed(e.message); });
     w.on("exit", () => failed("the preview worker stopped"));
     this.worker = w;
     return w;
