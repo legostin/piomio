@@ -2,6 +2,7 @@
 // the demo, and the service worker that serves pictures and tiles. Then start.tsx brings up the demo hub and the app.
 
 import { readParams, type FromDemo } from "./protocol";
+import { disableCache } from "../lib/cache";
 
 const params = readParams(location.search);
 
@@ -46,6 +47,9 @@ try {
 } catch {
   /* storage blocked: the hub language (the same) still applies */
 }
+
+// Every chapter is a first visit for the device's copy of the hub too (lib/cache.ts): none is kept or read.
+disableCache();
 
 const sw = await serviceWorker();
 if (!sw) report({ source: "piomio-demo", type: "failed", chapter: params.chapter, message: "no service worker" });

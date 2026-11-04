@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import jpeg from "jpeg-js";
 import { PNG } from "pngjs";
 import { PicturePreviews } from "../src/picture-previews.ts";
@@ -110,6 +111,23 @@ describe("the preview store", () => {
 
       expect(await previews.preview(join(dir, "missing.jpg"))).toBeUndefined();
       expect(await previews.preview(join(dir, "doc.pdf"))).toBeUndefined();
+    } finally {
+      previews.stop();
+    }
+  }, 60_000);
+});
+
+describe("without the worker", () => {
+  it("makes the preview on the hub's own thread", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "previews-"));
+    const broken = join(dir, "worker.mjs");
+    writeFileSync(broken, "throw new Error('no worker here');");
+    const previews = new PicturePreviews(join(dir, "cache"), pathToFileURL(broken));
+    try {
+      const photo = join(dir, "photo.jpg");
+      writeFileSync(photo, jpg(2400, 1600));
+      const made = (await previews.preview(photo))!;
+      expect(jpeg.decode(readFileSync(made)).width).toBe(PREVIEW_SIDE);
     } finally {
       previews.stop();
     }

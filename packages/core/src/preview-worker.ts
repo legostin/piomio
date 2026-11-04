@@ -21,9 +21,10 @@ parentPort?.on("message", (job: PreviewJob) => {
   let reply: PreviewReply;
   try {
     const p = makePreview(readFileSync(job.file), job.type);
-    reply = p ? { id: job.id, data: p.data, type: p.type } : { id: job.id };
+    reply = p ? { id: job.id, data: new Uint8Array(p.data), type: p.type } : { id: job.id };
   } catch (e) {
     reply = { id: job.id, error: e instanceof Error ? e.message : String(e) };
   }
-  parentPort!.postMessage(reply, reply.data ? [reply.data.buffer as ArrayBuffer] : []);
+  // Copied, not transferred: a Buffer's memory may be Node's own (its pool), which cannot be handed to another thread.
+  parentPort!.postMessage(reply);
 });
