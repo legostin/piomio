@@ -63,7 +63,6 @@ These wait until you turn them on:
 
 | Integration | What it does | Connects with |
 |---|---|---|
-| **Pio — always next to you** | The assistant over every app on your Mac or PC: sees the active window, talks, takes the mouse when you hand it over. See [Pio](pio.md). | **Turn on**, or yes to the assistant's offer |
 | **Weather** | Forecast for any place as a card: now, by the hour, the week (Open-Meteo). | **Turn on** |
 | **Currency rates** | Exchange rates and conversion (ECB rates through Frankfurter, others through ExchangeRate-API). | **Turn on** |
 | **Crypto prices** | Prices from CoinGecko with the 24-hour change and a 7-day chart. | **Turn on** |

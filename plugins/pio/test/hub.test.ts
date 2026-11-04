@@ -40,7 +40,7 @@ describe("the Pio plugin in a hub", () => {
     const plugins = mkdtempSync(join(tmpdir(), "owl-pio-plugins-"));
     cpSync(join(repo, "plugins", "pio"), join(plugins, "pio"), { recursive: true, filter: (src) => !/node_modules|[\\/]test[\\/]?|[\\/]ui[\\/]src/.test(src) });
     const config = loadConfig(
-      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), TZ: "UTC" },
+      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), TZ: "UTC", PIOMIO_PIO: "1" },
       { dataDir: mkdtempSync(join(tmpdir(), "owl-pio-")), builtinPluginsDirs: [join(repo, "packages", "core", "test", "fixtures", "plugins"), plugins], builtinAgentsDir: join(repo, "packages", "core", "test", "fixtures", "agents") },
     );
     hub = new Hub(config);

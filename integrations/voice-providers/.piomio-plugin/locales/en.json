@@ -1,6 +1,6 @@
 {
   "name": "Voice providers",
-  "description": "Speech for Pio and agents: built-in, or Grok, ElevenLabs and OpenAI with your API key.",
+  "description": "Speech for agents: built-in, or Grok, ElevenLabs and OpenAI with your API key.",
   "integration.summary": "Built-in voice by default; cloud providers when you choose them.",
   "integration.example": "Check which voice providers I have connected",
   "settings.tts": "Text to speech",

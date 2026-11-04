@@ -1,7 +1,7 @@
 {
   "groups": [
     { "title": { "en": "Getting started", "ru": "Начало" }, "pages": ["index", "install", "server", "first-run"] },
-    { "title": { "en": "Working with the team", "ru": "Работа с командой" }, "pages": ["chat", "agents", "tasks", "channels", "pages", "browser", "pio"] },
+    { "title": { "en": "Working with the team", "ru": "Работа с командой" }, "pages": ["chat", "agents", "tasks", "channels", "pages", "browser"] },
     { "title": { "en": "Brains and computers", "ru": "Интеллект и компьютеры" }, "pages": ["brains", "machines", "phone", "telegram", "anywhere", "updates"] },
     { "title": { "en": "Safety", "ru": "Безопасность" }, "pages": ["approvals", "security"] },
     { "title": { "en": "Reference", "ru": "Справочник" }, "pages": ["plugins", "settings", "troubleshooting"] }

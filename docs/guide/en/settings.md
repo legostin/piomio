@@ -177,6 +177,7 @@ The list you send replaces the old one, and it applies at once.
 | Variable | Default | What it does |
 |---|---|---|
 | `PIOMIO_API_KEYS` | off | `1` lets agents think through plain API keys too; set it alike on every replica |
+| `PIOMIO_PIO` | off | `1` loads Pio, the always-on companion over every app, which is still in the works; without it the hub neither offers nor shows it |
 | `PIOMIO_INSTALL_CLIS` | off (`1` in the desktop app and on a server install) | `1` lets **Sign in** install a missing CLI into `<data>/tools`, and reads the PATH of the user's login shell |
 | `PIOMIO_BRAIN_HOME` | `<data>/home/agent` (the user's home in the desktop app and on a server) | the brain CLIs' home, where their sign-ins live |
 | `PIOMIO_SANDBOX_BRAINS` | on, on macOS | `0` turns off the macOS sandbox around CLI brains |

@@ -24,6 +24,13 @@ import { compilePluginUi } from "./ui-compile.ts";
  * is not loaded at all (its id stays the hub's), and Codex gets neither the OpenAI key nor the setting that names it.
  */
 export const HELD_BACK_WITHOUT_KEYS: readonly string[] = ["brain-api"];
+/** Built-in plugins not ready for everyone yet, each loaded only when the hub is told so (Config.pio: PIOMIO_PIO=1). */
+export const UNRELEASED: Readonly<Record<string, (c: Config) => boolean>> = { pio: (c) => c.pio };
+
+/** Built-in plugins this hub does not load: their ids stay the hub's, so nothing installed can take them. */
+export function heldBack(id: string, c: Config): boolean {
+  return (!c.apiKeys && HELD_BACK_WITHOUT_KEYS.includes(id)) || (id in UNRELEASED && !UNRELEASED[id](c));
+}
 const KEY_PARTS: Record<string, { vault: string[]; settings: string[] }> = { "brain-codex": { vault: ["openai_api_key"], settings: ["apiKeyRef"] } };
 
 /** A builtin layout without its key parts: those vault items out of its permissions, those settings out of its form. */
@@ -178,13 +185,11 @@ export class PluginHost {
         return;
       }
       const id = layout.manifest.id;
-      if (source === "builtin" && !this.d.config.apiKeys) {
-        if (HELD_BACK_WITHOUT_KEYS.includes(id)) {
-          seen.add(id);
-          return;
-        }
-        layout = withoutKeys(layout);
+      if (source === "builtin" && heldBack(id, this.d.config)) {
+        seen.add(id);
+        return;
       }
+      if (source === "builtin" && !this.d.config.apiKeys) layout = withoutKeys(layout);
       if (seen.has(id)) {
         console.error(`[plugins] duplicate plugin id ${id} in ${dir}, skipped`);
         return;
@@ -707,7 +712,7 @@ export class PluginHost {
       cpSync(src, dir, { recursive: true, filter: (p) => !p.includes(`${"node_modules"}`) });
     }
     const layout = readPluginLayout(dir);
-    if (this.records.get(layout.manifest.id)?.source === "builtin" || HELD_BACK_WITHOUT_KEYS.includes(layout.manifest.id)) {
+    if (this.records.get(layout.manifest.id)?.source === "builtin" || HELD_BACK_WITHOUT_KEYS.includes(layout.manifest.id) || layout.manifest.id in UNRELEASED) {
       throw new LocalizedError("plugin.builtinCannotReplace", { id: layout.manifest.id });
     }
     // A card's source without its build (an integration an agent made): the hub compiles it.

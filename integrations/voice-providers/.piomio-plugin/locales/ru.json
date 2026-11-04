@@ -1,6 +1,6 @@
 {
   "name": "Провайдеры голоса",
-  "description": "Речь Пио и агентов: встроенный голос или Grok, ElevenLabs и OpenAI с вашим API-ключом.",
+  "description": "Речь агентов: встроенный голос или Grok, ElevenLabs и OpenAI с вашим API-ключом.",
   "integration.summary": "Встроенный голос по умолчанию; облачные сервисы — на выбор.",
   "integration.example": "Проверь, какие провайдеры голоса подключены",
   "settings.tts": "Озвучка текста",
