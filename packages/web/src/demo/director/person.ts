@@ -54,9 +54,10 @@ export class Person {
       await this.clock.wait(ch === " " ? 55 : 28 + Math.random() * 38);
     }
     await this.clock.wait(260);
+    let diagnosed = false;
     const send = await waitFor(this.clock, () => {
       const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${t("composer.send")}"]`);
-      if (!button) console.log("[composer diagnostic]", JSON.stringify({ connected: field.isConnected, value: field.value, buttons: [...document.querySelectorAll("button[aria-label]")].map(b => b.getAttribute("aria-label")), messages: messages.get(), groups: groups.get() }));
+      if (!button && !diagnosed) { diagnosed = true; console.error("[composer diagnostic]", JSON.stringify({ connected: field.isConnected, value: field.value, buttons: [...document.querySelectorAll("button[aria-label]")].map(b => b.getAttribute("aria-label")), messages: messages.get(), groups: groups.get() })); }
       return button;
     }, "the send button");
     const arrived = this.hub.nextUserMessage();
