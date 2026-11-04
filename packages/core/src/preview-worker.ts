@@ -21,7 +21,9 @@ parentPort?.on("message", (job: PreviewJob) => {
   let reply: PreviewReply;
   try {
     const p = makePreview(readFileSync(job.file), job.type);
-    reply = p ? { id: job.id, data: p.data, type: p.type } : { id: job.id };
+    // Encoder Buffers can share Node's pool, whose ArrayBuffer is not transferable.
+    // Own exactly the preview bytes before transferring them to the hub.
+    reply = p ? { id: job.id, data: Uint8Array.from(p.data), type: p.type } : { id: job.id };
   } catch (e) {
     reply = { id: job.id, error: e instanceof Error ? e.message : String(e) };
   }

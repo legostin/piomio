@@ -31,5 +31,19 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
 
-      - if: always()
-        run: npm run build:ui-plugins && npm run build:site && npm run check:site
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SITE_BASE: /piomio/
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:ui-plugins
+      - run: npm run build:site
+      - run: npm run check:site

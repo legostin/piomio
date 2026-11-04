@@ -63,7 +63,6 @@ export class PicturePreviews {
     const run = this.queue.then(async () => {
       const r = await this.ask({ file, type });
       if (!r.data || !r.type || !EXT[r.type]) {
-        console.error("[preview diagnostic]", r);
         this.cache.put(`${key}.none`, r.error ?? "");
         return undefined;
       }
@@ -71,7 +70,7 @@ export class PicturePreviews {
       return join(this.cache.dir, key + EXT[r.type]);
     });
     this.queue = run.catch(() => {});
-    return run.catch((e) => { console.error("[preview diagnostic]", e); return undefined; });
+    return run.catch(() => undefined);
   }
 
   private ask(job: Omit<PreviewJob, "id">): Promise<PreviewReply> {
@@ -111,7 +110,7 @@ export class PicturePreviews {
       }
       this.pending.clear();
     };
-    w.on("error", (e) => { console.error("[worker error]", e, Object.getOwnPropertyDescriptors(e), process.execArgv); failed(e.message); });
+    w.on("error", (e) => failed(e.message));
     w.on("exit", () => failed("the preview worker stopped"));
     this.worker = w;
     return w;
