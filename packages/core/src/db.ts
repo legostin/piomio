@@ -137,6 +137,8 @@ const MIGRATIONS: string[] = [
   `create table pictures(url text primary key, state text not null, at text not null);`,
   // A quiet turn's reply (Message.quiet): hidden while it streams, kept or deleted when it ends.
   `alter table messages add column quiet integer not null default 0;`,
+  // A phone's push handle from the push relay (push.ts): its APNs token sealed by the relay, null while pushes are off.
+  `alter table devices add column push_handle text;`,
 ];
 
 /**

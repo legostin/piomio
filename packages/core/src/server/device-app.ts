@@ -15,6 +15,7 @@ import type { Device } from "@piomio/shared";
 import { errorText, LocalizedError, requestLocale } from "../i18n.ts";
 import type { Hub } from "../app.ts";
 import { agentName } from "../agents.ts";
+import { pushNote } from "../push.ts";
 import type { DeviceTls } from "../devices-tls.ts";
 import { DEVICE_COOKIE } from "../devices.ts";
 import { hubName } from "../pairing.ts";
@@ -158,6 +159,28 @@ export async function buildDeviceApp(hub: Hub, tls: DeviceTls, opts: { remote?: 
       if (req.webCsrf) throw new HttpError(403, "auth.required");
       hub.locations.forget(req.device!.id);
       return { ok: true };
+    });
+    // Pushes (the person allowed them on the phone): the relay seals the phone's APNs token, the hub keeps the handle.
+    api.put("/api/devices/me/push", async (req) => {
+      if (req.webCsrf) throw new HttpError(403, "auth.required");
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      await hub.pushes.register(req.device!.id, b.token, b.environment);
+      return { ok: true };
+    });
+    api.delete("/api/devices/me/push", async (req) => {
+      if (req.webCsrf) throw new HttpError(403, "auth.required");
+      hub.pushes.forget(req.device!.id);
+      return { ok: true };
+    });
+    // What a push was about: the app's notification extension shows these words in place of "New message".
+    api.get("/api/devices/notifications/:id", async (req) => {
+      const n = hub.notifier.get((req.params as { id: string }).id);
+      if (!n?.deliveredAt) throw new HttpError(404, "push.notFound");
+      const locale = requestLocale(req);
+      return pushNote(n, hub.settings.get().defaultAgent, (id) => {
+        const a = hub.agents.get(id);
+        return a ? agentName(a, locale) : id;
+      });
     });
 
     // ----- approvals: listed with everything the card shows; approving needs the phone's key (Face ID) -----

@@ -1,7 +1,7 @@
 ---
 title: The iPhone app
 nav: The iPhone app
-description: Piomio on your iPhone: the team, every chat with its cards, tasks, the Inbox and approvals with Face ID. Pairing with a QR code, how the phone reaches the hub at home and away, location, and disconnecting a phone.
+description: Piomio on your iPhone: the team, every chat with its cards, tasks, the Inbox and approvals with Face ID. Pairing with a QR code, how the phone reaches the hub at home and away, notifications, location, and disconnecting a phone.
 ---
 
 The Piomio app for iPhone is your hub in your pocket: the team, every chat with all its cards, tasks, the Inbox and approvals that need Face ID. The phone runs no brains. It connects to your hub, wherever that runs: your Mac or PC, or a server.
@@ -55,6 +55,18 @@ The phones' port speaks HTTPS with the hub's own certificate, made on first use 
 | `PIOMIO_DEVICE_URLS` | detected | addresses for the QR, comma-separated, ahead of the detected ones |
 
 Behind a port forward or a proxy the hub can't see the address phones should use, so list it yourself: `PIOMIO_DEVICE_URLS=https://home.example.com:8082`. More variables in [Settings and environment variables](settings.md).
+
+## Notifications
+
+After you connect the phone, the app asks once whether it may send notifications. Allowed, the phone gets what reaches you: notes and questions from your agents, scheduled reports, digests and approvals waiting for you. They follow the same rules as everywhere else: quiet hours make them silent, and what goes into the digest doesn't buzz on its own ([Tasks and schedules](tasks.md)). A tap opens the agent's dialog or the task; the app's icon shows how many Inbox items are unread.
+
+Nothing personal goes through anyone else on the way:
+
+- Apple delivers pushes to iPhones only through its own service, so the hub hands each push to Piomio's push relay, and the relay to Apple. The push says only that there is a new message, with a random id. No title, no text, no agent's name.
+- The app then asks your hub for that id over its usual encrypted connection and shows the words. If the phone can't reach the hub at that moment, the notification just says **New message**.
+- The relay keeps nothing. It never sees the phone's push token in the clear either: the hub stores it sealed by the relay, so it can only wake this one phone.
+
+To turn notifications off, use the iPhone's **Settings** → **Notifications** → **Piomio**. A hub can use another relay, or none, with `PIOMIO_PUSH_RELAY` ([Settings and environment variables](settings.md)).
 
 ## Approvals with Face ID
 

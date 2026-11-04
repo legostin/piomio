@@ -156,6 +156,7 @@ pub fn setup(app: &mut tauri::App, args: Args) -> Result<(), Box<dyn std::error:
     return Ok(());
   }
   app.manage(crate::pio::Pio::default());
+  crate::notify::init(&handle);
   let paths = Paths::resolve(&handle)?;
   // Before any window: WebView2's GPU caches go when the last run did not end cleanly (gpucache.rs). Tauri keeps the
   // webviews' data in the app's local data dir, a dev run's too, so a dev run leaves it to the installed app.
@@ -260,7 +261,15 @@ fn spec(st: &AppState, mode: Mode) -> Spec {
           env.push(("PIOMIO_DESKTOP_APP".into(), arg(&exe)));
         }
       }
-      Spec { program: p.node.clone(), args: vec![arg(&p.launch()), "run".into()], env, log: p.hub_log.clone(), ports: p.hub_ports(), restart_delay: delay }
+      Spec {
+        program: p.node.clone(),
+        args: vec![arg(&p.launch()), "run".into()],
+        env,
+        log: p.hub_log.clone(),
+        ports: p.hub_ports(),
+        restart_delay: delay,
+        notices: Some((crate::notify::PREFIX, crate::notify::on_line)),
+      }
     }
     Mode::Node => {
       env.push(("PIOMIO_LANG".into(), texts().lang().into()));
@@ -275,7 +284,7 @@ fn spec(st: &AppState, mode: Mode) -> Spec {
       if let Some(path) = &st.path_env {
         env.push(("PATH".into(), path.clone()));
       }
-      Spec { program: p.node.clone(), args: vec![arg(&p.node_cli()), "run".into()], env, log: p.node_log.clone(), ports: vec![], restart_delay: delay }
+      Spec { program: p.node.clone(), args: vec![arg(&p.node_cli()), "run".into()], env, log: p.node_log.clone(), ports: vec![], restart_delay: delay, notices: None }
     }
   }
 }
@@ -361,6 +370,11 @@ pub fn pio_url(st: &AppState) -> Option<Url> {
 
 /// Shows what the user should see now: the setup window (first run, an error, a link) or the hub's UI.
 pub fn open_ui(app: &AppHandle) {
+  open_ui_at(app, None);
+}
+
+/// Shows what the user should see now, the hub window on `path` (a notification's dialog or task) when it opens.
+pub fn open_ui_at(app: &AppHandle, path: Option<String>) {
   let st = app.state::<AppState>();
   let mode = st.settings.lock().unwrap().mode;
   let pending = st.error.lock().unwrap().is_some() || st.link.lock().unwrap().is_some();
@@ -368,6 +382,9 @@ pub fn open_ui(app: &AppHandle) {
     let _ = window::open_setup(app);
     return;
   };
+  if let Some(p) = &path {
+    window::navigate_main(app, p);
+  }
   if window::show_main(app) {
     return;
   }
@@ -379,7 +396,13 @@ pub fn open_ui(app: &AppHandle) {
     let url = match mode {
       Mode::Hub => hub_window_url(&st),
       Mode::Node => settings::existing_node(&st.paths.node_home).and_then(|e| Url::parse(&e.hub).ok()),
-    };
+    }
+    .map(|mut u| {
+      if let Some(p) = &path {
+        u.set_path(p);
+      }
+      u
+    });
     *st.starting.lock().unwrap() = false;
     match url {
       Some(url) => {

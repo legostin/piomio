@@ -11,6 +11,7 @@ mod flavor;
 mod gpucache;
 mod i18n;
 mod login;
+mod notify;
 #[cfg(target_os = "macos")]
 mod migration;
 mod pio;
@@ -31,7 +32,7 @@ fn main() {
   if std::env::var_os("PIOMIO_DATA_DIR").is_none() {
     builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| app::second_instance(app, argv)));
   }
-  builder
+  let builder = builder
     .plugin(tauri_plugin_deep_link::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     // Without its click script: that script sends target=_blank links over IPC, which the hub's page may not use, so
@@ -39,7 +40,11 @@ fn main() {
     .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
     // Pio's native confirmation and its shortcuts (Esc while it drives, push-to-talk); no page gets their commands.
     .plugin(tauri_plugin_dialog::init())
-    .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(pio::control::on_shortcut).build())
+    .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(pio::control::on_shortcut).build());
+  // The hub's notifications on Windows and Linux (notify.rs); macOS has its own.
+  #[cfg(not(target_os = "macos"))]
+  let builder = builder.plugin(tauri_plugin_notification::init());
+  builder
     .invoke_handler(tauri::generate_handler![
       commands::get_state,
       commands::choose_hub,

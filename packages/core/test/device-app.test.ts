@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { Hub, loadConfig } from "../src/index.ts";
 import { approvalPayload } from "../src/devices.ts";
 import { parsePairingLink } from "../src/pairing.ts";
+import { PushRelay } from "../src/push.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
 
@@ -233,6 +234,48 @@ describe("device port", () => {
 
     await web.req("DELETE", `/api/devices/${paired.deviceId}`);
     expect((await pageRequest(devicePort, fp, "GET", "/api/bootstrap", undefined, { cookie })).status).toBe(401);
+  });
+
+  it("wakes a phone through the relay with only the notification's id, and gives the phone the words itself", async () => {
+    const pairing = (await web.req("POST", "/api/devices/pairing", {})).json;
+    const fp = parsePairingLink(pairing.link)!.fingerprint;
+    const paired = (await phoneRequest(devicePort, fp, "POST", "/api/devices/pair", { code: pairing.code, name: "Push phone", platform: "ios", publicKey: phoneKey().publicKey })).json;
+    const token = paired.token as string;
+
+    const calls: Array<{ path: string; body: any }> = [];
+    let gone = false;
+    hub.pushes.relay = new PushRelay("https://relay.test", async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const body = JSON.parse(String(init?.body));
+      calls.push({ path, body });
+      if (path === "/v1/register") return Response.json({ handle: `sealed-${body.token.slice(0, 4)}` });
+      return gone ? Response.json({ gone: true }, { status: 410 }) : Response.json({ ok: true });
+    });
+
+    const apns = "ab12".repeat(16);
+    expect((await phoneRequest(devicePort, fp, "PUT", "/api/devices/me/push", { token: "not hex" }, token)).status).toBe(400);
+    expect((await phoneRequest(devicePort, fp, "PUT", "/api/devices/me/push", { token: apns, environment: "sandbox" }, token)).status).toBe(200);
+    expect(calls[0]).toEqual({ path: "/v1/register", body: { token: apns, environment: "sandbox" } });
+    expect((await phoneRequest(devicePort, fp, "GET", "/api/devices/me", undefined, token)).json.push).toBe(true);
+
+    const n = await hub.notifier.notify({ level: "notify", title: "Anna wrote", body: "Lunch at one?", agentId: "assistant" });
+    await new Promise((r) => setTimeout(r, 50));
+    const push = calls.find((c) => c.path === "/v1/push")!;
+    // The relay hears the handle and an opaque id: no title, no body, no agent.
+    expect(Object.keys(push.body).sort()).toEqual(["badge", "handle", "id", "kind"]);
+    expect(push.body).toMatchObject({ handle: "sealed-ab12", id: n.id, kind: "message" });
+    expect(JSON.stringify(push.body)).not.toMatch(/Anna|Lunch|assistant/);
+
+    const note = await phoneRequest(devicePort, fp, "GET", `/api/devices/notifications/${n.id}`, undefined, token);
+    expect(note.json).toMatchObject({ id: n.id, title: "Anna wrote", body: "Lunch at one?", agentId: "assistant", path: "/agent/assistant" });
+    expect((await phoneRequest(devicePort, fp, "GET", `/api/devices/notifications/${n.id}`)).status).toBe(401);
+    expect((await phoneRequest(devicePort, fp, "GET", "/api/devices/notifications/n_missing", undefined, token)).status).toBe(404);
+
+    // The app was deleted from the phone: Apple says so, the hub drops the handle.
+    gone = true;
+    await hub.notifier.notify({ level: "notify", title: "Again", body: "x" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await phoneRequest(devicePort, fp, "GET", "/api/devices/me", undefined, token)).json.push).toBeUndefined();
   });
 
   it("takes where the user is from the phone that shares it, for the agents, and forgets it when sharing stops or the phone goes", async () => {

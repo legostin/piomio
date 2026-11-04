@@ -1,0 +1,21 @@
+[Unit]
+Description=Piomio push relay: hubs wake their phones through it (packages/push-relay)
+After=network.target
+
+[Service]
+Type=simple
+User=piomio-relay
+ExecStart=/usr/bin/node /opt/piomio-push-relay/relay.mjs
+Environment=RELAY_HOST=127.0.0.1
+Environment=RELAY_PORT=8795
+Environment=RELAY_APNS_TOPIC=app.piomio.ios
+EnvironmentFile=/etc/piomio-push-relay/env
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

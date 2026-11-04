@@ -44,6 +44,7 @@ const fromRow = (r: any): Device => ({
   ...(r.model ? { model: r.model } : {}),
   createdAt: r.created_at,
   ...(r.last_seen_at ? { lastSeenAt: r.last_seen_at } : {}),
+  ...(r.push_handle ? { push: true } : {}),
 });
 
 const clip = (v: unknown, max: number): string => String(v ?? "").trim().slice(0, max);
@@ -157,7 +158,7 @@ export class DeviceRegistry {
   /** The token stops working at once; the row stays for the audit trail. */
   revoke(id: string, actor: string): void {
     if (!this.get(id)) throw new LocalizedError("device.notFound", undefined, 404);
-    this.db.prepare("update devices set revoked = 1, token_hash = '' where id = ?").run(id);
+    this.db.prepare("update devices set revoked = 1, token_hash = '', push_handle = null where id = ?").run(id);
     for (const k of this.nonces.keys()) if (k.startsWith(`${id}:`)) this.nonces.delete(k);
     for (const [k, v] of this.tickets) if (v.deviceId === id) this.tickets.delete(k);
     for (const [k, v] of this.webSessions) if (v.deviceId === id) this.webSessions.delete(k);

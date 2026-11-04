@@ -44,6 +44,13 @@ pub fn is_local(u: &Url) -> bool {
   u.scheme() == "tauri" || u.host_str() == Some("tauri.localhost")
 }
 
+/// The hub window's page goes to `path` (one of its own routes) without loading again, when the window exists.
+pub fn navigate_main(app: &AppHandle, path: &str) {
+  let Some(w) = app.get_webview_window(MAIN) else { return };
+  let Ok(path) = serde_json::to_string(path) else { return };
+  let _ = w.eval(format!("history.pushState(null, '', {path}); dispatchEvent(new PopStateEvent('popstate'))"));
+}
+
 /// Shows the hub window when it exists; false when it has to be opened first.
 pub fn show_main(app: &AppHandle) -> bool {
   let Some(w) = app.get_webview_window(MAIN) else { return false };

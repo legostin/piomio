@@ -36,6 +36,14 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFCGTypes", "CFDictionary", "CFNumber", "CFString"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGWindow"] }
+# The hub's notifications (notify.rs).
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSObject", "NSString"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "bitflags", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+block2 = "0.6"
+
+# This computer's notifications (notify.rs) on Windows and Linux.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+tauri-plugin-notification = "2"
 
 [target.'cfg(windows)'.dependencies]
 win32job = "2"

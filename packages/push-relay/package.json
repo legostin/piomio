@@ -1,0 +1,14 @@
+{
+  "name": "@piomio/push-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Piomio's push relay: hubs ask it to wake a phone, it tells Apple. No message content passes through it.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/relay.mjs"
+  }
+}

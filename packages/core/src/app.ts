@@ -81,6 +81,7 @@ import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
 import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
+import { DevicePushes, PushRelay, desktopNotifyLine, pushNote } from "./push.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
@@ -150,6 +151,8 @@ export class Hub {
   startState: StartState = {};
   /** Phones paired with the hub (the Piomio app) and the device port they talk to. */
   devices: DeviceRegistry;
+  /** Phones' pushes through the push relay (push.ts). */
+  pushes: DevicePushes;
   /** Where the user is, when their phone shares it (user-location.ts). */
   locations: UserLocations;
   deviceApp?: FastifyInstance;
@@ -287,6 +290,13 @@ export class Hub {
     });
     this.devices = new DeviceRegistry({ db: this.db, bus: this.bus, audit: this.audit, invites: this.invites });
     this.locations = new UserLocations(this.settings, (id) => !!this.devices.get(id));
+    this.pushes = new DevicePushes({ db: this.db, bus: this.bus, ...(config.pushRelay ? { relay: new PushRelay(config.pushRelay) } : {}) });
+    // What reached the person wakes their phones (the words stay here) and, on the desktop app's own hub, shows as this
+    // computer's notification.
+    this.notifier.onDelivered = (n, o) => {
+      void this.pushes.send(n, { silent: o.silent, badge: this.notifier.unreadCount() });
+      if (config.desktopNotify) process.stdout.write(desktopNotifyLine(pushNote(n, o.recipient, this.notifier.agentName), o.silent));
+    };
     this.secrets = new SecretIntake({ db: this.db, bus: this.bus, audit: this.audit, vault: this.vault, plugins: () => this.plugins });
     this.agentDrafts = new AgentDrafts({ db: this.db, bus: this.bus });
     this.cliTools = new CliTools(config.dataDir, config.installClis);

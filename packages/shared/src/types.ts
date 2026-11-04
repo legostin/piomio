@@ -1225,6 +1225,8 @@ export interface Device {
   model?: string;
   createdAt: ISODate;
   lastSeenAt?: ISODate;
+  /** The phone takes pushes (through the push relay). */
+  push?: boolean;
 }
 
 /** What the web UI shows to pair a phone: the QR carries the link. */

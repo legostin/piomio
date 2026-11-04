@@ -4,7 +4,7 @@
 //! never outlives the app; on Windows a job object ends what it started, on macOS its process group.
 
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -32,6 +32,8 @@ pub struct Spec {
   /// The hub's ports (web UI, console, egress proxy), checked before each start.
   pub ports: Vec<u16>,
   pub restart_delay: Duration,
+  /// Lines on the child's stdout that start with this prefix go to the function (the rest of the line), not the log.
+  pub notices: Option<(&'static str, fn(&str))>,
 }
 
 const LOG_LIMIT: u64 = 5 * 1024 * 1024;
@@ -236,11 +238,12 @@ fn spawn(spec: &Spec) -> io::Result<Proc> {
   }
   rotate(&spec.log, LOG_LIMIT)?;
   let log = OpenOptions::new().create(true).append(true).open(&spec.log)?;
+  let out = log.try_clone()?;
   let mut cmd = command(&spec.program);
   cmd.args(&spec.args)
     .envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
     .stdin(Stdio::piped())
-    .stdout(log.try_clone()?)
+    .stdout(if spec.notices.is_some() { Stdio::piped() } else { Stdio::from(out.try_clone()?) })
     .stderr(log);
   #[cfg(unix)]
   {
@@ -262,6 +265,9 @@ fn spawn(spec: &Spec) -> io::Result<Proc> {
     job.assign_process(child.as_raw_handle() as isize).map_err(io::Error::other)?;
   }
   let stdin = child.stdin.take();
+  if let (Some(notices), Some(stdout)) = (spec.notices, child.stdout.take()) {
+    thread::spawn(move || split_stdout(stdout, out, notices));
+  }
   Ok(Proc {
     child,
     stdin,
@@ -278,6 +284,25 @@ fn end(mut p: Proc) {
   }
   let _ = p.child.kill();
   let _ = p.child.wait();
+}
+
+/// Copies the child's stdout into its log, except the lines meant for the app. Ends with the child.
+fn split_stdout(stdout: impl Read, mut log: impl Write, (prefix, on): (&'static str, fn(&str))) {
+  let mut lines = BufReader::new(stdout);
+  let mut line = Vec::new();
+  loop {
+    line.clear();
+    match lines.read_until(b'\n', &mut line) {
+      Ok(0) | Err(_) => return,
+      Ok(_) => {}
+    }
+    match line.strip_prefix(prefix.as_bytes()) {
+      Some(rest) => on(String::from_utf8_lossy(rest).trim_end()),
+      None => {
+        let _ = log.write_all(&line);
+      }
+    }
+  }
 }
 
 /// A line of the app's own in the child's log.
@@ -301,7 +326,18 @@ mod tests {
   }
 
   fn script(js: &str, log: PathBuf) -> Spec {
-    Spec { program: "node".into(), args: vec!["-e".into(), js.into()], env: vec![], log, ports: vec![], restart_delay: Duration::from_millis(50) }
+    Spec { program: "node".into(), args: vec!["-e".into(), js.into()], env: vec![], log, ports: vec![], restart_delay: Duration::from_millis(50), notices: None }
+  }
+
+  static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+  #[test]
+  fn lines_for_the_app_skip_the_log() {
+    let out = "starting\n\u{1e}note {\"id\":1}\nlistening\n\u{1e}note {\"id\":2}";
+    let mut log = Vec::new();
+    split_stdout(out.as_bytes(), &mut log, ("\u{1e}note ", |l| SEEN.lock().unwrap().push(l.to_string())));
+    assert_eq!(String::from_utf8(log).unwrap(), "starting\nlistening\n");
+    assert_eq!(*SEEN.lock().unwrap(), vec!["{\"id\":1}", "{\"id\":2}"]);
   }
 
   fn recorder() -> (Supervisor, Arc<Mutex<Vec<Status>>>) {

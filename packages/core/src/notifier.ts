@@ -124,6 +124,8 @@ export class Notifier {
   startTask?: (t: { agentId: string; title: string; goal: string; deliver: "digest" }) => { id: string };
   cancelTask?: (id: string) => void;
   agentName: (id: string) => string;
+  /** What reached the person, for their devices (push.ts): the phones' pushes and the desktop app's notifications. */
+  onDelivered?: (n: Notification, o: { silent: boolean; recipient: string }) => void;
   digestWriteMs: number;
   private digestTimer?: NodeJS.Timeout;
   private lastDigestKey = "";
@@ -298,6 +300,7 @@ export class Notifier {
     this.db.prepare("update notifications set delivered_at = ?, message_id = ? where id = ?").run(nowIso(), messageId ?? null, n.id);
     // An approval push is no Inbox row: the badges have nothing new.
     if (n.kind !== "approval") this.inboxChanged();
+    this.onDelivered?.(n, { silent: quiet, recipient: agentId });
   }
 
   /**
@@ -359,6 +362,7 @@ export class Notifier {
       silent: muted || inQuietHours(s.quietHours, localHHMM(s.timezone)),
     });
     this.inboxChanged();
+    this.onDelivered?.(out, { silent: muted || inQuietHours(s.quietHours, localHHMM(s.timezone)), recipient: agentId });
     return out;
   }
 
@@ -658,7 +662,8 @@ export class Notifier {
       agentId: s.defaultAgent,
     });
     this.db.prepare("update notifications set message_id = ? where id = ?").run(m.id, id);
-    this.bus.emit("notification.created", fromRow(this.db.prepare("select * from notifications where id = ?").get(id)));
+    const delivered = fromRow(this.db.prepare("select * from notifications where id = ?").get(id));
+    this.bus.emit("notification.created", delivered);
     await this.channels.broadcast({
       kind: "digest",
       text: this.channelText(row.title, body, sources),
@@ -667,6 +672,7 @@ export class Notifier {
       silent: inQuietHours(s.quietHours, localHHMM(s.timezone)),
     });
     this.inboxChanged();
+    this.onDelivered?.(delivered, { silent: inQuietHours(s.quietHours, localHHMM(s.timezone)), recipient: s.defaultAgent });
   }
 
   /** Stop the digest's writer, unless it already ended (failed, or done with nothing to say). */

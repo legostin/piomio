@@ -88,6 +88,10 @@ export interface Config {
    * GitHub's `releases/latest`, the desktop app (and its hub) as its latest.json.
    */
   updateUrl?: string;
+  /** The push relay that wakes paired phones (PIOMIO_PUSH_RELAY, default push.ts DEFAULT_PUSH_RELAY; "off": none). */
+  pushRelay?: string;
+  /** The desktop app runs this hub (PIOMIO_DESKTOP=1): it shows what reaches the person as this computer's notifications. */
+  desktopNotify: boolean;
   /** For tests: skip starting builtin plugins. */
   plugins: "all" | "none" | string[];
 }
@@ -164,6 +168,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     ...(env.PIOMIO_INSTALL_ROOT ? { installRoot: resolve(env.PIOMIO_INSTALL_ROOT) } : {}),
     ...(env.PIOMIO_DESKTOP === "1" && env.PIOMIO_DESKTOP_APP ? { desktopApp: env.PIOMIO_DESKTOP_APP } : {}),
     ...(env.PIOMIO_UPDATE_URL ? { updateUrl: env.PIOMIO_UPDATE_URL } : {}),
+    ...(pushRelay(env.PIOMIO_PUSH_RELAY) ? { pushRelay: pushRelay(env.PIOMIO_PUSH_RELAY) } : {}),
+    desktopNotify: env.PIOMIO_DESKTOP === "1",
     plugins: (env.PIOMIO_PLUGINS ?? "all") === "all" ? "all" : env.PIOMIO_PLUGINS === "none" ? "none" : (env.PIOMIO_PLUGINS ?? "").split(","),
   };
   const merged = { ...cfg, ...overrides };
@@ -171,6 +177,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     merged.brainHome = env.PIOMIO_BRAIN_HOME ? resolve(env.PIOMIO_BRAIN_HOME) : join(merged.dataDir, "home", "agent");
   }
   return merged;
+}
+
+/** The relay a hub uses when PIOMIO_PUSH_RELAY does not name another (or "off"): packages/push-relay, run by Piomio. */
+export const DEFAULT_PUSH_RELAY = "https://legost.in/piomio-push";
+
+/** PIOMIO_PUSH_RELAY: "off" (or "0") for none, else the relay's URL; unset, Piomio's own. */
+function pushRelay(v: string | undefined): string | undefined {
+  const s = (v ?? "").trim();
+  if (s === "off" || s === "0") return undefined;
+  return (s || DEFAULT_PUSH_RELAY).replace(/\/$/, "");
 }
 
 /** The root package.json's version: the desktop installers on GitHub are released under it. */

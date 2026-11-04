@@ -8,6 +8,7 @@
     "packages/brains-cli/src",
     "packages/node/src",
     "packages/replica/src",
+    "packages/push-relay/src",
     "packages/testkit/src",
     "plugins/*/server",
     "integrations/*/server"
