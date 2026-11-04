@@ -187,6 +187,8 @@ export default {
   // machines
   "machines.execApproval": "Run on {machine}: {command}",
   "machines.revokeApproval": "Disconnect the computer {machine} from Piomio",
+  "agents.folderApproval": "Open the folder {path} on {computer} as the project “{name}”: the agent reads and writes it without asking",
+  "agents.folderApprovalFor": "Open the folder {path} on {computer} to {agent} as the project “{name}”: it reads and writes it without asking",
   "machines.commandsOnApproval": "Allow commands on the computer {machine}: agents there may run programs (Blender, builds), each checked by auto mode",
   "machines.commandsOffApproval": "Forbid commands on the computer {machine}",
   "machines.setupApproval": "Change what the computer {machine} may use: brains, keys, models and spend limit",

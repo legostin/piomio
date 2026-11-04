@@ -8,6 +8,7 @@ import { stringify as toYaml } from "yaml";
 import type { AgentDef, AgentThinking, Locale } from "@piomio/shared";
 import { formatBrainRef, normalizeLocale, parseAvatar, parseBrainRef, parseFrontmatter, parseThinking, sameBrain } from "@piomio/shared";
 import type { AgentsState } from "./agents-state.ts";
+import { parseFolders } from "./agent-folders.ts";
 
 export const DEFAULT_BRAINS = ["claude-code@local", "codex@local", "kimi@local", "api:*"];
 
@@ -17,12 +18,14 @@ export function agentFromMarkdown(id: string, text: string, source: string): Age
     Array.isArray(v) ? v.map(String) : typeof v === "string" ? v.split(",").map((s) => s.trim()).filter(Boolean) : d;
   const initiative = Number(data.initiative ?? 1);
   const machines = list(data.machines, []);
+  const folders = parseFolders(data.folders);
   return {
     id,
     name: String(data.name ?? id),
     description: String(data.description ?? ""),
     brains: list(data.brains, DEFAULT_BRAINS),
     ...(machines.length ? { machines } : {}),
+    ...(folders ? { folders } : {}),
     model: data.model ? String(data.model) : undefined,
     thinking: parseThinking(data.thinking),
     initiative: (initiative === 0 || initiative === 2 ? initiative : 1) as 0 | 1 | 2,
@@ -84,7 +87,8 @@ export function agentMoved(a: AgentDef, from: string, to: string): AgentDef | un
   const brains = a.brains.map((b) => brainMoved(b, from, to)).filter((b, i, all) => all.findIndex((x) => sameBrain(x, b)) === i);
   const thinking = a.thinking && (Object.fromEntries(Object.entries(a.thinking).map(([k, c]) => [k, c?.brain ? { ...c, brain: brainMoved(c.brain, from, to) } : c])) as AgentThinking);
   const machines = a.machines && [...new Set(a.machines.map((m) => (m === from ? to : m)))];
-  const moved = { ...a, brains, ...(thinking ? { thinking } : {}), ...(machines ? { machines } : {}) };
+  const folders = a.folders?.map((f) => (f.machine === from ? { ...f, machine: to } : f));
+  const moved = { ...a, brains, ...(thinking ? { thinking } : {}), ...(machines ? { machines } : {}), ...(folders ? { folders } : {}) };
   return JSON.stringify(moved) === JSON.stringify(a) ? undefined : moved;
 }
 
@@ -99,6 +103,7 @@ export function agentToMarkdown(a: AgentDef): string {
     ...(parseAvatar(a.avatar) ? { avatar: parseAvatar(a.avatar) } : {}),
     brains: a.brains,
     ...(a.machines?.length ? { machines: a.machines } : {}),
+    ...(a.folders?.length ? { folders: a.folders } : {}),
     ...(a.model ? { model: a.model } : {}),
     ...(parseThinking(a.thinking) ? { thinking: parseThinking(a.thinking) } : {}),
     initiative: a.initiative,

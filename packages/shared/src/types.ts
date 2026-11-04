@@ -636,6 +636,12 @@ export interface AgentDef {
    * their brains, and an error when none of them is online. Unset or empty: anywhere.
    */
   machines?: string[];
+  /**
+   * The person's project folders the agent works in ("the site is in ~/code/site"), each on one computer: its brains
+   * there read and write them without asking (core/src/agent-folders.ts), and its prompt says where each project is.
+   * Added in the chat with the person's yes on a card (hub_agent_folder_add).
+   */
+  folders?: AgentFolder[];
   /** An exact model for every brain (from before `thinking`): used when no choice names one. */
   model?: string;
   /** How the agent thinks for each kind of work: kinds without a choice of their own follow `chat`. */
@@ -663,6 +669,18 @@ export interface AgentDef {
    * `companion: true` in the frontmatter.
    */
   companion?: boolean;
+}
+
+/** One of an agent's project folders (AgentDef.folders). */
+export interface AgentFolder {
+  /** What the person calls the project ("Site", "Диплом"). */
+  name: string;
+  /** Absolute path on `machine` (`~/…` for the person's home there). */
+  path: string;
+  /** The computer it is on (as AgentDef.machines keeps them); unset: the hub's own. */
+  machine?: string;
+  /** A line on what is there or how to work with it. */
+  note?: string;
 }
 
 /**

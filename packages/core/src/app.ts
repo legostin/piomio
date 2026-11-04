@@ -531,6 +531,7 @@ export class Hub {
       agents: this.agents,
       dataDir: config.dataDir,
       roots: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
+      here: () => this.here(),
       auto: this.auto,
       machineName: (id) => this.runner.computerName(id),
       egress: this.egressGuard,

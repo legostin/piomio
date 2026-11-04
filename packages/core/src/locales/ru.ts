@@ -186,6 +186,8 @@ export default {
   // machines
   "machines.execApproval": "Выполнить на машине {machine}: {command}",
   "machines.revokeApproval": "Отключить компьютер {machine} от Piomio",
+  "agents.folderApproval": "Открыть папку {path} на компьютере {computer} как проект «{name}»: агент будет читать и менять её без вопросов",
+  "agents.folderApprovalFor": "Открыть папку {path} на компьютере {computer} агенту {agent} как проект «{name}»: он будет читать и менять её без вопросов",
   "machines.commandsOnApproval": "Разрешить команды на компьютере {machine}: агенты там смогут запускать программы (Blender, сборки), каждую проверит автомод",
   "machines.commandsOffApproval": "Запретить команды на компьютере {machine}",
   "machines.setupApproval": "Изменить, что может использовать компьютер {machine}: интеллекты, ключи, модели и лимит расхода",

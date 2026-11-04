@@ -1,4 +1,5 @@
-import type { AgentDef, Locale, Task, ThinkingPreset, WorkKind } from "@piomio/shared";
+import type { AgentDef, AgentFolder, Locale, Task, ThinkingPreset, WorkKind } from "@piomio/shared";
+import { folderLine } from "./agent-folders.ts";
 
 /** Language names for the system prompt (English, since prompts are English). */
 const LANGUAGE_NAMES: Record<Locale, string> = { en: "English", ru: "Russian" };
@@ -19,6 +20,8 @@ export interface PromptContext {
   appended: string[];
   /** The computer the session's brain runs on; `local` is the hub's own. `commands`: whether commands may run there. */
   machine?: { name: string; local: boolean; commands?: boolean };
+  /** The agent's project folders: on this session's computer, and on others (by the computer's name). */
+  folders?: { here: AgentFolder[]; elsewhere: Array<AgentFolder & { computer: string }> };
   /** What is left of the hub's first-run setup (the default agent, interactive sessions only). */
   setup?: string;
   /** A group chat the agent takes part in: its title and members, the lead first. */
@@ -141,6 +144,24 @@ function groupWhere(c: PromptContext & { group: NonNullable<PromptContext["group
   ].join("\n");
 }
 
+/** Where the user's projects are: the ones on this computer are the agent's to work in. */
+function projectFolders(f: NonNullable<PromptContext["folders"]>): string[] {
+  const lines = ["## Your project folders"];
+  if (f.here.length) {
+    lines.push(
+      "The user's projects you work on, on this computer. You read and write them like your own folder (in the dialog you only look: changes go to a task). Your session still runs in its own folder: change what belongs to the project in its folder, and keep your notes, drafts and downloads in yours.",
+      ...f.here.map((x) => `- ${folderLine(x)}`),
+    );
+  }
+  if (f.elsewhere.length) {
+    lines.push(
+      "On other computers (work there goes to a task with that `machine`):",
+      ...f.elsewhere.map((x) => `- ${folderLine(x)}, on "${x.computer}"`),
+    );
+  }
+  return lines;
+}
+
 export function buildSystemPrompt(c: PromptContext): string {
   const now = new Intl.DateTimeFormat("en-GB", { timeZone: c.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date());
   const where =
@@ -188,6 +209,11 @@ export function buildSystemPrompt(c: PromptContext): string {
       "- How quickly or deeply you think (brain, model, effort) can differ by kind of work: your dialogs, tasks, channel runs, scheduled runs. When the user wants it changed (\"answer faster\", \"a deeper model for research tasks\"), do it with `thinking_set`; to show them how it is now, `thinking_show`. Either puts a card with buttons under your reply.",
     );
   }
+  if (!c.background) {
+    lines.push(
+      "- When the user tells you where a project of theirs lives (\"the site is in ~/code/site\"), add the folder with `hub_agent_folder_add`: a card asks their yes, then your brains on that computer read and write it without asking. `hub_agent_folder_remove` closes one.",
+    );
+  }
   if (c.task) lines.push(...(c.thread ? inAThread(c.thread) : IN_A_TASK));
   if (!c.machine || c.machine.local) {
     lines.push(
@@ -226,6 +252,7 @@ export function buildSystemPrompt(c: PromptContext): string {
   }
   if (c.dispatch && !c.task && !c.group && !c.background) lines.push("", ...howYouWork({ ...c, dispatch: c.dispatch }));
   if (c.setup?.trim()) lines.push("", c.setup.trim());
+  if (c.folders) lines.push("", ...projectFolders(c.folders));
   if (c.skills.length) {
     lines.push("", "## Skills", c.nativeSkills ? "Skills are installed for you natively; their names:" : "Load a skill's full instructions with `skill_load` when it is relevant:");
     for (const s of c.skills.slice(0, 80)) lines.push(`- ${s.name}${s.taught ? " (taught by the person)" : ""}: ${s.description}`);

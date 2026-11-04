@@ -20,6 +20,7 @@ import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
 import { agentRoot, classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
 import { shownCommand } from "../policy/commands.ts";
+import { foldersOn, localFolderPaths } from "../agent-folders.ts";
 
 export const NATIVE_PERMISSION_TOOL = "native_permission";
 /** How long a brain's question waits for the person: the CLI holds its turn meanwhile. */
@@ -37,6 +38,8 @@ export interface NativePermissionDeps {
   dataDir: string;
   /** More folders the session's brain may use (Claude Code plugin folders). */
   roots: () => string[];
+  /** The hub's own id in a cluster ("local" otherwise), to tell which project folders are on the hub's computer. */
+  here?: () => string;
   /** Auto mode: decides what would ask the person, when the settings say so. */
   auto?: AutoMode;
   /** A machine's name for the reviewer ("local" is this hub's). */
@@ -147,7 +150,10 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       const { denyRead } = confinement(d.dataDir, ctx.workspace);
       const own = agentRoot(ctx.workspace);
       const readRoots = [...(own ? [own] : []), ...(opened.get(ctx.sessionId) ?? [])];
-      let decided = decideNative(action, { workspace: ctx.workspace, roots: d.roots(), readRoots, denied: denyRead });
+      // Its project folders on the hub's computer are its own too (agent-folders.ts); a paired computer's policy decides there.
+      const machine = ctx.machineId ?? "local";
+      const folders = machine === "local" ? localFolderPaths(foldersOn(d.agents.get(ctx.agentId)?.folders, machine, d.here?.() ?? "local"), { dataDir: d.dataDir }) : [];
+      let decided = decideNative(action, { workspace: ctx.workspace, roots: [...d.roots(), ...folders], readRoots, denied: denyRead });
       // The CLI's own fetch after outside content: its address may carry data out (policy/egress.ts).
       const urls = action.kind === "fetch" && action.url ? [action.url] : [];
       if (urls.length && d.egress) {

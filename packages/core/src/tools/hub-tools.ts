@@ -13,13 +13,14 @@
 // The one exception is profile_update at the end: every agent may change its own profile when the user asks.
 
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { AgentDef, AgentDraft, IntegrationView, JsonSchema, Locale, MachineSettings, SpeechStatus, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
+import type { AgentDef, AgentDraft, AgentFolder, IntegrationView, JsonSchema, Locale, MachineSettings, SpeechStatus, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { AVATAR_COLORS, AVATAR_SHAPES, defaultAvatar, expandBrains, formatBrainRef, KEY_PROVIDERS, keyProvider, onMachines, parseAvatar, parseBrainRef, parseThinking } from "@piomio/shared";
 import { normalizeSettings, SetupError } from "../machine-setup.ts";
 import { siteDomain } from "../secrets.ts";
 import type { Hub } from "../app.ts";
 import { agentFromMarkdown, agentName, localizedAgent, patchAgent } from "../agents.ts";
 import { draftPatch } from "../agent-drafts.ts";
+import { checkLocalFolder, folderLine, MAX_FOLDERS, sameFolder } from "../agent-folders.ts";
 import { hubLocale, t, tFor } from "../i18n.ts";
 import { listIntegrations } from "../integrations.ts";
 import type { InstallPreview } from "../plugins/host.ts";
@@ -54,11 +55,20 @@ const SECRET_KEY = /key|token|secret|password/i;
 /** Tools that only put a card in front of the user, who then decides: fine even after outside content was read. */
 const CARDS = new Set(["network_request", "secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
-const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete", "machine_commands"]);
+const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete", "machine_commands", "agent_folder_add"]);
 /** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. group-tools.ts's group_delete too. */
 export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...[...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n), "group_delete"]);
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
-export const HUB_TOOLS_FOR_EVERY_AGENT = ["hub_skill_save", "hub_skill_delete", "hub_skills_list", "hub_skill_assign", "hub_network_request"];
+export const HUB_TOOLS_FOR_EVERY_AGENT = [
+  "hub_skill_save",
+  "hub_skill_delete",
+  "hub_skills_list",
+  "hub_skill_assign",
+  "hub_network_request",
+  // Where the person keeps their projects is said to the agent that works on them.
+  "hub_agent_folder_add",
+  "hub_agent_folder_remove",
+];
 
 /** The person said "always" (or "don't ask") in their own words. */
 const ALWAYS_WORDS = /\balways\b|\bwithout asking\b|\bdon'?t ask\b|\u0432\u0441\u0435\u0433\u0434\u0430|\u043d\u0435 \u0441\u043f\u0440\u0430\u0448\u0438\u0432|\u0431\u0435\u0437 (?:\u0441\u043f\u0440\u043e\u0441\u0430|\u0432\u043e\u043f\u0440\u043e\u0441|\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434)/iu;
@@ -271,7 +281,7 @@ export function registerHubTools(hub: Hub): void {
       name: "agents_list",
       effect: "read",
       description:
-        "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), initiative, the skills given to them (not counting the whole team's), which one is the default, which are pinned and which sleep in the archive.",
+        "List agents with their avatar, brains (in fallback order), the computers they are bound to (none: anywhere), their project folders, initiative, the skills given to them (not counting the whole team's), which one is the default, which are pinned and which sleep in the archive.",
       inputSchema: obj({}),
     },
     () => {
@@ -285,6 +295,7 @@ export function registerHubTools(hub: Hub): void {
           avatar: a.avatar,
           brains: a.brains,
           ...(a.machines?.length ? { machines: a.machines.map((m) => hub.runner.computerName(m)) } : {}),
+          ...(a.folders?.length ? { folders: a.folders.map((f) => ({ ...f, machine: hub.runner.computerName(f.machine ?? "local") })) } : {}),
           model: a.model,
           thinking: a.thinking,
           initiative: a.initiative,
@@ -346,6 +357,139 @@ export function registerHubTools(hub: Hub): void {
       if (i.thinking !== undefined) patch.thinking = parseThinking(i.thinking);
       const saved = hub.saveAgent({ ...patchAgent(prev ?? agentFromMarkdown(id, "", "user"), patch, hubLocale()), id, source: "user" }, "agent");
       return text(`Agent ${saved.id} ${prev ? "updated" : "created"}${saved.avatar ? ` (avatar: ${saved.avatar.color} ${saved.avatar.shape})` : ""}.`);
+    },
+  );
+
+  // ---------- an agent's project folders (agent-folders.ts) ----------
+
+  /** The agent a folder tool works on: any for the default agent, itself for the others; or what is wrong. */
+  const folderAgent = (i: { agent?: unknown }, ctx: ToolCallContext): AgentDef | string => {
+    const id = typeof i.agent === "string" && i.agent.trim() ? i.agent.trim().toLowerCase() : ctx.agentId;
+    if (id !== ctx.agentId && ctx.agentId !== hub.settings.get().defaultAgent) return "You can change only your own folders: leave agent out.";
+    return hub.agents.get(id) ?? `No agent ${id}. See hub_agents_list.`;
+  };
+  /** The folder as it is kept: on which computer, at which path (checked when it is the hub's own), or what is wrong. */
+  const folderOf = (i: Record<string, unknown>): AgentFolder | string => {
+    const name = String(i.name ?? "").trim();
+    const raw = String(i.path ?? "").trim();
+    if (!name) return "Give the project's name (what the person calls it).";
+    if (!raw) return "Give the folder's full path.";
+    const machine = typeof i.machine === "string" && i.machine.trim() ? hub.resolveComputer(i.machine) : hub.here();
+    if (!machine) return `No computer "${i.machine}". Computers: ${hub.computers().map((c) => c.name).join(", ")}.`;
+    const note = typeof i.note === "string" && i.note.trim() ? i.note.trim().slice(0, 300) : undefined;
+    const own = machine === hub.here();
+    let path = raw;
+    if (own) {
+      const checked = checkLocalFolder(raw, { dataDir: hub.config.dataDir });
+      if ("error" in checked) return checked.error;
+      path = checked.path;
+    }
+    // The hub's own computer is the default: kept without a name, unless the hub is one replica of several.
+    return { name: name.slice(0, 80), path, ...(own && machine === "local" ? {} : { machine }), ...(note ? { note } : {}) };
+  };
+  /** The card: which project, which folder on which computer, and for whom when it is a teammate's (`teammate`). */
+  const folderCard = (teammate: AgentDef | undefined, f: { name?: unknown; path?: unknown; machine?: unknown }): string =>
+    tFor(hubLocale())(teammate ? "agents.folderApprovalFor" : "agents.folderApproval", {
+      agent: teammate ? agentName(teammate, hubLocale()) : "",
+      name: String(f.name ?? ""),
+      path: String(f.path ?? ""),
+      computer: hub.runner.computerName(typeof f.machine === "string" && f.machine ? (hub.resolveComputer(f.machine) ?? f.machine) : "local"),
+    });
+
+  reg(
+    {
+      name: "agent_folder_add",
+      effect: "local-write",
+      description:
+        "Add a project folder you work in, when the person tells you where a project of theirs lives (\"the site is in ~/code/site\", \"my thesis is in Documents/Thesis on the PC\"). " +
+        "The person says yes on a card; then your brains on that computer read and write the folder without asking, and your instructions list it by name. " +
+        "Your sessions still run in their own folders, so nothing of the hub's lands in the project. The same name again replaces that folder. " +
+        "machine: the computer it is on (name or id, see task_agents); left out, this hub's. The default agent may pass agent to add one for a teammate.",
+      inputSchema: obj(
+        {
+          name: { type: "string", description: "The project's name as the person calls it" },
+          path: { type: "string", description: "The folder's full path on that computer (~/… for the home)" },
+          machine: { type: "string", description: "The computer it is on; omit for this hub's" },
+          note: { type: "string", description: "One line on what is there or how to work with it, if the person said" },
+          agent: { type: "string", description: "Another agent's id (only the default agent); omit for yourself" },
+        },
+        ["name", "path"],
+      ),
+    },
+    async (i, ctx) => {
+      const agent = folderAgent(i, ctx);
+      if (typeof agent === "string") return text(agent, true);
+      const folder = folderOf(i);
+      if (typeof folder === "string") return text(folder, true);
+      const save = (via: string): ToolResult => {
+        const now = hub.agents.get(agent.id) ?? agent;
+        const kept = (now.folders ?? []).filter((f) => !sameFolder(f, folder));
+        if (kept.length >= MAX_FOLDERS) return text(`${agentName(now, hubLocale())} already has ${MAX_FOLDERS} folders: remove one first (hub_agent_folder_remove).`, true);
+        hub.saveAgent({ ...now, folders: [...kept, folder] }, `agent:${ctx.agentId}`);
+        hub.audit.append(`agent:${ctx.agentId}`, "agent.folder.add", agent.id, { via, name: folder.name, path: folder.path, machine: folder.machine ?? "local" });
+        const where = hub.runner.computerName(folder.machine ?? "local");
+        return text(`Added ${folderLine(folder)} on ${where} for ${agentName(now, hubLocale())}: from the next task there, its brains read and write it without asking. Tell the person in a sentence.`);
+      };
+      if (ctx.approved) return save("approved on its card");
+      const approval = hub.approvals.create({
+        sessionId: ctx.sessionId,
+        conversationId: ctx.conversationId,
+        taskId: ctx.taskId,
+        agentId: ctx.agentId,
+        tool: HUB_TOOL_PREFIX + "agent_folder_add",
+        input: i,
+        summary: folderCard(agent.id === ctx.agentId ? undefined : agent, folder),
+        effect: "external",
+        tainted: ctx.tainted,
+      });
+      const outcome = await hub.approvals.wait(approval.id, hub.settings.get().approvalInlineWaitSec * 1000);
+      if (outcome === "approved") {
+        let r: ToolResult;
+        try {
+          r = save("approved on its card");
+        } catch (e: any) {
+          r = text(e?.message ?? String(e), true);
+        }
+        hub.approvals.markExecuted(approval.id, r);
+        return r;
+      }
+      if (outcome === "timeout") {
+        return text(
+          `The card waits for the person's tap (approvalId=${approval.id}): the folder opens only after it. Do not call again; end your turn ` +
+            "with a sentence that the card is there. When they tap, the hub adds it and tells you.",
+        );
+      }
+      return text("The person declined: the folder stays closed. Ask what they want instead, if anything.", true);
+    },
+    (i) => folderCard(hub.agents.get(String(i.agent ?? "")), i),
+  );
+
+  reg(
+    {
+      name: "agent_folder_remove",
+      effect: "local-write",
+      description: "Close one of your project folders (by its name or path) when the person no longer wants you working there. The default agent may pass agent for a teammate.",
+      inputSchema: obj(
+        {
+          folder: { type: "string", description: "The project's name or the folder's path" },
+          agent: { type: "string", description: "Another agent's id (only the default agent); omit for yourself" },
+        },
+        ["folder"],
+      ),
+    },
+    (i, ctx) => {
+      const agent = folderAgent(i, ctx);
+      if (typeof agent === "string") return text(agent, true);
+      const key = String(i.folder ?? "").trim().toLowerCase();
+      const gone = (agent.folders ?? []).filter((f) => f.name.toLowerCase() === key || f.path.toLowerCase() === key);
+      if (!key || !gone.length) {
+        const has = (agent.folders ?? []).map((f) => folderLine(f)).join("; ");
+        return text(`No folder "${i.folder ?? ""}". ${has ? `The folders: ${has}.` : "There are no folders."}`, true);
+      }
+      const kept = (agent.folders ?? []).filter((f) => !gone.includes(f));
+      hub.saveAgent({ ...agent, folders: kept.length ? kept : undefined }, `agent:${ctx.agentId}`);
+      hub.audit.append(`agent:${ctx.agentId}`, "agent.folder.remove", agent.id, { folders: gone.map((f) => f.path) });
+      return text(`Closed ${gone.map((f) => f.name).join(", ")} for ${agentName(agent, hubLocale())}: from the next task its brains ask again before touching it.`);
     },
   );
 

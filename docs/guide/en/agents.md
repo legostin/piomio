@@ -1,6 +1,6 @@
 ---
 title: Agents and the team
-description: The team you start with, what an agent is on disk, making and changing agents in the chat, initiative, which brain answers, pin, archive and delete, agents bound to a computer, what agents know, memory and skills.
+description: The team you start with, what an agent is on disk, making and changing agents in the chat, initiative, which brain answers, pin, archive and delete, agents bound to a computer, project folders, what agents know, memory and skills.
 ---
 
 Piomio is a team, not one bot. Each agent is a role with its own name, face, character, brains and tools, and its own long dialog with you. They know about each other, pass work along and remember what matters about you.
@@ -60,6 +60,7 @@ You plan meals for the family. Ask about allergies once, remember them, and keep
 | `avatar` | The face: a colour (teal, blue, indigo, violet, pink, red, orange, amber, green, slate) and a shape (circle, square, hexagon, diamond, triangle, star, flower, drop). The eyes are drawn from the agent's id |
 | `brains` | The brains it may use, in order. `api:*` means every API provider you set up |
 | `machines` | The computers it may work on. Empty means any |
+| `folders` | Its project folders: `name`, `path`, the computer (`machine`, none for the hub's own) and a `note` (see below) |
 | `thinking` | How it thinks for each kind of work: `chat`, `task`, `feed`, `schedule` |
 | `initiative` | 0, 1 or 2 (see below). Default 1 |
 | `tools`, `skills` | Which tools and skills it may use, as name patterns. `*` is all |
@@ -125,6 +126,12 @@ Archiving or deleting the default agent first asks who takes its place.
 ## Agents on particular computers
 
 An agent can be bound to computers: "let the coder work only on my laptop". It then uses only those computers' brains, never others, and its tasks don't go anywhere else. While none of them is online, its dialog says so; your message stays there, and you send it again once a computer is back. The same is under **Agent settings** → **Where it thinks**: pick a computer, then a brain on it, and the agent thinks only there, with that brain. **Anywhere** keeps the ordered list of brains instead. Computers are covered in [Machines and other computers](machines.md).
+
+## Project folders
+
+Tell an agent where a project lives, in your own words: "the site is in ~/code/site", "my thesis is in Documents/Thesis on the PC". It adds the folder with a card in the chat, and the folder opens when you tap **Allow**. From the next task on, the agent's brains on that computer read and change the files there without asking you each time, and the agent knows each project by its name: "fix the footer on the site" goes to the right folder. "Stop working in the site folder" closes it again, with no card.
+
+The agent still works in a folder of its own for each task, so its notes, drafts, downloads and skills never land in your project. A folder never opens if it is your whole home, a system folder, the hub's own data or one with your keys and passwords (such as `~/.ssh`). On a connected computer, that computer's own settings still decide what the agent may touch there. In a dialog the agent only looks; changing the files is work for a task.
 
 ## What an agent knows
 
