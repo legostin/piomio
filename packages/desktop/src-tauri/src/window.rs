@@ -3,7 +3,9 @@
 //! Downloads folder; closing the hub window keeps the app in the tray. Pio's bubble and its frame are in pio/.
 
 use tauri::ipc::CapabilityBuilder;
-use tauri::webview::{DownloadEvent, NewWindowResponse};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent};
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 
@@ -11,6 +13,22 @@ use crate::app::AppState;
 
 pub const MAIN: &str = "main";
 pub const SETUP: &str = "setup";
+
+/// The menu's "Clear cache" waits for the hub window's page to load (the window was closed).
+static CLEAR_CACHE: AtomicBool = AtomicBool::new(false);
+/// The page clears what it keeps on this computer and says so (state/app.ts in the web UI); it may still be starting.
+const CLEAR_CACHE_JS: &str = "(function f(n){ if (window.piomioClearCache) return void window.piomioClearCache(); if (n > 0) setTimeout(function(){ f(n - 1); }, 250); })(80)";
+
+/// The menu's "Clear cache": the hub window's page clears its copy of the chats, lists and pictures, opening if closed.
+pub fn clear_cache(app: &AppHandle) {
+  if let Some(w) = app.get_webview_window(MAIN) {
+    let _ = w.eval(CLEAR_CACHE_JS);
+    show_main(app);
+    return;
+  }
+  CLEAR_CACHE.store(true, Ordering::SeqCst);
+  crate::app::open_ui(app);
+}
 
 /// Version comes from the installed shell, even when its page is served by a remote hub.
 fn desktop_hello(scheme: &str, test: bool, overlay: bool, version: &str) -> String {
@@ -67,6 +85,11 @@ pub fn open_main(app: &AppHandle, url: Url) -> tauri::Result<()> {
     .initialization_script(hello)
     .inner_size(1200.0, 820.0)
     .min_inner_size(420.0, 520.0)
+    .on_page_load(|w, p| {
+      if p.event() == PageLoadEvent::Finished && CLEAR_CACHE.swap(false, Ordering::SeqCst) {
+        let _ = w.eval(CLEAR_CACHE_JS);
+      }
+    })
     .on_navigation(move |u| {
       if same_origin(u, &origin) || u.scheme() == "about" || u.scheme() == "blob" {
         return true;

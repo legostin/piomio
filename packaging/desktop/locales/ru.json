@@ -2,6 +2,7 @@
   "tray.open": "Открыть Piomio",
   "tray.autostart": "Запускать при входе в систему",
   "tray.logs": "Показать журнал",
+  "tray.clearCache": "Очистить кэш",
   "tray.restart": "Перезапустить",
   "tray.quit": "Выйти из Piomio",
   "tray.starting": "Piomio запускается…",

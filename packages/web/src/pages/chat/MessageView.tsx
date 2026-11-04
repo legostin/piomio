@@ -13,6 +13,7 @@ import { api, errorText } from "../../lib/api";
 import { showDetails } from "../../state/prefs";
 import { openViewer, saveMedia } from "../../state/viewer";
 import { fileHref, mediaKind, partKey } from "../../lib/gallery";
+import { previewSrc, useCachedImage } from "../../lib/media-cache";
 import { native } from "../../lib/native";
 import { Markdown } from "../../components/markdown";
 import { Badge, Button, cx } from "../../components/ui";
@@ -186,6 +187,16 @@ function NotePart({ text }: { text: string }) {
 }
 
 /**
+ * A picture file's thumbnail: its preview from the hub (kept on this device), the file itself loading only in the
+ * viewer. `data-full` names the file, so the viewer starts from this preview while the picture loads.
+ */
+function ChatImage({ href, alt }: { href: string; alt?: string }) {
+  const src = useCachedImage(previewSrc(href));
+  if (!src) return <span className="block h-48 w-64 max-w-full animate-pulse" />;
+  return <img src={src} data-full={href} alt={alt} className="block max-h-72 max-w-full" decoding="async" />;
+}
+
+/**
  * A file in a message. A picture or a video is its own thumbnail and opens the viewer on the chat's media; any other
  * file is a chip that opens it (inside the phone app, the share sheet: the app's web view cannot show it itself).
  */
@@ -201,7 +212,7 @@ function Attachment({ part, message, index }: { part: Extract<MessagePart, { typ
   if (media === "image") {
     return (
       <button type="button" data-media-key={key} onClick={open} aria-label={label} title={part.name} className="my-1.5 block max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-hairline bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-accent">
-        <img src={href} alt={part.name} className="block max-h-72 max-w-full" loading="lazy" decoding="async" />
+        <ChatImage href={href} alt={part.name} />
       </button>
     );
   }

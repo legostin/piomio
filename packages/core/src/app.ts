@@ -1227,6 +1227,7 @@ export class Hub {
     this.setup.stop();
     await this.runner.stop();
     this.speech.stop();
+    this.media.previews.stop();
     this.machines.closeAll();
     this.activity.close();
     await this.plugins.stopAll();

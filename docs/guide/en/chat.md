@@ -118,6 +118,12 @@ Tap a picture or a video in the chat to open the viewer. It holds all the chat's
 
 Other files show as a chip that opens the file.
 
+### What your device keeps
+
+The chat shows a small copy of each photo or screenshot, which the hub makes once; the picture itself loads only when you open it in the viewer. Your device also keeps the latest messages of the dialogs you opened, the team, the group chats and those small copies, so a chat opens at once, even before the hub answers, and the hub's answer replaces what was kept. Signing out removes it all.
+
+**Clear cache** removes what this device keeps; you stay signed in. It is in **Settings** under **General**, in the command palette, in the desktop app's menu bar (tray) menu and in the iPhone app's **Hub** tab.
+
 ## Voice messages
 
 Voice messages and audio files are turned into text before the agent answers. The words appear under the voice message, and the agent reads them like a typed message.

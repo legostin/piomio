@@ -2,9 +2,9 @@
 // full-screen on phones). The home view lists the sections; a section renders its page in compact form.
 
 import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, ExternalLink, LogOut, MessageCircleMore, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Eraser, ExternalLink, LogOut, MessageCircleMore, ShieldCheck, X } from "lucide-react";
 import { useStore } from "../lib/store";
-import { logout, session } from "../state/app";
+import { clearCacheNow, logout, session } from "../state/app";
 import { closePanel, openPanel, panel, panelBack } from "../state/panel";
 import { usePluginRegistry } from "../plugins/slots";
 import { PluginBoundary } from "../plugins/boundary";
@@ -150,6 +150,12 @@ function Home() {
             {g.id === "general" && s && (
               <>
                 <Row icon={<ShieldCheck className="size-[17px]" />} color={TILE.console} label={t("common.securityConsole")} hint={t("panel.hint.console")} href={s.consoleUrl} />
+                <button type="button" onClick={() => void clearCacheNow()} title={t("panel.hint.clearCache")} className="flex w-full items-center gap-3 px-3 py-2 text-left text-[14px] font-medium transition-colors hover:bg-surface-2/70">
+                  <Tile color="slate">
+                    <Eraser className="size-[17px]" />
+                  </Tile>
+                  {t("common.clearCache")}
+                </button>
                 <button type="button" onClick={() => void logout()} className="flex w-full items-center gap-3 px-3 py-2 text-left text-[14px] font-medium text-danger transition-colors hover:bg-surface-2/70">
                   <span className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] bg-danger-soft">
                     <LogOut className="size-[17px]" />

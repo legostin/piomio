@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
 import type { ImageItem } from "@piomio/shared";
 import { activeSlide, mediaSrc } from "../../lib/media";
 import { partKey } from "../../lib/gallery";
+import { previewSrc, useCachedImage } from "../../lib/media-cache";
 import { openViewer } from "../../state/viewer";
 import { cx } from "../../components/ui";
 import { PictureGate } from "../../components/picture";
@@ -19,7 +20,9 @@ const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(pre
  * An image that fades in once loaded, with a quiet placeholder while it loads and when it cannot. `failed` (from a
  * PictureGate) says whether the hub held it: then the gate shows the Show line instead.
  */
-function Picture({ src, alt, fit, className, failed }: { src: string; alt: string; fit: "contain" | "cover"; className?: string; failed?: () => Promise<boolean> }) {
+function Picture({ src: full, alt, fit, className, failed }: { src: string; alt: string; fit: "contain" | "cover"; className?: string; failed?: () => Promise<boolean> }) {
+  // The chat shows a workspace picture's preview, kept on this device (lib/media-cache.ts); the viewer loads `full`.
+  const src = useCachedImage(previewSrc(full));
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const img = useRef<HTMLImageElement>(null);
   useEffect(() => {
@@ -37,11 +40,11 @@ function Picture({ src, alt, fit, className, failed }: { src: string; alt: strin
   }
   return (
     <div className={cx("relative overflow-hidden bg-surface-2", state === "loading" && "min-h-40 min-w-56 animate-pulse", className)}>
-      <img
+      {src && <img
         ref={img}
         src={src}
+        data-full={full}
         alt={alt}
-        loading="lazy"
         decoding="async"
         draggable={false}
         onLoad={() => setState("ok")}
@@ -51,7 +54,7 @@ function Picture({ src, alt, fit, className, failed }: { src: string; alt: strin
           fit === "cover" ? "h-full w-full object-cover" : "max-h-[420px] w-auto max-w-full object-contain",
           state === "ok" ? "opacity-100" : "opacity-0",
         )}
-      />
+      />}
     </div>
   );
 }

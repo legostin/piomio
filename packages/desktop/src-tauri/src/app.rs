@@ -584,6 +584,7 @@ pub fn on_menu(app: &AppHandle, id: &str) {
       }
     }
     "logs" => open_log(app),
+    "clear-cache" => window::clear_cache(app),
     "update" => crate::update::on_menu(app),
     "restart" => {
       let app = app.clone();

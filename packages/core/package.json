@@ -17,8 +17,13 @@
     "@simplewebauthn/server": "^14.0.3",
     "ajv": "^8.20.0",
     "fastify": "^5.12.7",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
     "qrcode-generator": "^2.0.4",
     "sucrase": "^3.35.1",
     "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/pngjs": "^6.0.5"
   }
 }

@@ -19,6 +19,8 @@ The Piomio app for iPhone is your hub in your pocket: the team, every chat with 
 
 A chat on the phone is the same chat as on the computer, cards included: sign-in cards, forms, maps, pages, approvals. You can dictate instead of typing and change how an agent thinks from its header. Settings, new agents, brains and plugins you change by asking the assistant in the chat, or on the computer.
 
+The app keeps the lists and the chats you opened, so it opens with them at once and refreshes them from the hub. **Clear cache** in the **Hub** tab removes that copy and the chats' pictures; the phone stays connected ([What your device keeps](chat.md#what-your-device-keeps)).
+
 ## Connect the phone
 
 1. **Get a QR code on the computer.** Say "connect my phone" in the chat, or open **Settings** → **Devices** → **Connect a phone**. The card shows a QR code that works once, within an hour, and, when other devices can reach the hub, a link to send to the phone. On a server installed with `install.sh`, `piomio devices pair` (as the user `piomio`) prints the QR right in the terminal.

@@ -11,6 +11,7 @@ import { desktopTicketFrom } from "../lib/desktop";
 import { mobileMode } from "../lib/mobile";
 import { toastWorthy } from "../lib/notifications";
 import { native } from "../lib/native";
+import { cacheDelete, cacheGet, cachePut, clearCache } from "../lib/cache";
 import { adoptHubLocale, t } from "../i18n";
 import { toast } from "./toast";
 import { clearFeeds, feeds, onFeedEvent, refreshFeeds } from "./feeds";
@@ -143,6 +144,7 @@ export async function init(): Promise<void> {
     adoptHubLocale(auth.language);
     if (!auth.hasPassword) return phase.set({ kind: "setup", auth });
     if (!auth.authenticated) return phase.set({ kind: "login", auth });
+    if (await fromCache()) return void bootstrapInBackground();
     adoptHubLocale((await bootstrap()).language);
     phase.set({ kind: "ready" });
   } catch (e) {
@@ -157,6 +159,8 @@ export async function init(): Promise<void> {
  * (navigator.language), like the app around it, rather than the hub language.
  */
 async function initMobile(): Promise<void> {
+  // Inside the app, the device's copy shows at once: the app signed the page in.
+  if (native && (await fromCache())) return void bootstrapInBackground();
   try {
     await bootstrap();
     phase.set({ kind: "ready" });
@@ -198,11 +202,132 @@ export async function bootstrap(): Promise<Bootstrap> {
   const b = await request<Bootstrap>("GET", "/api/bootstrap");
   setCsrf(b.csrf);
   session.set(b);
+  keepOnDevice();
   startSocket();
   void refreshConversations();
   void refreshTeam();
   void refreshGroups();
+  // Agents shown from the device's copy: the hub's list replaces them.
+  if (agents.get()) void refreshAgents().catch(() => {});
   return b;
+}
+
+// ---------- this device's copy (lib/cache.ts) ----------
+
+/** The lists the page keeps on this device, by cache key. */
+const KEPT_LISTS = { team, groups, conversations, agents } as const;
+/** Dialogs whose latest messages stay on the device, the last opened first (KEPT_DIALOGS at most). */
+const DIALOGS_KEY = "messages:index";
+const KEPT_DIALOGS = 40;
+let keeping = false;
+let keptDialogs: string[] = [];
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** `value()` goes into the cache a moment from now (changes in a row are written once). */
+function saveSoon(key: string, value: () => unknown, ms = 800): void {
+  if (!keeping || saveTimers.has(key)) return;
+  saveTimers.set(
+    key,
+    setTimeout(() => {
+      saveTimers.delete(key);
+      if (keeping) void cachePut(key, value());
+    }, ms),
+  );
+}
+
+function keepDialog(id: string): void {
+  const rest = keptDialogs.filter((x) => x !== id);
+  keptDialogs = [id, ...rest].slice(0, KEPT_DIALOGS);
+  for (const gone of rest.slice(KEPT_DIALOGS - 1)) void cacheDelete(`messages:${gone}`);
+  saveSoon(DIALOGS_KEY, () => keptDialogs);
+}
+
+for (const [key, store] of Object.entries(KEPT_LISTS) as Array<[string, Store<unknown>]>)
+  store.subscribe(() => {
+    if (store.get()) saveSoon(key, () => store.get());
+  });
+// The session without its CSRF token: a page shown from the copy gets a fresh one from the hub before it writes.
+session.subscribe(() => {
+  if (session.get()) saveSoon("bootstrap", () => ({ ...session.get(), csrf: "" }));
+});
+let lastMessages = messages.get();
+messages.subscribe(() => {
+  const all = messages.get();
+  for (const id of Object.keys(all)) {
+    const c = all[id];
+    if (c === lastMessages[id] || !c.loaded || c.error || !c.messages.length) continue;
+    if (!saveTimers.has(`messages:${id}`)) keepDialog(id);
+    saveSoon(`messages:${id}`, () => messages.get()[id]?.messages.slice(-PAGE));
+  }
+  lastMessages = all;
+});
+
+/** From now on what the hub sends is kept on this device too (the page is signed in). */
+function keepOnDevice(): void {
+  if (keeping) return;
+  keeping = true;
+  void cacheGet<string[]>(DIALOGS_KEY).then((ids) => {
+    if (Array.isArray(ids)) keptDialogs = [...keptDialogs, ...ids.filter((x) => !keptDialogs.includes(x))].slice(0, KEPT_DIALOGS);
+  });
+  // What came before keeping started.
+  for (const [key, store] of Object.entries(KEPT_LISTS) as Array<[string, Store<unknown>]>) if (store.get()) saveSoon(key, () => store.get());
+  if (session.get()) saveSoon("bootstrap", () => ({ ...session.get(), csrf: "" }));
+}
+
+/**
+ * The page as the device last saw it, shown at once (the hub's answer replaces it): the session, the team, the group
+ * chats and the dialogs list. False when the device has no copy.
+ */
+async function fromCache(): Promise<boolean> {
+  const [b, ...lists] = await Promise.all([cacheGet<Bootstrap>("bootstrap"), ...Object.keys(KEPT_LISTS).map((k) => cacheGet<unknown>(k))]);
+  if (!b || typeof b !== "object" || !b.mainConversationId) return false;
+  Object.values(KEPT_LISTS).forEach((store, i) => {
+    const v = lists[i];
+    if (v && !store.get() && Array.isArray(v)) (store as Store<unknown>).set(v);
+  });
+  if (!mobileMode) adoptHubLocale(b.language);
+  session.set(b);
+  keepOnDevice();
+  phase.set({ kind: "ready" });
+  return true;
+}
+
+/** The hub's own session behind the copy: tried again until the hub answers (offline, the copy stays). */
+async function bootstrapInBackground(): Promise<void> {
+  for (let wait = 2000; ; wait = Math.min(wait * 2, 30_000)) {
+    try {
+      await bootstrap();
+      return;
+    } catch (e) {
+      // A 401 went to onUnauthorized (sign-in again).
+      if (e instanceof ApiError && e.status === 401) return;
+    }
+    if (phase.get().kind !== "ready") return;
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+
+/** The person cleared the cache: the device's copy goes, the page keeps what it shows and keeps saving from now on. */
+export async function clearDeviceCache(): Promise<void> {
+  for (const t of saveTimers.values()) clearTimeout(t);
+  saveTimers.clear();
+  keptDialogs = [];
+  await clearCache();
+}
+
+/** The "Clear cache" item (settings, the command palette, the desktop app's menu): cleared, and said so. */
+export async function clearCacheNow(): Promise<void> {
+  await clearDeviceCache();
+  toast(t("app.cacheCleared"), "success");
+}
+
+// The desktop app's menu clears the cache of the page in its window (packages/desktop: app.rs).
+if (typeof window !== "undefined") (window as { piomioClearCache?: () => Promise<void> }).piomioClearCache = clearCacheNow;
+
+/** Signed out: nothing of this hub stays on the device. */
+async function forgetDevice(): Promise<void> {
+  keeping = false;
+  await clearDeviceCache();
 }
 
 export async function refreshBootstrap(): Promise<void> {
@@ -222,6 +347,7 @@ export async function logout(): Promise<void> {
     /* ignore */
   }
   stopSocket();
+  await forgetDevice();
   session.set(null);
   messages.set({});
   tasks.set(null);
@@ -418,6 +544,8 @@ export async function loadMessages(id: string, refresh = false): Promise<void> {
   const cur = messages.get()[id];
   if (cur && (cur.loading || (cur.loaded && !refresh))) return;
   messages.set((all) => ({ ...all, [id]: { ...(all[id] ?? EMPTY_CONV), loading: true, error: undefined } }));
+  // The device's copy first, while the hub answers.
+  if (!cur) void fromDevice(id);
   try {
     const list = await api.get<Message[]>(`/api/conversations/${encodeURIComponent(id)}/messages?limit=${PAGE}`);
     messages.set((all) => {
@@ -430,6 +558,13 @@ export async function loadMessages(id: string, refresh = false): Promise<void> {
   } catch (e) {
     messages.set((all) => ({ ...all, [id]: { ...(all[id] ?? EMPTY_CONV), loading: false, loaded: true, error: e instanceof Error ? e.message : String(e) } }));
   }
+}
+
+/** A dialog's latest messages as this device kept them, shown until the hub's arrive (they merge with those). */
+async function fromDevice(id: string): Promise<void> {
+  const kept = await cacheGet<Message[]>(`messages:${id}`);
+  if (!Array.isArray(kept) || !kept.length) return;
+  patchConv(id, (c) => (c.loaded ? c : { ...c, messages: prependOlder(kept, c.messages), loaded: true, hasMore: kept.length >= PAGE }));
 }
 
 export async function loadOlder(id: string): Promise<void> {

@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, sep } from "node:path";
 import { pinnedLookup } from "./egress.ts";
+import { PicturePreviews } from "./picture-previews.ts";
 
 /**
  * Largest image an agent can show from its workspace, or a channel gets inline: a PNG render or a full-size screenshot
@@ -314,6 +315,8 @@ export class MediaService {
   private o: MediaServiceOptions;
   private inflight = new Map<string, Promise<{ data: Buffer; type: string }>>();
   private tileLimit = new Limiter(TILE_CONNECTIONS);
+  /** Small copies of workspace pictures for the chat (/api/files?preview=1). */
+  readonly previews: PicturePreviews;
 
   constructor(o: MediaServiceOptions) {
     this.o = o;
@@ -321,6 +324,7 @@ export class MediaService {
     this.media = new FileCache(join(o.dataDir, "cache", "media"), MEDIA_TTL_MS);
     this.tiles = new FileCache(join(o.dataDir, "cache", "tiles"), TILE_TTL_MS);
     this.apis = new FileCache(join(o.dataDir, "cache", "api"), API_TTL_MS);
+    this.previews = new PicturePreviews(join(o.dataDir, "cache", "previews"));
   }
 
   /** An external image by its address (validated here), from the cache when it is fresh. */
@@ -410,6 +414,7 @@ export class MediaService {
     this.media.prune();
     this.tiles.prune();
     this.apis.prune();
+    this.previews.prune();
   }
 
   private once(key: string, fn: () => Promise<{ data: Buffer; type: string }>): Promise<{ data: Buffer; type: string }> {

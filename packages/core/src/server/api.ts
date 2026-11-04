@@ -776,6 +776,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     // gets an opaque origin without script. A PDF keeps the browser's own viewer, which never runs as the hub.
     reply.header("x-content-type-options", "nosniff");
     if (!/\.pdf$/i.test(file)) reply.header("content-security-policy", "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
+    // ?preview=1: a picture's small copy for the chat (picture-previews.ts), the file itself when it has none.
+    if ((req.query as any).preview === "1") return sendFile(reply, (await hub.media.previews.preview(file)) ?? file);
     return sendFile(reply, file, { download: (req.query as any).download === "1" });
   });
 

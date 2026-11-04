@@ -58,21 +58,37 @@ function thumbnail(key: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-media-key="${CSS.escape(key)}"]`);
 }
 
+/** Sizes guessed from a chat preview (its proportions, the hub's preview side), until the picture itself loads. */
+const guessed = new Map<string, Size>();
+/** The longest side of the hub's previews (preview-image.ts): a preview this big stands for a larger picture. */
+const PREVIEW_SIDE = 720;
+
+const sameUrl = (a: string, b: string) => {
+  try {
+    return new URL(a, location.href).href === new URL(b, location.href).href;
+  } catch {
+    return false;
+  }
+};
+
 /**
- * The thumbnail's own picture when it is the item itself, already decoded. Hub files come with `no-cache`, so a new
- * <img> waits for the hub to say "not modified"; meanwhile the viewer draws this one (and knows its size at once,
- * so the picture can grow out of the thumbnail).
+ * The thumbnail's own picture, already decoded: the item itself, or its preview (`data-full` names the item). Hub
+ * files come with `no-cache`, so a new <img> waits for the hub to say "not modified"; meanwhile the viewer draws this
+ * one, and knows the picture's size (or, from a preview, its proportions) at once, so it can grow out of the thumbnail.
  */
 function posterOf(key: string, src: string): HTMLImageElement | undefined {
   const el = thumbnail(key);
   const img = el instanceof HTMLImageElement ? el : el?.querySelector("img");
   if (!img || !img.complete || !img.naturalWidth) return undefined;
-  try {
-    if (new URL(img.currentSrc || img.src, location.href).href !== new URL(src, location.href).href) return undefined;
-  } catch {
-    return undefined;
+  const size = { w: img.naturalWidth, h: img.naturalHeight };
+  if (sameUrl(img.currentSrc || img.src, src)) {
+    if (!known.has(src)) known.set(src, size);
+    return img;
   }
-  if (!known.has(src)) known.set(src, { w: img.naturalWidth, h: img.naturalHeight });
+  if (!img.dataset.full || !sameUrl(img.dataset.full, src)) return undefined;
+  // A smaller preview is the picture itself, at its own size; a full-size one may stand for a picture of any size.
+  const k = Math.max(size.w, size.h) >= PREVIEW_SIDE ? 4 : 1;
+  if (!known.has(src)) guessed.set(src, { w: size.w * k, h: size.h * k });
   return img;
 }
 
@@ -131,7 +147,8 @@ function Viewer({ state }: { state: ViewerState }) {
   const editRef = useRef(editing);
   editRef.current = editing;
 
-  const natural = (it: MediaItem | undefined, src?: string): Size | undefined => (it ? (naturals[it.key] ?? known.get(src ?? it.src) ?? (it.kind === "image" ? knownSize(src ?? it.src) : undefined)) : undefined);
+  const natural = (it: MediaItem | undefined, src?: string): Size | undefined =>
+    it ? (naturals[it.key] ?? known.get(src ?? it.src) ?? (it.kind === "image" ? (knownSize(src ?? it.src) ?? guessed.get(src ?? it.src)) : undefined)) : undefined;
   const srcOf = (it: MediaItem) => (editing && it.fileId === editing.fileId ? editing.sourceUrl : it.src);
   const boxOf = (it: MediaItem | undefined): Box => {
     const n = it ? natural(it, srcOf(it)) : undefined;

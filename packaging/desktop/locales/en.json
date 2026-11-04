@@ -2,6 +2,7 @@
   "tray.open": "Open Piomio",
   "tray.autostart": "Start at login",
   "tray.logs": "Show log",
+  "tray.clearCache": "Clear cache",
   "tray.restart": "Restart",
   "tray.quit": "Quit Piomio",
   "tray.starting": "Piomio is starting…",

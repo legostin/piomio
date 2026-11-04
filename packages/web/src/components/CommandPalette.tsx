@@ -6,7 +6,7 @@ import { useLocation } from "wouter";
 import { CornerDownLeft, Search } from "lucide-react";
 import { createStore, useStore } from "../lib/store";
 import { agentPath, groupPath } from "../lib/team";
-import { agents, ensureAgents, ensureGroups, groups, logout, session } from "../state/app";
+import { agents, clearCacheNow, ensureAgents, ensureGroups, groups, logout, session } from "../state/app";
 import { toast } from "../state/toast";
 import { usePluginRegistry } from "../plugins/slots";
 import { liveWindowActions } from "../plugins/liveview";
@@ -94,6 +94,7 @@ export function CommandPalette() {
       out.push({ id: "console", title: t("common.securityConsole"), group: goTo, icon: "shield-check", run: () => void window.open(s.consoleUrl, "_blank", "noopener") });
       out.push({ id: "approvals", title: t("palette.approvals"), group: goTo, icon: "shield", run: () => void window.open(`${s.consoleUrl}/#/approvals`, "_blank", "noopener") });
     }
+    out.push({ id: "clear-cache", title: t("common.clearCache"), group: actions, icon: "eraser", run: () => void clearCacheNow() });
     out.push({ id: "logout", title: t("common.logout"), group: actions, icon: "power", run: () => logout() });
     return out;
   }, [routes, commands, liveViews, s, agentList, groupList, navigate]);
