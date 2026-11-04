@@ -1,6 +1,7 @@
-// OpenAI Codex CLI as a brain: a `codex app-server` per turn (codex-app.ts), which takes more input while the turn runs;
-// Codex without it gets `codex exec --json` per turn, `codex exec resume <thread>` between turns.
-// Uses the user's ChatGPT subscription (`codex login` stored in HOME/.codex) or OPENAI_API_KEY.
+// OpenAI Codex CLI as a brain: `codex app-server` (codex-app.ts), which takes more input while a turn runs. A dialog's
+// process stays up between turns (keepWarm), so that its next reply does not wait for Codex to start and resume the
+// thread; other work gets one per turn. Codex without it gets `codex exec --json` per turn, `codex exec resume <thread>`
+// between turns. Uses the user's ChatGPT subscription (`codex login` stored in HOME/.codex) or OPENAI_API_KEY.
 
 import { mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,10 +9,10 @@ import type { BrainEvent, BrainSessionOptions, BrainTurn, ProbeResult } from "@p
 import type { BrainProviderImpl, BrainSessionImpl } from "@piomio/plugin-sdk";
 import type { Locale } from "@piomio/shared/i18n";
 import { markLegacy, profileFrom } from "@piomio/shared/models";
-import { capture, childEnv, runLines } from "./proc.ts";
+import { capture, childEnv, runLines, WarmPool } from "./proc.ts";
 import { brainsT } from "./messages.ts";
 import { parseCodexDeviceLogin, runCliLogin } from "./login.ts";
-import { AppServerUnsupported, CodexAppTurn, listCodexModels, parseCodexReset, type CodexModel } from "./codex-app.ts";
+import { AppServerUnsupported, CodexAppServer, listCodexModels, parseCodexReset, type CodexModel } from "./codex-app.ts";
 import { askHub, type HubAnswer } from "./hub-permission.ts";
 import { confinedNetwork, confinedProxyEnv } from "./network.ts";
 
@@ -30,7 +31,22 @@ export interface CodexOptions {
   locale?: () => Locale;
   /** How long a sign-in from the chat may wait for the user (Codex device codes last 15 minutes). */
   loginTimeoutMs?: number;
+  /** How long a dialog's process waits for its next turn before it closes. */
+  idleMs?: number;
+  /** Processes kept waiting at once; the one waiting longest closes first. */
+  maxWarm?: number;
 }
+
+/** A dialog's process waits this long for its next turn before it closes (BrainSessionOptions.keepWarm). */
+const IDLE_MS = 10 * 60_000;
+/** Processes kept waiting at once; the one waiting longest closes first. */
+const MAX_WARM = 3;
+/**
+ * Codex's Fast tier spends the person's limits several times as quickly, and the person's own config.toml may turn it
+ * on (`service_tier`): the hub's agents never use it, in a thread old or new. `serviceTier: null` on the thread says the
+ * same to a Codex that no longer knows this switch (codex-app.ts).
+ */
+const NO_FAST_TIER = "features.fast_mode=false";
 
 /** Turns `codex exec --json` events into BrainEvents. */
 export class CodexStreamParser {
@@ -90,18 +106,25 @@ function tomlString(s: string): string {
 class CodexSession implements BrainSessionImpl {
   private threadId?: string;
   private proc?: ReturnType<typeof runLines>;
-  /** The app-server turn in progress. */
-  private app?: CodexAppTurn;
+  /** The app server: in a turn, or a dialog's waiting for its next one. */
+  private app?: CodexAppServer;
   /** This Codex has no app-server: turns use `codex exec`. */
   private execOnly = false;
   private interrupted = false;
+  /** A turn is in progress (send() has not finished). */
+  private turning = false;
+  private closed = false;
+  private idle?: NodeJS.Timeout;
+  private warming?: Promise<void>;
   private o: BrainSessionOptions;
   private p: CodexOptions;
   private dir: string;
+  private pool: WarmPool<CodexSession>;
 
-  constructor(opts: BrainSessionOptions, p: CodexOptions) {
+  constructor(opts: BrainSessionOptions, p: CodexOptions, pool: WarmPool<CodexSession>) {
     this.o = opts;
     this.p = p;
+    this.pool = pool;
     this.threadId = opts.resume;
     this.dir = join(p.stateDir, "sessions", opts.sessionId.replace(/[^\w-]/g, "_"));
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
@@ -176,6 +199,7 @@ class CodexSession implements BrainSessionImpl {
       `approval_policy="never"`,
       `sandbox_mode="read-only"`,
       "project_doc_max_bytes=0",
+      NO_FAST_TIER,
       ...["shell_tool", "multi_agent", "apps", "plugins", "memories", "goals", "hooks", "image_generation"].map((f) => `features.${f}=false`),
       ...(this.o.effort ? [`model_reasoning_effort=${tomlString(this.o.effort)}`] : []),
       ...(this.p.extraConfig?.() ?? []),
@@ -197,6 +221,7 @@ class CodexSession implements BrainSessionImpl {
       // The hub's gateway decides about each of its tools; Codex asking the person first ended as "user rejected".
       `mcp_servers.piomio.default_tools_approval_mode="approve"`,
       `approval_policy=${tomlString(this.approvalPolicy())}`,
+      NO_FAST_TIER,
       ...((!exec && this.profile()) || [`sandbox_mode=${tomlString(this.sandbox())}`]),
       // Legacy exec cannot enforce a profile's domain rules. Do not turn its sandbox into unrestricted networking.
       ...(exec && this.o.confine ? ["sandbox_workspace_write.network_access=false"] : []),
@@ -214,64 +239,134 @@ class CodexSession implements BrainSessionImpl {
     return a;
   }
 
+  private async childEnv(): Promise<Record<string, string>> {
+    return childEnv(process.env, { ...this.o.env, ...(await this.p.authEnv?.()), ...confinedProxyEnv(this.o) });
+  }
+
+  private newServer(env: Record<string, string>): CodexAppServer {
+    return new CodexAppServer({
+      command: this.p.command?.() ?? "codex",
+      config: this.config(),
+      cwd: this.o.workspace,
+      env,
+      model: this.o.model,
+      effort: this.o.effort,
+      sandbox: this.o.bare ? "read-only" : this.sandbox(),
+      threadId: this.threadId,
+      ask: this.ask(),
+      approvalPolicy: this.approvalPolicy(),
+      ...(this.profile() && !this.o.bare ? { profile: true } : {}),
+      ...(this.o.bare ? { bare: { instructions: this.o.systemPrompt } } : {}),
+    });
+  }
+
+  /** The process starts and opens the thread before the person's message comes. Never fails: a turn starts its own. */
+  warm(): Promise<void> {
+    if (!this.o.keepWarm || this.execOnly || this.turning || this.app?.alive()) return this.warming ?? Promise.resolve();
+    this.warming ??= this.warmUp().finally(() => (this.warming = undefined));
+    return this.warming;
+  }
+
+  private async warmUp(): Promise<void> {
+    const env = await this.childEnv();
+    // A turn came while the environment was being read: it starts the process.
+    if (this.turning || this.closed || this.app?.alive()) return;
+    const app = this.newServer(env);
+    this.app = app;
+    try {
+      await app.open();
+      if (!this.turning && this.app === app) this.rest();
+    } catch (e) {
+      this.p.log?.(`codex warm-up failed: ${(e as Error).message}`);
+      if (e instanceof AppServerUnsupported) this.execOnly = true;
+      if (this.app === app) this.app = undefined;
+      void app.stop();
+    }
+  }
+
+  /** Between turns: the process waits for the next one, then closes. */
+  private rest(): void {
+    clearTimeout(this.idle);
+    this.idle = setTimeout(() => this.release(), this.p.idleMs ?? IDLE_MS);
+    this.idle.unref?.();
+    this.pool.rest(this);
+  }
+
+  /** Let the waiting process go. */
+  release(): void {
+    clearTimeout(this.idle);
+    this.pool.take(this);
+    if (this.turning) return;
+    const app = this.app;
+    this.app = undefined;
+    void app?.stop();
+  }
+
   async *send(turn: BrainTurn): AsyncGenerator<BrainEvent> {
-    // The hub chose how this turn thinks: from here on the session thinks so (each turn starts its own app-server).
+    // The hub chose how this turn thinks: from here on the session thinks so.
     if (turn.model) this.o = { ...this.o, model: turn.model };
     if (turn.effort) this.o = { ...this.o, effort: turn.effort };
     this.interrupted = false;
-    const env = childEnv(process.env, { ...this.o.env, ...(await this.p.authEnv?.()), ...confinedProxyEnv(this.o) });
-    if (!this.execOnly) {
-      const start = () =>
-        new CodexAppTurn({
-          command: this.p.command?.() ?? "codex",
-          config: this.config(),
-          cwd: this.o.workspace,
-          env,
-          model: this.o.model,
-          effort: this.o.effort,
-          sandbox: this.o.bare ? "read-only" : this.sandbox(),
-          threadId: this.threadId,
-          ask: this.ask(),
-          approvalPolicy: this.approvalPolicy(),
-          ...(this.profile() && !this.o.bare ? { profile: true } : {}),
-          ...(this.o.bare ? { bare: { instructions: this.o.systemPrompt } } : {}),
-        });
-      let app = start();
-      this.app = app;
-      try {
-        for await (const e of app.run(turn)) yield e;
-        // The thread is too full to go on (Codex compacts on its own; this is when that was not enough): a fresh
-        // thread from the hub's recap.
-        if (app.parser.full && turn.recap && this.threadId && !this.interrupted) {
-          this.p.log?.(`codex thread ${this.threadId} is full, starting a fresh one from the recap`);
-          this.threadId = undefined;
-          app = start();
-          this.app = app;
-          for await (const e of app.run({ ...turn, text: `${turn.recap}\n\n---\n${turn.text}` })) yield e;
-        }
-      } catch (e) {
-        if (!(e instanceof AppServerUnsupported)) throw e;
-        this.execOnly = true;
-        this.p.log?.(`codex app-server unavailable (${e.message}); turns use codex exec`);
-      } finally {
-        this.app = undefined;
-      }
+    this.turning = true;
+    clearTimeout(this.idle);
+    this.pool.take(this);
+    try {
+      // A warm-up in its first moment has not started the process yet: this turn does.
+      const env = await this.childEnv();
       if (!this.execOnly) {
-        if (app.threadId) this.threadId = app.threadId;
-        const f = app.parser;
-        if (!this.interrupted) {
-          const t = brainsT(this.p.locale?.());
-          if (f.limit) yield { type: "limit_hit", resetAt: f.limit.resetAt, detail: `Codex: ${f.limit.detail}` };
-          else if (f.failed || !f.completed) {
-            const stderr = app.stderr();
-            const auth = f.auth || /not logged in|login|401|unauthorized|api key/i.test(`${f.failed ?? ""}\n${stderr}`);
-            yield { type: "error", fatal: !f.completed, message: auth ? t("codex.notSignedIn") : (f.failed ?? stderr.trim().split("\n").slice(-6).join("\n")) || t("codex.failed") };
+        // A dialog's process may be waiting already (warm, or the turn before); else it starts now.
+        let app = this.app?.alive() ? this.app : this.newServer(env);
+        this.app = app;
+        app.think({ model: this.o.model, effort: this.o.effort });
+        try {
+          for await (const e of app.run(turn)) yield e;
+          // The thread is too full to go on (Codex compacts on its own; this is when that was not enough): a fresh
+          // thread from the hub's recap.
+          if (app.parser.full && turn.recap && app.threadId && !this.interrupted) {
+            this.p.log?.(`codex thread ${app.threadId} is full, starting a fresh one from the recap`);
+            this.threadId = undefined;
+            await app.stop();
+            app = this.newServer(env);
+            this.app = app;
+            for await (const e of app.run({ ...turn, text: `${turn.recap}\n\n---\n${turn.text}` })) yield e;
           }
+        } catch (e) {
+          if (!(e instanceof AppServerUnsupported)) throw e;
+          this.execOnly = true;
+          this.app = undefined;
+          this.p.log?.(`codex app-server unavailable (${e.message}); turns use codex exec`);
         }
-        yield { type: "done", resumeToken: this.threadId };
-        return;
+        if (!this.execOnly) {
+          if (app.threadId) this.threadId = app.threadId;
+          const f = app.parser;
+          // A dialog's process waits for the next turn, unless something is wrong with it (the next turn starts clean).
+          const keep = !!this.o.keepWarm && !this.o.bare && !this.closed && app.alive() && f.completed && !f.failed && !f.limit;
+          if (!keep) {
+            this.app = undefined;
+            await app.stop();
+          }
+          if (!this.interrupted) {
+            const t = brainsT(this.p.locale?.());
+            if (f.limit) yield { type: "limit_hit", resetAt: f.limit.resetAt, detail: `Codex: ${f.limit.detail}` };
+            else if (f.failed || !f.completed) {
+              const stderr = app.stderr();
+              const auth = f.auth || /not logged in|login|401|unauthorized|api key/i.test(`${f.failed ?? ""}\n${stderr}`);
+              yield { type: "error", fatal: !f.completed, message: auth ? t("codex.notSignedIn") : (f.failed ?? stderr.trim().split("\n").slice(-6).join("\n")) || t("codex.failed") };
+            }
+          }
+          if (keep) this.rest();
+          yield { type: "done", resumeToken: this.threadId };
+          return;
+        }
       }
+      yield* this.sendExec(turn, env);
+    } finally {
+      this.turning = false;
     }
+  }
+
+  /** A turn through `codex exec` (a Codex too old for the app server). */
+  private async *sendExec(turn: BrainTurn, env: Record<string, string>): AsyncGenerator<BrainEvent> {
     const parser = new CodexStreamParser();
     const proc = runLines(this.p.command?.() ?? "codex", this.args(), { cwd: this.o.workspace, env, input: turn.text });
     this.proc = proc;
@@ -315,8 +410,10 @@ class CodexSession implements BrainSessionImpl {
 
   interrupt(): void {
     if (this.app) {
+      // A waiting process has no turn to stop.
+      if (!this.turning) return;
       this.interrupted = true;
-      void this.app.interrupt();
+      void this.app.interrupt(!!this.o.keepWarm && !this.closed);
       return;
     }
     if (!this.proc) return;
@@ -329,7 +426,9 @@ class CodexSession implements BrainSessionImpl {
   }
 
   close(): void {
+    this.closed = true;
     this.interrupt();
+    this.release();
   }
 }
 
@@ -362,6 +461,7 @@ export function codexThinking(models: CodexModel[] | undefined): Pick<ProbeResul
 }
 
 export function createCodexProvider(p: CodexOptions): BrainProviderImpl {
+  const pool = new WarmPool<CodexSession>(p.maxWarm ?? MAX_WARM);
   // The model list, asked once per command and version for ten minutes (it starts an app-server).
   let listed: { key: string; at: number; models: Promise<CodexModel[] | undefined> } | undefined;
   const modelsOf = (command: string, version: string, env: Record<string, string>) => {
@@ -389,7 +489,7 @@ export function createCodexProvider(p: CodexOptions): BrainProviderImpl {
     },
     async createSession(opts: BrainSessionOptions): Promise<BrainSessionImpl> {
       mkdirSync(opts.workspace, { recursive: true });
-      return new CodexSession(opts, p);
+      return new CodexSession(opts, p, pool);
     },
     // Device code sign-in as the same user and HOME the sessions use: the user opens the page and types the code.
     login({ env, onUpdate }) {

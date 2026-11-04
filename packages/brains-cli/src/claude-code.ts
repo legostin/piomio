@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { BrainEvent, BrainSessionOptions, BrainTurn, ProbeResult } from "@piomio/shared";
 import type { BrainProviderImpl, BrainSessionImpl } from "@piomio/plugin-sdk";
 import type { Locale, Translate } from "@piomio/shared/i18n";
-import { capture, childEnv, runLines, textOfToolContent, type RunningProcess } from "./proc.ts";
+import { capture, childEnv, runLines, textOfToolContent, WarmPool, type RunningProcess } from "./proc.ts";
 import { brainsT } from "./messages.ts";
 import { parseClaudeBrowserLogin, runCliLogin } from "./login.ts";
 import { confinedNetwork, confinedProxyEnv } from "./network.ts";
@@ -313,27 +313,6 @@ class LineReader {
   }
 }
 
-/** The dialogs' processes waiting for their next turn: at most `max`, the one waiting longest closes first. */
-class WarmPool {
-  private waiting: ClaudeCodeSession[] = [];
-  private max: number;
-
-  constructor(max: number) {
-    this.max = max;
-  }
-
-  rest(s: ClaudeCodeSession): void {
-    this.take(s);
-    this.waiting.push(s);
-    while (this.waiting.length > this.max) this.waiting.shift()!.release();
-  }
-
-  take(s: ClaudeCodeSession): void {
-    const i = this.waiting.indexOf(s);
-    if (i >= 0) this.waiting.splice(i, 1);
-  }
-}
-
 class ClaudeCodeSession implements BrainSessionImpl {
   private resumeId?: string;
   private child?: RunningProcess;
@@ -352,9 +331,9 @@ class ClaudeCodeSession implements BrainSessionImpl {
   private p: ClaudeCodeOptions;
   private dir: string;
   private caps: () => Promise<ClaudeCaps>;
-  private pool: WarmPool;
+  private pool: WarmPool<ClaudeCodeSession>;
 
-  constructor(opts: BrainSessionOptions, p: ClaudeCodeOptions, caps: () => Promise<ClaudeCaps>, pool: WarmPool) {
+  constructor(opts: BrainSessionOptions, p: ClaudeCodeOptions, caps: () => Promise<ClaudeCaps>, pool: WarmPool<ClaudeCodeSession>) {
     this.o = opts;
     this.p = p;
     this.caps = caps;
@@ -654,7 +633,7 @@ function writePrivate(file: string, content: string): void {
 }
 
 export function createClaudeCodeProvider(p: ClaudeCodeOptions): BrainProviderImpl {
-  const pool = new WarmPool(p.maxWarm ?? MAX_WARM);
+  const pool = new WarmPool<ClaudeCodeSession>(p.maxWarm ?? MAX_WARM);
   // What the installed CLI takes, read from its --help once per command and version.
   let caps: { key: string; caps: Promise<ClaudeCaps> } | undefined;
   const capsOf = (command: string, version: string, env: Record<string, string>): Promise<ClaudeCaps> => {

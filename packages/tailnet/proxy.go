@@ -15,6 +15,10 @@ import (
 
 type clientIPKey struct{}
 
+// alpn is what the listeners offer: HTTP/2 loads the page's files over one connection, where HTTP/1.1 opens up to six,
+// each with its own TLS handshake through the tunnel. A browser's WebSocket takes a connection of its own over HTTP/1.1.
+var alpn = []string{"h2", "http/1.1"}
+
 // clientIP is the address of whoever opened the connection: Funnel's original client, else the tailnet peer.
 func clientIP(c net.Conn) string {
 	if t, ok := c.(*tls.Conn); ok {

@@ -890,7 +890,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const dir = hub.plugins.uiDir((req.params as any).id);
     const file = dir ? safeFile(dir, (req.params as any)["*"]) : undefined;
     if (!file) throw new HttpError(404, "not found");
-    return sendFile(reply, file);
+    return sendFile(reply, file, { compress: true });
   });
 
   // ----- realtime -----

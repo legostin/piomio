@@ -35,6 +35,27 @@ export class EventQueue<T> {
   }
 }
 
+/** The dialogs' processes waiting for their next turn: at most `max`, the one waiting longest closes first. */
+export class WarmPool<T extends { release(): void }> {
+  private waiting: T[] = [];
+  private max: number;
+
+  constructor(max: number) {
+    this.max = max;
+  }
+
+  rest(s: T): void {
+    this.take(s);
+    this.waiting.push(s);
+    while (this.waiting.length > this.max) this.waiting.shift()!.release();
+  }
+
+  take(s: T): void {
+    const i = this.waiting.indexOf(s);
+    if (i >= 0) this.waiting.splice(i, 1);
+  }
+}
+
 export interface RunningProcess {
   child: ChildProcess;
   lines: AsyncIterable<string>;

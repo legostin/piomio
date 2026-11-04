@@ -131,7 +131,11 @@ export default defineConfig(({ mode }) => ({
     target: "es2022",
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
-    ...(mode === "demo" ? { rollupOptions: { input: resolve(import.meta.dirname, "demo.html") } } : {}),
+    ...(mode === "demo"
+      ? { rollupOptions: { input: resolve(import.meta.dirname, "demo.html") } }
+      : // The libraries in a file of their own: a release usually changes only our code, and a browser keeps the rest.
+        // Leaflet and the icon set load only when they are needed.
+        { rolldownOptions: { output: { advancedChunks: { groups: [{ name: "vendor", test: /node_modules[\\/](?!leaflet|lucide-react)/ }] } } } }),
   },
   server: {
     port: 5173,

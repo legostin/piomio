@@ -60,7 +60,7 @@ export function registerSpa(app: FastifyInstance, webDist: string, isPage: (rel:
       const file = safeFile(webDist, rel);
       if (file) {
         reply.header("x-content-type-options", "nosniff");
-        return sendFile(reply, file, { cache: rel.startsWith("assets/") });
+        return sendFile(reply, file, { cache: rel.startsWith("assets/"), compress: true });
       }
       if (/\.[a-z0-9]{1,8}$/i.test(rel)) throw new HttpError(404, "not found");
     }

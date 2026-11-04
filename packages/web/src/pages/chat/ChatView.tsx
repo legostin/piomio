@@ -8,7 +8,7 @@ import { AVATAR_PALETTE, defaultAvatar } from "@piomio/shared/avatar";
 import { useStore } from "../../lib/store";
 import { stickAfterScroll } from "../../lib/stick";
 import { errorText } from "../../lib/api";
-import { agents, conversations, ensureAgents, loadMessages, loadOlder, updateConversation, useConversationMessages } from "../../state/app";
+import { agents, conversations, ensureAgents, loadMessages, loadOlder, showingDialog, updateConversation, useConversationMessages } from "../../state/app";
 import { showDetails } from "../../state/prefs";
 import { toast } from "../../state/toast";
 import { addFiles } from "../../state/attachments";
@@ -131,6 +131,7 @@ export function ChatView({
     void loadMessages(conversationId);
     ensureAgents();
   }, [conversationId]);
+  useEffect(() => showingDialog(conversationId), [conversationId]);
 
   // Keep the view pinned to the bottom while new content streams in; keep position when older messages load.
   useLayoutEffect(() => {

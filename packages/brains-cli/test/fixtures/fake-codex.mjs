@@ -67,6 +67,8 @@ if (args[0] === "login" && args.includes("--device-auth")) {
 }
 
 function appServer() {
+  // One line per process that started, for tests that count them.
+  if (process.env.FAKE_CODEX_SPAWNS) appendFileSync(process.env.FAKE_CODEX_SPAWNS, `${process.pid}\n`);
   const send = (o) => process.stdout.write(JSON.stringify(o) + "\n");
   const note = (method, params) => send({ method, params });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -142,13 +144,14 @@ function appServer() {
         return;
       case "thread/start":
         // What the brain asked for, for tests that check it: the -c overrides and the thread's sandbox and approvals.
-        if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ args, sandbox: p.sandbox, approvalPolicy: p.approvalPolicy, ephemeral: p.ephemeral, baseInstructions: p.baseInstructions })}\n`);
+        if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ args, sandbox: p.sandbox, approvalPolicy: p.approvalPolicy, ephemeral: p.ephemeral, baseInstructions: p.baseInstructions, serviceTier: "serviceTier" in p ? p.serviceTier : "absent" })}\n`);
         threadId = `th-${process.pid}`;
         model = p.model ?? "default";
         note("thread/started", { thread: { id: threadId } });
         // FAKE_CODEX_SANDBOX: the sandbox the thread says it runs in ("dangerFullAccess": a Codex that ignored the profile).
         return ok({ thread: { id: threadId }, model, ...(process.env.FAKE_CODEX_SANDBOX ? { sandbox: { type: process.env.FAKE_CODEX_SANDBOX } } : {}) });
       case "thread/resume":
+        if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ args, resume: p.threadId, serviceTier: "serviceTier" in p ? p.serviceTier : "absent" })}\n`);
         if (p.threadId === "missing") return fail("thread not found");
         threadId = p.threadId;
         resumed = true;
@@ -165,6 +168,8 @@ function appServer() {
         });
       case "turn/start": {
         if (p.effort) effort = p.effort;
+        // A thread already open takes another model with the turn.
+        if (p.model) model = p.model;
         turn = { id: `turn-${++turns}`, steered: [], interrupted: false };
         ok({ turn: { id: turn.id, status: "inProgress", items: [] } });
         void sleep(20).then(() => runTurn(textOf(p.input)));
@@ -175,6 +180,8 @@ function appServer() {
         turn.steered.push(textOf(p.input));
         return ok({ turnId: turn.id });
       case "turn/interrupt":
+        // A Codex that never ends the turn it was told to stop.
+        if (process.env.FAKE_CODEX_STUCK === "1") return ok({});
         if (turn) {
           turn.interrupted = true;
           turn.wake?.();

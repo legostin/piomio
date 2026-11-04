@@ -20,7 +20,7 @@ import type { DeviceTls } from "../devices-tls.ts";
 import { DEVICE_COOKIE } from "../devices.ts";
 import { hubName } from "../pairing.ts";
 import { registerApi } from "./api.ts";
-import { clientIp, HttpError } from "./http.ts";
+import { clientIp, HttpError, registerCompression } from "./http.ts";
 import { registerSpa } from "./spa.ts";
 import { registerPages } from "./pages.ts";
 
@@ -41,6 +41,7 @@ export async function buildDeviceApp(hub: Hub, tls: DeviceTls, opts: { remote?: 
   await app.register(fastifyCookie);
   // Replica links (replica-link.ts) carry batches of rows and pieces of files: up to 64 MB a frame.
   await app.register(fastifyWebsocket, { options: { maxPayload: 64 * 1024 * 1024 } });
+  registerCompression(app);
 
   /** The page's own origin: phones reach the port by IP, so there is no fixed list of hosts. */
   const sameOrigin = (req: FastifyRequest) => !!req.headers.host && req.headers.origin === `https://${req.headers.host}`;

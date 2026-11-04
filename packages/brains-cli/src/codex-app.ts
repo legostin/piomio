@@ -1,5 +1,6 @@
-// Codex through `codex app-server` (JSON-RPC over stdio, one process per turn): thread/start or thread/resume, then
-// turn/start; turn/steer adds the user's input to the turn in progress, which takes it at its next step.
+// Codex through `codex app-server` (JSON-RPC over stdio): thread/start or thread/resume, then a turn/start per turn;
+// turn/steer adds the user's input to the turn in progress, which takes it at its next step. The process may stay up
+// between turns with the thread open in it, which spares the next turn Codex's start-up (see CodexSession).
 
 import type { BrainEvent, BrainTurn } from "@piomio/shared";
 import { brainImageEvents } from "@piomio/shared";
@@ -229,23 +230,42 @@ export async function approvalAnswer(method: string, params: Record<string, any>
 export class AppServerUnsupported extends Error {}
 
 /**
- * One turn over a fresh `codex app-server`: yields BrainEvents until the turn completes. `steer()` adds input while it
- * runs. `threadId` is the thread to resume (or the one it started), for the next turn.
+ * A `codex app-server` with one thread open in it, taking turns one at a time: `run()` yields BrainEvents until a turn
+ * completes and `steer()` adds input while it runs. `threadId` is the thread to resume (or the one it started).
  */
-export class CodexAppTurn {
+export class CodexAppServer {
   threadId?: string;
-  readonly parser = new CodexAppParser();
+  /** The turn in progress, or the last one. */
+  parser = new CodexAppParser();
   private proc?: RunningProcess;
+  /** The process is gone, or going: the next turn needs another. */
+  private gone = false;
+  private reading?: Promise<void>;
+  private opening?: Promise<void>;
+  /** The thread it was asked to resume was gone and it started another: the next turn brings the recap. */
+  private lostThread = false;
+  /** The model the open thread thinks with. */
+  private threadModel?: string;
   private nextId = 0;
   private pending = new Map<number, Pending>();
-  private events = new EventQueue<BrainEvent>();
+  private events?: EventQueue<BrainEvent>;
   private started = false;
-  private finished = false;
+  private finished = true;
   private s: AppServerSetup;
 
   constructor(s: AppServerSetup) {
     this.s = s;
     this.threadId = s.threadId;
+  }
+
+  /** The process is there (or starting) and can take a turn. */
+  alive(): boolean {
+    return !this.gone && (!this.proc || this.proc.child.exitCode === null);
+  }
+
+  /** How the next turn thinks. */
+  think(how: { model?: string; effort?: string }): void {
+    this.s = { ...this.s, ...how };
   }
 
   private request<T = any>(method: string, params: unknown): Promise<T> {
@@ -294,14 +314,16 @@ export class CodexAppTurn {
       return;
     }
     if (m.method === "thread/started" && m.params?.thread?.id) this.threadId = m.params.thread.id;
-    for (const e of this.parser.push(m.method, m.params)) this.events.push(e);
+    // Between turns Codex's own notes (its MCP servers starting, rate limits) concern no turn.
+    if (this.finished) return;
+    for (const e of this.parser.push(m.method, m.params)) this.events?.push(e);
     if (m.method === "turn/completed" && this.parser.completed) this.finish();
   }
 
   private finish(): void {
     if (this.finished) return;
     this.finished = true;
-    this.events.end();
+    this.events?.end();
   }
 
   private input(turn: BrainTurn): unknown[] {
@@ -310,62 +332,98 @@ export class CodexAppTurn {
     return items;
   }
 
-  /** Throws AppServerUnsupported when this Codex has no app-server (nothing has been sent to the model then). */
-  async *run(turn: BrainTurn): AsyncGenerator<BrainEvent> {
+  /**
+   * Starts the process and opens the thread, once; a turn before that is done waits for it. Rejects with
+   * AppServerUnsupported when this Codex has no app-server (nothing has been sent to the model then).
+   */
+  open(): Promise<void> {
+    return (this.opening ??= this.connect());
+  }
+
+  private async connect(): Promise<void> {
     const args = ["app-server"];
     for (const c of this.s.config) args.push("-c", c);
     const proc = runLines(this.s.command, args, { cwd: this.s.cwd, env: this.s.env, keepInput: true });
     this.proc = proc;
-    const reading = (async () => {
+    this.reading = (async () => {
       for await (const line of proc.lines) this.onLine(line);
+      this.gone = true;
       for (const p of this.pending.values()) p.reject(new Error("codex app-server exited"));
       this.pending.clear();
       this.finish();
     })();
     try {
-      try {
-        await this.request("initialize", { clientInfo: { name: "piomio", title: "Piomio", version: "1" }, capabilities: null });
-      } catch {
-        const exit = await Promise.race([proc.exited, new Promise<null>((r) => setTimeout(() => r(null), 2000))]);
-        throw new AppServerUnsupported(exit ? proc.stderr().trim().split("\n").slice(-3).join("\n") : "codex app-server did not answer");
-      }
-      this.notify("initialized");
-      // A `sandbox` here would win over the permission profile the config chose.
-      const thread = {
-        cwd: this.s.cwd,
-        approvalPolicy: this.s.approvalPolicy ?? (this.s.ask ? "on-request" : "never"),
-        ...(this.s.profile ? {} : { sandbox: this.s.sandbox }),
-        ...(this.s.model ? { model: this.s.model } : {}),
-        ...(this.s.bare ? { ephemeral: true, baseInstructions: this.s.bare.instructions } : {}),
-      };
-      let r: any;
-      if (this.threadId) r = await this.request("thread/resume", { threadId: this.threadId, ...thread }).catch(() => undefined);
-      // The thread to resume is gone: a fresh one, which starts from the hub's recap when it sent one.
-      if (!r && this.threadId && turn.recap) turn = { ...turn, text: `${turn.recap}\n\n---\n${turn.text}` };
-      if (!r) r = await this.request("thread/start", thread);
-      this.threadId = r?.thread?.id ?? this.threadId;
-      // The profile closes what no agent may read; a Codex that ran without it would see the whole computer.
-      if (this.s.profile && r?.sandbox?.type === "dangerFullAccess") throw new Error("Codex did not take the hub's permission profile: the turn was not started");
-      // The model the thread answers with (its default when none was asked for).
-      const model = typeof r?.model === "string" && r.model ? r.model : this.s.model;
-      if (model) this.events.push({ type: "model", model });
-      const t = await this.request("turn/start", { threadId: this.threadId, input: this.input(turn), ...(this.s.effort ? { effort: this.s.effort } : {}) });
+      await this.request("initialize", { clientInfo: { name: "piomio", title: "Piomio", version: "1" }, capabilities: null });
+    } catch {
+      const exit = await Promise.race([proc.exited, new Promise<null>((r) => setTimeout(() => r(null), 2000))]);
+      this.gone = true;
+      proc.child.kill("SIGKILL");
+      throw new AppServerUnsupported(exit ? proc.stderr().trim().split("\n").slice(-3).join("\n") : "codex app-server did not answer");
+    }
+    this.notify("initialized");
+    // A `sandbox` here would win over the permission profile the config chose. The Fast tier stays off (codex.ts).
+    const thread = {
+      cwd: this.s.cwd,
+      approvalPolicy: this.s.approvalPolicy ?? (this.s.ask ? "on-request" : "never"),
+      ...(this.s.profile ? {} : { sandbox: this.s.sandbox }),
+      ...(this.s.model ? { model: this.s.model } : {}),
+      ...(this.s.bare ? { ephemeral: true, baseInstructions: this.s.bare.instructions } : {}),
+      serviceTier: null,
+    };
+    let r: any;
+    if (this.threadId) r = await this.request("thread/resume", { threadId: this.threadId, ...thread }).catch(() => undefined);
+    // The thread to resume is gone: a fresh one, which starts from the hub's recap when it sent one.
+    if (!r && this.threadId) this.lostThread = true;
+    if (!r) r = await this.request("thread/start", thread);
+    this.threadId = r?.thread?.id ?? this.threadId;
+    // The profile closes what no agent may read; a Codex that ran without it would see the whole computer.
+    if (this.s.profile && r?.sandbox?.type === "dangerFullAccess") throw new Error("Codex did not take the hub's permission profile: the turn was not started");
+    // The model the thread answers with (its default when none was asked for).
+    this.threadModel = typeof r?.model === "string" && r.model ? r.model : this.s.model;
+  }
+
+  /** One turn, in the process and thread already open or opened now. Throws AppServerUnsupported as `open()` does. */
+  async *run(turn: BrainTurn): AsyncGenerator<BrainEvent> {
+    this.parser = new CodexAppParser();
+    const events = new EventQueue<BrainEvent>();
+    this.events = events;
+    this.finished = false;
+    try {
+      await this.open();
+      if (this.lostThread && turn.recap) turn = { ...turn, text: `${turn.recap}\n\n---\n${turn.text}` };
+      this.lostThread = false;
+      // A thread already open takes another model with the turn.
+      const switching = !!this.s.model && this.s.model !== this.threadModel;
+      if (switching) this.threadModel = this.s.model;
+      if (this.threadModel) events.push({ type: "model", model: this.threadModel });
+      const t = await this.request("turn/start", { threadId: this.threadId, input: this.input(turn), ...(switching ? { model: this.s.model } : {}), ...(this.s.effort ? { effort: this.s.effort } : {}) });
       this.parser.turnId = t?.turn?.id;
       this.started = true;
     } catch (e) {
       if (e instanceof AppServerUnsupported) {
-        proc.child.kill("SIGKILL");
+        this.finish();
         throw e;
       }
-      this.events.push({ type: "error", message: String((e as Error)?.message ?? e), fatal: true });
+      events.push({ type: "error", message: String((e as Error)?.message ?? e), fatal: true });
       this.finish();
     }
-    for await (const e of this.events) yield e;
-    this.started = false;
+    try {
+      for await (const e of events) yield e;
+    } finally {
+      this.started = false;
+      this.finish();
+    }
+  }
+
+  /** Let the process go: its input closes and it leaves, or is killed after a moment. */
+  async stop(): Promise<void> {
+    this.gone = true;
+    const proc = this.proc;
+    if (!proc) return;
     proc.endInput();
     const exited = await Promise.race([proc.exited, new Promise<null>((r) => setTimeout(() => r(null), 3000).unref())]);
     if (!exited) proc.child.kill("SIGKILL");
-    await reading.catch(() => {});
+    await this.reading?.catch(() => {});
   }
 
   /** stderr so far, for failures people read. */
@@ -385,11 +443,20 @@ export class CodexAppTurn {
     }
   }
 
-  async interrupt(): Promise<void> {
+  /**
+   * Stop the turn in progress. `keep`: the process stays for the next turn if the turn ends within a moment, as Codex
+   * says it does; otherwise (a turn not started yet, or one that goes on) the process is stopped too, and the turn ends.
+   */
+  async interrupt(keep = false): Promise<void> {
     const turnId = this.parser.turnId;
-    if (this.started && turnId && this.threadId) {
-      await Promise.race([this.request("turn/interrupt", { threadId: this.threadId, turnId }).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+    const running = this.started && !!turnId && !!this.threadId;
+    if (running) await Promise.race([this.request("turn/interrupt", { threadId: this.threadId, turnId }).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+    if (keep && running) {
+      const end = Date.now() + STOP_GRACE_MS;
+      while (!this.finished && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+      if (this.finished) return;
     }
+    this.gone = true;
     const c = this.proc?.child;
     if (!c || c.exitCode !== null) return;
     c.kill("SIGINT");
@@ -398,3 +465,6 @@ export class CodexAppTurn {
     }, 5000).unref();
   }
 }
+
+/** How long a stopped turn may take to end before its process goes too. */
+const STOP_GRACE_MS = 5000;

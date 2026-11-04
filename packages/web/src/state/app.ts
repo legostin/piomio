@@ -86,6 +86,8 @@ export interface ConvMessages {
   loadingOlder: boolean;
   hasMore: boolean;
   error?: string;
+  /** The connection dropped while it was off screen: the hub is asked again when it opens. */
+  stale?: boolean;
 }
 
 const PAGE = 60;
@@ -140,12 +142,14 @@ export async function init(): Promise<void> {
   desktopTicket = undefined;
   // A used or expired ticket just leaves the usual sign-in form.
   if (ticket) await request("POST", "/api/auth/desktop", { ticket }).catch(() => undefined);
+  // The device's copy shows at once, whatever the way to the hub is like (signing out leaves none behind). The hub's
+  // session follows; a 401 there goes to the sign-in screen.
+  if (await fromCache()) return void bootstrapInBackground();
   try {
     const auth = await request<AuthState>("GET", "/api/auth/state");
     adoptHubLocale(auth.language);
     if (!auth.hasPassword) return phase.set({ kind: "setup", auth });
     if (!auth.authenticated) return phase.set({ kind: "login", auth });
-    if (await fromCache()) return void bootstrapInBackground();
     adoptHubLocale((await bootstrap()).language);
     phase.set({ kind: "ready" });
   } catch (e) {
@@ -386,7 +390,7 @@ function startSocket(): void {
       if (feeds.get()) void refreshFeeds();
       if (tasks.get()) void refreshTasks();
       if (machineActivity.get()) void refreshMachineActivity();
-      for (const id of Object.keys(messages.get())) if (messages.get()[id].loaded) void loadMessages(id, true);
+      refreshDialogs();
       reconnected.emit();
     },
     onRepeatedFailure: async () => {
@@ -544,9 +548,35 @@ export async function updateConversation(id: string, patch: { title?: string; ag
   return c;
 }
 
+/** Dialogs on screen now, and in how many places. */
+const onScreen = new Map<string, number>();
+
+/** A dialog came on screen (ChatView); the returned function says it left. */
+export function showingDialog(id: string): () => void {
+  onScreen.set(id, (onScreen.get(id) ?? 0) + 1);
+  return () => {
+    const left = (onScreen.get(id) ?? 1) - 1;
+    if (left > 0) onScreen.set(id, left);
+    else onScreen.delete(id);
+  };
+}
+
+/**
+ * Back online: the dialogs on screen ask the hub what they missed, the others when they open. A shaky connection
+ * reconnects often, and every dialog visited since the page loaded would otherwise fetch its messages each time.
+ */
+export function refreshDialogs(): void {
+  for (const [id, c] of Object.entries(messages.get())) {
+    if (!c.loaded) continue;
+    if (onScreen.has(id)) void loadMessages(id, true);
+    else patchConv(id, (x) => ({ ...x, stale: true }));
+  }
+}
+
 export async function loadMessages(id: string, refresh = false): Promise<void> {
   const cur = messages.get()[id];
-  if (cur && (cur.loading || (cur.loaded && !refresh))) return;
+  const again = refresh || !!cur?.stale;
+  if (cur && (cur.loading || (cur.loaded && !again))) return;
   messages.set((all) => ({ ...all, [id]: { ...(all[id] ?? EMPTY_CONV), loading: true, error: undefined } }));
   // The device's copy first, while the hub answers.
   if (!cur) void fromDevice(id);
@@ -556,7 +586,7 @@ export async function loadMessages(id: string, refresh = false): Promise<void> {
       const prev = all[id] ?? EMPTY_CONV;
       return {
         ...all,
-        [id]: { ...prev, messages: mergeFetched(prev.messages, list), loaded: true, loading: false, hasMore: refresh && prev.loaded ? prev.hasMore : list.length >= PAGE },
+        [id]: { ...prev, messages: mergeFetched(prev.messages, list), loaded: true, loading: false, stale: false, hasMore: again && prev.loaded ? prev.hasMore : list.length >= PAGE },
       };
     });
   } catch (e) {
