@@ -30,3 +30,20 @@ jobs:
       # The browser plugin's tests drive Playwright's Chromium, with the system libraries it needs.
       - run: npx playwright install --with-deps chromium
       - run: npm test
+
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SITE_BASE: /piomio/
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:ui-plugins
+      - run: npm run build:site
+      - run: npm run check:site

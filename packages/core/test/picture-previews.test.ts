@@ -1,3 +1,5 @@
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
 // Small copies of chat pictures (src/picture-previews.ts, src/preview-image.ts): scaled to fit, upright, kept on disk.
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
@@ -132,4 +134,23 @@ describe("without the worker", () => {
       previews.stop();
     }
   }, 60_000);
+});
+
+// Force the encoder's Buffer into Node's shared pool, independent of the Node version's pool size.
+it("returns a preview when the encoder uses Node's shared Buffer pool", async () => {
+  const url = new URL("../src/preview-worker.ts", import.meta.url).href;
+  const worker = new Worker(`Buffer.poolSize = 1024 * 1024; void import(${JSON.stringify(url)});`, { eval: true });
+  try {
+    const reply = once(worker, "message");
+    const data = jpeg.encode({ width: 800, height: 800, data: Buffer.alloc(800 * 800 * 4, 255) }, 92).data;
+    const file = join(mkdtempSync(join(tmpdir(), "pooled-preview-")), "photo.jpg");
+    writeFileSync(file, data);
+    worker.postMessage({ id: 1, file, type: "image/jpeg" });
+    const [result] = await reply;
+    expect(result.error).toBeUndefined();
+    expect(result.type).toBe("image/jpeg");
+    expect(jpeg.decode(result.data).width).toBe(PREVIEW_SIDE);
+  } finally {
+    await worker.terminate();
+  }
 });
