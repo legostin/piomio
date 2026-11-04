@@ -584,8 +584,9 @@ export function registerCoreTools(d: CoreToolDeps): void {
           true,
         );
       try {
-        const words = await d.transcriber.transcribe(file, mimeOf(file));
-        return text(words ? `Transcript: ${words}` : "No speech in the recording.");
+        let warning: string | undefined;
+        const words = await d.transcriber.transcribe(file, mimeOf(file), (w) => { warning = w; });
+        return text([warning, words ? `Transcript: ${words}` : "No speech in the recording."].filter(Boolean).join("\n"));
       } catch (e: any) {
         return text(`Could not transcribe it: ${e?.message ?? e}`, true);
       }

@@ -102,6 +102,10 @@ export function createCoreCall(hub: Hub) {
         hub.team.setPresence(id, presence);
         return { ok: true };
       }
+      case "speech.say": {
+        const a = await hub.voiceProviders.say(String(p.text ?? ""), { language: p.language });
+        return { data: a.data.toString("base64"), mimeType: a.mimeType, ...(a.warning ? { warning: a.warning } : {}) };
+      }
       case "speech.transcribe": {
         if (p.check === true) return { available: !!hub.transcriber.engine() };
         const b64 = String(p.data ?? "");
@@ -116,11 +120,11 @@ export function createCoreCall(hub: Hub) {
       }
       // The hub's local speech engine (speech/engine.ts): what is installed and downloading; downloads in the background.
       case "speech.status":
-        return hub.speech.status();
+        return hub.voiceProviders.status(hub.speech.status());
       case "speech.install": {
         const r = hub.speech.install({ voice: p.voice, stt: p.stt });
         hub.audit.append(`plugin:${pluginId}`, "speech.install", undefined, { voice: p.voice ?? null, stt: p.stt ?? null });
-        return r;
+        return hub.voiceProviders.status(r);
       }
       case "tasks.create": {
         const agentId = p.agentId ?? hub.settings.get().defaultAgent;

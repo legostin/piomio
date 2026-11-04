@@ -173,6 +173,7 @@ export const CORE_METHODS = [
   "files.fetch", // read a file an agent hands the plugin from its workspace (base64), e.g. one to upload to a site
   "connections.token", // an access token of the hub's connection the plugin's integration uses (e.g. Google)
   "conversations.tell", // a note for an agent that it answers: wakes the task, else the dialog (the default agent's when none)
+  "speech.say", // synthesize with the selected provider; base64 audio, keys remain in the plugin vault scope
   "speech.transcribe", // the words of a short audio clip (base64), with the hub's speech-to-text; { check: true } says if one is set up
   "agents.presence", // the live state of one of the plugin's own agents (the always-on companion): { agentId, presence | null }
   "speech.status", // the hub's local speech engine: SpeechStatus (voices, speech-to-text, what is installed and downloading)

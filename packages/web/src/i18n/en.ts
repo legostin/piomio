@@ -908,6 +908,8 @@ export default {
   "settings.error.timezone": "Unknown time zone “{value}”",
   "settings.error.checkFields": "Check the fields",
   "settings.voice.title": "Voice",
+  "settings.voice.providers": "Voice providers",
+  "settings.voice.cloudManaged": "Speech recognition is controlled by Voice providers. Use the button above to choose Built-in or a cloud service. The previous hub setting applies when the plugin is disabled.",
   "settings.voice.hint": "Voice messages and audio files are turned into text before the agent answers. It works with a Groq or OpenAI API key in the vault (groq_api_key, openai_api_key; the assistant can ask for one in the chat), with your own OpenAI-compatible server, for example a local Whisper, or with this computer's own engine: free and offline, for WAV recordings.",
   "settings.voice.provider": "Speech to text",
   "settings.voice.auto": "Automatic: OpenAI or Groq if the vault has a key, else this computer",

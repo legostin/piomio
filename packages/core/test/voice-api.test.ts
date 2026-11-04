@@ -7,8 +7,8 @@ afterEach(async () => { for (const app of apps.splice(0)) await app.close(); });
 async function app() {
   const api = Fastify(); apps.push(api);
   const interruptVoice = vi.fn(() => ({ mode: "interrupted" }));
-  const say = vi.fn(async () => Buffer.from([1, 2]));
-  await registerApi(api, { config: {}, runner: { interruptVoice }, speech: { say } } as any,
+  const say = vi.fn(async () => ({ data: Buffer.from([1, 2]), mimeType: "audio/wav" }));
+  await registerApi(api, { config: {}, runner: { interruptVoice }, voiceProviders: { say } } as any,
     { kind: "web", bootstrap: () => ({}), authenticate: async () => {}, wsAllowed: () => false });
   return { api, interruptVoice, say };
 }
@@ -28,7 +28,7 @@ describe("voice HTTP boundaries without a listening port", () => {
     f.api.addHook("onRequest", async (_request, reply) => { raw = reply.raw; });
     f.say.mockImplementation(async (_words: any, options: any) => {
       signal = options.signal; started();
-      return new Promise<Buffer>((_resolve, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true }));
+      return new Promise<{ data: Buffer; mimeType: string }>((_resolve, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true }));
     });
     const response = f.api.inject({ method: "POST", url: "/api/speech/say", payload: { text: "old reply" } });
     const disconnected = expect(response).rejects.toThrow("response destroyed before completion");
