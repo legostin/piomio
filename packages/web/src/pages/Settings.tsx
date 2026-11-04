@@ -10,6 +10,7 @@ import { desktopAction, desktopApp } from "../lib/desktop";
 import { useStore } from "../lib/store";
 import { agents, ensureAgents, hubEvents, logout, refreshBootstrap, session } from "../state/app";
 import { toast } from "../state/toast";
+import { openPanelItem } from "../state/panel";
 import { explicitLocale, locale, LOCALES, t, type MessageKey } from "../i18n";
 import { usePluginRegistry } from "../plugins/slots";
 import { PluginSetupCard } from "../components/SecretCards";
@@ -303,9 +304,11 @@ export function SettingsPage() {
 
         <Card title={t("settings.voice.title")}>
           <p className="mb-3 text-sm text-muted">{t("settings.voice.hint")}</p>
+          <div className="mb-3"><Button onClick={() => openPanelItem("plugins", "voice-providers")}>{t("settings.voice.providers")}</Button></div>
+          {speech?.transcriptionManaged && <p className="mb-3 text-sm text-muted">{t("settings.voice.cloudManaged")}</p>}
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t("settings.voice.provider")} hint={voiceEngine ? t("settings.voice.now", { engine: `${voiceEngine.label} · ${voiceEngine.model}` }) : voiceEngine === null ? t("settings.voice.none") : undefined}>
-              <Select value={form.transcription.provider} onChange={(e) => set("transcription", { provider: e.target.value as Transcription["provider"] })}>
+              <Select disabled={!!speech?.transcriptionManaged} value={form.transcription.provider} onChange={(e) => set("transcription", { provider: e.target.value as Transcription["provider"] })}>
                 {VOICE_PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>
                     {t(p.label)}

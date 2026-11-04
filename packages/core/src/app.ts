@@ -1,3 +1,4 @@
+import { VoiceProviders } from "./speech/providers.ts";
 // Hub composition root: builds every core service, wires them together, starts/stops servers.
 
 import { wireNetworkApprovals } from "./network-approvals.ts";
@@ -168,6 +169,7 @@ export class Hub {
   transcriber: Transcriber;
   /** The local speech engine: voices and speech to text, downloaded on demand (speech/engine.ts). */
   speech: SpeechEngine;
+  voiceProviders: VoiceProviders;
   /** Access from anywhere: the hub's Tailscale node and its link (remote.ts). */
   remote: RemoteAccess;
   /** The link's gateways on loopback: the web UI and the phones, behind the node. */
@@ -302,11 +304,13 @@ export class Hub {
       language: () => this.settings.get().language,
       voice: () => this.settings.get().voice,
       sttProvider: () => this.settings.get().transcription?.provider ?? "auto",
-      emit: (status) => this.bus.emit("speech.status", status),
+      emit: (status) => this.bus.emit("speech.status", this.voiceProviders?.status(status) ?? status),
       log: (line) => console.log(line),
     });
     // Without a key (or with provider "local") voice messages go to the local engine once it is installed.
     this.transcriber.local = this.speech;
+    this.bus.on("plugins.updated", () => this.speech.changed());
+    this.bus.on("plugin.event", (e: { pluginId?: string }) => { if (e.pluginId === "voice-providers") this.speech.changed(); });
     this.bus.on("settings.updated", (e) => {
       const keys = (e as { keys?: unknown }).keys;
       if (Array.isArray(keys) && keys.some((k) => k === "voice" || k === "transcription" || k === "language")) this.speech.changed();
@@ -418,6 +422,7 @@ export class Hub {
       attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
       onCatalogUpdated: (pluginId, before, after) => this.catalogUpdated(pluginId, before, after),
     });
+    this.voiceProviders = new VoiceProviders(this.plugins, this.speech, this.transcriber);
     this.mcp = new McpEndpoint(this.gateway, this.store, config.version);
     this.media = new MediaService({ dataDir: config.dataDir, version: config.version, resolve: (host) => this.egress.resolveTarget(host) });
     this.connections = new Connections({

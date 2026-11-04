@@ -1,3 +1,4 @@
+import { speakWithProvider, needsLocalVoice } from "../voice/provider.ts";
 // Pio's window in the desktop app (/pio/overlay, a bare page over a see-through window, always on top): the face, its
 // card with the three switches, Pio's lines, and what Pio does on this computer — watching which window is active,
 // listening, speaking, and the mouse and keyboard when the person handed them over.
@@ -141,20 +142,12 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
       }),
     [],
   );
-  const replyVoice = useMemo(() => new ReplyVoice(async (words, signal) => {
-    const lang = langOf(words);
-    const s = live.current.speech;
-    const v = s?.runtime === "ready" ? voiceFor(lang, s.voices, s.voice, true) : undefined;
-    if (v) {
-      try {
-        const wav = await api.say(words, v.id, signal);
-        signal.throwIfAborted();
-        return await speaker.play(wav);
-      } catch (e) { if (signal.aborted) throw e; }
-    }
-    signal.throwIfAborted();
-    return speaker.system(words, lang);
-  }, () => speaker.stop()), []);
+  const replyVoice = useMemo(() => new ReplyVoice((words, signal) => speakWithProvider(words, signal, live.current.speech, {
+    say: (text, voice, abort, language) => api.say(text, voice, abort, language, (text) => setNote({ text })),
+    play: (data) => speaker.play(data),
+    system: (text, language) => speaker.system(text, language),
+    warning: (text) => setNote({ text }),
+  }), () => speaker.stop()), []);
   const mic = useMemo(() => new Mic({
     onPhrase: (wav, held, duringReply) => void heard(wav, held, duringReply),
     onHearing: setHearing,
@@ -216,7 +209,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   /** A phrase from the mic: its words, if they are for Pio. */
   const heard = async (wav: Uint8Array, held: boolean, duringReply: boolean) => {
     try {
-      const text = await api.transcribe(wav, live.current.lang);
+      const text = await api.transcribe(wav, live.current.lang, (text) => setNote({ text }));
       setSttError(undefined);
       if (duringReply && !held && backchannel(text)) return;
       const followUntil = duringReply || live.current.thinking ? Date.now() + FOLLOW_MS : live.current.followUntil;
@@ -535,8 +528,8 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
   live.current.lang = lang;
   const voice = speech ? voiceFor(lang, speech.voices, speech.voice, false) : undefined;
   const hears = speech?.stt.models?.find((m) => m.langs.length === 1 && m.langs[0] === lang) ?? speech?.stt.models?.find((m) => m.langs.includes(lang));
-  const sttNeeded = sttMissing && !!hears && !hears.installed;
-  const needsVoice = sw.voice && speech && (speech.runtime !== "ready" || (voice && !voice.installed) || sttNeeded);
+  const sttNeeded = sttMissing && !speech?.cloud?.stt && !!hears && !hears.installed;
+  const needsVoice = sw.voice && needsLocalVoice(speech, voice?.installed, sttNeeded);
   const voiceBytes = (speech?.runtime === "ready" ? 0 : RUNTIME_BYTES) + (voice && !voice.installed ? voice.size : 0) + (hears && !hears.installed ? hears.size : 0);
   const screenMissing = sw.watching && !!perms && !perms.screen && !seesTitles;
   // Something in the settings needs the person: a dot on its tab.
@@ -599,7 +592,7 @@ export function Overlay({ ui }: { ui: PiomioUI }) {
                 )}
                 {sttError && <Note text={sttError} onClose={() => setSttError(undefined)} />}
                 {sttNeeded && !needsVoice && <Note text={t("overlay.voice.noStt")} />}
-                {needsVoice &&
+                {needsVoice && speech &&
                   (speech.runtime === "failed" ? (
                     <Note text={t("overlay.voice.failed", { error: speech.error ?? "" })} action={t("overlay.voice.installButton")} onAction={install} />
                   ) : progress !== undefined || speech.runtime === "downloading" ? (

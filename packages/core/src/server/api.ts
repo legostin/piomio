@@ -704,7 +704,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   });
 
   // ----- the local speech engine (speech/engine.ts): voices and speech to text, downloaded on demand -----
-  api.get("/api/speech", async (req) => hub.speech.status(requestLocale(req)));
+  api.get("/api/speech", async (req) => hub.voiceProviders.status(hub.speech.status(requestLocale(req))));
   // Downloads go on in the background: progress comes as the realtime event speech.status.
   api.post("/api/speech/install", async (req) => {
     const b = (req.body ?? {}) as { voice?: unknown; stt?: unknown };
@@ -712,17 +712,18 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const stt = b.stt === true || (typeof b.stt === "string" && /^[a-z0-9.-]{2,40}$/i.test(b.stt)) ? b.stt : undefined;
     const s = hub.speech.install({ voice: b.voice, stt }, requestLocale(req));
     hub.audit.append("user", "speech.install", undefined, { voice: b.voice ?? null, stt: stt ?? null });
-    return s;
+    return hub.voiceProviders.status(s);
   });
   // The words of the text (Markdown dropped, at most 1000 characters) as one WAV; 409 until the voice is installed.
   api.post("/api/speech/say", async (req, reply) => {
-    const b = (req.body ?? {}) as { text?: unknown; voice?: unknown; speed?: unknown };
+    const b = (req.body ?? {}) as { text?: unknown; voice?: unknown; speed?: unknown; language?: unknown };
     const ctl = new AbortController();
     const close = () => { if (!reply.raw.writableEnded) ctl.abort(); };
     reply.raw.on("close", close);
     try {
-      const wav = await hub.speech.say(String(b.text ?? ""), { voice: b.voice, speed: b.speed, signal: ctl.signal });
-      return reply.header("content-type", "audio/wav").header("cache-control", "no-store").send(wav);
+      const audio = await hub.voiceProviders.say(String(b.text ?? ""), { voice: b.voice, speed: b.speed, language: b.language, signal: ctl.signal, locale: requestLocale(req) });
+      if (audio.warning) reply.header("x-piomio-voice-warning", encodeURIComponent(audio.warning));
+      return reply.header("content-type", audio.mimeType).header("cache-control", "no-store").send(audio.data);
     } finally { reply.raw.off("close", close); }
   });
   // A phrase the overlay heard (a 16 kHz mono WAV): its words, with whatever speech-to-text is set up.
@@ -741,7 +742,9 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       try {
         // ?lang=ru: the speaker's language (Pio's window knows it), heard with that language's local model.
         const lang = (req.query as { lang?: unknown }).lang;
-        return { text: await hub.transcriber.transcribeBuffer(req.body, "audio/wav", "phrase.wav", typeof lang === "string" && /^[a-z]{2,3}$/.test(lang) ? lang : undefined) };
+        let warning: string | undefined;
+        const text = await hub.transcriber.transcribeBuffer(req.body, "audio/wav", "phrase.wav", typeof lang === "string" && /^[a-z]{2,3}$/.test(lang) ? lang : undefined, (w) => { warning = w; });
+        return { text, ...(warning ? { warning } : {}) };
       } catch (e) {
         throw e instanceof TranscribeError ? new HttpError(502, "speech.transcribeFailed", { reason: e.message }) : e;
       }

@@ -14,6 +14,8 @@ export interface VoiceInfo {
 }
 
 export interface SpeechStatus {
+  transcriptionManaged?: boolean;
+  cloud?: { tts?: string; stt?: string; fallback: "local" };
   runtime: "missing" | "downloading" | "ready" | "failed";
   error?: string;
   voice: string;
@@ -75,9 +77,11 @@ export class SpeechApi {
   }
 
   /** `lang`: the speaker's language (the hub hears it with that language's local model when it has one). */
-  async transcribe(wav: Uint8Array, lang?: string): Promise<string> {
+  async transcribe(wav: Uint8Array, lang?: string, warning?: (message: string) => void): Promise<string> {
     const r = await this.send(`/api/speech/transcribe${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`, new Blob([wav as BlobPart], { type: "audio/wav" }), "audio/wav");
-    return String((await r.json())?.text ?? "");
+    const result = await r.json();
+    if (typeof result.warning === "string") warning?.(result.warning);
+    return String(result?.text ?? "");
   }
 
   /** Whether the hub has any speech-to-text (a key's service or the local engine). */
@@ -92,8 +96,10 @@ export class SpeechApi {
     return String((await r.json())?.path ?? "");
   }
 
-  async say(text: string, voice?: string, signal?: AbortSignal): Promise<ArrayBuffer> {
-    const r = await this.send("/api/speech/say", JSON.stringify({ text, ...(voice ? { voice } : {}) }), "application/json", true, signal);
+  async say(text: string, voice?: string, signal?: AbortSignal, language?: string, warning?: (message: string) => void): Promise<ArrayBuffer> {
+    const r = await this.send("/api/speech/say", JSON.stringify({ text, language, ...(voice ? { voice } : {}) }), "application/json", true, signal);
+    const note = r.headers.get("x-piomio-voice-warning");
+    if (note) { try { warning?.(decodeURIComponent(note)); } catch { /* malformed header */ } }
     return r.arrayBuffer();
   }
 }

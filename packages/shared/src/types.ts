@@ -1365,6 +1365,9 @@ export interface VoiceInfo {
 
 /** What the local speech engine has and does (GET /api/speech, POST /api/speech/install, UiEvent speech.status). */
 export interface SpeechStatus {
+  /** Explicit cloud selections from the optional Voice providers integration. */
+  transcriptionManaged?: boolean;
+  cloud?: { tts?: string; stt?: string; fallback: "local" };
   /** The engine itself (sherpa-onnx and the phonemizer, downloaded on first use). */
   runtime: "missing" | "downloading" | "ready" | "failed";
   /** Why the last install failed, in the reader's language. */

@@ -139,33 +139,40 @@ export class Transcriber {
   private d: TranscriberDeps;
   /** The hub's local speech engine (provider "local", and "auto" when no key is there). */
   local?: LocalSpeechToText;
+  /** undefined: keep hub settings; null: selected engine unavailable, never pick a different provider. */
+  extension?: {
+    engine(): Engine | null | undefined;
+    transcribe(data: Buffer, mimeType: string | undefined, name: string, lang?: string, warn?: (warning: string) => void): Promise<string>;
+  };
   constructor(d: TranscriberDeps) {
     this.d = d;
   }
 
   engine(): Engine | undefined {
-    return pickEngine(this.d.settings() ?? DEFAULT_TRANSCRIPTION, this.d.hasSecret, this.local?.sttReady());
+    const selected = this.extension?.engine();
+    return selected === undefined ? pickEngine(this.d.settings() ?? DEFAULT_TRANSCRIPTION, this.d.hasSecret, this.local?.sttReady()) : selected ?? undefined;
   }
 
   /** The words of an audio file; throws TranscribeError with the reason. */
-  async transcribe(file: string, mimeType?: string): Promise<string> {
+  async transcribe(file: string, mimeType?: string, warn?: (warning: string) => void): Promise<string> {
     if (!this.engine()) throw new TranscribeError("no speech-to-text is set up");
     const st = await stat(file).catch(() => undefined);
     if (!st?.isFile()) throw new TranscribeError("the audio file is missing");
     if (st.size > MAX_TRANSCRIBE_BYTES) throw new TranscribeError("the audio is larger than 25 MB");
-    return this.transcribeBuffer(await readFile(file), mimeType, basename(file));
+    return this.transcribeBuffer(await readFile(file), mimeType, basename(file), undefined, warn);
   }
 
   /**
    * The words of a recording in memory (`name`: its file name, if it has one); throws TranscribeError with the reason.
    * `lang`: the language the speaker uses, when known (the local engine then hears with that language's model).
    */
-  async transcribeBuffer(data: Buffer, mimeType?: string, name = "audio", lang?: string): Promise<string> {
+  async transcribeBuffer(data: Buffer, mimeType?: string, name = "audio", lang?: string, warn?: (warning: string) => void): Promise<string> {
     const e = this.engine();
     if (!e) throw new TranscribeError("no speech-to-text is set up");
     if (!data.length) throw new TranscribeError("the audio is empty");
     if (data.length > MAX_TRANSCRIBE_BYTES) throw new TranscribeError("the audio is larger than 25 MB");
     if (e.local) return this.hearLocally(data, mimeType, lang);
+    if (this.extension?.engine()) return this.extension.transcribe(data, mimeType, uploadName(name, mimeType), lang, warn);
     let key: string | undefined;
     if (e.keyRef) {
       try {
@@ -199,7 +206,7 @@ export class Transcriber {
   }
 
   /** The local engine reads WAV only: the hub has no decoder for Ogg, M4A or WebM. */
-  private async hearLocally(data: Buffer, mimeType?: string, lang?: string): Promise<string> {
+  async hearLocally(data: Buffer, mimeType?: string, lang?: string): Promise<string> {
     if (!this.local) throw new TranscribeError("no speech-to-text is set up");
     if (!isWav(data))
       throw new TranscribeError(
