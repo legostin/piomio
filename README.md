@@ -16,13 +16,14 @@
   <a href="#a-day-with-the-team">What it does</a> &nbsp;·&nbsp;
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
   <a href="https://piomio.io/en/docs/">Docs</a> &nbsp;·&nbsp;
-  <a href="README.ru.md">Русский</a>
+  <a href="README.ru.md">Русский</a> &nbsp;·&nbsp;
+  <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/legostin/piomio/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/legostin/piomio?style=flat-square&color=f4a11a&label=release"></a>
   <img alt="macOS, Windows, Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-1c1814?style=flat-square">
-  <img alt="English and Russian" src="https://img.shields.io/badge/EN%20%C2%B7%20RU-1c1814?style=flat-square">
+  <img alt="English, Russian and Simplified Chinese" src="https://img.shields.io/badge/EN%20%C2%B7%20RU%20%C2%B7%20%E4%B8%AD%E6%96%87-1c1814?style=flat-square">
   <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-1c1814?style=flat-square"></a>
 </p>
 

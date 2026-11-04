@@ -12,6 +12,9 @@ import { parseDoc } from "./docs/markdown";
 import { docHref, type DocPageData } from "./docs/page";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** Open Graph locale tags. The path and html lang stay the short code (`zh`); this is the regional tag. */
+const OG_LOCALE: Record<Lang, string> = { en: "en_US", ru: "ru_RU", zh: "zh_CN" };
 /** JSON inside <script>: nothing in it may close the tag. */
 const ld = (o: object) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, "\\u003c")}</script>`;
 
@@ -29,7 +32,7 @@ function headTags(o: { lang: Lang; title: string; description: string; url: (lan
     `<link rel="alternate" hreflang="x-default" href="${o.url("en")}" />`,
     `<meta property="og:type" content="${o.article ? "article" : "website"}" />`,
     `<meta property="og:site_name" content="Piomio" />`,
-    `<meta property="og:locale" content="${o.lang === "ru" ? "ru_RU" : "en_US"}" />`,
+    `<meta property="og:locale" content="${OG_LOCALE[o.lang]}" />`,
     `<meta property="og:title" content="${esc(o.title)}" />`,
     `<meta property="og:description" content="${esc(o.description)}" />`,
     `<meta property="og:url" content="${o.url(o.lang)}" />`,
@@ -120,14 +123,14 @@ Piomio is a self-hosted personal agent platform: a team of AI agents with names 
 
 ${docs.map((d) => `- [${d.title}](${data.origin}${data.base}en/docs/${d.slug}.md): ${d.description}`).join("\n")}
 
-The same pages as web pages: ${data.origin}${data.base}en/docs/ ([Russian](${data.origin}${data.base}ru/docs/)).
+The same pages as web pages: ${data.origin}${data.base}en/docs/ ([Russian](${data.origin}${data.base}ru/docs/)). Simplified Chinese ([简体中文](${data.origin}${data.base}zh/)) has the landing page and the server guide translated; ${data.origin}${data.base}zh/docs/ serves these English pages until the guide is translated.
 
 ## More
 
 - [README](${repo}#readme): what it does, install, configuration
 - [Releases](${repo}/releases): installers for macOS and Windows
-- [Website](${data.origin}${data.base}en/): live demo, features, FAQ ([Russian](${data.origin}${data.base}ru/))
-- [On a server](${data.origin}${data.base}en/server/): the hub on a Linux server or the server as a computer of an existing hub, signing in to a CLI there, opening the chat ([Russian](${data.origin}${data.base}ru/server/))
+- [Website](${data.origin}${data.base}en/): live demo, features, FAQ ([Russian](${data.origin}${data.base}ru/), [简体中文](${data.origin}${data.base}zh/))
+- [On a server](${data.origin}${data.base}en/server/): the hub on a Linux server or the server as a computer of an existing hub, signing in to a CLI there, opening the chat ([Russian](${data.origin}${data.base}ru/server/), [简体中文](${data.origin}${data.base}zh/server/))
 - [Setup for agents](${siteConfig.setupGuide}): step-by-step instructions for a coding agent asked to install and set up Piomio on the machine it runs on (macOS, Windows, a Linux server)
 
 ## Install on a server

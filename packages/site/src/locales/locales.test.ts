@@ -4,8 +4,9 @@ import { describe, expect, it } from "vitest";
 import { CHAPTERS } from "../demo/protocol";
 import en from "./en.json";
 import ru from "./ru.json";
+import zh from "./zh.json";
 
-const catalogs: Record<string, Record<string, string>> = { en, ru };
+const catalogs: Record<string, Record<string, string>> = { en, ru, zh };
 const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
 describe("site catalogs", () => {

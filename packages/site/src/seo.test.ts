@@ -14,32 +14,36 @@ const docSlugs = nav.groups.flatMap((g) => g.pages);
 const paths = indexablePaths(PAGES.map(pagePath), docSlugs);
 
 describe("sitemap and robots", () => {
-  const xml = sitemapXml({ origin: "https://piomio.io", base: "/", languages: ["en", "ru"], paths, lastmod: "2026-11-04" });
+  const languages = [...siteConfig.languages];
+  const xml = sitemapXml({ origin: "https://piomio.io", base: "/", languages, paths, lastmod: "2026-11-04" });
 
   it("lists every public page in every language, with hreflang and an absolute sitemap URL", () => {
+    expect(languages).toEqual(["en", "ru", "zh"]);
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
     expect(xml).toContain('xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"');
     expect(xml).toContain('xmlns:xhtml="http://www.w3.org/1999/xhtml"');
     for (const path of ["", "server/", "docs/", "docs/install/", "docs/troubleshooting/"])
-      for (const lang of ["en", "ru"]) {
+      for (const lang of languages) {
         const loc = `https://piomio.io/${lang}/${path}`;
         expect(xml, loc).toContain(`<loc>${loc}</loc>`);
       }
     expect(xml).toContain('<xhtml:link rel="alternate" hreflang="en" href="https://piomio.io/en/docs/install/" />');
     expect(xml).toContain('<xhtml:link rel="alternate" hreflang="ru" href="https://piomio.io/ru/docs/install/" />');
+    expect(xml).toContain('<xhtml:link rel="alternate" hreflang="zh" href="https://piomio.io/zh/docs/install/" />');
     expect(xml).toContain('<xhtml:link rel="alternate" hreflang="x-default" href="https://piomio.io/en/docs/install/" />');
-    expect(xml.match(/<loc>/g)?.length).toBe(paths.length * 2);
+    expect(xml.match(/<loc>/g)?.length).toBe(paths.length * languages.length);
     expect(paths.length).toBeGreaterThan(docSlugs.length);
 
     const robots = robotsTxt({ origin: "https://piomio.io", base: "/" });
     expect(robots).toBe("User-agent: *\nAllow: /\nDisallow: /demo/\nSitemap: https://piomio.io/sitemap.xml\n");
-    assertPublishedSeo(xml, robots, { origin: "https://piomio.io", base: "/", languages: ["en", "ru"], pagePaths: PAGES.map(pagePath), docSlugs });
+    assertPublishedSeo(xml, robots, { origin: "https://piomio.io", base: "/", languages, pagePaths: PAGES.map(pagePath), docSlugs });
   });
 
   it("keeps the GitHub Pages base path in every URL", () => {
-    const nested = sitemapXml({ origin: "https://legostin.github.io", base: "/piomio/", languages: ["en", "ru"], paths: ["", "docs/"], lastmod: "2026-11-04" });
+    const nested = sitemapXml({ origin: "https://legostin.github.io", base: "/piomio/", languages: siteConfig.languages, paths: ["", "docs/"], lastmod: "2026-11-04" });
     expect(nested).toContain("<loc>https://legostin.github.io/piomio/en/</loc>");
     expect(nested).toContain("<loc>https://legostin.github.io/piomio/ru/docs/</loc>");
+    expect(nested).toContain("<loc>https://legostin.github.io/piomio/zh/</loc>");
     expect(robotsTxt({ origin: "https://legostin.github.io", base: "/piomio/" })).toContain("Sitemap: https://legostin.github.io/piomio/sitemap.xml");
     expect(robotsTxt({ origin: "https://legostin.github.io", base: "/piomio/" })).toContain("Disallow: /piomio/demo/");
   });

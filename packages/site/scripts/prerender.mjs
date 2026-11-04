@@ -71,7 +71,7 @@ ${head}
 </style>
 </head>
 <body>
-<p><a href="${base}en/" hreflang="en">English</a> · <a href="${base}ru/" hreflang="ru">Русский</a></p>
+<p>${languages.map((l) => `<a href="${base}${l}/" hreflang="${l}">${{ en: "English", ru: "Русский", zh: "简体中文" }[l] ?? l}</a>`).join(" · ")}</p>
 </body>
 </html>
 `;

@@ -1,6 +1,7 @@
 // The website's checks, on the built site (npm run build:site first): the landing page, the server guide and every docs
-// page open without errors in both languages, and every chapter of the demo plays to its end in both languages, fast,
-// without the demo hub meeting a request it does not know.
+// page open without errors in every site language, and every chapter of the demo plays to its end in English and
+// Russian (the app UI the demo shows), fast, without the demo hub meeting a request it does not know. Pass --lang to
+// limit both. Simplified Chinese pages are checked; their embedded demo is still the English app.
 //
 //   node packages/site/scripts/check.mjs [--speed 8] [--only mail,send] [--lang ru]
 //
@@ -19,7 +20,11 @@ const arg = (name, fallback) => {
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 const speed = Number(arg("speed", "8"));
-const langs = arg("lang", "en,ru").split(",");
+// Chapters play the real app, which is English and Russian. Pages (including /zh/) are checked for every site language
+// unless --lang narrows both.
+const langArg = arg("lang", "");
+const chapterLangs = (langArg || "en,ru").split(",");
+const pageLangs = (langArg || siteConfig.languages.join(",")).split(",");
 const chaptersSrc = readFileSync(resolve(import.meta.dirname, "../src/demo/protocol.ts"), "utf8");
 const all = [...(/CHAPTERS\s*=\s*\[([^\]]*)\]/.exec(chaptersSrc)?.[1] ?? "").matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
 const chapters = arg("only", all.join(",")).split(",");
@@ -40,19 +45,28 @@ assertPublishedSeo(readFileSync(join(DIST, "sitemap.xml"), "utf8"), readFileSync
   docSlugs,
 });
 const gaId = gaMeasurementId(process.env.GA_MEASUREMENT_ID !== undefined ? process.env.GA_MEASUREMENT_ID : siteConfig.gaMeasurementId);
-const homeEn = readFileSync(join(DIST, "en/index.html"), "utf8");
-const homeRu = readFileSync(join(DIST, "ru/index.html"), "utf8");
-const docsEn = readFileSync(join(DIST, "en/docs/index.html"), "utf8");
+const homes = Object.fromEntries(siteConfig.languages.map((lang) => [lang, readFileSync(join(DIST, lang, "index.html"), "utf8")]));
+const docsPages = Object.fromEntries(siteConfig.languages.map((lang) => [lang, readFileSync(join(DIST, lang, "docs/index.html"), "utf8")]));
 const chooser = readFileSync(join(DIST, "index.html"), "utf8");
 if (!chooser.includes("location.search")) throw new Error("the language redirect drops the query string");
+if (!chooser.includes("简体中文") || !chooser.includes(`${published.base}zh/`)) throw new Error("the language chooser is missing Simplified Chinese");
+const homeZh = homes.zh;
+if (!homeZh.includes('<html lang="zh"')) throw new Error("the Chinese home page is not lang=zh");
+if (!homeZh.includes('rel="canonical"') || !homeZh.includes("/zh/")) throw new Error("the Chinese home page is missing its canonical URL");
+if (!homeZh.includes('hreflang="zh"') || !homeZh.includes('hreflang="en"') || !homeZh.includes('hreflang="ru"') || !homeZh.includes('hreflang="x-default"'))
+  throw new Error("the Chinese home page is missing hreflang alternates");
+if (!homeZh.includes('property="og:locale" content="zh_CN"')) throw new Error("the Chinese home page is missing og:locale zh_CN");
+if (!readFileSync(join(DIST, "sitemap.xml"), "utf8").includes("/zh/")) throw new Error("sitemap.xml has no Simplified Chinese pages");
 if (gaId) {
-  for (const [file, html] of [["/en/", homeEn], ["/ru/", homeRu], ["/en/docs/", docsEn]]) {
-    if (!html.includes(`https://www.googletagmanager.com/gtag/js?id=${gaId}`)) throw new Error(`${file} is missing the GA4 snippet`);
+  for (const lang of siteConfig.languages) {
+    for (const [file, html] of [[`/${lang}/`, homes[lang]], [`/${lang}/docs/`, docsPages[lang]]]) {
+      if (!html.includes(`https://www.googletagmanager.com/gtag/js?id=${gaId}`)) throw new Error(`${file} is missing the GA4 snippet`);
+    }
   }
-  if (!homeEn.includes('data-ga="download"') || !homeEn.includes('data-ga="testflight"') || !homeEn.includes('data-ga="github"'))
+  if (!homes.en.includes('data-ga="download"') || !homes.en.includes('data-ga="testflight"') || !homes.en.includes('data-ga="github"'))
     throw new Error("the landing page is missing a Download, TestFlight or GitHub analytics anchor");
   if (chooser.includes("googletagmanager.com")) throw new Error("the language chooser loads GA4 and would count the visit twice");
-} else if ([homeEn, homeRu, docsEn, chooser].some((html) => html.includes("googletagmanager.com"))) {
+} else if ([...Object.values(homes), ...Object.values(docsPages), chooser].some((html) => html.includes("googletagmanager.com"))) {
   throw new Error("analytics was injected with no measurement ID");
 }
 console.log(`[site] sitemap, robots and analytics (${gaId || "off"}) ok`);
@@ -80,7 +94,7 @@ function watch(page, label) {
 }
 
 // 1. The pages themselves.
-for (const lang of langs) {
+for (const lang of pageLangs) {
   const page = await context.newPage();
   const problems = watch(page, `/${lang}/`);
   const res = await page.goto(`${origin}${base}${lang}/`, { waitUntil: "load" });
@@ -102,7 +116,7 @@ for (const lang of langs) {
 }
 
 // 2. The server guide: prerendered, hydrated without a mismatch, its language switch pointing at the guide.
-for (const lang of langs) {
+for (const lang of pageLangs) {
   const page = await context.newPage();
   const problems = watch(page, `/${lang}/server/`);
   const res = await page.goto(`${origin}${base}${lang}/server/`, { waitUntil: "networkidle" });
@@ -124,7 +138,7 @@ for (const lang of langs) {
 const nav = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../docs/guide/nav.json"), "utf8"));
 const slugs = nav.groups.flatMap((g) => g.pages);
 const line = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../package.json"), "utf8")).version.split(".").slice(0, 2).join(".");
-for (const lang of langs) {
+for (const lang of pageLangs) {
   const page = await context.newPage();
   for (const [slug, prefix] of [...slugs.map((s) => [s, ""]), ["index", `${line}/`]]) {
     const path = `/${lang}/docs/${prefix}${slug === "index" ? "" : `${slug}/`}`;
@@ -179,7 +193,7 @@ await cacheProbe.evaluate(async () => {
 await cacheProbe.close();
 
 // 4. Every chapter, in every language, to its end.
-for (const lang of langs)
+for (const lang of chapterLangs)
   for (const chapter of chapters) {
     const page = await context.newPage();
     const problems = watch(page, `${lang}/${chapter}`);
