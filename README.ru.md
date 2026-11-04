@@ -23,7 +23,7 @@
 <p align="center">
   <a href="https://github.com/legostin/piomio/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/legostin/piomio?style=flat-square&color=f4a11a&label=release"></a>
   <img alt="macOS, Windows, Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-1c1814?style=flat-square">
-  <img alt="Русский, английский и китайский" src="https://img.shields.io/badge/RU%20%C2%B7%20EN%20%C2%B7%20%E4%B8%AD%E6%96%87-1c1814?style=flat-square">
+  <img alt="Русский и английский" src="https://img.shields.io/badge/RU%20%C2%B7%20EN-1c1814?style=flat-square">
   <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-1c1814?style=flat-square"></a>
 </p>
 

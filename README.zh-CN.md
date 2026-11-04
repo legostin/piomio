@@ -23,7 +23,7 @@
 <p align="center">
   <a href="https://github.com/legostin/piomio/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/legostin/piomio?style=flat-square&color=f4a11a&label=release"></a>
   <img alt="macOS, Windows, Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-1c1814?style=flat-square">
-  <img alt="中文、英文和俄文" src="https://img.shields.io/badge/%E4%B8%AD%E6%96%87%20%C2%B7%20EN%20%C2%B7%20RU-1c1814?style=flat-square">
+  <img alt="应用界面：英文和俄文" src="https://img.shields.io/badge/EN%20%C2%B7%20RU-1c1814?style=flat-square">
   <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-1c1814?style=flat-square"></a>
 </p>
 
@@ -44,10 +44,10 @@ Piomio 是你自己运行的个人智能体平台。你有一支不大的智能�
 |---|---|
 | ☀️&nbsp;**早晨简报自己来** | 今天的会议、值得读的邮件、天气，还有你总忘的牙医。然后它提议 12:30 提醒你出门吃午饭。 |
 | 📬&nbsp;**47 封邮件，看着它整理完** | 「去整理我的邮件。」结果重要的有三封。一封回复起草好了，发票变成任务，订阅邮件进了归档。（Gmail 通过 Composio 连接。） |
-| ✉️&nbsp;**发出去之前它会问** | 邮件、预订、推送和付款都等你在卡片上点一下。「Always allow」只为那一个地址加一条规则，别的不行。 |
+| ✉️&nbsp;**发出去之前它会问** | 邮件、预订、代码推送和付款都等你在卡片上点一下。「Always allow」只为那一个地址加一条规则，别的不行。 |
 | 🛡️&nbsp;**那封要求过分的邮件** | 一封钓鱼邮件让智能体转发你的发票。因为智能体刚刚读过外部邮件，新的收件人必须得到你的同意。密钥放进模型永远看不到的保险库。 |
 | 🔌&nbsp;**一句话连上一个服务** | 「连接我的 Notion。」聊天里出现一张卡片，你登录一次。Notion、Linear，以及任何带 MCP 服务器的东西直接连接；Gmail、Google Calendar、Slack、GitHub 和更多服务通过 Composio 接入，那是一个外部服务，它的云会看到这些数据。 |
-| 👥&nbsp;**三件事，一条消息** | 助理把它们拆开。一个队友比较笔记本，同时提醒设好、火车找到，每个答案都作为你那条消息的回复回来。 |
+| 👥&nbsp;**三件事，一条消息** | 助理把它们拆开。一个队友比较笔记本，同时设好提醒、找到车次，每个答案都作为你那条消息的回复回来。 |
 | 💻&nbsp;**Claude Code 用完了，接着用 Codex** | 一个智能体在你的 MacBook 上通过 Claude Code 修一个失败的测试。Claude 订阅碰到限额，它改用 Codex 继续。 |
 | 🎓&nbsp;**一件事演示一遍** | 在智能体的浏览器里订水，边做边说。智能体把它存成一项技能，问哪些可以不经你确认去点、金额到多少，然后每周五下单。 |
 | 🗺️&nbsp;**一页，而不是一堵文字** | 「给周六的散步做一页。」你在聊天里得到一个可交互的页面：路线、带价格的地点、天气和照片。 |

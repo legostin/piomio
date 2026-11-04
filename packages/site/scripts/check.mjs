@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 import { siteConfig } from "../site.config.ts";
 import { PAGES, pagePath } from "../src/pages.ts";
 import { assertPublishedSeo, gaMeasurementId } from "../src/seo.ts";
+import { loadDocs } from "./docs.mjs";
 import { builtBase, DIST, serve } from "./serve.mjs";
 
 const arg = (name, fallback) => {
@@ -43,6 +44,7 @@ assertPublishedSeo(readFileSync(join(DIST, "sitemap.xml"), "utf8"), readFileSync
   languages: siteConfig.languages,
   pagePaths: PAGES.map(pagePath),
   docSlugs,
+  docLanguages: Object.entries(loadDocs({ languages: siteConfig.languages })[0].sourceLang).filter(([l, from]) => l === from).map(([l]) => l),
 });
 const gaId = gaMeasurementId(process.env.GA_MEASUREMENT_ID !== undefined ? process.env.GA_MEASUREMENT_ID : siteConfig.gaMeasurementId);
 const homes = Object.fromEntries(siteConfig.languages.map((lang) => [lang, readFileSync(join(DIST, lang, "index.html"), "utf8")]));

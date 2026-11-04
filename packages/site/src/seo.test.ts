@@ -48,6 +48,19 @@ describe("sitemap and robots", () => {
     expect(robotsTxt({ origin: "https://legostin.github.io", base: "/piomio/" })).toContain("Disallow: /piomio/demo/");
   });
 
+  it("keeps untranslated docs out of the sitemap and language alternates", () => {
+    const sitemap = sitemapXml({ origin: "https://piomio.io", base: "/piomio/", languages,
+      docLanguages: ["en", "ru"], paths, lastmod: "2026-11-04" });
+    expect(sitemap).toContain("<loc>https://piomio.io/piomio/zh/</loc>");
+    expect(sitemap).toContain("<loc>https://piomio.io/piomio/zh/server/</loc>");
+    expect(sitemap).not.toContain("/zh/docs/");
+    expect(sitemap).toContain("/ru/docs/install/");
+    assertPublishedSeo(sitemap, robotsTxt({ origin: "https://piomio.io", base: "/piomio/" }), {
+      origin: "https://piomio.io", base: "/piomio/", languages, docLanguages: ["en", "ru"],
+      pagePaths: PAGES.map(pagePath), docSlugs,
+    });
+  });
+
   it("refuses to emit an empty urlset", () => {
     expect(() => sitemapXml({ origin: "https://piomio.io", base: "/", languages: ["en"], paths: [], lastmod: "2026-11-04" })).toThrow(/no public pages/);
     expect(() => assertPublishedSeo("", "User-agent: *\nAllow: /\nSitemap: https://piomio.io/sitemap.xml\n", { origin: "https://piomio.io", base: "/", languages: ["en"], pagePaths: [""], docSlugs: [] })).toThrow(/empty/);

@@ -91,6 +91,8 @@ export function pageData({ lines, line, lang, slug, prefix, repo }) {
   return {
     lang,
     slug,
+    sourceLang: line.sourceLang?.[lang] ?? lang,
+    translatedLangs: Object.keys(line.pages).filter((l) => (line.sourceLang?.[l] ?? l) === l),
     source: line.pages[lang][slug],
     version: { id: line.id, release: line.release, current: line.current },
     prefix,

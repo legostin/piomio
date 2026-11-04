@@ -21,14 +21,14 @@ const ld = (o: object) => `<script type="application/ld+json">${JSON.stringify(o
 export { PAGES, pagePath };
 
 /** The <head> tags every page has: title, description, its address in each language, the card for links. */
-function headTags(o: { lang: Lang; title: string; description: string; url: (lang: Lang) => string; canonical: string; article: boolean; noindex?: boolean }): string[] {
+function headTags(o: { lang: Lang; title: string; description: string; url: (lang: Lang) => string; canonical: string; article: boolean; noindex?: boolean; languages?: readonly Lang[] }): string[] {
   const t = translator(o.lang);
   return [
     `<title>${esc(o.title)}</title>`,
     `<meta name="description" content="${esc(o.description)}" />`,
     ...(o.noindex ? [`<meta name="robots" content="noindex" />`] : []),
     `<link rel="canonical" href="${o.canonical}" />`,
-    ...siteConfig.languages.map((l) => `<link rel="alternate" hreflang="${l}" href="${o.url(l)}" />`),
+    ...(o.languages ?? siteConfig.languages).map((l) => `<link rel="alternate" hreflang="${l}" href="${o.url(l)}" />`),
     `<link rel="alternate" hreflang="x-default" href="${o.url("en")}" />`,
     `<meta property="og:type" content="${o.article ? "article" : "website"}" />`,
     `<meta property="og:site_name" content="Piomio" />`,
@@ -99,7 +99,8 @@ export function renderDoc(doc: DocPageData): { html: string; head: string } {
     title: doc.slug === "index" ? meta.title : `${meta.title} · ${t("docs.meta.suffix")}`,
     description: meta.description,
     url: (l) => url(l),
-    canonical: doc.version.current ? url(doc.lang, "") : url(doc.lang),
+    canonical: doc.version.current ? url(doc.sourceLang ?? doc.lang, "") : url(doc.sourceLang ?? doc.lang),
+    languages: doc.translatedLangs,
     article: true,
     noindex: !doc.version.current,
   });

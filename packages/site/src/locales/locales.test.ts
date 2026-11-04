@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { LOCALES } from "../../../shared/src/i18n";
 import { CHAPTERS } from "../demo/protocol";
 import en from "./en.json";
 import ru from "./ru.json";
@@ -33,5 +34,19 @@ describe("the demo contract", () => {
     const src = readFileSync(resolve(import.meta.dirname, "../../../web/src/demo/scenarios/types.ts"), "utf8");
     const list = /CHAPTER_IDS\s*=\s*\[([^\]]*)\]/.exec(src)?.[1] ?? "";
     expect([...list.matchAll(/"([a-z-]+)"/g)].map((m) => m[1])).toEqual([...CHAPTERS]);
+  });
+});
+
+// README language badges describe the product; translated documentation is linked separately.
+describe("README product language claims", () => {
+  it("advertises the supported app locales even in the translated README", () => {
+    for (const file of ["README.md", "README.ru.md", "README.zh-CN.md"]) {
+      const source = readFileSync(resolve(import.meta.dirname, "../../../..", file), "utf8");
+      const badge = source.match(/src="https:\/\/img\.shields\.io\/badge\/([^" ]+)-1c1814\?style=flat-square"/g)
+        ?.find((b) => /(?:EN|RU)%20/.test(b));
+      expect(badge, file).toBeTruthy();
+      const codes = decodeURIComponent(badge!).match(/badge\/([^"?]+)-1c1814/)![1].split(" · ").map((l) => l.toLowerCase()).sort();
+      expect(codes, file).toEqual([...LOCALES].sort());
+    }
   });
 });

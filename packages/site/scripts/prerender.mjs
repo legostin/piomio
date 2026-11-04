@@ -89,6 +89,6 @@ ${head}
   );
 
   const paths = indexablePaths(PAGES.map(pagePath), docSlugs);
-  writeFileSync(join(dist, "sitemap.xml"), sitemapXml({ origin, base, languages, paths, lastmod: new Date().toISOString().slice(0, 10) }));
+  writeFileSync(join(dist, "sitemap.xml"), sitemapXml({ origin, base, languages, paths, docLanguages: languages.filter((l) => newest.sourceLang[l] === l), lastmod: new Date().toISOString().slice(0, 10) }));
   writeFileSync(join(dist, "robots.txt"), robotsTxt({ origin, base }));
 }

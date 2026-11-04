@@ -5,7 +5,7 @@ The landing page per language (`/en/`, `/ru/`, `/zh/`) with the live demo: the r
 chapter of the story per section, the server guide (`/en/server/`, `/ru/server/`, `/zh/server/`) and the docs (`/en/docs/`,
 `/ru/docs/`, `/zh/docs/`). Vite + React + Tailwind, prerendered with React's server renderer and hydrated.
 Simplified Chinese (`zh`, Open Graph `zh_CN`) translates the landing page and the server guide. The long guide under
-`docs/guide/` has no `zh/` folder, so `/zh/docs/` is the English pages. The live demo still shows the English app.
+`docs/guide/` has no `zh/` folder, so `/zh/docs/` shows the English pages with a translation notice, `article lang="en"`, and a canonical URL pointing to the English original. Only translated docs enter the sitemap and SEO language alternates. The live demo still shows the English app.
 Design: [docs/superpowers/specs/2026-10-31-website-design.md](../../docs/superpowers/specs/2026-10-31-website-design.md).
 
 ## Build, look, check
