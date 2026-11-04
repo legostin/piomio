@@ -150,6 +150,34 @@ for (const lang of langs) {
   console.log(`docs /${lang}/docs/: ${slugs.length} pages checked`);
 }
 
+// A chapter may open after a previous tab closed mid-reply. Keep a streaming snapshot on the
+// site's origin: every fresh demo world must ignore it, and must leave the device's cache alone.
+const cacheProbe = await context.newPage();
+await cacheProbe.goto(`${origin}${base}robots.txt`);
+await cacheProbe.evaluate(async () => {
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open("piomio-cache", 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("data")) db.createObjectStore("data");
+      if (!db.objectStoreNames.contains("media")) db.createObjectStore("media", { keyPath: "url" }).createIndex("at", "at");
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction("data", "readwrite");
+    for (const agent of ["pio", "ada", "leo", "bit"]) {
+      const id = `dlg_${agent}`;
+      tx.objectStore("data").put([{ id: `cache-poison-${id}`, conversationId: id, role: "assistant", parts: [], status: "streaming", createdAt: new Date().toISOString() }], `messages:${id}`);
+    }
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+});
+await cacheProbe.close();
+
 // 4. Every chapter, in every language, to its end.
 for (const lang of langs)
   for (const chapter of chapters) {

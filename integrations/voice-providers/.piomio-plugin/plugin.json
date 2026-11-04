@@ -1,0 +1,169 @@
+{
+  "id": "voice-providers",
+  "name": "%name%",
+  "description": "%description%",
+  "version": "0.1.0",
+  "author": "Piomio",
+  "builtin": true,
+  "defaultEnabled": false,
+  "server": "./server/index.ts",
+  "contributes": {
+    "tools": true,
+    "http": true,
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ttsProvider": {
+          "type": "string",
+          "title": "%settings.tts%",
+          "description": "%settings.providerHint%",
+          "enum": [
+            "local",
+            "xai",
+            "elevenlabs",
+            "openai"
+          ],
+          "enumNames": [
+            "%settings.builtin%",
+            "Grok (xAI)",
+            "ElevenLabs",
+            "OpenAI"
+          ],
+          "default": "local"
+        },
+        "sttProvider": {
+          "type": "string",
+          "title": "%settings.stt%",
+          "description": "%settings.providerHint%",
+          "enum": [
+            "local",
+            "xai",
+            "elevenlabs",
+            "openai"
+          ],
+          "enumNames": [
+            "%settings.builtin%",
+            "Grok (xAI)",
+            "ElevenLabs",
+            "OpenAI"
+          ],
+          "default": "local"
+        },
+        "xaiVoice": {
+          "type": "string",
+          "title": "%settings.xaiVoice%",
+          "default": "rex",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$",
+          "description": "%settings.voiceHint%"
+        },
+        "xaiSttModel": {
+          "type": "string",
+          "title": "%settings.xaiSttModel%",
+          "default": "grok-voice-transcribe-2.0",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$"
+        },
+        "elevenlabsVoice": {
+          "type": "string",
+          "title": "%settings.elevenlabsVoice%",
+          "default": "JBFqnCBsd6RMkjVDRZzb",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$",
+          "description": "%settings.voiceHint%"
+        },
+        "elevenlabsTtsModel": {
+          "type": "string",
+          "title": "%settings.elevenlabsTtsModel%",
+          "default": "eleven_flash_v2_5",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$"
+        },
+        "elevenlabsSttModel": {
+          "type": "string",
+          "title": "%settings.elevenlabsSttModel%",
+          "default": "scribe_v2",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$"
+        },
+        "openaiVoice": {
+          "type": "string",
+          "title": "%settings.openaiVoice%",
+          "default": "cedar",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$",
+          "description": "%settings.voiceHint%"
+        },
+        "openaiTtsModel": {
+          "type": "string",
+          "title": "%settings.openaiTtsModel%",
+          "default": "gpt-realtime-2.1-mini",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$",
+          "description": "%settings.openaiModelHint%"
+        },
+        "openaiSttModel": {
+          "type": "string",
+          "title": "%settings.openaiSttModel%",
+          "default": "gpt-transcribe",
+          "maxLength": 100,
+          "pattern": "^[\\w.-]{1,100}$"
+        }
+      },
+      "required": [
+        "ttsProvider",
+        "sttProvider"
+      ]
+    },
+    "setup": {
+      "secrets": [
+        {
+          "vault": "xai_api_key",
+          "title": "%setup.xai%",
+          "hint": "%setup.hint%",
+          "link": "https://console.x.ai/",
+          "required": false
+        },
+        {
+          "vault": "elevenlabs_api_key",
+          "title": "%setup.elevenlabs%",
+          "hint": "%setup.hint%",
+          "link": "https://elevenlabs.io/app/settings/api-keys",
+          "required": false
+        },
+        {
+          "vault": "openai_api_key",
+          "title": "%setup.openai%",
+          "hint": "%setup.hint%",
+          "link": "https://platform.openai.com/api-keys",
+          "required": false
+        }
+      ]
+    }
+  },
+  "integration": {
+    "category": "assistant",
+    "icon": "audio-lines",
+    "connect": "setup",
+    "summary": "%integration.summary%",
+    "example": "%integration.example%"
+  },
+  "permissions": {
+    "network": [
+      "api.x.ai",
+      "api.elevenlabs.io",
+      "api.openai.com"
+    ],
+    "vault": [
+      "xai_api_key",
+      "elevenlabs_api_key",
+      "openai_api_key"
+    ],
+    "core": [
+      "ui.emit",
+      "speech.say",
+      "files.deliver"
+    ]
+  }
+}

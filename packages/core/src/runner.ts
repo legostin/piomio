@@ -8,6 +8,7 @@ import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, 
 import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
 import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { confinement } from "./native-permissions.ts";
+import { foldersOn, localFolderPaths } from "./agent-folders.ts";
 import { NATIVE_PERMISSION_TOOL } from "./tools/native-permission.ts";
 import type { Config } from "./config.ts";
 import type { Store, SessionRow } from "./store.ts";
@@ -1581,8 +1582,9 @@ export class SessionRunner {
       this.d.store.addMessage({ conversationId: a.conversationId, role: "assistant", agentId: a.agentId, parts: [part], status: "complete" });
     }
     // A task's question for the person also shows where the person is: in the dialog that started it, under the
-    // task's line, so they answer without opening the task. A quiet line has nothing to answer: it stays in the task.
-    const dialog = quiet ? undefined : this.starterDialog(a.taskId);
+    // task's line, so they answer without opening the task. So does what auto mode stopped there: its "Allow" is the
+    // person's to press. Only a line of what the person asked for themselves stays in the task.
+    const dialog = asked ? undefined : this.starterDialog(a.taskId);
     if (dialog) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId: a.taskId! }, part], status: "complete" });
   }
 
@@ -1783,6 +1785,11 @@ export class SessionRunner {
     if (local && (ref.brainId === "codex" || ref.brainId === "kimi")) skillsDir = join(workspace, ".agents", "skills");
     if (skillsDir) this.d.skills.materialize(skillsDir, skills);
 
+    // The agent's project folders on this computer open in its sandbox; the prompt names them and the ones elsewhere.
+    const folders = foldersOn(agent.folders, ref.machineId, this.here());
+    const folderPaths = local ? localFolderPaths(folders, { dataDir: this.d.config.dataDir }) : [];
+    const elsewhere = (agent.folders ?? []).filter((f) => !folders.includes(f)).map((f) => ({ ...f, computer: this.computerName(f.machine ?? "local") }));
+
     const hook = await this.d.hooks.run("session.start", { sessionId: row.id, agentId: agent.id, conversationId: conv.id, taskId: task?.id, background }, (p) => p);
     const appended = hook.results.map((r) => r?.appendSystemPrompt).filter(Boolean) as string[];
     const s = this.d.settings.get();
@@ -1798,6 +1805,7 @@ export class SessionRunner {
       nativeSkills: !!skillsDir,
       appended,
       machine: { name: this.computerName(ref.machineId), local, ...(!local ? { commands: !!this.d.machines?.().find((m) => m.id === ref.machineId)?.info?.commands } : {}) },
+      folders: folders.length || elsewhere.length ? { here: folders, elsewhere } : undefined,
       setup: background || task ? undefined : await this.d.setup?.promptBlock(agent.id),
       group: conv.kind === "group" ? { title: conv.title, members: this.groupMembers(conv) } : undefined,
       dispatch: conv.kind === "main" && !task && !background ? this.dispatchContext() : undefined,
@@ -1840,7 +1848,7 @@ export class SessionRunner {
       // The brain's own shell and file tools stay in its folder; the rest it asks for (native-permissions.ts).
       ...(local && this.d.config.sandboxBrains
         ? { confine: {
-            ...confinement(this.d.config.dataDir, workspace, local && ref.brainId === "claude-code" ? this.d.claudePluginDirs() : []),
+            ...confinement(this.d.config.dataDir, workspace, local && ref.brainId === "claude-code" ? this.d.claudePluginDirs() : [], undefined, folderPaths),
             permissionTool: NATIVE_PERMISSION_TOOL,
             network: { allowedDomains: ["*"] },
           } }

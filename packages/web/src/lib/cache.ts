@@ -20,8 +20,15 @@ export interface CachedMedia {
 }
 
 let opening: Promise<IDBDatabase | undefined> | undefined;
+let disabled = false;
+
+/** Nothing is kept or read from now on (the demo: every chapter starts as a first visit). */
+export function disableCache(): void {
+  disabled = true;
+}
 
 function open(): Promise<IDBDatabase | undefined> {
+  if (disabled) return Promise.resolve(undefined);
   opening ??= new Promise<IDBDatabase | undefined>((resolve) => {
     let req: IDBOpenDBRequest;
     try {

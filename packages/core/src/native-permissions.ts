@@ -91,8 +91,8 @@ export function classifyKimiTool(tool: string, input: unknown, cwd: string): Nat
   return { kind: "other", tool, input };
 }
 
-function expandHome(p: string): string {
-  return p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+export function expandHome(p: string, home = homedir()): string {
+  return p === "~" ? home : p.startsWith("~/") ? join(home, p.slice(2)) : p;
 }
 
 /** `p` is `dir` or inside it. */
@@ -353,15 +353,27 @@ const PRIVATE = [
   "Library/Group Containers/group.com.apple.notes",
 ];
 
+/** The person's credentials and private stores in `home`, which no agent's tool reads. */
+export function privateDirs(home = homedir()): string[] {
+  return PRIVATE.map((p) => join(home, p));
+}
+
 /**
  * What a sandboxed brain may not read: the person's credentials and private stores, and the hub's data folder (its
  * conversations, vault, memory and the other agents' folders), except the session's own workspace, the rest of its
- * agent's folder (earlier tasks and dialogs) and `allow`.
+ * agent's folder (earlier tasks and dialogs) and `allow`. Its project folders (`folders`, agent-folders.ts) it reads
+ * and writes like its own.
  */
-export function confinement(dataDir: string, workspace: string, allow: string[] = [], home = homedir()): { denyRead: string[]; allowRead: string[]; allowWrite: string[] } {
+export function confinement(
+  dataDir: string,
+  workspace: string,
+  allow: string[] = [],
+  home = homedir(),
+  folders: string[] = [],
+): { denyRead: string[]; allowRead: string[]; allowWrite: string[] } {
   const own = agentRoot(workspace);
-  const allowRead = [workspace, ...(own && within(own, dataDir) ? [own] : []), ...allow.filter((d) => within(d, dataDir))];
-  return { denyRead: [...PRIVATE.map((p) => join(home, p)), dataDir], allowRead, allowWrite: userTemp() };
+  const allowRead = [workspace, ...(own && within(own, dataDir) ? [own] : []), ...allow.filter((d) => within(d, dataDir)), ...folders];
+  return { denyRead: [...privateDirs(home), dataDir], allowRead, allowWrite: [...userTemp(), ...folders] };
 }
 
 /**
