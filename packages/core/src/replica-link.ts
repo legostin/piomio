@@ -2,6 +2,7 @@
 // a link that some networks cannot reach (Funnel) still talks to a replica with a public address, and everything goes
 // both ways over it — the replicas' own calls, and the phones' requests and WebSockets a standby forwards to the leader.
 
+import type { Socket } from "node:net";
 import type { TLSSocket } from "node:tls";
 import WebSocket from "ws";
 import { createRpcPeer, wsTransport, type RpcPeer, type WsLike } from "@piomio/shared";
@@ -107,11 +108,20 @@ export function dialLink(o: { url: string; key: ReplicaKey; fingerprint: string;
   });
 }
 
-/** An RPC peer over a link socket, with a ping so a dead connection is noticed. */
-export function linkPeer(ws: WebSocket): RpcPeer {
+/**
+ * An RPC peer over a link socket, with a ping so a dead connection is noticed. A peer busy sending (a file's piece on
+ * a slow uplink) answers the ping only after it, so any bytes from it count as alive too; `onBytes` hears them.
+ */
+export function linkPeer(ws: WebSocket, o: { onBytes?: () => void; pingMs?: number } = {}): RpcPeer {
   const rpc = createRpcPeer(wsTransport(ws as unknown as WsLike));
   let alive = true;
-  ws.on("pong", () => (alive = true));
+  const heard = () => {
+    alive = true;
+    o.onBytes?.();
+  };
+  ws.on("pong", heard);
+  // ws keeps the open connection's socket here; its "data" comes before a big frame is whole.
+  (ws as unknown as { _socket?: Socket })._socket?.on("data", heard);
   const t = setInterval(() => {
     if (!alive) return ws.terminate();
     alive = false;
@@ -120,7 +130,7 @@ export function linkPeer(ws: WebSocket): RpcPeer {
     } catch {
       /* closing */
     }
-  }, 10_000);
+  }, o.pingMs ?? 10_000);
   t.unref();
   ws.on("close", () => clearInterval(t));
   return rpc;

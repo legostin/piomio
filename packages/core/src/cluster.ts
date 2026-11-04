@@ -90,8 +90,8 @@ const STARTUP_GRACE_MS = 6_000;
 /** How long a leader waits for its turns before it hands over. */
 const DRAIN_MS = 120_000;
 const FILES_EVERY_MS = 5_000;
-/** A file over a link goes in pieces this big. */
-const FILE_PIECE = 4 * 1024 * 1024;
+/** A file over a link goes in pieces this big: small enough that hellos and phones' requests don't wait long behind one. */
+const FILE_PIECE = 1024 * 1024;
 
 type Role = "leader" | "standby";
 type DbName = "main" | "vault";
@@ -469,7 +469,13 @@ export class Cluster {
   }
 
   private attachLink(ws: WebSocket, peerId: string): void {
-    const rpc = linkPeer(ws);
+    // Bytes on its link keep a peer seen while a hello waits behind a file's piece on a slow uplink.
+    const rpc = linkPeer(ws, {
+      onBytes: () => {
+        const p = this.peers.get(peerId);
+        if (p) p.lastSeen = Date.now();
+      },
+    });
     serveLink(rpc, peerId, {
       call: (from, c) => this.serveCall(from, c),
       deviceUrl: () => `https://127.0.0.1:${this.hub.config.devicePort}`,
