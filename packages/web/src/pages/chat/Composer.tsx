@@ -5,7 +5,7 @@
 // Plugins may wrap/replace it (chat.composer) and add buttons (chat.composerActions).
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type PointerEvent } from "react";
-import { ArrowUp, Mic, Paperclip, Square, UsersRound } from "lucide-react";
+import { ArrowUp, X, Mic, Paperclip, Square, UsersRound } from "lucide-react";
 import type { AgentDef } from "@piomio/shared";
 import { api, errorText } from "../../lib/api";
 import { mobileMode } from "../../lib/mobile";
@@ -16,6 +16,7 @@ import { canSend, readyPaths } from "../../lib/attachments";
 import { isStreaming } from "../../lib/messages";
 import { useStore } from "../../lib/store";
 import { agents, conversations, ensureAgents, groups, interrupt, sendMessage, useConversationMessages, useSelector, warmConversation } from "../../state/app";
+import { replies, clearReply } from "../../state/replies";
 import { toast } from "../../state/toast";
 import { addFiles, removeFiles, usePendingFiles } from "../../state/attachments";
 import { AttachmentChips } from "./AttachmentChips";
@@ -61,7 +62,9 @@ export function useSend(conversationId: string) {
     async (text: string, attachments: string[] = []) => {
       const trimmed = text.trim();
       if (!trimmed && !attachments.length) return;
-      await sendMessage(conversationId, trimmed, attachments);
+      const reply = replies.get()[conversationId];
+      await sendMessage(conversationId, trimmed, attachments, reply?.messageId);
+      if (reply) clearReply(conversationId, reply);
     },
     [conversationId],
   );
@@ -190,6 +193,7 @@ function MicButton({
 
 export function DefaultComposer({ conversationId }: { conversationId: string }) {
   const conv = useConversationMessages(conversationId);
+  const reply = useStore(replies)[conversationId];
   const { members: mentionable, group: isGroup } = useMentionable(conversationId);
   // Between two members' answers no message streams, but the round goes on.
   const groupRunning = useSelector(groups, (list) => !!list?.find((g) => g.conversationId === conversationId)?.running);
@@ -205,6 +209,9 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
   const [listening, setListening] = useState(false);
   const [micNote, setMicNote] = useState<{ text: string; error: boolean } | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (reply) ta.current?.focus();
+  }, [reply]);
   const picker = useRef<HTMLInputElement>(null);
   const files = usePendingFiles(conversationId);
   const sendable = canSend(text, files);
@@ -320,6 +327,7 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
   const pick = (i: number) => (suggestions.length ? choose(suggestions[i]) : chooseMention(mentions[i]));
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape" && reply && !options) clearReply(conversationId);
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (options) {
       if (e.key === "ArrowDown") {
@@ -407,6 +415,15 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
         </div>
       )}
       <div className="composer-box rounded-[26px] border border-hairline bg-surface p-1.5 shadow-pop transition-[border-color,box-shadow] duration-200 focus-within:border-accent/50 focus-within:shadow-[var(--shadow-pop),0_0_0_4px_color-mix(in_srgb,var(--accent)_16%,transparent)]">
+        {reply && (
+          <div className="flex items-center gap-2 border-l-[3px] border-accent mx-3 my-2 pl-3" role="status">
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold text-accent-text">{t("message.replyingTo", { name: reply.author ?? t("message.you") })}</div>
+              <div className="truncate text-muted">{reply.text}</div>
+            </div>
+            <button type="button" aria-label={t("message.cancelReply")} title={t("message.cancelReply")} onClick={() => clearReply(conversationId)} className="inline-flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-surface-2"><X className="size-4" /></button>
+          </div>
+        )}
         {files.length > 0 && <AttachmentChips conversationId={conversationId} files={files} />}
         <div className="flex items-end gap-1">
           <button

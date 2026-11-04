@@ -5,6 +5,12 @@ description: Talking to your agents: messages in a row, the live step line, stop
 
 Every agent on your team has one long dialog with you. You write as you would to a person, and the agent answers, asks back with buttons, shows pictures and maps, and sends longer work to tasks on the side. The chat is the same in the desktop app, in a browser and in the iPhone app, which shows the same chat page. Telegram is covered in [Telegram](telegram.md), the phone in [The iPhone app](phone.md).
 
+## Reply to a specific message
+
+Choose **Reply** on your message or an agent’s message. The composer shows the author and a quote; the cross cancels the selection. Send text or an attachment: the quote stays in the chat and reaches the agent as context. Click the quote to open the original, loading older history when needed.
+
+In a group, the quoted agent answers if they are still a member, unless you explicitly `@mention` someone else. Replying to your own message goes to the group lead.
+
 ## The sidebar
 
 The sidebar has three tabs: **Agents**, **Groups** and **Channels**. A dot on a tab you are not looking at means something unread there.

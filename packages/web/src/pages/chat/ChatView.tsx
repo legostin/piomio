@@ -10,6 +10,7 @@ import { stickAfterScroll } from "../../lib/stick";
 import { errorText } from "../../lib/api";
 import { agents, conversations, ensureAgents, loadMessages, loadOlder, showingDialog, updateConversation, useConversationMessages } from "../../state/app";
 import { showDetails } from "../../state/prefs";
+import { messageJumps } from "../../state/reply-navigation";
 import { toast } from "../../state/toast";
 import { addFiles } from "../../state/attachments";
 import { Button, EmptyState, ErrorNote, IconButton, Input, Spinner } from "../../components/ui";
@@ -114,6 +115,7 @@ export function ChatView({
   }, [conv.messages]);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const jumping = useRef(false);
   const prevHeight = useRef<number | null>(null);
   const content = useRef<HTMLDivElement>(null);
   const lastId = useRef<string | undefined>(undefined);
@@ -133,13 +135,20 @@ export function ChatView({
   }, [conversationId]);
   useEffect(() => showingDialog(conversationId), [conversationId]);
 
+  useEffect(() => messageJumps.on((event) => {
+    if (event.conversationId !== conversationId) return;
+    jumping.current = event.active;
+    stick.current = false;
+    prevHeight.current = null;
+  }), [conversationId]);
+
   // Keep the view pinned to the bottom while new content streams in; keep position when older messages load.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
     // The person's own new message brings the view down, wherever they were reading.
     const last = conv.messages[conv.messages.length - 1];
-    if (last && lastId.current !== undefined && last.id !== lastId.current && last.role === "user") stick.current = true;
+    if (!jumping.current && last && lastId.current !== undefined && last.id !== lastId.current && last.role === "user") stick.current = true;
     lastId.current = last?.id;
     if (prevHeight.current !== null) {
       el.scrollTop += el.scrollHeight - prevHeight.current;
@@ -174,10 +183,10 @@ export function ChatView({
     const el = scroller.current;
     if (!el) return;
     const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stick.current = stickAfterScroll(stick.current, lastTop.current, el);
+    if (!jumping.current) stick.current = stickAfterScroll(stick.current, lastTop.current, el);
     lastTop.current = el.scrollTop;
     setShowDown(fromBottom > 400);
-    if (el.scrollTop < 60 && conv.hasMore && !conv.loadingOlder && prevHeight.current === null) older();
+    if (!jumping.current && el.scrollTop < 60 && conv.hasMore && !conv.loadingOlder && prevHeight.current === null) older();
   };
 
   const title = meta?.title || (meta?.kind === "main" ? t("chat.main") : t("chat.defaultTitle"));

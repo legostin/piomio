@@ -317,7 +317,7 @@ export type MessagePart =
    */
   | { type: "task"; taskId: string; text?: string; reply?: string }
   /** The user's message this reply answers, when the dialog moved on since (a task's result for the request that started it). */
-  | { type: "reply_to"; messageId: string; text: string }
+  | { type: "reply_to"; messageId: string; text: string; author?: string }
   /** News the agent shows (show_news): cards from a channel's posts or found by the agent; `feedId` links the channel. */
   | { type: "news"; title?: string; feedId?: string; items: NewsItem[] }
   /**

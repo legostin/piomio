@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
-import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
+import { replyText, replyContext, bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
 import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { confinement } from "./native-permissions.ts";
 import { foldersOn, localFolderPaths } from "./agent-folders.ts";
@@ -337,7 +337,7 @@ export class SessionRunner {
   async userMessage(
     conversationId: string,
     text: string,
-    opts: { channel?: string; attachments?: AttachmentPart[]; context?: string; onCapture?: (c: CaptureResult) => void } = {},
+    opts: { channel?: string; attachments?: AttachmentPart[]; replyTo?: string; context?: string; onCapture?: (c: CaptureResult) => void } = {},
   ): Promise<Message> {
     const conv = this.d.store.getConversation(conversationId);
     if (!conv) throw new LocalizedError("conversation.notFound");
@@ -347,6 +347,14 @@ export class SessionRunner {
     }
     // So does a group chat in the archive.
     if (conv.kind === "group" && this.d.groupArchived?.(conv.id)) throw new LocalizedError("group.archivedChat", { title: conv.title }, 409);
+    // Resolve on the server: clients send only an id, never a trusted quote or author.
+    const original = opts.replyTo !== undefined ? this.d.store.getMessage(opts.replyTo) : undefined;
+    if (opts.replyTo !== undefined && (!original || original.conversationId !== conversationId || original.role === "system" || original.status === "streaming" || original.quiet)) {
+      throw new LocalizedError("message.invalidReply", undefined, 400);
+    }
+    const replyPart: Extract<MessagePart, { type: "reply_to" }> | undefined = original ? {
+      type: "reply_to", messageId: original.id, text: replyText(original), author: original.agentId ? this.agentLabel(original.agentId) : original.role === "user" ? "User" : this.agentLabel(conv.agentId),
+    } : undefined;
     // Secrets come out first: message hooks, the stored message and the model only see vault:// references.
     const cap = this.d.secrets.capture(text, conversationId, "user");
     if (cap.stored.length || cap.withheld || cap.refused) opts.onCapture?.(cap);
@@ -355,7 +363,7 @@ export class SessionRunner {
       r.block ? { blocked: r.block } : r.text !== undefined ? { ...p, text: r.text } : p,
     );
     const attachments = opts.attachments ?? [];
-    const parts: MessagePart[] = [...(text || !attachments.length ? [{ type: "text" as const, text }] : []), ...attachments];
+    const parts: MessagePart[] = [...(replyPart ? [replyPart] : []), ...(text || !attachments.length ? [{ type: "text" as const, text }] : []), ...attachments];
     // The person's own pictures are theirs to show.
     if (text) this.d.pictures?.trust(markdownPictures(text));
     const msg = this.d.store.addMessage({ conversationId, role: "user", parts, status: "complete", channel: opts.channel });
@@ -374,12 +382,12 @@ export class SessionRunner {
     const expanded = command?.prompt ?? this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
     const voiceContext = this.voiceContext.get(conversationId);
     this.voiceContext.delete(conversationId);
-    const prompt = [opts.context?.trim(), voiceContext, note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
+    const prompt = [replyPart ? replyContext(replyPart) : undefined, opts.context?.trim(), voiceContext, note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
     // From the web UI: the user's words travel with a mirrored reply, so the phone shows the exchange.
     const fromWeb = !opts.channel || opts.channel === WEB_CHANNEL;
     const files = attachments.length ? { attachments } : {};
     if (conv.kind === "group") {
-      this.startGroupRound(conv, hooked.payload.text, prompt, msg.id, { replyChannel: opts.channel, ...files });
+      this.startGroupRound(conv, hooked.payload.text, prompt, msg.id, { replyAgentId: original?.agentId ?? (original?.role === "assistant" ? conv.agentId : undefined), replyChannel: opts.channel, ...files });
       return msg;
     }
     const quote = [text, ...attachments.map((a) => `📎 ${a.name}`)].filter(Boolean).join("\n");
@@ -524,9 +532,9 @@ export class SessionRunner {
   }
 
   /** The user wrote in a group: the members it mentions answer one after another (or the lead), in the conversation queue. */
-  private startGroupRound(conv: Conversation, text: string, prompt: string, triggerId: string, opts: { replyChannel?: string; attachments?: AttachmentPart[] }): void {
+  private startGroupRound(conv: Conversation, text: string, prompt: string, triggerId: string, opts: { replyChannel?: string; attachments?: AttachmentPart[]; replyAgentId?: string }): void {
     const epoch = this.groupEpoch.get(conv.id) ?? 0;
-    const speakers = firstSpeakers(text, this.groupMembers(conv));
+    const speakers = firstSpeakers(text, this.groupMembers(conv), opts.replyAgentId);
     void this.enqueue(conv.id, () => this.runGroupRound(conv.id, epoch, speakers, prompt, triggerId, opts));
   }
 

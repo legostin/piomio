@@ -122,6 +122,7 @@ export default defineConfig(({ mode }) => ({
       "@piomio/shared/group": resolve(import.meta.dirname, "../shared/src/group.ts"),
       "@piomio/shared/thinking": resolve(import.meta.dirname, "../shared/src/thinking.ts"),
       "@piomio/shared/commands": resolve(import.meta.dirname, "../shared/src/commands.ts"),
+      "@piomio/shared/replies": resolve(import.meta.dirname, "../shared/src/replies.ts"),
       "@piomio/shared/models": resolve(import.meta.dirname, "../shared/src/models.ts"),
     },
   },
