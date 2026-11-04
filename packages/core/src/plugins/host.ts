@@ -3,7 +3,7 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, cpSync, rmSync, renameSync, statSync, readFileSync } from "node:fs";
 import { join, dirname, basename, resolve } from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Catalog, CatalogEntryState, CoreMethod, Locale, MessagePart, PiomioManifest, PluginLayout, PluginPermissions, ToolCallContext, ToolDescriptor, ToolResult, ToolSpec } from "@piomio/shared";
 import { createRpcPeer, ndjsonTransport, readPluginLayout, toolPrefixOf, nowIso, ENTRY_ID_RE, type RpcPeer } from "@piomio/shared";
 import { json, type Db } from "../db.ts";
@@ -63,6 +63,8 @@ export interface PluginRecord {
   commitHash?: string;
   settings: Record<string, unknown>;
   layout?: PluginLayout;
+  /** Changes when the UI module or its translations change, even without a manifest version bump. */
+  uiRevision?: string;
   status: PluginStatus;
   lastError?: string;
   logs: Array<{ ts: string; level: string; msg: string }>;
@@ -133,6 +135,7 @@ interface Running {
   child: ChildProcess;
   peer: RpcPeer;
   stopping: boolean;
+  stopPromise?: Promise<void>;
   unsubs: Array<() => void>;
 }
 
@@ -221,6 +224,10 @@ export class PluginHost {
         commitHash: r.commit_hash ?? undefined,
         settings: json(r.settings, {}),
         layout,
+        uiRevision:
+          layout.uiEntry && existsSync(layout.uiEntry)
+            ? createHash("sha256").update(readFileSync(layout.uiEntry)).update(JSON.stringify(layout.messages)).digest("hex").slice(0, 16)
+            : undefined,
         status: prev?.status ?? (layout.serverEntry ? "stopped" : "no-server"),
         lastError: prev?.lastError,
         logs: prev?.logs ?? [],
@@ -366,19 +373,35 @@ export class PluginHost {
   async stop(id: string): Promise<void> {
     const r = this.running.get(id);
     if (!r) return;
+    if (r.stopPromise) return r.stopPromise;
     r.stopping = true;
-    try {
-      await r.peer.request("plugin.deactivate", {}, { timeoutMs: 3000 });
-    } catch {
-      /* ignore */
-    }
-    setTimeout(() => {
-      if (r.child.exitCode === null) r.child.kill("SIGKILL");
-    }, 3000).unref();
-    this.cleanup(id);
-    const rec = this.records.get(id);
-    if (rec && rec.status !== "error") rec.status = rec.enabled ? "stopped" : "disabled";
-    this.d.bus.emit("plugins.updated", {});
+    r.stopPromise = (async () => {
+      // Deactivate acknowledges before the runner exits. In particular, Windows keeps the plugin's working
+      // directory locked until its process is gone, so updates must wait before replacing any files.
+      const exited = new Promise<void>((resolve) => {
+        if (r.child.exitCode !== null || r.child.signalCode !== null || !r.child.pid) resolve();
+        else r.child.once("exit", () => resolve());
+      });
+      const killTimer = setTimeout(() => {
+        if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");
+      }, 3000);
+      try {
+        try {
+          await r.peer.request("plugin.deactivate", {}, { timeoutMs: 3000 });
+        } catch {
+          /* An exited or unresponsive plugin still needs to finish stopping. */
+        }
+        await exited;
+      } finally {
+        clearTimeout(killTimer);
+      }
+      // onExit normally cleaned up this process already; never unregister a replacement's tools.
+      if (this.running.get(id) === r) this.cleanup(id);
+      const rec = this.records.get(id);
+      if (rec && !this.running.has(id) && rec.status !== "error") rec.status = rec.enabled ? "stopped" : "disabled";
+      this.d.bus.emit("plugins.updated", {});
+    })();
+    return r.stopPromise;
   }
 
   async stopAll(): Promise<void> {
@@ -632,7 +655,7 @@ export class PluginHost {
       .map((r) => ({
         id: r.id,
         name: localizePluginValue(r.layout, r.layout!.manifest.name, locale),
-        url: `/plugins-ui/${r.id}/${basename(r.layout!.uiEntry!)}`,
+        url: `/plugins-ui/${r.id}/${basename(r.layout!.uiEntry!)}?v=${r.uiRevision}`,
         messages: { en: r.layout!.messages.en, [locale]: r.layout!.messages[locale] },
       }));
   }
