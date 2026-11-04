@@ -1,0 +1,60 @@
+name: debug-ci
+on:
+  push:
+    branches: [fix/ci-main-previews-site]
+permissions:
+  contents: read
+jobs:
+  previews:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci >/dev/null 2>&1
+      - run: node -v && npm -v
+      - name: probe previews
+        run: |
+          cat > packages/core/dbg-previews.mts <<'EOF'
+          import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { join } from 'node:path';
+          import jpeg from 'jpeg-js';
+          import { PicturePreviews } from './src/picture-previews.ts';
+          const w = 2400, h = 1600;
+          const data = Buffer.alloc(w * h * 4);
+          for (let i = 0; i < data.length; i++) data[i] = Math.floor(Math.random() * 256);
+          const dir = mkdtempSync(join(tmpdir(), 'dbg-'));
+          const photo = join(dir, 'photo.jpg');
+          writeFileSync(photo, Buffer.from(jpeg.encode({ width: w, height: h, data }, 92).data));
+          const p = new PicturePreviews(join(dir, 'cache'));
+          const r = await p.preview(photo);
+          console.log('RESULT', r);
+          for (const f of readdirSync(join(dir, 'cache'))) console.log('CACHE', f, f.endsWith('.none') ? JSON.stringify(readFileSync(join(dir, 'cache', f), 'utf8')) : '');
+          p.stop();
+          EOF
+          node packages/core/dbg-previews.mts 2>&1 | tail -30 || true
+      - name: vitest only previews
+        run: npx vitest run packages/core/test/picture-previews.test.ts 2>&1 | tail -60 || true
+  site:
+    runs-on: ubuntu-latest
+    env:
+      SITE_BASE: /
+      SITE_ORIGIN: https://piomio.io
+      SITE_CNAME: piomio.io
+      GA_MEASUREMENT_ID: G-RCPYYNZ3CQ
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci >/dev/null 2>&1
+      - run: npx playwright install --with-deps chromium >/dev/null 2>&1
+      - run: npm run build:ui-plugins >/dev/null 2>&1
+      - run: npm run build:site 2>&1 | tail -15
+      - name: check site
+        run: npm run check:site > $RUNNER_TEMP/site.log 2>&1 || true
+      - run: tail -c 12000 $RUNNER_TEMP/site.log
