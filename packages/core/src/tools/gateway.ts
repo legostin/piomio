@@ -58,7 +58,7 @@ export interface GatewayDeps {
 const ASKED_WINDOW_MS = 3 * 3600_000;
 
 /** Tools every agent has, whatever its tool list: what draws in the person's chat (buttons, maps, pictures, cards, pages) and the team's group chats. */
-const SHOW_TOOLS = ["show_choices", "show_map", "show_images", "show_news", "feed_show", "page_create", "page_update", "page_read", "page_list", "page_show", "thinking_show", "profile_show", "group_create", "group_update", "group_archive", "group_delete"];
+const SHOW_TOOLS = ["show_choices", "show_map", "show_images", "send_files", "library_find", "library_open", "show_news", "feed_show", "page_create", "page_update", "page_read", "page_list", "page_show", "thinking_show", "profile_show", "group_create", "group_update", "group_archive", "group_delete"];
 
 function textOf(r: ToolResult): string {
   return r.content.map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join("\n");

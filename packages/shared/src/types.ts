@@ -363,6 +363,45 @@ export interface PageView {
   updatedAt: ISODate;
 }
 
+/**
+ * What an agent's library holds (core/src/library.ts): photos and videos, voice notes and audio, other files
+ * (documents), and the pages it made.
+ */
+export type LibraryKind = "media" | "audio" | "file" | "page";
+
+/**
+ * One thing in an agent's library: a file the person sent it or it sent the person, a picture it showed, a page it
+ * made. Gathered from the chats (its dialog, its tasks, the groups it is in) and the pages, newest first.
+ */
+export interface LibraryItem {
+  /** Unique in the library: the file's path, the picture's address, or `page:<id>`. */
+  id: string;
+  kind: LibraryKind;
+  /** Who sent it into the chat: the person, or an agent (a page is always the agent's). */
+  from: "person" | "agent";
+  name: string;
+  /** A file's path relative to the workspaces root (what /api/files serves). */
+  path?: string;
+  /** A picture the agent showed: `file:<path>` or an http(s) address (through the image proxy). */
+  src?: string;
+  mimeType?: string;
+  size?: number;
+  durationSec?: number;
+  /** A picture's caption, a page's summary. */
+  caption?: string;
+  /** What a voice note says. */
+  transcript?: string;
+  /** A voice note (not an audio file). */
+  voice?: boolean;
+  pageId?: string;
+  /** The agent it belongs to: the one whose chat it came in, or whose page it is. */
+  agentId: string;
+  conversationId?: string;
+  messageId?: string;
+  /** When it came into the chat (a page: its last change). */
+  at: ISODate;
+}
+
 /** One card of a `news` part. */
 export interface NewsItem {
   title: string;
@@ -1049,7 +1088,9 @@ export interface OutboundMessage {
  */
 export type OutboundMedia =
   | { kind: "image"; url?: string; data?: string; mimeType?: string; name?: string; caption?: string }
-  | { kind: "map"; lat: number; lon: number; title?: string };
+  | { kind: "map"; lat: number; lon: number; title?: string }
+  /** A file the agent sent (send_files), inline: the channel delivers it as a document. */
+  | { kind: "file"; data: string; name: string; mimeType?: string; caption?: string };
 
 // ---------- Machines ----------
 

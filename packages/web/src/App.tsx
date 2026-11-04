@@ -22,6 +22,7 @@ import { TaskDetailPage } from "./pages/TaskDetail";
 import { ChannelPage } from "./pages/channels/ChannelPage";
 import { entityPath } from "./state/ask";
 import { MobileApp, useMobileReadyOnError } from "./pages/MobileApp";
+import { LibrarySheet } from "./components/LibrarySheet";
 import { mobileMode } from "./lib/mobile";
 import { desktopApp, desktopInvoke } from "./lib/desktop";
 import { t } from "./i18n";
@@ -51,6 +52,7 @@ export function App() {
       )}
       {(p.kind === "setup" || p.kind === "login") && <AuthScreen mode={p.kind} auth={p.auth} />}
       {p.kind === "ready" && <FirstRunGate>{mobileMode ? <MobileApp /> : <ReadyApp />}</FirstRunGate>}
+      {p.kind === "ready" && <LibrarySheet />}
       {p.kind === "ready" && <MediaViewer />}
       <Toasts />
     </>

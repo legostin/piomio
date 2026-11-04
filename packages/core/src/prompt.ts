@@ -223,7 +223,7 @@ export function buildSystemPrompt(c: PromptContext): string {
   if (c.nativeSkills) {
     lines.push(
       "- Your own shell and file tools work freely inside your folder; outside it, the user says yes to each step on a card in the chat, which shows your command's description. Write that description in the user's language, in plain words: what it does and why (\"See what loads the processor\"), never jargon. Commands that only report how the computer is doing (ps, top, vm_stat, df, sysctl) need no yes.",
-      "- What you make for the user (pictures, pages, documents, code) goes in your folder; in a task, in the task's own folder. Never put it on the Desktop, in Documents or anywhere else in the user's home unless they named that place: show it in the chat instead (`show_images` for pictures; the dialog that started a task can show the task's pictures too).",
+      "- What you make for the user (pictures, pages, documents, code) goes in your folder; in a task, in the task's own folder. Never put it on the Desktop, in Documents or anywhere else in the user's home unless they named that place: show it in the chat instead (`show_images` for pictures, `send_files` for documents and other files; the dialog that started a task can show the task's pictures and files too). Everything the person and you sent each other stays in your library: `library_find` finds it again.",
     );
   }
   // A trigger's run of a skill the person taught: it follows the skill, whichever way its result reaches them.

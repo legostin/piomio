@@ -1,7 +1,7 @@
 // What the demo hub answers: the requests the web UI makes, from the world. Shapes follow packages/core/src/server/api.ts;
 // anything the visitor can reach but the demo does not act out answers a gentle "not in the demo".
 
-import type { Message } from "@piomio/shared";
+import type { LibraryItem, Message } from "@piomio/shared";
 import browserEn from "../../../../../plugins/browser/.piomio-plugin/locales/en.json";
 import browserRu from "../../../../../plugins/browser/.piomio-plugin/locales/ru.json";
 import memoryEn from "../../../../../plugins/memory/.piomio-plugin/locales/en.json";
@@ -164,6 +164,35 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
   });
   r.route("GET", "/api/pages", () => w().pages);
   r.route("GET", "/api/pages/:id", ({ params }) => w().pages.find((p) => p.id === params.id) ?? refuse());
+  // An agent's library (core/src/library.ts), read from the demo's chats and pages the same way.
+  r.route("GET", "/api/library", ({ query }) => {
+    const agent = query.get("agent") ?? undefined;
+    const kind = query.get("kind") ?? undefined;
+    const words = (query.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const hit = (...t: Array<string | undefined>) => words.every((x) => t.filter(Boolean).join(" ").toLowerCase().includes(x));
+    const items: LibraryItem[] = [];
+    for (const c of w().conversations) {
+      if (agent && c.agentId !== agent && !c.members?.includes(agent)) continue;
+      for (const m of w().messages[c.id] ?? []) {
+        const from = m.role === "user" && !m.agentId ? "person" : "agent";
+        const at = { agentId: m.agentId ?? c.agentId, conversationId: c.id, messageId: m.id, at: m.createdAt };
+        for (const p of m.parts) {
+          if (p.type === "attachment" && hit(p.name, p.transcript)) {
+            const k = p.kind === "voice" || p.mimeType?.startsWith("audio/") ? "audio" : /^(image|video)\//.test(p.mimeType ?? "") ? "media" : "file";
+            items.push({ ...at, id: p.path, kind: k, from, name: p.name, path: p.path, mimeType: p.mimeType, size: p.size, durationSec: p.durationSec, transcript: p.transcript, voice: p.kind === "voice" || undefined });
+          } else if (p.type === "images") {
+            for (const it of p.items) if (hit(it.caption, it.alt)) items.push({ ...at, id: it.src, kind: "media", from: "agent", name: it.caption ?? it.alt ?? "image", src: it.src, caption: it.caption });
+          }
+        }
+      }
+    }
+    for (const p of w().pages) if ((!agent || p.agentId === agent) && hit(p.title, p.summary)) items.push({ id: `page:${p.id}`, kind: "page", from: "agent", name: p.title, pageId: p.id, agentId: p.agentId, caption: p.summary, src: p.cover, conversationId: p.conversationId, at: p.updatedAt });
+    const seen = new Set<string>();
+    const out = items
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
+      .filter((it) => !seen.has(it.id) && seen.add(it.id) && (!kind || it.kind === kind));
+    return { items: out, more: false };
+  });
 
   // ----- integrations and secrets -----
   r.route("GET", "/api/integrations", () => w().integrations);

@@ -63,6 +63,7 @@ turn that off. Other agents' chats and group chats are not mirrored to Telegram.
 - **Pictures** from a reply arrive as a photo or an album of up to ten. A large picture comes as a file. What Telegram
   won't take arrives as links. A picture the chat holds back (see [Pictures and carousels](chat.md#pictures-and-carousels))
   isn't sent.
+- **Files** the agent sends you (a document, a spreadsheet, an archive) arrive as documents, up to 40 MB per reply.
 - **Maps** arrive as a location pin with the place's name.
 - **Notifications**, with the title in bold. Those from your reminders and watches have buttons: **👍 Useful**,
   **🔉 Less often** and **🔕 Turn off**. In quiet hours they come without a sound.

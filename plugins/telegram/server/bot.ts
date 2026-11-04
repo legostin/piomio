@@ -712,7 +712,7 @@ export class TelegramBot {
   }
 
   /**
-   * Pictures as a photo or an album (URLs for Telegram to fetch, files uploaded), maps as location pins. Failures stay
+   * Pictures as a photo or an album (URLs for Telegram to fetch, files uploaded), other files as documents, maps as location pins. Failures stay
    * soft: what could not be sent becomes a text with links.
    */
   private async sendMedia(chatId: number, media: OutboundMedia[], opts: { silent?: boolean; link?: string }): Promise<number | undefined> {
@@ -734,6 +734,9 @@ export class TelegramBot {
           await flush();
           keep(await this.sendDocument(chatId, m, opts));
         }
+      } else if (m.kind === "file") {
+        await flush();
+        keep(await this.sendDocument(chatId, { kind: "image", data: m.data, mimeType: m.mimeType, name: m.name, caption: m.caption }, opts));
       } else if (m.kind === "map") {
         await flush();
         keep(await this.sendMap(chatId, m, opts));

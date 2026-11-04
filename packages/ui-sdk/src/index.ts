@@ -251,8 +251,8 @@ export interface EmptyStateProps {
 export type NativeHapticKind = "light" | "success" | "warning";
 
 /** What the app tells the page (a `piomio-native` CustomEvent on window): live words while the mic is held. */
-/** What the app tells the page: live dictation words, the "Show steps" switch in its header, the hub answering again. */
-export type NativeEvent = { type: "dictation"; text: string } | { type: "details"; on: boolean } | { type: "online" };
+/** What the app tells the page: live dictation words, the "Show steps" switch in its header, the hub answering again, its "Library" menu item. */
+export type NativeEvent = { type: "dictation"; text: string } | { type: "details"; on: boolean } | { type: "online" } | { type: "library" };
 
 /**
  * The Piomio iOS app around the page (its chat screen is the web UI's chat in a WKWebView). Every call is

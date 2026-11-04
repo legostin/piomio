@@ -58,7 +58,7 @@ export function PageCard({ pageId, conversationId }: { pageId: string; conversat
   );
 }
 
-function PageViewer({ page, conversationId, onClose }: { page: PageView; conversationId: string; onClose: () => void }) {
+export function PageViewer({ page, conversationId, onClose }: { page: PageView; conversationId: string; onClose: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const close = useRef(onClose);
   close.current = onClose;

@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
-import type { AgentDef, TaskStatus } from "@piomio/shared";
+import type { AgentDef, LibraryKind, TaskStatus } from "@piomio/shared";
 import { formatBrainRef, GROUP_MAX_MEMBERS, GROUP_MIN_MEMBERS, isWorkKind, LOCALES, parseBrainRef, type Locale, type ThinkingPatch } from "@piomio/shared";
 import { hubLocale, localizePluginValue, requestLocale, tFor } from "../i18n.ts";
 import type { Hub } from "../app.ts";
@@ -236,6 +236,19 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     const p = hub.pages.get((req.params as { id: string }).id);
     if (!p) throw new HttpError(404, "pages.notFound");
     return p;
+  });
+
+  // ----- an agent's library (library.ts): every file, picture and page of its chats, for every device -----
+  api.get("/api/library", async (req) => {
+    const q = req.query as { agent?: unknown; kind?: unknown; q?: unknown; before?: unknown; limit?: unknown };
+    const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+    return hub.library({
+      agentId: str(q.agent),
+      kind: str(q.kind) as LibraryKind | undefined,
+      q: str(q.q)?.slice(0, 200),
+      before: str(q.before),
+      limit: str(q.limit) ? Number(q.limit) || undefined : undefined,
+    });
   });
 
   // ----- channels (feeds.ts): news an agent of the team gathers on a schedule -----

@@ -9,6 +9,7 @@ import { useStore } from "../lib/store";
 import { chatLinkPath, isMobilePath, mobileConversationId, mobileMode, trackVisualViewport } from "../lib/mobile";
 import { native, nativeErrorText, openOutside, type NativeBridge } from "../lib/native";
 import { toast } from "../state/toast";
+import { openLibrary } from "../state/library";
 import { setShowDetails } from "../state/prefs";
 import { agents, conversations, ensureAgents, ensureGroups, ensureTeam, groups, hubIsBack, session, team, useConversationMessages, useSelector } from "../state/app";
 import { useUiPlugins } from "../plugins/host";
@@ -138,6 +139,9 @@ function MobileChat({ conversationId }: { conversationId: string }) {
   const isDefault = !!s && agentId === s.defaultAgent;
   // An agent's dialog counts unread in the team, a group chat in the groups.
   useReadMarker(conversationId, member?.unread ?? groupUnread ?? 0);
+
+  // The app's "Library" menu item: the agent's library over the chat.
+  useEffect(() => native?.onEvent((ev) => ev.type === "library" && agentId !== undefined && openLibrary(agentId)), [agentId]);
 
   // Once the first page of messages (or its error) is on screen.
   const told = useRef(false);

@@ -36,7 +36,7 @@ import { humanFailure } from "./notifier.ts";
 import { agentName } from "./agents.ts";
 import { hubLocale, LocalizedError, t } from "./i18n.ts";
 import { captureNote, type CaptureResult, type SecretIntake } from "./secrets.ts";
-import { readWorkspaceImage } from "./media.ts";
+import { imageTypeOf, readWorkspaceImage } from "./media.ts";
 import { BrainImages, saveBrainImage } from "./brain-images.ts";
 import { clockTime, TurnClock } from "./clock.ts";
 import { busy, situation, TASK_STATE } from "./situation.ts";
@@ -2127,13 +2127,28 @@ export class SessionRunner {
     return ref ? parseBrainRef(ref).machineId : "local";
   }
 
-  /** The reply's images and maps for the channels: web images by address, workspace files inline (10 MB each, 40 MB in all). */
+  /** The reply's images, files and maps for the channels: web images by address, workspace files inline (40 MB in all). */
   private async replyMedia(messageId: string | undefined): Promise<OutboundMedia[]> {
     const parts = (messageId ? this.d.store.getMessage(messageId)?.parts : undefined) ?? [];
     const out: OutboundMedia[] = [];
     let inline = 0;
     for (const p of parts) {
       if (p.type === "map") out.push({ kind: "map", lat: p.lat, lon: p.lon, ...(p.title ? { title: p.title } : {}) });
+      if (p.type === "attachment") {
+        // A file the agent sent (send_files): a picture as a picture, anything else as a document.
+        const file = join(this.d.config.dataDir, "workspaces", p.path);
+        let data: Buffer;
+        try {
+          if (inline + statSync(file).size > MAX_INLINE_MEDIA_BYTES) continue;
+          data = readFileSync(file);
+        } catch {
+          continue;
+        }
+        inline += data.length;
+        const type = p.mimeType ?? "application/octet-stream";
+        out.push(type.startsWith("image/") && imageTypeOf(p.name) ? { kind: "image", data: data.toString("base64"), mimeType: type, name: p.name } : { kind: "file", data: data.toString("base64"), mimeType: type, name: p.name });
+        continue;
+      }
       if (p.type !== "images") continue;
       for (const it of p.items) {
         const caption = it.caption ? { caption: it.caption } : {};
@@ -2623,6 +2638,8 @@ function attachedKey(p: MessagePart): string | undefined {
   if (p.type === "images") return `images:${JSON.stringify(p.items)}`;
   if (p.type === "map") return `map:${JSON.stringify([p.lat, p.lon, p.zoom, p.title, p.markers, p.route?.mode, p.route?.stops])}`;
   if (p.type === "widget") return `widget:${p.plugin}:${p.kind}:${JSON.stringify(p.data)}`;
+  // A file the agent sent (send_files): the same file twice in one reply is one.
+  if (p.type === "attachment") return `attachment:${p.path}`;
   return undefined;
 }
 

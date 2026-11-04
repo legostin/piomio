@@ -1,6 +1,6 @@
 ---
 title: The chat
-description: Talking to your agents: messages in a row, the live step line, stopping, buttons and cards, files, photos and voice, the hub's own /commands, group chats and their archive.
+description: Talking to your agents: messages in a row, the live step line, stopping, buttons and cards, files, photos and voice, the library of everything you sent each other, the hub's own /commands, group chats and their archive.
 ---
 
 Every agent on your team has one long dialog with you. You write as you would to a person, and the agent answers, asks back with buttons, shows pictures and maps, and sends longer work to tasks on the side. The chat is the same in the desktop app, in a browser and in the iPhone app, which shows the same chat page. Telegram is covered in [Telegram](telegram.md), the phone in [The iPhone app](phone.md).
@@ -117,6 +117,16 @@ Tap a picture or a video in the chat to open the viewer. It holds all the chat's
 - **Download** saves the file (the desktop app puts it in Downloads, the iPhone app opens the share sheet), and **Open the original** opens the file itself.
 
 Other files show as a chip that opens the file.
+
+### The library
+
+Everything you and an agent sent each other gathers in its library: photos and videos, voice messages, documents and other files, the pictures it showed and the pages it made. It covers the agent's dialog, its tasks and the group chats it is in, newest first, and comes from the hub, so it is the same on the computer, in a browser and on the phone.
+
+- Open it with the library button next to **⋯** in the agent's chat.
+- **All** shows a shelf of each kind; **Pages**, **Photos and videos**, **Files** and **Voice and audio** show all of one kind. The search field finds words in names, captions and what a voice message said.
+- A picture or a video opens in the viewer, a page full screen, a file in the browser (the iPhone app opens the share sheet), and a voice message plays in place.
+
+The agent has the same library. Ask "send me the contract from last week again" or "what did I send you on Monday": it finds the file, opens it in its folder to work on it, or sends it back to the chat. Documents and other files an agent makes reach you as files in the chat (and in Telegram), and stay in the library even if the agent later changes its own copy.
 
 ### What your device keeps
 

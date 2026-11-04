@@ -16,6 +16,7 @@ import { adoptHubLocale, t } from "../i18n";
 import { toast } from "./toast";
 import { clearFeeds, feeds, onFeedEvent, refreshFeeds } from "./feeds";
 import { clearPages, onPageEvent } from "./pages";
+import { touchLibrary } from "./library";
 
 export interface UiPluginEntry {
   id: string;
@@ -459,9 +460,11 @@ function handleEvent(e: UiEvent): void {
         next[i] = { ...list[i], updatedAt: e.data.createdAt };
         return sortConversations(next);
       });
+      if (e.data.parts.some((p) => p.type === "attachment" || p.type === "images")) touchLibrary();
       break;
     case "message.updated":
       patchConv(e.data.conversationId, (c) => ({ ...c, messages: upsertMessage(c.messages, e.data) }));
+      if (e.data.parts.some((p) => p.type === "attachment" || p.type === "images")) touchLibrary();
       break;
     case "message.delta":
       patchConv(e.data.conversationId, (c) => ({ ...c, messages: applyDelta(c.messages, e.data) }));
@@ -489,6 +492,7 @@ function handleEvent(e: UiEvent): void {
     case "page.updated":
     case "page.deleted":
       onPageEvent(e);
+      touchLibrary();
       break;
     case "task.updated":
       tasks.set((list) => (list ? upsertById(list, e.data) : list));

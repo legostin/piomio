@@ -135,6 +135,21 @@ export function saveAttachment(root: string, conv: AttachmentOwner, f: IncomingF
   return part;
 }
 
+/**
+ * Copies a file the agent made into the conversation's attachments folder (send_files), so it stays in the library
+ * when the agent changes or removes its own copy, and returns its message part.
+ */
+export function copyAttachment(root: string, conv: AttachmentOwner, file: string, name = basename(file)): AttachmentPart {
+  const dir = attachmentsDir(root, conv);
+  mkdirSync(dir, { recursive: true });
+  const wanted = safeFileName(name);
+  const taken = (n: string) => existsSync(join(dir, n)) && !sameFile(file, join(dir, n));
+  const final = freeName(wanted, taken);
+  const dest = join(dir, final);
+  if (!existsSync(dest)) copyFileSync(file, dest);
+  return { type: "attachment", path: relative(root, dest).split(sep).join("/"), name: final, mimeType: mimeOf(final), size: statSync(dest).size };
+}
+
 /** A path the web sends with a message: only a file directly in this conversation's attachments folder counts. */
 export function attachmentFromPath(root: string, conv: AttachmentOwner, path: unknown): AttachmentPart | undefined {
   if (typeof path !== "string") return undefined;

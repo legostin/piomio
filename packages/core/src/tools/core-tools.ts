@@ -2,7 +2,7 @@
 
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import type { BehindEntry, ImageItem, InboxEntry, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ToolDescriptor, ToolResult } from "@piomio/shared";
+import type { BehindEntry, ImageItem, InboxEntry, LibraryItem, LibraryKind, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { brainsFor, isThinkingPreset, MAP_ICONS, sameBrain, truncate } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
 import type { SkillIndex } from "../skills.ts";
@@ -11,7 +11,8 @@ import type { Store } from "../store.ts";
 import { notifyInputError, notifyRefusal, type Notifier } from "../notifier.ts";
 import type { AgentRegistry } from "../agents.ts";
 import { imageTypeOf, MAX_IMAGE_BYTES, parseImageUrl } from "../media.ts";
-import { mimeOf } from "../attachments.ts";
+import { copyAttachment, forSession, formatSize, mimeOf } from "../attachments.ts";
+import { LIBRARY_KINDS, type LibraryPage, type LibraryQuery } from "../library.ts";
 import type { Transcriber } from "../transcribe.ts";
 import type { RoadRoute } from "../routing.ts";
 import type { UserLocation } from "../user-location.ts";
@@ -43,6 +44,8 @@ export interface CoreToolDeps {
   route?: (mode: Exclude<RouteMode, "transit">, stops: Array<[number, number]>) => Promise<RoadRoute | { error: string }>;
   /** Where the user is, when their phone shares it (user-location.ts). */
   userLocation?: () => UserLocation | undefined;
+  /** An agent's library (library.ts): what the person and the agent sent each other, and its pages. */
+  library?: (q: LibraryQuery) => LibraryPage;
 }
 
 /** Who is writing to a task: the agent, its conversation and, inside a task, that task; tainted when it had read outside content. */
@@ -114,6 +117,45 @@ function workspaceFile(path: string, workspace: string, root: string): string | 
     return { error: `${path}: no such file in your workspace` };
   }
   return statSync(real).isFile() ? real : { error: `${path}: not a file` };
+}
+
+/** Largest file send_files puts in the chat. */
+const MAX_SEND_BYTES = 200 * 1024 * 1024;
+const MAX_SEND_FILES = 10;
+
+/** A real file in the agent's workspace or a task folder it started, or an error text (send_files). */
+function ownFile(path: string, workspace: string, root: string, more: string[] = []): string | { error: string } {
+  let real: string;
+  let realRoot: string;
+  const folders: string[] = [];
+  try {
+    realRoot = realpathSync(root);
+    for (const dir of [workspace, ...more]) {
+      try {
+        folders.push(realpathSync(dir));
+      } catch {
+        /* a task's folder that was never made */
+      }
+    }
+    real = realpathSync(resolve(workspace, path));
+  } catch {
+    return { error: `${path}: no such file${isAbsolute(path) ? "" : ` in your workspace (${workspace})`}` };
+  }
+  const inside = (dir: string) => real === dir || real.startsWith(dir + sep);
+  if (!folders.some(inside) || !inside(realRoot)) return { error: `${path}: outside your workspace and your tasks' folders` };
+  const st = statSync(real);
+  if (!st.isFile()) return { error: `${path}: not a file` };
+  if (st.size > MAX_SEND_BYTES) return { error: `${path}: larger than ${MAX_SEND_BYTES / 1024 / 1024} MB` };
+  return real;
+}
+
+/** One library item as the agent reads it (English, for the model). */
+function libraryLine(it: LibraryItem, n: number): string {
+  const bits = [it.mimeType, it.size !== undefined ? formatSize(it.size) : undefined, it.durationSec !== undefined ? `${it.durationSec} s` : undefined].filter(Boolean);
+  const who = it.from === "person" ? "from the person" : it.kind === "page" ? "your page" : "sent by you";
+  const ref = it.kind === "page" ? `page ${it.pageId}` : it.path ? `ref: ${it.path}` : `url: ${it.src}`;
+  const words = it.transcript ? `, says: "${truncate(it.transcript, 160)}"` : it.caption ? `, caption: "${truncate(it.caption, 120)}"` : "";
+  return `${n}. [${it.kind}] ${JSON.stringify(truncate(it.name, 120))}${bits.length ? ` (${bits.join(", ")})` : ""}, ${who}, ${it.at.slice(0, 16).replace("T", " ")} UTC${words}; ${ref}`;
 }
 
 /**
@@ -703,6 +745,166 @@ export function registerCoreTools(d: CoreToolDeps): void {
         `The user now sees ${items.length === 1 ? "the image" : `a carousel of ${items.length} images`} in the chat (and in Telegram, if your reply goes there). ` +
           "Do not paste it again as markdown.",
       );
+    },
+  );
+
+  reg(
+    {
+      name: "send_files",
+      description:
+        "Send the person files right in the chat: a document, a spreadsheet, a PDF, an archive, audio or video you made or found, as a file they can open " +
+        "and save on any of their devices (and in Telegram, if your reply goes there). For pictures to look at, show_images is better. " +
+        "Each `path` is a file in your workspace (relative, or absolute in it or in the folder of a task you started; on another computer a file there " +
+        "reaches the hub in a few seconds), or a `ref` from library_find to send something from before again. Up to 10 files, 200 MB each. " +
+        "Everything sent this way stays in your library. Say in your reply what you sent; do not paste the file's contents unless asked.",
+      effect: "read",
+      inputSchema: {
+        type: "object",
+        properties: {
+          files: {
+            type: "array",
+            minItems: 1,
+            maxItems: MAX_SEND_FILES,
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "A file in your workspace, or a library ref" },
+                name: { type: "string", description: "The name the person sees (default: the file's own)" },
+              },
+              required: ["path"],
+            },
+          },
+        },
+        required: ["files"],
+      },
+    },
+    async (i, ctx) => {
+      const list: unknown[] = Array.isArray(i.files) ? i.files : typeof i.path === "string" ? [i] : [];
+      if (!list.length) return text("Give files: [{path}, …].", true);
+      if (list.length > MAX_SEND_FILES) return text(`At most ${MAX_SEND_FILES} files at once; split them into several calls.`, true);
+      const more = d.startedWorkspaces?.(ctx.conversationId) ?? [];
+      const owner = { id: ctx.conversationId, agentId: ctx.agentId, taskId: ctx.taskId };
+      const parts: MessagePart[] = [];
+      const problems: string[] = [];
+      for (const [n, raw] of list.entries()) {
+        const it = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+        const label = `file ${n + 1}`;
+        let path = typeof it.path === "string" ? it.path.trim() : "";
+        if (!path) {
+          problems.push(`${label}: give path`);
+          continue;
+        }
+        const name = clip(it.name, 150);
+        // Something from the library (the person's file, one sent before): it is in the chat's files already.
+        const known = d.library?.({ agentId: ctx.agentId, q: path.split("/").pop(), limit: 500 }).items.find((x) => x.path === path && x.kind !== "page");
+        if (known?.path) {
+          parts.push({ type: "attachment", path: known.path, name: name ?? known.name, ...(known.mimeType ? { mimeType: known.mimeType } : { mimeType: mimeOf(known.name) }), ...(known.size !== undefined ? { size: known.size } : {}) });
+          continue;
+        }
+        if (ctx.machineId !== "local") {
+          let mapped: string | undefined;
+          for (const folder of [ctx.workspace, ...more]) {
+            const rel = folderRelative(path, folder);
+            if (rel) {
+              mapped = resolve(folder, rel);
+              break;
+            }
+          }
+          if (!mapped) {
+            problems.push(`${label}: ${path} is not in your workspace or your tasks' folders; save the file there and send it by its path`);
+            continue;
+          }
+          await arrived(mapped, REMOTE_FILE_WAIT_MS);
+          path = mapped;
+        }
+        const r = ownFile(path, ctx.workspace, d.workspacesRoot, more);
+        if (typeof r !== "string") {
+          problems.push(`${label}: ${r.error}`);
+          continue;
+        }
+        try {
+          parts.push(copyAttachment(d.workspacesRoot, owner, r, name ?? basename(r)));
+        } catch (e: any) {
+          problems.push(`${label}: could not copy it (${e?.message ?? e})`);
+        }
+      }
+      if (problems.length) return text(`Nothing sent. ${problems.join("; ")}.`, true);
+      for (const part of parts) {
+        if (d.showToPerson) d.showToPerson(ctx.conversationId, part, ctx.taskId);
+        else d.attachPart(ctx.conversationId, part);
+      }
+      const names = parts.map((p) => (p.type === "attachment" ? p.name : "")).join(", ");
+      return text(`The person now has ${parts.length === 1 ? "the file" : `${parts.length} files`} in the chat (${names}), and in Telegram if your reply goes there. They stay in your library.`);
+    },
+  );
+
+  reg(
+    {
+      name: "library_find",
+      description:
+        "Look through your library: every file the person sent you or you sent them (photos, videos, voice notes, documents), the pictures you showed " +
+        "and the pages you made, from your dialog, your tasks and your group chats, newest first. Use it when the person means something from before " +
+        "(\"the contract I sent last week\", \"that photo of the receipt\", \"the page with the plan\") or asks what they have sent you. " +
+        "`query`: words from the name, caption or what a voice note says (any language, as written); `kind`: media (photos and videos), audio " +
+        "(voice notes and audio), file (documents and other files) or page. Then open a file in your workspace with library_open, send it again with " +
+        "send_files {path: ref}, or show a page with page_show. The person sees the same library in the app (the Library button in your chat).",
+      effect: "read",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Words to look for (empty: everything, newest first)" },
+          kind: { type: "string", enum: LIBRARY_KINDS },
+          limit: { type: "integer", minimum: 1, maximum: 50, description: "How many items (default 20)" },
+        },
+      },
+    },
+    (i, ctx) => {
+      if (!d.library) return text("The library is not available on this hub.", true);
+      const kind = LIBRARY_KINDS.includes(i.kind) ? (i.kind as LibraryKind) : undefined;
+      const limit = Number.isInteger(i.limit) ? Math.max(1, Math.min(50, i.limit)) : 20;
+      const query = typeof i.query === "string" ? i.query.trim().slice(0, 200) : "";
+      const page = d.library({ agentId: ctx.agentId, kind, q: query || undefined, limit });
+      if (!page.items.length) return text(query ? `Nothing in your library matches "${query}"${kind ? ` among ${kind}` : ""}. Try other words or no query.` : "Your library is empty: nothing was sent in your chats yet.");
+      const lines = page.items.map((it, n) => libraryLine(it, n + 1));
+      if (page.more) lines.push(`(more, older items: ask with a narrower query or kind)`);
+      return text(lines.join("\n"));
+    },
+  );
+
+  reg(
+    {
+      name: "library_open",
+      description:
+        "Put files from your library (refs from library_find) into your working folder, to read or work on them with your file tools: a document the " +
+        "person sent in another chat or a task, a photo from last week. Returns each file's path in your workspace. Up to 10 at once.",
+      effect: "read",
+      inputSchema: {
+        type: "object",
+        properties: { refs: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 } },
+        required: ["refs"],
+      },
+    },
+    (i, ctx) => {
+      if (!d.library) return text("The library is not available on this hub.", true);
+      const refs: string[] = (Array.isArray(i.refs) ? i.refs : typeof i.ref === "string" ? [i.ref] : []).filter((r: unknown): r is string => typeof r === "string" && !!r.trim()).map((r: string) => r.trim());
+      if (!refs.length) return text("Give refs from library_find.", true);
+      if (refs.length > 10) return text("At most 10 files at once.", true);
+      const lines: string[] = [];
+      for (const ref of refs) {
+        if (ref.startsWith("page ") || ref.startsWith("page:")) {
+          lines.push(`- ${ref}: a page; read it with page_read and show it with page_show`);
+          continue;
+        }
+        const it = d.library({ agentId: ctx.agentId, q: ref.split("/").pop(), limit: 500 }).items.find((x) => x.path === ref);
+        if (!it?.path) {
+          lines.push(`- ${ref}: not in your library (use a ref exactly as library_find gives it)`);
+          continue;
+        }
+        const [f] = forSession([{ type: "attachment", path: it.path, name: it.name, ...(it.mimeType ? { mimeType: it.mimeType } : {}), ...(it.size !== undefined ? { size: it.size } : {}) }], d.workspacesRoot, ctx.workspace);
+        lines.push(f.path ? `- ${ref}: ${f.path}` : `- ${ref}: the file is no longer there`);
+      }
+      const remote = ctx.machineId !== "local" ? "\nThey come over to this computer from the hub: if one is not there yet, wait a few seconds and look again." : "";
+      return text(`In your working folder:\n${lines.join("\n")}${remote}`);
     },
   );
 

@@ -13,6 +13,7 @@ import { editAgent } from "../../state/panel";
 import { ChatView } from "./ChatView";
 import { SetupGate } from "../../components/BrainSetupCard";
 import { ArchivedBar } from "./AgentMenu";
+import { LibraryButton } from "../../components/LibrarySheet";
 
 /** While the dialog is on screen, tell the hub the user has seen it up to the newest finished message. */
 export function useReadMarker(conversationId: string | undefined, unread: number): void {
@@ -92,7 +93,10 @@ export function AgentPage({ agentId }: { agentId?: string }) {
     <div className="flex h-full flex-col">
       <TopBar>
         <AgentHeader agentId={id} />
-        <ChatMenu onSettings={agent ? () => editAgent(agent.id) : undefined} />
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          <LibraryButton agentId={id} />
+          <ChatMenu onSettings={agent ? () => editAgent(agent.id) : undefined} />
+        </div>
       </TopBar>
       <div className="min-h-0 flex-1">
         {conversationId ? (

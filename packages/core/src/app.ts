@@ -48,6 +48,7 @@ import { EgressGuard } from "./policy/egress.ts";
 import { Pictures } from "./policy/pictures.ts";
 import { brainReviewer } from "./policy/reviewer.ts";
 import { Pages } from "./pages.ts";
+import { readLibrary, type LibraryQuery } from "./library.ts";
 import { registerCoreTools } from "./tools/core-tools.ts";
 import { McpEndpoint } from "./mcp/server.ts";
 import { McpClientManager } from "./mcp/client.ts";
@@ -128,6 +129,10 @@ export class Hub {
   feeds: Feeds;
   /** Pages agents make (pages.ts). */
   pages: Pages;
+  /** An agent's library (library.ts): the files, pictures and pages of its chats, newest first. */
+  library(q: LibraryQuery = {}) {
+    return readLibrary({ db: this.db, workspacesRoot: join(this.config.dataDir, "workspaces"), pages: this.pages }, q);
+  }
   /** "New channel" and "Add agent" chats (setup-chats.ts). */
   setupChats: SetupChats;
   plugins: PluginHost;
@@ -496,6 +501,7 @@ export class Hub {
       transcriber: this.transcriber,
       route: (mode, stops) => roadRoute(config.routerUrl, mode, stops),
       userLocation: () => this.locations.get(),
+      library: (q) => this.library(q),
     });
     this.machines.registerTools(this.tools);
     registerHubTools(this);
