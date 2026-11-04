@@ -6,7 +6,7 @@ it("a fresh demo world neither restores nor writes the origin's persistent cache
   vi.stubGlobal("indexedDB", { open });
   try {
     const cache = await import("./cache");
-    cache.disablePersistentCache();
+    cache.disableCache();
     expect(await cache.cacheGet("messages:dlg_ada")).toBeUndefined();
     await cache.cachePut("messages:dlg_ada", [{ status: "streaming" }]);
     expect(await cache.mediaGet("/api/files?path=photo.jpg")).toBeUndefined();

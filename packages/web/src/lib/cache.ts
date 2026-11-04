@@ -19,16 +19,16 @@ export interface CachedMedia {
   at: number;
 }
 
-// A scripted demo owns a fresh world on each load, even on the same origin.
-let persistent = true;
-export function disablePersistentCache(): void {
-  persistent = false;
+let opening: Promise<IDBDatabase | undefined> | undefined;
+let disabled = false;
+
+/** Nothing is kept or read from now on (the demo: every chapter starts as a first visit). */
+export function disableCache(): void {
+  disabled = true;
 }
 
-let opening: Promise<IDBDatabase | undefined> | undefined;
-
 function open(): Promise<IDBDatabase | undefined> {
-  if (!persistent) return Promise.resolve(undefined);
+  if (disabled) return Promise.resolve(undefined);
   opening ??= new Promise<IDBDatabase | undefined>((resolve) => {
     let req: IDBOpenDBRequest;
     try {

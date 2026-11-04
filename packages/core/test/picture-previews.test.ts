@@ -1,10 +1,11 @@
-// Small copies of chat pictures (src/picture-previews.ts, src/preview-image.ts): scaled to fit, upright, kept on disk.
 import { once } from "node:events";
 import { Worker } from "node:worker_threads";
+// Small copies of chat pictures (src/picture-previews.ts, src/preview-image.ts): scaled to fit, upright, kept on disk.
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import jpeg from "jpeg-js";
 import { PNG } from "pngjs";
 import { PicturePreviews } from "../src/picture-previews.ts";
@@ -118,8 +119,25 @@ describe("the preview store", () => {
   }, 60_000);
 });
 
+describe("without the worker", () => {
+  it("makes the preview on the hub's own thread", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "previews-"));
+    const broken = join(dir, "worker.mjs");
+    writeFileSync(broken, "throw new Error('no worker here');");
+    const previews = new PicturePreviews(join(dir, "cache"), pathToFileURL(broken));
+    try {
+      const photo = join(dir, "photo.jpg");
+      writeFileSync(photo, jpg(2400, 1600));
+      const made = (await previews.preview(photo))!;
+      expect(jpeg.decode(readFileSync(made)).width).toBe(PREVIEW_SIDE);
+    } finally {
+      previews.stop();
+    }
+  }, 60_000);
+});
+
 // Force the encoder's Buffer into Node's shared pool, independent of the Node version's pool size.
-it("transfers a preview backed by a pooled encoder Buffer", async () => {
+it("returns a preview when the encoder uses Node's shared Buffer pool", async () => {
   const url = new URL("../src/preview-worker.ts", import.meta.url).href;
   const worker = new Worker(`Buffer.poolSize = 1024 * 1024; void import(${JSON.stringify(url)});`, { eval: true });
   try {
