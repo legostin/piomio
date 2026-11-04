@@ -222,7 +222,7 @@ export function Iphone() {
           <div className="reveal mt-9">
             {data.testflightUrl ? (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <a href={data.testflightUrl} className="candy inline-flex items-center gap-2.5 rounded-full px-6 py-3.5 text-[16px] font-semibold">
+                <a href={data.testflightUrl} data-ga="testflight" className="candy inline-flex items-center gap-2.5 rounded-full px-6 py-3.5 text-[16px] font-semibold">
                   <Apple size={18} />
                   {t("iphone.testflight")}
                 </a>
@@ -397,12 +397,12 @@ export function Install() {
               <div className="flex flex-col gap-6">
                 {steps(tab)}
                 <div className="flex flex-wrap items-center gap-3">
-                  <a href={downloadHref(tab)} className="candy inline-flex items-center gap-2 rounded-full px-5 py-3 text-[15px] font-semibold">
+                  <a href={downloadHref(tab)} data-ga="download" className="candy inline-flex items-center gap-2 rounded-full px-5 py-3 text-[15px] font-semibold">
                     {tab === "mac" ? <Apple size={17} /> : <Windows size={16} />}
                     {t("install.download")}
                     {data.release.version && <span className="font-medium opacity-70">{t("install.version", { version: data.release.version })}</span>}
                   </a>
-                  <a href={data.release.page} className="text-[14px] font-semibold text-accent-text underline-offset-4 hover:underline">
+                  <a href={data.release.page} data-ga="download" className="text-[14px] font-semibold text-accent-text underline-offset-4 hover:underline">
                     {t("install.allReleases")}
                   </a>
                 </div>
@@ -430,7 +430,7 @@ export function Footer() {
           </div>
         </div>
         <div className="flex flex-wrap gap-x-5 gap-y-2 text-[14px] font-medium text-fg-2 sm:ml-auto">
-          <a href={repo} className="inline-flex items-center gap-1.5 hover:text-fg">
+          <a href={repo} data-ga="github" className="inline-flex items-center gap-1.5 hover:text-fg">
             <GitHub size={15} />
             {t("footer.github")}
           </a>
@@ -443,7 +443,7 @@ export function Footer() {
           <a href={`${data.base}${lang}/server/`} className="hover:text-fg">
             {t("footer.server")}
           </a>
-          <a href={data.release.page} className="hover:text-fg">
+          <a href={data.release.page} data-ga="download" className="hover:text-fg">
             {t("footer.releases")}
           </a>
           <a href={`${repo}#license`} className="hover:text-fg">

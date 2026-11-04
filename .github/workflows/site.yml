@@ -8,6 +8,8 @@
 #   SITE_BASE    "/piomio/" while the site lives on legostin.github.io; "/" once a domain is connected
 #   SITE_ORIGIN  the site's address for canonical links, e.g. https://piomio.app (default https://legostin.github.io)
 #   SITE_CNAME   the domain itself, written to CNAME, e.g. piomio.app
+#   GA_MEASUREMENT_ID  GA4 measurement ID baked into every language page. Empty: no analytics script.
+#     Production default is the piomio.io property. Change it here and in packages/site/site.config.ts together.
 name: site
 
 on:
@@ -45,6 +47,7 @@ jobs:
       SITE_BASE: ${{ vars.SITE_BASE || '/piomio/' }}
       SITE_ORIGIN: ${{ vars.SITE_ORIGIN || 'https://legostin.github.io' }}
       SITE_CNAME: ${{ vars.SITE_CNAME }}
+      GA_MEASUREMENT_ID: G-RCPYYNZ3CQ
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4

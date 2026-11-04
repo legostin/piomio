@@ -8,6 +8,12 @@ export const siteConfig = {
   testflightUrl: "https://testflight.apple.com/join/g4hCfeXA",
   /** The site's address once a domain is connected (canonical links, Open Graph); empty: GitHub Pages. */
   siteUrl: "",
+  /**
+   * GA4 measurement ID (G-XXXXXXXXXX) for piomio.io. The build injects gtag.js only when this is a real ID.
+   * The site workflow sets GA_MEASUREMENT_ID to the same value (that variable wins). An empty GA_MEASUREMENT_ID
+   * turns analytics off. Change the ID in both places.
+   */
+  gaMeasurementId: "G-RCPYYNZ3CQ",
   /** The server installer (packaging/linux/install.sh, published by the site's build), as the README and the hub's invite page give it. */
   installScript: "https://piomio.io/install.sh",
   /** What an agent follows to install Piomio for the person (public/setup.md), named in the prompt the site and the README give. */

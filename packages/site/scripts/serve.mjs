@@ -4,6 +4,7 @@
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
+import { withSearch } from "../src/seo.ts";
 
 export const DIST = resolve(import.meta.dirname, "../dist");
 
@@ -43,7 +44,7 @@ export function serve({ port = 5198, dist = DIST, base = builtBase() } = {}) {
     let path = decodeURIComponent(url.pathname);
     if (!path.startsWith(base)) {
       if (path === "/" || path === base.slice(0, -1)) {
-        res.writeHead(302, { location: base });
+        res.writeHead(302, { location: withSearch(base, url.search) });
         return res.end();
       }
       return notFound(res);
@@ -53,7 +54,7 @@ export function serve({ port = 5198, dist = DIST, base = builtBase() } = {}) {
     if (file !== dist && !file.startsWith(dist + sep)) return notFound(res);
     if (existsSync(file) && statSync(file).isDirectory()) {
       if (!path.endsWith("/") && path !== "") {
-        res.writeHead(301, { location: `${base}${path}/` });
+        res.writeHead(301, { location: withSearch(`${base}${path}/`, url.search) });
         return res.end();
       }
       file = join(file, "index.html");

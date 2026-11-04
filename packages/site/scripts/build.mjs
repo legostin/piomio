@@ -4,6 +4,7 @@
 //   SITE_BASE    where the site lives: "/" with a domain (default), "/piomio/" on legostin.github.io
 //   SITE_ORIGIN  its address for canonical links (default: https://legostin.github.io, or siteConfig.siteUrl)
 //   SITE_CNAME   a domain to write into dist/CNAME (GitHub Pages)
+//   GA_MEASUREMENT_ID  GA4 measurement ID. When the variable is set, it overrides site.config.ts; empty turns analytics off.
 //   GITHUB_TOKEN optional, for the release and star count lookups
 //   --skip-demo  reuse packages/web/dist-demo as it is
 
@@ -12,6 +13,7 @@ import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { build } from "vite";
 import { siteConfig } from "../site.config.ts";
+import { measurementIdFrom } from "../src/seo.ts";
 import { ogImages } from "./og.mjs";
 import { prerender } from "./prerender.mjs";
 
@@ -25,6 +27,9 @@ const slash = (b) => `/${b.replace(/^\/+|\/+$/g, "")}/`.replace(/\/+/g, "/");
 const base = slash(process.env.SITE_BASE || "/");
 const origin = (process.env.SITE_ORIGIN || siteConfig.siteUrl || "https://legostin.github.io").replace(/\/+$/, "");
 const skipDemo = process.argv.includes("--skip-demo");
+const gaRaw = process.env.GA_MEASUREMENT_ID !== undefined ? process.env.GA_MEASUREMENT_ID : siteConfig.gaMeasurementId;
+const gaId = measurementIdFrom(process.env.GA_MEASUREMENT_ID, siteConfig.gaMeasurementId);
+if (gaRaw.trim() && !gaId) console.warn(`[site] GA_MEASUREMENT_ID "${gaRaw.trim()}" is not a GA4 measurement ID (G-XXXXXXXXXX); analytics stays off`);
 
 async function github(path) {
   const headers = { accept: "application/vnd.github+json", "user-agent": "piomio-site-build" };
@@ -79,7 +84,7 @@ if (!existsSync(join(WEB, "dist-demo/demo.html"))) throw new Error("packages/web
 await build({ root: SITE, configFile: join(SITE, "vite.config.ts"), logLevel: "warn" });
 const ssrOut = join(WORK, "ssr");
 await build({ root: SITE, configFile: join(SITE, "vite.config.ts"), logLevel: "warn", build: { ssr: "src/entry-server.tsx", outDir: ssrOut, emptyOutDir: true, copyPublicDir: false } });
-await prerender({ dist: DIST, ssrEntry: join(ssrOut, "entry-server.js"), languages: siteConfig.languages, base, origin, release: release.version, repo: siteConfig.repo });
+await prerender({ dist: DIST, ssrEntry: join(ssrOut, "entry-server.js"), languages: siteConfig.languages, base, origin, release: release.version, repo: siteConfig.repo, gaMeasurementId: gaId });
 rmSync(ssrOut, { recursive: true, force: true });
 
 // 4. The demo next to the page, the server installer (curl -fsSL <site>/install.sh | sh), the pictures for links, and
@@ -90,4 +95,4 @@ await ogImages(DIST, siteConfig.languages);
 writeFileSync(join(DIST, ".nojekyll"), "");
 if (process.env.SITE_CNAME) writeFileSync(join(DIST, "CNAME"), `${process.env.SITE_CNAME.trim()}\n`);
 
-console.log(`[site] built ${DIST} for ${origin}${base} (${siteConfig.languages.join(", ")})`);
+console.log(`[site] built ${DIST} for ${origin}${base} (${siteConfig.languages.join(", ")})${gaId ? `, GA4 ${gaId}` : ", analytics off"}`);

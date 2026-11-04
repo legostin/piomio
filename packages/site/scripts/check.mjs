@@ -9,6 +9,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright";
+import { siteConfig } from "../site.config.ts";
+import { PAGES, pagePath } from "../src/pages.ts";
+import { assertPublishedSeo, gaMeasurementId } from "../src/seo.ts";
 import { builtBase, DIST, serve } from "./serve.mjs";
 
 const arg = (name, fallback) => {
@@ -26,6 +29,33 @@ if (!existsSync(join(DIST, "demo/demo.html"))) {
   console.error("packages/site/dist is not built: npm run build:site");
   process.exit(1);
 }
+
+const published = JSON.parse(readFileSync(resolve(import.meta.dirname, "../.build/data.json"), "utf8"));
+const docSlugs = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../docs/guide/nav.json"), "utf8")).groups.flatMap((g) => g.pages);
+assertPublishedSeo(readFileSync(join(DIST, "sitemap.xml"), "utf8"), readFileSync(join(DIST, "robots.txt"), "utf8"), {
+  origin: published.origin,
+  base: published.base,
+  languages: siteConfig.languages,
+  pagePaths: PAGES.map(pagePath),
+  docSlugs,
+});
+const gaId = gaMeasurementId(process.env.GA_MEASUREMENT_ID !== undefined ? process.env.GA_MEASUREMENT_ID : siteConfig.gaMeasurementId);
+const homeEn = readFileSync(join(DIST, "en/index.html"), "utf8");
+const homeRu = readFileSync(join(DIST, "ru/index.html"), "utf8");
+const docsEn = readFileSync(join(DIST, "en/docs/index.html"), "utf8");
+const chooser = readFileSync(join(DIST, "index.html"), "utf8");
+if (!chooser.includes("location.search")) throw new Error("the language redirect drops the query string");
+if (gaId) {
+  for (const [file, html] of [["/en/", homeEn], ["/ru/", homeRu], ["/en/docs/", docsEn]]) {
+    if (!html.includes(`https://www.googletagmanager.com/gtag/js?id=${gaId}`)) throw new Error(`${file} is missing the GA4 snippet`);
+  }
+  if (!homeEn.includes('data-ga="download"') || !homeEn.includes('data-ga="testflight"') || !homeEn.includes('data-ga="github"'))
+    throw new Error("the landing page is missing a Download, TestFlight or GitHub analytics anchor");
+  if (chooser.includes("googletagmanager.com")) throw new Error("the language chooser loads GA4 and would count the visit twice");
+} else if ([homeEn, homeRu, docsEn, chooser].some((html) => html.includes("googletagmanager.com"))) {
+  throw new Error("analytics was injected with no measurement ID");
+}
+console.log(`[site] sitemap, robots and analytics (${gaId || "off"}) ok`);
 
 const base = builtBase();
 const server = await serve({ port: 0, base });

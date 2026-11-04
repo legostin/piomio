@@ -111,9 +111,11 @@ script (React's server renderer), then hydrated. No new framework.
 - `/en/` and `/ru/` prerendered, `hreflang` alternates, a canonical link, Open Graph images per language, `sitemap.xml`,
   `robots.txt`. `/` sends the browser to its language (English by default) with a plain link for no-script visitors.
 - Texts: `src/locales/{en,ru}.json`, one key set (a test checks parity), the app's `{name}` placeholders.
-- Settings in `site.config.ts`: the repository, the TestFlight link (empty: "soon"), the download links and the star
-  count filled at build time from the latest GitHub release (a build without network keeps the release page link).
-- Fonts are the app's bundled Onest and Unbounded; no outside requests at all, no analytics.
+- Settings in `site.config.ts`: the repository, the TestFlight link (empty: "soon"), the GA4 measurement ID (empty: no
+  analytics script), the download links and the star count filled at build time from the latest GitHub release (a
+  build without network keeps the release page link).
+- Fonts are the app's bundled Onest and Unbounded. The only outside request is gtag.js, and only when a GA4 measurement
+  ID is set.
 - The base path comes from `SITE_BASE` (`/piomio/` on `legostin.github.io`, `/` with a domain). A `CNAME` file is added
   when the domain is chosen.
 

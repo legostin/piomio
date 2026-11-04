@@ -35,9 +35,9 @@ does not reach its end; `--only mail,send`, `--lang ru` and `--speed 4` narrow t
   Markdown is published next to it (`/en/docs/install.md`) and listed in llms.txt. `npm test` checks the pages
   (`src/docs/docs.test.ts`), `npm run check:site` opens every one.
 - `src/locales/{en,ru}.json`: every word of the pages. Same keys in each (`src/locales/locales.test.ts`).
-- `site.config.ts`: the repository, the TestFlight link, the site's address.
+- `site.config.ts`: the repository, the TestFlight link, the site's address, the GA4 measurement ID.
 - `scripts/build.mjs`: release links and the star count from GitHub (at build time; no network → the releases page),
-  the demo, the page, prerendering (`prerender.mjs`), Open Graph pictures (`og.mjs`, Playwright), sitemap, robots.
+  the demo, the page, prerendering (`prerender.mjs`), Open Graph pictures (`og.mjs`, Playwright), sitemap, robots, and the GA4 snippet when a measurement ID is set.
 
 ## Common changes
 
@@ -52,6 +52,13 @@ the link the badge says “Beta”.
 2. Set the repository variables `SITE_BASE=/`, `SITE_ORIGIN=https://<domain>` and `SITE_CNAME=<domain>` (Settings →
    Secrets and variables → Actions → Variables), and set `siteUrl` in `site.config.ts` to the same address.
 3. Run the **site** workflow (or push to `main`): the build writes `CNAME` and prerenders with the new base.
+
+**Analytics (GA4).** The build injects gtag.js only when the measurement ID is a `G-…` value. Nothing is injected when it is empty or invalid, and there is no cookie banner. Production uses `G-RCPYYNZ3CQ` (the piomio.io property). Change it in both places, and keep them the same:
+
+- `gaMeasurementId` in `site.config.ts` — what `npm run build:site` uses when `GA_MEASUREMENT_ID` is not set;
+- `GA_MEASUREMENT_ID` in `.github/workflows/site.yml` — what the GitHub Pages build sets. This value wins. Set it to an empty string to publish with analytics off.
+
+The script is async, on every language page (the landing page, the server guide, the docs). `/` only redirects, and does not load the tag, so a visit is counted once. That redirect keeps the query string, including UTM parameters. Download, TestFlight and GitHub links are normal outbound anchors with `data-ga="download"`, `data-ga="testflight"` or `data-ga="github"`; the snippet sends a gtag event with that name. GA4 enhanced measurement also records the outbound click.
 
 **A language.** A language needs the app itself translated first (the demo shows the real UI: `packages/core` and
 `packages/web` catalogs, the plugins' `locales/`), then:

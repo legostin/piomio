@@ -7,14 +7,16 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { frontMatter } from "../src/docs/markdown.ts";
+import { analyticsSnippet, indexablePaths, languageRedirectScript, robotsTxt, sitemapXml } from "../src/seo.ts";
 import { loadDocs, pageData } from "./docs.mjs";
 
 /**
- * @param {{ dist: string; ssrEntry: string; languages: readonly string[]; base: string; origin: string; release?: string; repo: string }} o
+ * @param {{ dist: string; ssrEntry: string; languages: readonly string[]; base: string; origin: string; release?: string; repo: string; gaMeasurementId?: string }} o
  */
-export async function prerender({ dist, ssrEntry, languages, base, origin, release, repo }) {
+export async function prerender({ dist, ssrEntry, languages, base, origin, release, repo, gaMeasurementId }) {
   const template = readFileSync(join(dist, "index.html"), "utf8");
   const { render, renderDoc, llmsTxt, PAGES, pagePath } = await import(pathToFileURL(ssrEntry).href);
+  const analytics = analyticsSnippet(gaMeasurementId);
   const write = (file, text) => {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, text);
@@ -23,7 +25,7 @@ export async function prerender({ dist, ssrEntry, languages, base, origin, relea
   const fill = (lang, marked, head, html) =>
     template
       .replace('<html lang="en">', () => `<html lang="${lang}"${marked ? ` data-page="${marked}"` : ""}>`)
-      .replace("<!--head-->", () => head)
+      .replace("<!--head-->", () => `${head}${analytics}`)
       .replace("<!--app-->", () => html);
   for (const lang of languages)
     for (const which of PAGES) {
@@ -60,10 +62,7 @@ export async function prerender({ dist, ssrEntry, languages, base, origin, relea
 ${head}
 <link rel="icon" type="image/svg+xml" href="${base}favicon.svg" />
 <script>
-  var langs = ${JSON.stringify(languages)};
-  var want = (navigator.languages || [navigator.language || "en"]).map(function (l) { return String(l).slice(0, 2).toLowerCase(); });
-  var pick = want.find(function (l) { return langs.indexOf(l) >= 0; }) || "en";
-  location.replace(${JSON.stringify(base)} + pick + "/");
+  ${languageRedirectScript(base, languages)}
 </script>
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, sans-serif; background: #f7f4ef; color: #1c1814; }
@@ -78,7 +77,7 @@ ${head}
 `;
   const alternates = [...languages.map((l) => `<link rel="alternate" hreflang="${l}" href="${origin}${base}${l}/" />`), `<link rel="alternate" hreflang="x-default" href="${origin}${base}en/" />`];
   writeFileSync(join(dist, "index.html"), chooser(render("en").head));
-  writeFileSync(join(dist, "404.html"), chooser(["<title>Piomio</title>", ...alternates].join("\n")));
+  writeFileSync(join(dist, "404.html"), chooser(["<title>Piomio</title>", `<meta name="robots" content="noindex" />`, ...alternates].join("\n")));
   writeFileSync(
     join(dist, "llms.txt"),
     llmsTxt(
@@ -89,24 +88,7 @@ ${head}
     ),
   );
 
-  const today = new Date().toISOString().slice(0, 10);
-  writeFileSync(
-    join(dist, "sitemap.xml"),
-    `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
-${[...PAGES.map(pagePath), ...docSlugs.map((slug) => `docs/${slug === "index" ? "" : `${slug}/`}`)]
-  .flatMap((path) =>
-    languages.map(
-      (l) => `  <url>
-    <loc>${origin}${base}${l}/${path}</loc>
-    <lastmod>${today}</lastmod>
-${languages.map((x) => `    <xhtml:link rel="alternate" hreflang="${x}" href="${origin}${base}${x}/${path}" />`).join("\n")}
-  </url>`,
-    ),
-  )
-  .join("\n")}
-</urlset>
-`,
-  );
-  writeFileSync(join(dist, "robots.txt"), `User-agent: *\nAllow: /\nDisallow: ${base}demo/\nSitemap: ${origin}${base}sitemap.xml\n`);
+  const paths = indexablePaths(PAGES.map(pagePath), docSlugs);
+  writeFileSync(join(dist, "sitemap.xml"), sitemapXml({ origin, base, languages, paths, lastmod: new Date().toISOString().slice(0, 10) }));
+  writeFileSync(join(dist, "robots.txt"), robotsTxt({ origin, base }));
 }
