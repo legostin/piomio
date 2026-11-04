@@ -2,7 +2,6 @@
 // the real buttons and waits for the hub, so what the visitor sees is the app's own behaviour.
 
 import type { Message } from "@piomio/shared";
-import { messages, groups } from "../../state/app";
 import { agentPath } from "../../lib/team";
 import { t } from "../../i18n";
 import type { DemoHub } from "../hub/hub";
@@ -54,12 +53,7 @@ export class Person {
       await this.clock.wait(ch === " " ? 55 : 28 + Math.random() * 38);
     }
     await this.clock.wait(260);
-    let diagnosed = false;
-    const send = await waitFor(this.clock, () => {
-      const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${t("composer.send")}"]`);
-      if (!button && !diagnosed) { diagnosed = true; console.error("[composer diagnostic]", JSON.stringify({ connected: field.isConnected, value: field.value, buttons: [...document.querySelectorAll("button[aria-label]")].map(b => b.getAttribute("aria-label")), messages: messages.get(), groups: groups.get() })); }
-      return button;
-    }, "the send button");
+    const send = await waitFor(this.clock, () => document.querySelector<HTMLButtonElement>(`button[aria-label="${t("composer.send")}"]`), "the send button");
     const arrived = this.hub.nextUserMessage();
     await this.cursor.moveTo(this.clock, send);
     await this.cursor.press(this.clock);

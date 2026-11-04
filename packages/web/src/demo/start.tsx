@@ -7,6 +7,7 @@ import * as ReactDOMClient from "react-dom/client";
 import * as JsxRuntime from "react/jsx-runtime";
 import { Router } from "wouter";
 import { uiRuntime } from "../plugins/runtime";
+import { disablePersistentCache } from "../lib/cache";
 import { agentPath } from "../lib/team";
 import { App } from "../App";
 import "../index.css";
@@ -26,6 +27,8 @@ import { installShims } from "./shims";
 import { makeWorld } from "./world";
 
 export async function start(params: DemoParams, report: (m: FromDemo) => void): Promise<void> {
+  // Each chapter has a fresh hub; another chapter's cached streaming reply is not part of this world.
+  disablePersistentCache();
   const content = contentFor(params.lang);
   const chapter = chapterById(params.chapter);
   const hub = new DemoHub(makeWorld(content));
