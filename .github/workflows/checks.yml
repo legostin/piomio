@@ -30,3 +30,6 @@ jobs:
       # The browser plugin's tests drive Playwright's Chromium, with the system libraries it needs.
       - run: npx playwright install --with-deps chromium
       - run: npm test
+
+      - if: always()
+        run: npm run build:ui-plugins && npm run build:site && npm run check:site

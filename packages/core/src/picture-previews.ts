@@ -63,6 +63,7 @@ export class PicturePreviews {
     const run = this.queue.then(async () => {
       const r = await this.ask({ file, type });
       if (!r.data || !r.type || !EXT[r.type]) {
+        console.error("[preview diagnostic]", r);
         this.cache.put(`${key}.none`, r.error ?? "");
         return undefined;
       }
@@ -70,7 +71,7 @@ export class PicturePreviews {
       return join(this.cache.dir, key + EXT[r.type]);
     });
     this.queue = run.catch(() => {});
-    return run.catch(() => undefined);
+    return run.catch((e) => { console.error("[preview diagnostic]", e); return undefined; });
   }
 
   private ask(job: Omit<PreviewJob, "id">): Promise<PreviewReply> {
