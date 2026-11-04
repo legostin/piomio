@@ -127,7 +127,7 @@ function Versions({ data }: { data: DocPageData }) {
               {t("docs.atRelease", { version: data.version.release })}
             </a>
           )}
-          <a href={`https://github.com/${site.repo}/releases`} className="block rounded-lg px-2.5 py-2 text-[13px] text-fg-2 hover:bg-surface-2">
+          <a href={`https://github.com/${site.repo}/releases`} data-ga="download" className="block rounded-lg px-2.5 py-2 text-[13px] text-fg-2 hover:bg-surface-2">
             {t("docs.releases")}
           </a>
         </div>

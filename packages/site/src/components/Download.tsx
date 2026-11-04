@@ -55,7 +55,7 @@ export function DownloadButton({ size = "lg" }: { size?: "sm" | "lg" }) {
   const os = useOs();
   if (os === "phone")
     return size === "sm" ? (
-      <a href={`https://github.com/${data.repo}`} className="candy inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[14px] font-semibold">
+      <a href={`https://github.com/${data.repo}`} data-ga="github" className="candy inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[14px] font-semibold">
         <GitHub size={15} />
         GitHub
       </a>
@@ -65,13 +65,13 @@ export function DownloadButton({ size = "lg" }: { size?: "sm" | "lg" }) {
   const Icon = os === "mac" ? Apple : Windows;
   if (size === "sm")
     return (
-      <a href={downloadHref(os)} className="candy inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[14px] font-semibold">
+      <a href={downloadHref(os)} data-ga="download" className="candy inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[14px] font-semibold">
         <Icon size={15} />
         {t("nav.download")}
       </a>
     );
   return (
-    <a href={downloadHref(os)} className="candy inline-flex items-center gap-2.5 rounded-full px-6 py-3.5 text-[16px] font-semibold">
+    <a href={downloadHref(os)} data-ga="download" className="candy inline-flex items-center gap-2.5 rounded-full px-6 py-3.5 text-[16px] font-semibold">
       <Icon size={19} />
       {t(os === "mac" ? "hero.downloadMac" : "hero.downloadWin")}
     </a>

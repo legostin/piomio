@@ -63,6 +63,7 @@ export function TopBar({ page = "home", hrefFor }: { page?: Page; hrefFor?: (lan
           </div>
           <a
             href={`https://github.com/${data.repo}`}
+            data-ga="github"
             className="ghost hidden items-center gap-2 rounded-full px-3 py-1.5 text-[14px] font-medium sm:inline-flex"
             aria-label={data.stars ? t("nav.stars", { count: data.stars }) : "GitHub"}
           >
