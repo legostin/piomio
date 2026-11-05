@@ -161,6 +161,11 @@ export interface ApprovalAsk {
   listed?: boolean;
   agent?: string;
   task?: string;
+  /** Server deadline for a live network permission; does not promise that a TCP client stays connected. */
+  networkExpiresAt?: string;
+  networkClosedReason?: "timeout" | "connection_closed" | "session_ended";
+  /** A user explicitly requested a fresh decision; this never reopens the old approval. */
+  networkRetryRequestedAt?: string;
 }
 
 /**

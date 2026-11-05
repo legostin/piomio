@@ -196,6 +196,10 @@ export class ApprovalService {
     if (a.status !== "pending") throw new LocalizedError("approval.alreadyResolved", { status: a.status }, 409);
     const status: ApprovalStatus = decision === "approve" ? "approved" : "denied";
     const network = a.ask?.kind === "network";
+    if (network && a.ask?.networkExpiresAt && Date.parse(a.ask.networkExpiresAt) <= Date.now()) {
+      this.expire(id, "timeout");
+      throw new LocalizedError("approval.alreadyResolved", { status: "expired" }, 409);
+    }
     if (network && decision === "approve" && opts.remember) {
       if (!this.onNetworkRemember) throw new Error("Network permission service unavailable");
       this.onNetworkRemember(a);
@@ -227,14 +231,41 @@ export class ApprovalService {
   }
 
   /** A live request ended: close its card without scheduling deferred execution. */
-  expire(id: string): void {
+  expire(id: string, reason?: "timeout" | "connection_closed" | "session_ended"): void {
     const a = this.get(id);
     if (!a || a.status !== "pending") return;
+    if (a.ask?.kind === "network" && reason) this.db.prepare("update approvals set ask = ? where id = ?").run(JSON.stringify({ ...a.ask, networkClosedReason: reason }), id);
     this.db.prepare("update approvals set status = 'expired', resolved_at = ?, resolved_via = 'timeout' where id = ?").run(nowIso(), id);
     this.audit.append("core", "approval.expire", a.tool, { id });
     const waiters = this.waiters.get(id) ?? [];
     this.waiters.delete(id);
     for (const waiter of waiters) waiter("denied");
+    this.bus.emit("approval.resolved", this.get(id));
+  }
+
+  /** A user asks for a new network decision, never a late approval or a replay of the old socket. */
+  requestNetworkRetry(id: string): { approval: Approval; fresh: boolean } {
+    let a = this.get(id);
+    if (!a) throw new LocalizedError("approval.notFound", undefined, 404);
+    if (a.tool !== "hub_network_request" || a.ask?.kind !== "network" || !a.ask.host) throw new LocalizedError("network.retryUnavailable", undefined, 409);
+    if (a.ask?.kind === "network" && a.status === "pending" && a.ask.networkExpiresAt && Date.parse(a.ask.networkExpiresAt) <= Date.now()) {
+      this.expire(id, "timeout"); a = this.get(id)!;
+    }
+    if (!["expired", "denied"].includes(a.status)) throw new LocalizedError("network.retryUnavailable", undefined, 409);
+    const ask = a.ask!;
+    if (ask.networkRetryRequestedAt) return { approval: a, fresh: false };
+    this.db.prepare("update approvals set ask = ? where id = ?").run(JSON.stringify({ ...ask, networkRetryRequestedAt: nowIso() }), id);
+    const updated = this.get(id)!;
+    this.audit.append("user", "network.retry.requested", ask.host!, { approvalId: id });
+    this.bus.emit("approval.resolved", updated);
+    return { approval: updated, fresh: true };
+  }
+
+  networkRetryFailed(id: string): void {
+    const a = this.get(id);
+    if (!a?.ask?.networkRetryRequestedAt) return;
+    const ask = { ...a.ask }; delete ask.networkRetryRequestedAt;
+    this.db.prepare("update approvals set ask = ? where id = ?").run(JSON.stringify(ask), id);
     this.bus.emit("approval.resolved", this.get(id));
   }
 

@@ -210,6 +210,21 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     return { id: a.id, status: a.status };
   });
 
+  // A separate user action requests a fresh decision in the agent's current context; it grants no access itself.
+  api.post("/api/approvals/:id/network-retry", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const original = hub.approvals.get(id);
+    if (!original) throw new HttpError(404, "approval.notFound");
+    if (!hub.store.getConversation(original.conversationId) || (original.taskId && hub.store.getTask(original.taskId)?.status === "cancelled")) throw new HttpError(409, "network.retryUnavailable");
+    const { approval, fresh } = hub.approvals.requestNetworkRetry(id);
+    if (fresh) {
+      try {
+        await hub.runner.userMessage(approval.conversationId, tFor(requestLocale(req))("network.retryMessage", { host: approval.ask!.host!, port: approval.ask!.port ?? 443 }), { channel: opts.kind === "device" ? "app" : "web" });
+      } catch (e) { hub.approvals.networkRetryFailed(id); throw e; }
+    }
+    return reply.code(202).send({ requested: true });
+  });
+
   // ----- team: every agent with its long-lived dialog (created on first listing), and the group chats -----
   api.get("/api/team", async () => hub.team.list());
   // The group chats; with ?all=1 the archived ones too (`archived: true`): the web's archive opens from there.

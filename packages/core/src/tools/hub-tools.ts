@@ -177,7 +177,7 @@ export function registerHubTools(hub: Hub): void {
 
   reg({
     name: "network_request", effect: "read",
-    description: "Ask the person to allow a public host for this local brain session. Uses the network card: once for this session, always in the host allowlist, or deny. Never grants permission to publish, send or run commands. Waits up to 90 seconds. Private/LAN/metadata addresses are refused. Also use this after a proxy 403 to get a clear outcome.",
+    description: "Ask the person to allow a public host for this local brain session. Uses the network card: once for this session, always in the host allowlist, or deny. Never grants permission to publish, send or run commands. Waits up to 10 minutes without opening a connection to that host. Private/LAN/metadata addresses are refused. Also use this after a proxy 403 to get a clear outcome. Never automatically retry expired or denied access.",
     inputSchema: obj({ host: { type: "string", description: "Exact DNS name or public IP, without a URL or wildcard" }, port: { type: "integer", minimum: 1, maximum: 65535 } }, ["host"]),
   }, async (i, ctx) => {
     await hub.egress.requestHost(ctx.sessionId, String(i.host ?? ""), Number(i.port ?? 443));
