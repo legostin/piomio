@@ -840,6 +840,8 @@ export default {
   "mcp.emptyHint": "Добавьте их в конфигурацию ниже или установите плагин, который их приносит.",
   "mcp.status.connecting": "подключается",
   "mcp.status.connected": "подключён",
+  "mcp.status.reconnecting": "переподключается",
+  "mcp.status.signin": "ждёт входа",
   "mcp.status.error": "ошибка",
   "mcp.status.disabled": "отключён",
   "mcp.source.user": "ваш",

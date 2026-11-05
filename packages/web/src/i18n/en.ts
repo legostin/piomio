@@ -840,6 +840,8 @@ export default {
   "mcp.emptyHint": "Add them to the config below or install a plugin that brings them.",
   "mcp.status.connecting": "connecting",
   "mcp.status.connected": "connected",
+  "mcp.status.reconnecting": "reconnecting",
+  "mcp.status.signin": "waiting for sign-in",
   "mcp.status.error": "error",
   "mcp.status.disabled": "disabled",
   "mcp.source.user": "yours",

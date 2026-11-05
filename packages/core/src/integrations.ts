@@ -189,8 +189,12 @@ export async function listIntegrations(hub: Hub, locale: Locale, opts: { all?: b
     }
     // Its MCP servers: one that failed to start says why; a sign-in is connected once every server of the plugin is.
     const servers = r.enabled ? hub.mcpClients.list().filter((s) => s.source === r.id) : [];
-    const failed = servers.find((s) => s.status === "error");
-    if (failed && view.status !== "unavailable") Object.assign(view, { status: "broken", ...(failed.error ? { detail: failed.error } : {}) });
+    // One the hub is reconnecting by itself is broken for now, never waiting for a sign-in: the sign-in is kept.
+    const failed = servers.find((s) => s.status === "error" || s.status === "reconnecting");
+    if (failed && view.status !== "unavailable") {
+      const detail = failed.status === "reconnecting" ? t("mcp.reconnecting", { error: failed.error ?? "" }) : failed.error;
+      Object.assign(view, { status: "broken", ...(detail ? { detail } : {}) });
+    }
     else if (integ.connect === "signin" && r.enabled && (!servers.length || servers.some((s) => s.status !== "connected"))) view.status = "needs-setup";
     // Its process fell over: broken, whatever its connection says.
     if (r.enabled && (r.status === "crashed" || r.status === "error") && view.status !== "unavailable")

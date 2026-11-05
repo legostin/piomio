@@ -14,7 +14,7 @@ import { Badge, Button, Card, EmptyState, ErrorNote, Loading, Page, Textarea } f
 interface McpStatus {
   name: string;
   source: string;
-  status: "connecting" | "connected" | "error" | "disabled";
+  status: "connecting" | "connected" | "reconnecting" | "signin" | "error" | "disabled";
   error?: string;
   tools: string[];
 }
@@ -22,6 +22,8 @@ interface McpStatus {
 const STATUS: Record<McpStatus["status"], { label: MessageKey; tone: Tone }> = {
   connecting: { label: "mcp.status.connecting", tone: "info" },
   connected: { label: "mcp.status.connected", tone: "success" },
+  reconnecting: { label: "mcp.status.reconnecting", tone: "warning" },
+  signin: { label: "mcp.status.signin", tone: "info" },
   error: { label: "mcp.status.error", tone: "danger" },
   disabled: { label: "mcp.status.disabled", tone: "neutral" },
 };
