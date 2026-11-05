@@ -40,10 +40,10 @@ const ADDRESS = /[a-z][a-z0-9+.-]*:\/\/|\b[\w.-]+@[\w.-]+:/i;
  */
 const LOOKS = new Set(["pwd", "ls", "whoami", "id", "uname", "uptime", "nproc", "df", "du", "date", "echo", "true", "false", "which"]);
 /**
- * git's subcommands that show the repository's state and history. Not `diff`: by default it runs the repository's
- * configured external diff program.
+ * git's subcommands that show the repository's state and history. Not `diff` (by default it runs the repository's
+ * configured external diff program), nor `remote` (a remote's address may carry a token).
  */
-const GIT_LOOKS = new Set(["status", "log", "rev-parse", "branch", "describe", "show-ref", "shortlog", "rev-list", "count-objects", "remote", "tag", "stash", "worktree", "version", "merge-base", "name-rev"]);
+const GIT_LOOKS = new Set(["status", "log", "rev-parse", "branch", "describe", "show-ref", "shortlog", "rev-list", "count-objects", "tag", "stash", "worktree", "version", "merge-base", "name-rev"]);
 /** A flag (`-5`, `--oneline`, `--format=%h %s`). */
 const FLAG = /^--?[A-Za-z0-9][A-Za-z0-9-]*(?:=[A-Za-z0-9%._:@^~{}(), -]*)?$/;
 /** A revision or a range of them (origin/main, HEAD~1, @{u}, v1.2, main..HEAD): never an absolute path or a way up. */
