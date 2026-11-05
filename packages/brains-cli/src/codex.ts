@@ -12,7 +12,8 @@ import { markLegacy, profileFrom } from "@piomio/shared/models";
 import { capture, childEnv, runLines, WarmPool } from "./proc.ts";
 import { brainsT } from "./messages.ts";
 import { parseCodexDeviceLogin, runCliLogin } from "./login.ts";
-import { AppServerUnsupported, CodexAppServer, listCodexModels, parseCodexReset, type CodexModel } from "./codex-app.ts";
+import { AppServerStartFailed, AppServerUnsupported, CodexAppServer, listCodexModels, parseCodexReset, type CodexModel } from "./codex-app.ts";
+import { isolationConfig } from "./codex-isolation.ts";
 import { askHub, type HubAnswer } from "./hub-permission.ts";
 import { confinedNetwork, confinedProxyEnv } from "./network.ts";
 
@@ -27,6 +28,8 @@ export interface CodexOptions {
   extraConfig?: () => string[];
   stateDir: string;
   log?: (msg: string) => void;
+  /** What went wrong and the hub's log should keep (a Codex that did not start). */
+  error?: (msg: string) => void;
   /** Language for messages people read (probe details, failures); English by default. */
   locale?: () => Locale;
   /** How long a sign-in from the chat may wait for the user (Codex device codes last 15 minutes). */
@@ -36,6 +39,10 @@ export interface CodexOptions {
   /** Processes kept waiting at once; the one waiting longest closes first. */
   maxWarm?: number;
 }
+
+/** The model's side of a `codex exec` session that was to have network (English: it is for the model). */
+const EXEC_OFFLINE_NOTE =
+  "[System] Your shell has no network in this session: this Codex is too old for the hub's network proxy. Use the hub's tools (web_fetch, the composio_github_* tools) for the internet, and tell the person to update Codex.";
 
 /** A dialog's process waits this long for its next turn before it closes (BrainSessionOptions.keepWarm). */
 const IDLE_MS = 10 * 60_000;
@@ -110,6 +117,8 @@ class CodexSession implements BrainSessionImpl {
   private app?: CodexAppServer;
   /** This Codex has no app-server: turns use `codex exec`. */
   private execOnly = false;
+  /** The session was told its commands have no network in `codex exec`. */
+  private toldOffline = false;
   private interrupted = false;
   /** A turn is in progress (send() has not finished). */
   private turning = false;
@@ -192,6 +201,20 @@ class CodexSession implements BrainSessionImpl {
     ];
   }
 
+  /** The hub gave this session's commands network through its proxy (BrainSessionOptions.confine.network). */
+  private wantsNetwork(): boolean {
+    try {
+      return !!confinedNetwork(this.o);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The hub's tools alone: the person's own Codex MCP servers, plugins and ChatGPT apps are off (codex-isolation.ts). */
+  private isolation(): string[] {
+    return isolationConfig({ ...process.env, ...this.o.env });
+  }
+
   /** A bare session (auto mode's reviewer): no hub, no tools, none of the person's MCP servers, plugins or memories. */
   private bareConfig(): string[] {
     return [
@@ -201,6 +224,7 @@ class CodexSession implements BrainSessionImpl {
       "project_doc_max_bytes=0",
       NO_FAST_TIER,
       ...["shell_tool", "multi_agent", "apps", "plugins", "memories", "goals", "hooks", "image_generation"].map((f) => `features.${f}=false`),
+      ...this.isolation().filter((c) => c.startsWith("mcp_servers.")),
       ...(this.o.effort ? [`model_reasoning_effort=${tomlString(this.o.effort)}`] : []),
       ...(this.p.extraConfig?.() ?? []),
     ];
@@ -222,6 +246,7 @@ class CodexSession implements BrainSessionImpl {
       `mcp_servers.piomio.default_tools_approval_mode="approve"`,
       `approval_policy=${tomlString(this.approvalPolicy())}`,
       NO_FAST_TIER,
+      ...this.isolation(),
       ...((!exec && this.profile()) || [`sandbox_mode=${tomlString(this.sandbox())}`]),
       // Legacy exec cannot enforce a profile's domain rules. Do not turn its sandbox into unrestricted networking.
       ...(exec && this.o.confine ? ["sandbox_workspace_write.network_access=false"] : []),
@@ -319,7 +344,18 @@ class CodexSession implements BrainSessionImpl {
         this.app = app;
         app.think({ model: this.o.model, effort: this.o.effort });
         try {
-          for await (const e of app.run(turn)) yield e;
+          try {
+            for await (const e of app.run(turn)) yield e;
+          } catch (e) {
+            if (!(e instanceof AppServerStartFailed)) throw e;
+            // A passing failure at start (nothing reached the model): once more, in a fresh process.
+            this.p.log?.(`codex app-server did not start (${e.message}); starting it again`);
+            void app.stop();
+            app = this.newServer(env);
+            this.app = app;
+            app.think({ model: this.o.model, effort: this.o.effort });
+            for await (const e of app.run(turn)) yield e;
+          }
           // The thread is too full to go on (Codex compacts on its own; this is when that was not enough): a fresh
           // thread from the hub's recap.
           if (app.parser.full && turn.recap && app.threadId && !this.interrupted) {
@@ -331,10 +367,19 @@ class CodexSession implements BrainSessionImpl {
             for await (const e of app.run({ ...turn, text: `${turn.recap}\n\n---\n${turn.text}` })) yield e;
           }
         } catch (e) {
+          if (e instanceof AppServerStartFailed) {
+            // Never `codex exec` for it: its commands have no network, and the session would stay so silently.
+            this.app = undefined;
+            const message = brainsT(this.p.locale?.())("codex.didNotStart", { detail: e.message });
+            this.p.error?.(`codex app-server did not start twice in session ${this.o.sessionId}: ${e.message}`);
+            yield { type: "error", fatal: true, message };
+            yield { type: "done", resumeToken: this.threadId };
+            return;
+          }
           if (!(e instanceof AppServerUnsupported)) throw e;
           this.execOnly = true;
           this.app = undefined;
-          this.p.log?.(`codex app-server unavailable (${e.message}); turns use codex exec`);
+          this.p.error?.(`codex has no app-server (${e.message}); turns use codex exec, whose commands have no network`);
         }
         if (!this.execOnly) {
           if (app.threadId) this.threadId = app.threadId;
@@ -358,6 +403,12 @@ class CodexSession implements BrainSessionImpl {
           yield { type: "done", resumeToken: this.threadId };
           return;
         }
+      }
+      // A session that was to have network through the hub's proxy has none in exec: the person and the agent are told.
+      if (!this.toldOffline && this.wantsNetwork()) {
+        this.toldOffline = true;
+        yield { type: "warning", message: brainsT(this.p.locale?.())("codex.noNetwork") };
+        turn = { ...turn, text: `${EXEC_OFFLINE_NOTE}\n\n${turn.text}` };
       }
       yield* this.sendExec(turn, env);
     } finally {
