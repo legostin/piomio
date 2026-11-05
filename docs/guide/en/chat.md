@@ -36,6 +36,8 @@ You don't have to put everything into one message.
 - Every agent is a front desk. It answers quick things itself and sends anything with steps (research, code, checking, long writing) to a task on the side, then says in one line what it started. The dialog stays free, and you can keep writing. How tasks work is in [Tasks, schedules and the Inbox](tasks.md).
 - Your own dialogs never wait in line. Tasks and messages between agents do wait when a brain is busy (**Parallel sessions per brain** in **Settings** → **General**).
 
+You can send clarifications at any time without pressing **Stop**. A status under the message shows whether it joined the current work or is queued for the next turn. Queued input starts after the current work ends; it never starts a competing run. In groups, new messages wait for the current round. If delivery fails or the hub restarts before queued input is picked up, the message stays in the chat with a retry notice.
+
 ### The live step line
 
 While the agent works, a short line under its name says what it is doing now, in place of typing dots: **Reading plan.md**, **Running: npm test**, **On the web…**, **Starting a task…**, **Writing to a teammate…**. **Waiting for your permission** shows in amber when an action needs your yes (see [Approvals and auto mode](approvals.md)). When the words of the reply start to flow, the line gives way to them.
@@ -46,7 +48,7 @@ When a task finishes after you have already written about other things, the agen
 
 ### Stopping
 
-While an agent answers, the send button turns into **Stop**. It stops the reply in progress. In a group chat the members still waiting for their turn don't answer either. If there is nothing running you see **Nothing to stop**.
+While an agent answers, **Send** stays available and a separate **Stop** button appears beside it. It stops the reply in progress. In a group chat the members still waiting for their turn don't answer either. If there is nothing running you see **Nothing to stop**.
 
 Stop does not cancel tasks the agent already started. Say "stop that" and the agent cancels the task, or press **Cancel** on the task's page.
 

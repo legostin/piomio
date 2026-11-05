@@ -110,6 +110,8 @@ export interface RunnerDeps {
 const WEB_CHANNEL = "web";
 
 interface TurnOpts {
+  /** Busy-chat inputs picked up by this queued turn. */
+  inputMessageIds?: string[];
   task?: Task;
   /** The channel the user's message came from: the reply goes back there. */
   replyChannel?: string;
@@ -245,6 +247,8 @@ export class SessionRunner {
   private freed = new Set<() => void>();
   /** By conversation: user messages written while a turn runs, which reach the agent together as its next turn. */
   private pending = new Map<string, Pending[]>();
+  /** Input preparation/steering is serial too: slow transcription must not reorder later text. */
+  private inputs = new Map<string, Promise<void>>();
   /** When each live session last got the current time (clock.ts). */
   private clock = new TurnClock();
   /** The `[You now]` block each live session saw last (situation.ts). */
@@ -387,6 +391,7 @@ export class SessionRunner {
     const fromWeb = !opts.channel || opts.channel === WEB_CHANNEL;
     const files = attachments.length ? { attachments } : {};
     if (conv.kind === "group") {
+      if (this.isRunning(conversationId)) this.inputStatus(msg.id, "queued");
       this.startGroupRound(conv, hooked.payload.text, prompt, msg.id, { replyAgentId: original?.agentId ?? (original?.role === "assistant" ? conv.agentId : undefined), replyChannel: opts.channel, ...files });
       return msg;
     }
@@ -395,24 +400,35 @@ export class SessionRunner {
     const task = conv.taskId ? this.d.store.getTask(conv.taskId) : undefined;
     // A turn is running here: the message joins it and the brain takes it at its next step (voice notes become words
     // first). A brain that cannot take it, or a turn that ended meanwhile, gets it as the next turn.
-    if (this.activeTurns.has(conversationId)) {
-      void (async () => {
-        const files: Pick<TurnOpts, "attachments" | "speech"> = attachments.length ? await this.transcribeParts(msg.id, attachments) : {};
-        if (await this.steerInto(conversationId, prompt, { ...reply, ...files, fromUser: true })) return;
-        if (task) await this.wakeTask(task, prompt, { ...reply, ...files, fromUser: true });
-        else this.queueUserTurn(conv, { messageId: msg.id, prompt, attachments: files.attachments ?? [], ...reply });
-      })();
-      return msg;
-    }
-    // Written on a task's page: the task carries on with it (its status, result and report follow). A goal waiting for
-    // the person has its answer: it goes on round after round.
     if (task?.kind === "goal" && task.question) this.d.store.updateTask(task.id, { question: undefined });
-    if (task) {
-      void (async () => this.wakeTask(task, prompt, { ...reply, fromUser: true, ...(attachments.length ? await this.transcribeParts(msg.id, attachments) : {}) }))();
-      return msg;
+    if (task || this.activeTurns.has(conversationId) || this.isRunning(conversationId) || this.inputs.has(conversationId)) {
+      this.inputStatus(msg.id, "sending");
+      const previous = this.inputs.get(conversationId) ?? Promise.resolve();
+      const input = previous.then(async () => {
+        const files: Pick<TurnOpts, "attachments" | "speech"> = attachments.length ? await this.transcribeParts(msg.id, attachments) : {};
+        if (await this.steerInto(conversationId, prompt, { ...reply, ...files, fromUser: true })) {
+          this.inputStatus(msg.id, "steered");
+          return;
+        }
+        this.inputStatus(msg.id, "queued");
+        if (task) {
+          const mode = await this.wakeTask(task, prompt, { ...reply, ...files, fromUser: true, inputMessageIds: [msg.id] });
+          if (mode === "cancelled") this.inputStatus(msg.id, "failed");
+        } else this.queueUserTurn(conv, { messageId: msg.id, prompt, attachments: files.attachments ?? [], ...reply });
+      }).catch(() => { this.inputStatus(msg.id, "failed"); });
+      this.inputs.set(conversationId, input);
+      void input.finally(() => { if (this.inputs.get(conversationId) === input) this.inputs.delete(conversationId); });
+      return this.d.store.getMessage(msg.id) ?? msg;
     }
     this.queueUserTurn(conv, { messageId: msg.id, prompt, attachments, ...reply });
     return msg;
+  }
+
+  /** Update persisted UI metadata without replacing transcripts or the user's words. */
+  private inputStatus(messageId: string, state: Extract<MessagePart, { type: "input_status" }>["state"], onlyExisting = false): void {
+    const m = this.d.store.getMessage(messageId);
+    if (!m || (onlyExisting && !m.parts.some((p) => p.type === "input_status"))) return;
+    this.d.store.updateMessage(messageId, { parts: [...m.parts.filter((p) => p.type !== "input_status"), { type: "input_status", state }] });
   }
 
   /**
@@ -440,12 +456,13 @@ export class SessionRunner {
       }
       const quote = batch.flatMap((b) => (b.quote ? [b.quote] : [])).join("\n");
       return this.runTurn(conv, batch.map((b) => b.prompt).join("\n\n"), {
+        inputMessageIds: batch.map((b) => b.messageId),
         fromUser: true,
         replyChannel: batch[0].replyChannel,
         ...(quote ? { quote } : {}),
         ...(attachments.length ? { attachments, speech } : {}),
       });
-    });
+    }).catch(() => { for (const b of batch) this.inputStatus(b.messageId, "failed", true); });
   }
 
   /** More input for the turn running in the conversation: true when its brain took it (the reply goes on there). */
@@ -462,7 +479,7 @@ export class SessionRunner {
       if (this.activeTurns.get(conversationId) !== a) return false;
       if (extra) text = `${extra}\n\n${text}`;
     }
-    if (!(await a.handle.steer(this.turnInput(a.row, text, opts)))) {
+    if (!(await a.handle.steer(this.turnInput(a.row, text, opts)).catch(() => false))) {
       if (a.voiceInterrupted) {
         a.stopped = true;
         void a.handle.interrupt();
@@ -547,7 +564,8 @@ export class SessionRunner {
     opts: { replyChannel?: string; attachments?: AttachmentPart[]; speech?: Record<string, string> },
   ): Promise<void> {
     const stopped = () => (this.groupEpoch.get(conversationId) ?? 0) !== epoch;
-    if (stopped()) return;
+    if (stopped()) { this.inputStatus(triggerId, "failed", true); return; }
+    this.inputStatus(triggerId, "started", true);
     if (opts.attachments?.length) opts = { ...opts, ...(await this.transcribeParts(triggerId, opts.attachments)) };
     const queue = [...speakers];
     const handedBy = new Map<string, string>();
@@ -939,19 +957,22 @@ export class SessionRunner {
     const history = this.d.store.listMessages(conv.id, { limit: 50 });
     const resumed = fresh.status === "paused" || history.some((m) => m.role === "assistant");
     // What reached the task before it started (its starter's clarifications, the user's words on its page).
-    const notes = resumed ? [] : history.slice(1).flatMap((m) => m.parts.flatMap((p) => (p.type === "text" && p.text.trim() ? [p.text.trim()] : [])));
+    // Inputs still being prepared join through steering afterwards; do not deliver their text twice.
+    const pendingInputs = history.filter((m) => m.parts.some((p) => p.type === "input_status" && p.state === "queued"));
+    const readyHistory = history.slice(1).filter((m) => !m.parts.some((p) => p.type === "input_status" && p.state === "sending"));
+    const notes = (resumed ? pendingInputs : readyHistory).flatMap((m) => m.parts.flatMap((p) => (p.type === "text" && p.text.trim() ? [p.text.trim()] : [])));
     const sender = fresh.kind === "message" ? this.threadSender(fresh) : undefined;
     // A teammate's thread reads as their message; the reply is the answer.
     const thread = (): string =>
       resumed
-        ? "Continue where you stopped; your reply goes back to your teammate."
+        ? ["Continue where you stopped; your reply goes back to your teammate.", ...notes].join("\n\n")
         : [`Message from your teammate ${sender!.name} (agent "${sender!.id}"). Your reply goes back to them automatically.`, "", fresh.goal, ...notes.flatMap((n) => ["", n])].join("\n");
     const prompt = sender
       ? thread()
       : fresh.kind === "goal"
-        ? goalPrompt(fresh, !resumed, goalLimit(fresh.rounds ?? 0))
+        ? [goalPrompt(fresh, !resumed, goalLimit(fresh.rounds ?? 0)), ...notes].join("\n\n")
         : resumed
-        ? "Continue working on the task from where you stopped."
+        ? ["Continue working on the task from where you stopped.", ...notes].join("\n\n")
         : [
             `Task: ${fresh.title}`,
             "",
@@ -961,7 +982,8 @@ export class SessionRunner {
             taskEnding(fresh),
           ].join("\n");
 
-    const r = await this.runTurn(conv, prompt, { task: fresh });
+    const attachments = pendingInputs.flatMap((m) => m.parts.filter((p): p is AttachmentPart => p.type === "attachment"));
+    const r = await this.runTurn(conv, prompt, { task: fresh, inputMessageIds: pendingInputs.map((m) => m.id), ...(attachments.length ? { attachments } : {}) });
     // A run counts against the day's budget once it really ran, not for each look at whether its brains are back.
     if (fresh.background && r.errorCode !== "brain-offline") this.countUsage(agent.id, "background_run");
     await this.afterTaskTurn(fresh.id, r);
@@ -1123,18 +1145,24 @@ export class SessionRunner {
    * Something for a task (its starter's answer or clarification, the user's words on its page): it joins the running
    * turn, waits for the first turn of a task that has not started, or gives the task another turn.
    */
-  async wakeTask(task: Task, text: string, opts: Pick<TurnOpts, "replyChannel" | "quote" | "attachments" | "speech" | "taint" | "fromUser"> = {}): Promise<"steered" | "queued" | "started" | "cancelled"> {
+  async wakeTask(task: Task, text: string, opts: Pick<TurnOpts, "replyChannel" | "quote" | "attachments" | "speech" | "taint" | "fromUser" | "inputMessageIds"> = {}): Promise<"steered" | "queued" | "started" | "cancelled"> {
     const cur = this.d.store.getTask(task.id) ?? task;
     if (cur.status === "cancelled") return "cancelled";
     // Outside content stays marked in every session of the task from now on.
     if (opts.taint && !cur.tainted) this.d.store.updateTask(cur.id, { tainted: true });
-    if (await this.steerInto(cur.conversationId, text, opts)) return "steered";
+    if (await this.steerInto(cur.conversationId, text, opts)) {
+      for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "steered");
+      return "steered";
+    }
     if (cur.status === "queued") return "queued";
     const conv = this.d.store.getConversation(cur.conversationId);
     if (!conv) return "cancelled";
     void this.enqueue(conv.id, async () => {
       const now = this.d.store.getTask(cur.id);
-      if (!now || now.status === "cancelled") return;
+      if (!now || now.status === "cancelled") {
+        for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "failed");
+        return;
+      }
       this.d.store.updateTask(now.id, { status: "running", resumeAt: undefined, error: undefined });
       const r = await this.runTurn(conv, text, { ...opts, task: now });
       await this.afterTaskTurn(now.id, r);
@@ -1998,9 +2026,13 @@ export class SessionRunner {
   async runTurn(conv: Conversation, prompt: string, opts: TurnOpts): Promise<TurnResult> {
     // A group chat in the archive sleeps: what comes back to it later (a task's report, an answered card) wakes nobody.
     if (conv.kind === "group" && this.d.groupArchived?.(conv.id)) return { text: "", awaitingApproval: false };
+    for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "started", true);
     this.setTurning(conv.id, 1);
     try {
       return await this.turn(conv, prompt, opts);
+    } catch (error) {
+      for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "failed", true);
+      throw error;
     } finally {
       this.setTurning(conv.id, -1);
     }

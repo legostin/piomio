@@ -342,6 +342,8 @@ function Parts({ message }: { message: Message }) {
         if (it.kind === "orphan_result") return <ToolCard key={it.key} result={it.result} />;
         const p = it.part;
         switch (p.type) {
+          case "input_status":
+            return <div key={it.key} role="status" className="px-1 text-xs text-muted">{t(`message.input.${p.state}`)}</div>;
           case "text": {
             const caret = streaming && idx === items.length - 1 && lastPart?.type === "text";
             return message.role === "user" && !message.agentId ? (

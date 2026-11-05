@@ -48,6 +48,10 @@ describe("the recap a fresh session starts from", () => {
     expect(r).toContain("You: on it");
   });
 
+  it("keeps input delivery metadata out of the model's history", () => {
+    expect(partsText([{ type: "text", text: "keep going" }, { type: "input_status", state: "queued" }])).toBe("keep going");
+  });
+
   it("puts what the agent did in words", () => {
     expect(partsText([{ type: "choices", options: ["yes", "no"], chosen: 0 }, { type: "map", lat: 1, lon: 2, title: "Lisbon" }])).toBe("[offered: yes / no; chosen: yes] [showed a map of Lisbon at 1, 2]");
   });
