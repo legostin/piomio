@@ -46,18 +46,23 @@ describe("tag creation and explicit release dispatch", () => {
     const published = service({ existing: true, published: true });
     expect(await publishTagRelease(plan, published.api)).toBe("already published"); expect(published.writes).toHaveLength(0);
     for (const [status, conclusion] of [["queued", null], ["in_progress", null], ["completed", "success"]]) {
-      const s = service({ existing: true, runs: [{ head_sha: plan.sha, head_branch: plan.tag, status, conclusion }] });
+      const s = service({ existing: true, runs: [{ head_sha: plan.sha, head_branch: plan.tag, display_title: `Publish ${plan.tag}`, status, conclusion }] });
       expect(await publishTagRelease(plan, s.api)).toBe("already dispatched"); expect(s.writes).toHaveLength(0);
     }
   });
   it("requires retrying a failed run instead of dispatching a second one", async () => {
-    const s = service({ existing: true, runs: [{ id: 12, head_sha: plan.sha, head_branch: plan.tag, status: "completed", conclusion: "failure" }] });
+    const s = service({ existing: true, runs: [{ id: 12, head_sha: plan.sha, head_branch: plan.tag, display_title: `Publish ${plan.tag}`, status: "completed", conclusion: "failure" }] });
     await expect(publishTagRelease(plan, s.api)).rejects.toThrow(/run 12 failed/); expect(s.writes).toHaveLength(0);
   });
   it("fails closed when listing runs is denied", async () => {
     const s = service({ existing: true });
     const api = async (path: string, options: any) => { if (path.startsWith("actions/")) throw new Error("denied"); return s.api(path, options); };
     await expect(publishTagRelease(plan, api)).rejects.toThrow("denied"); expect(s.writes).toHaveLength(0);
+  });
+  it("does not confuse a successful preview with a published build", async () => {
+    const s = service({ existing: true, runs: [{ head_sha: plan.sha, head_branch: plan.tag, display_title: `Preview ${plan.tag}`, status: "completed", conclusion: "success" }] });
+    expect(await publishTagRelease(plan, s.api)).toBe("dispatched");
+    expect(s.writes).toEqual([{ path: "actions/workflows/release.yml/dispatches", body: { ref: plan.tag, inputs: { dry_run: "false" } } }]);
   });
   it("treats only an explicit 404 as absence, and does not leak the workflow token in an error", async () => {
     const api = githubApi("legostin/piomio", "private-token", async () => new Response("", { status: 403 }));

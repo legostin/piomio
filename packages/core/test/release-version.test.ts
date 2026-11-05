@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { stampVersion } from "../../../scripts/release-version.mjs";
 import { buildVersion } from "../../../scripts/release-build.mjs";
-import { publicationPlan } from "../../../scripts/release-publish.mjs";
+import { publicationPlan, verifyReleaseTag } from "../../../scripts/release-publish.mjs";
 
 const root = resolve(import.meta.dirname, "../../..");
 const files = ["package.json", "package-lock.json", "packages/desktop/src-tauri/tauri.conf.json", "packages/desktop/src-tauri/Cargo.toml", "packages/desktop/src-tauri/Cargo.lock"];
@@ -63,5 +63,11 @@ describe("publication retries and latest ordering", () => {
   it("does not overwrite a published release or an unexplained draft", async () => {
     expect(await publicationPlan("0.2.39", api({ draft: false }))).toEqual({ publish: false });
     await expect(publicationPlan("0.2.39", api({ draft: true }))).rejects.toThrow(/inspection/);
+  });
+  it("rechecks the tag target after building, including annotated tags", async () => {
+    const sha = "a".repeat(40);
+    await expect(verifyReleaseTag("0.2.39", sha, async () => ({ object: { type: "commit", sha } }))).resolves.toBeUndefined();
+    await expect(verifyReleaseTag("0.2.39", sha, async (path: string) => ({ object: path.startsWith("git/ref/") ? { type: "tag", sha: "b".repeat(40) } : { type: "commit", sha } }))).resolves.toBeUndefined();
+    await expect(verifyReleaseTag("0.2.39", sha, async () => ({ object: { type: "commit", sha: "c".repeat(40) } }))).rejects.toThrow(/changed during the build/);
   });
 });

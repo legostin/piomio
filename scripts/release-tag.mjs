@@ -24,8 +24,9 @@ export async function publishTagRelease(plan, api) {
   if (release && !release.draft) return "already published";
   // A GITHUB_TOKEN tag push does not start another workflow. Dispatch it explicitly, but do not duplicate a run.
   for (let page = 1; page <= 10; page++) {
-    const { workflow_runs: runs } = await api(`actions/workflows/release.yml/runs?head_sha=${plan.sha}&event=workflow_dispatch&per_page=100&page=${page}`);
-    const matching = runs.filter((r) => r.head_sha === plan.sha && r.head_branch === plan.tag);
+    const { workflow_runs: runs } = await api(`actions/workflows/release.yml/runs?head_sha=${plan.sha}&per_page=100&page=${page}`);
+    // A successful dry run on this tag is not a publication. Include tag-push runs made by the owner, too.
+    const matching = runs.filter((r) => r.head_sha === plan.sha && r.head_branch === plan.tag && r.display_title === `Publish ${plan.tag}`);
     if (matching.some((r) => r.status !== "completed" || r.conclusion === "success")) return "already dispatched";
     if (matching.length) throw new Error(`Release run ${matching[0].id} failed; rerun that run instead of dispatching another`);
     if (runs.length < 100) break;

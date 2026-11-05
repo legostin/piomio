@@ -1,5 +1,6 @@
 # A tag is the release version. PRs and manual branch runs build a preview without creating tags or publishing.
 name: release
+run-name: "${{ (github.event_name == 'pull_request' || inputs.dry_run) && 'Preview' || 'Publish' }} ${{ github.ref_name }}"
 
 on:
   push:
@@ -27,7 +28,7 @@ permissions:
 # Preview builds cannot cancel a production run. A release at a newer tag may supersede a queued older release.
 concurrency:
   group: release-build-${{ github.event_name == 'pull_request' && github.ref || inputs.dry_run && github.ref || 'publish' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.dry_run == true }}
 
 jobs:
   version:
