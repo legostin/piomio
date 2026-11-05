@@ -237,6 +237,8 @@ describe("device port", () => {
   });
 
   it("wakes a phone through the relay with only the notification's id, and gives the phone the words itself", async () => {
+    // This delivery test must send a push even when CI runs during quiet hours.
+    hub.settings.update({ quietHours: { enabled: false, start: "23:00", end: "08:00" } });
     const pairing = (await web.req("POST", "/api/devices/pairing", {})).json;
     const fp = parsePairingLink(pairing.link)!.fingerprint;
     const paired = (await phoneRequest(devicePort, fp, "POST", "/api/devices/pair", { code: pairing.code, name: "Push phone", platform: "ios", publicKey: phoneKey().publicKey })).json;
@@ -259,6 +261,7 @@ describe("device port", () => {
     expect((await phoneRequest(devicePort, fp, "GET", "/api/devices/me", undefined, token)).json.push).toBe(true);
 
     const n = await hub.notifier.notify({ level: "notify", title: "Anna wrote", body: "Lunch at one?", agentId: "assistant" });
+    expect(n.effectiveLevel).toBe("notify");
     await new Promise((r) => setTimeout(r, 50));
     const push = calls.find((c) => c.path === "/v1/push")!;
     // The relay hears the handle and an opaque id: no title, no body, no agent.
