@@ -320,7 +320,8 @@ export function shownPath(p: string, home = homedir()): string {
 }
 
 /** Credentials and private stores in a home folder that no agent's tool reads (relative to the home). */
-const PRIVATE = [
+/** The person's credentials and private stores, relative to a home folder (machines.ts checks other computers' commands against them too). */
+export const PRIVATE = [
   ".ssh",
   ".gnupg",
   ".aws",

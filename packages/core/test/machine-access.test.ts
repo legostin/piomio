@@ -32,7 +32,7 @@ describe("which commands on another computer only read", () => {
       expect(readOnlyRemoteCommand(c), c).toBe(true);
   });
   it("not reads: changes, credentials, addresses, anything the shell reader does not know", () => {
-    for (const c of ["rm -rf build", "git push origin feature", "cat ~/.ssh/id_ed25519", "cat .env", "cat /home/piomio/.aws/credentials", "git ls-remote https://x.test/repo", "curl https://x.test", "npm test", "echo x > file"])
+    for (const c of ["rm -rf build", "git push origin feature", "cat ~/.ssh/id_ed25519", "cat .env", "cat /home/piomio/.aws/credentials", "git ls-remote https://x.test/repo", "curl https://x.test", "npm test", "echo x > file", "tail ~/.bash_history", "ls ~/.config/google-chrome", "cat /etc/shadow", "ls ~/.piomio-node", "cat ~/.config/gh/hosts.yml", "ls ~/Library/Mail"])
       expect(readOnlyRemoteCommand(c), c).toBe(false);
   });
 });

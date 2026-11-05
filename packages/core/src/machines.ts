@@ -16,9 +16,19 @@ import type { MachineSetups } from "./machine-setup.ts";
 import type { Cluster } from "./cluster.ts";
 import { compareVersions } from "./updates.ts";
 import { readOnlyCommand } from "./policy/commands.ts";
+import { PRIVATE } from "./native-permissions.ts";
 
-/** A path or word that names credentials: a command that names one is never "only reads", wherever it runs. */
-const CREDENTIAL = /(?:^|[\s/'"=~:])\.(?:ssh|aws|gnupg|kube|docker|azure|netrc|npmrc|pypirc|git-credentials|password-store)\b|\.config\/gh\b|\.env\b|\bid_(?:rsa|ed25519|ecdsa|dsa)\b|credential|secret|token|passw|keychain/i;
+/**
+ * What names credentials or private stores: a command that names one is never "only reads", wherever it runs. The
+ * closed paths of this computer (native-permissions.ts), and what holds the same on a Linux server.
+ */
+const CLOSED = [...PRIVATE, ".piomio-node", ".config/google-chrome", ".config/chromium", ".mozilla", ".bash_history", ".zsh_history", ".python_history", ".psql_history", "/etc/shadow", "/etc/sudoers"];
+const CREDENTIAL = /\.env\b|\bid_(?:rsa|ed25519|ecdsa|dsa)\b|credential|secret|token|passw|keychain|private[_-]?key/i;
+
+function namesClosed(command: string): boolean {
+  const low = command.toLowerCase();
+  return CREDENTIAL.test(command) || CLOSED.some((p) => low.includes(p.toLowerCase()));
+}
 /** An address in a command: what it reads could carry data out to that site. */
 const ADDRESS = /[a-z][a-z0-9+.-]*:\/\/|\b[\w.-]+@[\w.-]+:/i;
 
@@ -27,7 +37,7 @@ const ADDRESS = /[a-z][a-z0-9+.-]*:\/\/|\b[\w.-]+@[\w.-]+:/i;
  * policy/commands.ts) and names no credentials and no address: it needs no review, like a read here.
  */
 export function readOnlyRemoteCommand(command: string): boolean {
-  return !CREDENTIAL.test(command) && !ADDRESS.test(command) && readOnlyCommand(command, { home: "~", tmp: "/tmp" });
+  return !namesClosed(command) && !ADDRESS.test(command) && readOnlyCommand(command, { home: "~", tmp: "/tmp" });
 }
 
 export const NODE_AUTH_PREFIX = "piomio-node-auth:";
