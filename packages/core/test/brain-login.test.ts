@@ -149,6 +149,18 @@ describe("signing CLI brains in from the chat", () => {
     expect(JSON.stringify(await messages())).not.toContain("ABCD-EFGHI");
   });
 
+  it("mirrors the brain sign-in card from a delegated task without exposing login codes", async () => {
+    const dialog = hub.store.createConversation({ agentId: "assistant", kind: "dialog", title: "Sign in" });
+    const task = hub.store.createTask({ agentId: "assistant", title: "Sign in", goal: "Sign in", createdBy: "user", parentConversationId: dialog.id });
+    const ctx = { conversationId: task.conversationId, taskId: task.id, agentId: "assistant", sessionId: "s", machineId: "local", workspace: tmpdir(), tainted: false, background: false } as any;
+    const result = await hub.tools.get("hub_brain_login")!.invoke({ ref: CODEX }, ctx);
+    expect(JSON.stringify(result)).toContain("already signed in");
+    const card = { type: "brain_login", ref: CODEX };
+    expect(hub.store.listMessages(task.conversationId)[0]!.parts).toEqual([card]);
+    expect(hub.store.listMessages(dialog.id)[0]!.parts).toEqual([{ type: "task", taskId: task.id }, card]);
+    expect(JSON.stringify(hub.store.listMessages(dialog.id))).not.toContain("ABCD-EFGHI");
+  });
+
   it("says when the brain is already signed in", async () => {
     await say(`CALL hub_brain_login {"ref":"${CODEX}"}`, /tool said: codex@local is already signed in/);
   });

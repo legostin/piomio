@@ -1137,7 +1137,7 @@ export function registerHubTools(hub: Hub): void {
         setting: i.setting ? String(i.setting) : undefined,
         conversationId: ctx.conversationId,
       });
-      hub.runner.attachPart(ctx.conversationId, { type: "secret_request", requestId: req.id, vaultId: req.vaultId, title: req.title, status: req.status });
+      hub.runner.showToPerson(ctx.conversationId, { type: "secret_request", requestId: req.id, vaultId: req.vaultId, title: req.title, status: req.status }, ctx.taskId);
       const locked = hub.vault.state() !== "unlocked";
       const r = await hub.secrets.wait(req.id, hub.settings.get().approvalInlineWaitSec * 1000);
       if (r.status === "saved") {
@@ -1191,13 +1191,14 @@ export function registerHubTools(hub: Hub): void {
       const id = String(i.id ?? "");
       const view = (await listIntegrations(hub, hubLocale())).find((x) => x.id === id);
       if (!view) return text(`No integration "${id}". Known: ${(await listIntegrations(hub, hubLocale())).map((x) => x.id).join(", ")}.`, true);
-      return integrationCard(view, ctx.conversationId);
+      return integrationCard(view, ctx);
     },
   );
 
   /** An integration's card in the chat, and what the agent should tell the user about it. */
-  function integrationCard(view: IntegrationView, conversationId: string): ToolResult {
-    hub.runner.attachPart(conversationId, { type: "integration", id: view.id });
+  function integrationCard(view: IntegrationView, ctx: ToolCallContext): ToolResult {
+    const { conversationId } = ctx;
+    hub.runner.showToPerson(conversationId, { type: "integration", id: view.id }, ctx.taskId);
     if (view.id === "remote-access" && view.status !== "connected") hub.remoteCardShown(conversationId);
     const state =
       view.status === "connected"
@@ -1513,9 +1514,9 @@ export function registerHubTools(hub: Hub): void {
     async (i, ctx) => {
       // A sign-in, or nothing to set up: the integration's own card is the one with the right button.
       const integration = (await listIntegrations(hub, hubLocale())).find((x) => x.id === String(i.id) && x.connect !== "setup");
-      if (integration) return integrationCard(integration, ctx.conversationId);
+      if (integration) return integrationCard(integration, ctx);
       const view = hub.secrets.setupView(String(i.id), hubLocale());
-      hub.runner.attachPart(ctx.conversationId, { type: "plugin_setup", pluginId: view.pluginId });
+      hub.runner.showToPerson(ctx.conversationId, { type: "plugin_setup", pluginId: view.pluginId }, ctx.taskId);
       const missing = view.secrets.filter((s) => !s.present);
       // A stored secret can still be wrong (a revoked token): the channel's own status says whether it works.
       const channels = await Promise.all(
@@ -1566,7 +1567,7 @@ export function registerHubTools(hub: Hub): void {
       }
       hub.brains.invalidate(ref);
       const probe = await hub.brains.probe(ref, 0);
-      hub.runner.attachPart(ctx.conversationId, { type: "brain_login", ref });
+      hub.runner.showToPerson(ctx.conversationId, { type: "brain_login", ref }, ctx.taskId);
       if (probe.authenticated && !i.again) {
         return text(`${ref} is already signed in (${probe.detail ?? "ok"}). The card shows it and has a "Sign in again" button; pass again: true only if the user asks to switch accounts.`);
       }
@@ -1606,7 +1607,7 @@ export function registerHubTools(hub: Hub): void {
       inputSchema: obj({}),
     },
     (_i, ctx) => {
-      hub.runner.attachPart(ctx.conversationId, { type: "device_pairing" });
+      hub.runner.showToPerson(ctx.conversationId, { type: "device_pairing" }, ctx.taskId);
       const reachable = !!inviteUrl(machineHubUrl(hub.config.publicUrl, hub.remote.link()), "x");
       const machines = hub.machines.list().map((m) => m.name);
       const phones = hub.devices.list().map((d) => d.name);

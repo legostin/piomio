@@ -608,24 +608,26 @@ export class SessionRunner {
   }
 
   /** A card (secret request, plugin setup, images, a map) for the message the agent is writing right now in this conversation. */
-  attachPart(conversationId: string, part: MessagePart): void {
+  attachPart(conversationId: string, part: MessagePart): boolean {
     const msgId = this.streamingMessage.get(conversationId);
     const m = msgId ? this.d.store.getMessage(msgId) : undefined;
     // The same card twice in one reply (the agent called the tool again) shows once.
     const key = attachedKey(part);
-    if (m && key && m.parts.some((p) => attachedKey(p) === key)) return;
+    if (m && key && m.parts.some((p) => attachedKey(p) === key)) return false;
     if (m) this.d.store.updateMessage(m.id, { parts: [...m.parts, part] });
     else this.d.store.addMessage({ conversationId, role: "system", parts: [part], status: "complete" });
+    return true;
   }
 
   /**
-   * Something for the person to see (pictures): in the conversation it was made in, and when that is a task, also in
+   * Something for the person to see (pictures, connection cards): in the conversation it was made in, and when that is a task, also in
    * the dialog that started it, under the task's line, as its questions are: the person reads the dialog.
    */
   showToPerson(conversationId: string, part: MessagePart, taskId?: string): void {
-    this.attachPart(conversationId, part);
+    // A repeated tool call in one reply must not duplicate the card in the parent either.
+    if (!this.attachPart(conversationId, part)) return;
     const dialog = this.starterDialog(taskId);
-    if (dialog && taskId) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId }, part], status: "complete" });
+    if (dialog && dialog.id !== conversationId && taskId) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId }, part], status: "complete" });
   }
 
   /** The folders of the tasks a conversation started (and theirs, in turn): what it may show the person from. */
@@ -716,7 +718,9 @@ export class SessionRunner {
 
   private updateSecretPart(r: SecretRequest): void {
     if (!r.conversationId) return;
-    for (const m of this.d.store.listMessages(r.conversationId, { limit: 50 })) {
+    const taskId = this.d.store.getConversation(r.conversationId)?.taskId;
+    const where = new Set([r.conversationId, this.starterDialog(taskId)?.id].filter((id): id is string => !!id));
+    for (const conversationId of where) for (const m of this.d.store.listMessages(conversationId, { limit: 50 })) {
       if (m.parts.some((p) => p.type === "secret_request" && p.requestId === r.id && p.status !== r.status)) {
         this.d.store.updateMessage(m.id, { parts: m.parts.map((p) => (p.type === "secret_request" && p.requestId === r.id ? { ...p, status: r.status } : p)) });
       }
