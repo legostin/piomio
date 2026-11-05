@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 import { siteConfig } from "../site.config.ts";
 import { PAGES, pagePath } from "../src/pages.ts";
 import { assertPublishedSeo, gaMeasurementId } from "../src/seo.ts";
-import { loadDocs } from "./docs.mjs";
+import { docsCheckPlan } from "./docs-check.mjs";
 import { builtBase, DIST, serve } from "./serve.mjs";
 
 const arg = (name, fallback) => {
@@ -37,14 +37,14 @@ if (!existsSync(join(DIST, "demo/demo.html"))) {
 }
 
 const published = JSON.parse(readFileSync(resolve(import.meta.dirname, "../.build/data.json"), "utf8"));
-const docSlugs = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../docs/guide/nav.json"), "utf8")).groups.flatMap((g) => g.pages);
+const docs = docsCheckPlan(published, siteConfig.languages);
 assertPublishedSeo(readFileSync(join(DIST, "sitemap.xml"), "utf8"), readFileSync(join(DIST, "robots.txt"), "utf8"), {
   origin: published.origin,
   base: published.base,
   languages: siteConfig.languages,
   pagePaths: PAGES.map(pagePath),
-  docSlugs,
-  docLanguages: Object.entries(loadDocs({ languages: siteConfig.languages })[0].sourceLang).filter(([l, from]) => l === from).map(([l]) => l),
+  docSlugs: docs.slugs,
+  docLanguages: docs.docLanguages,
 });
 const gaId = gaMeasurementId(process.env.GA_MEASUREMENT_ID !== undefined ? process.env.GA_MEASUREMENT_ID : siteConfig.gaMeasurementId);
 const homes = Object.fromEntries(siteConfig.languages.map((lang) => [lang, readFileSync(join(DIST, lang, "index.html"), "utf8")]));
@@ -137,12 +137,10 @@ for (const lang of pageLangs) {
 
 // 3. The docs: every page of the newest line, prerendered and hydrated without a mismatch, its language links and its
 // sidebar on the same page, its Markdown next to it; the versioned copy of the overview.
-const nav = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../docs/guide/nav.json"), "utf8"));
-const slugs = nav.groups.flatMap((g) => g.pages);
-const line = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../package.json"), "utf8")).version.split(".").slice(0, 2).join(".");
+const slugs = docs.slugs;
 for (const lang of pageLangs) {
   const page = await context.newPage();
-  for (const [slug, prefix] of [...slugs.map((s) => [s, ""]), ["index", `${line}/`]]) {
+  for (const [slug, prefix] of docs.routes) {
     const path = `/${lang}/docs/${prefix}${slug === "index" ? "" : `${slug}/`}`;
     const problems = watch(page, path);
     const res = await page.goto(`${origin}${base}${path.slice(1)}`, { waitUntil: "networkidle" });
