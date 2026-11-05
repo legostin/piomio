@@ -19,7 +19,7 @@ interface Fake {
   notified: any[];
 }
 
-function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: string) => Promise<string>; wake?: "steered" | "started" | "cancelled" } = {}): Fake {
+function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: string) => Promise<string>; wake?: "steered" | "started" | "cancelled"; noBudget?: boolean } = {}): Fake {
   const f: Fake = { told: [], woken: [], messages: [], heard: [], created: [], notified: [], hub: undefined as unknown as Hub };
   const convs = new Map<string, Conversation>([
     ["c_dialog", { id: "c_dialog", kind: "agent", agentId: "assistant" } as Conversation],
@@ -49,6 +49,7 @@ function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: s
         f.created.push(t);
         return { id: "t_new", ...t };
       },
+      hasBudget: () => !opts.noBudget,
     },
     notifier: {
       notify: async (n: any) => {
@@ -132,6 +133,30 @@ describe("core methods for plugins", () => {
     expect(f.created[1].skill).toBeUndefined();
     expect(f.created[1].goal).toBe("No skill");
     await expect(call("triggers", "tasks.create", { agentId: "assistant", goal: "x", skill: "nope" })).rejects.toThrow(/No skill "nope"/);
+  });
+
+  it("tasks.create: who started it, outside content, and work that can wait for tomorrow's budget", async () => {
+    const f = fakeHub();
+    const call = createCoreCall(f.hub);
+    await call("kanban", "tasks.create", { agentId: "coder", goal: "A card" });
+    expect(f.created[0].createdBy).toBe("user");
+    expect(f.created[0].tainted).toBeUndefined();
+    await call("kanban", "tasks.create", { agentId: "coder", goal: "A card", byAgent: true, tainted: true, parentConversationId: "c_dialog" });
+    expect(f.created[1]).toMatchObject({ createdBy: "agent", tainted: true, parentConversationId: "c_dialog" });
+    // A trigger's run stays a trigger's, whoever else it names.
+    await call("kanban", "tasks.create", { agentId: "coder", goal: "A card", byAgent: true, triggerId: "t_w" });
+    expect(f.created[2].createdBy).toBe("trigger");
+    // A plugin raises the flag, it cannot lower it.
+    await call("kanban", "tasks.create", { agentId: "coder", goal: "A card", tainted: false });
+    expect(f.created[3].tainted).toBeUndefined();
+
+    const spent = fakeHub({ noBudget: true });
+    const spentCall = createCoreCall(spent.hub);
+    expect(await spentCall("kanban", "tasks.create", { agentId: "coder", goal: "Later", skipIfNoBudget: true })).toEqual({ skipped: "budgetExhausted" });
+    expect(spent.created).toEqual([]);
+    // Without the option the budget is the runner's business, as before.
+    await spentCall("kanban", "tasks.create", { agentId: "coder", goal: "Now" });
+    expect(spent.created).toHaveLength(1);
   });
 
   it("notify records a valid call and tells the plugin what is wrong with an invalid one", async () => {

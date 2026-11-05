@@ -74,6 +74,7 @@ These wait until you turn them on:
 | **Granola** | Your meeting notes: summaries, transcripts, questions across meetings. | Granola's sign-in |
 | **Notion** | Search, read and write pages and databases, comment. | Notion's sign-in |
 | **Linear** | Find and read issues, projects, cycles and documents; create and update issues; comment. | Linear's sign-in |
+| **Kanban** | Projects with columns of their own, a queue, cards with files, agents that take cards by themselves. See [Kanban board](kanban.md). | **Turn on** |
 | **Blender** | Blender for the agents through the official MCP server from Blender Lab. | **Turn on** |
 | **Composio** | Slack, GitHub, Google apps, Microsoft 365, Jira, Zoom and more through an outside service. | A Composio key, then each app's sign-in |
 

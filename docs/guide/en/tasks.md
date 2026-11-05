@@ -84,6 +84,8 @@ Filter with **All**, **Active**, **Waiting**, **Done** and **Failed**, or search
 
 A task's page has **Cancel** while it runs and **Retry** once it is over. Its summary shows the **Goal** and the **Result**; **More** opens them in full, and a sub-task links to its parent. Below is the task's own conversation with a field to write in. Turn on **Show steps** in the **⋯** menu to see each tool call. Tasks stay in the list; there is no delete.
 
+For work you want to plan ahead, with projects, a queue, priorities and cards agents take by themselves, there is the [Kanban board](kanban.md): a card there is the plan, and each of its runs is a task here.
+
 ## /task and /goal
 
 `/task <what to do>` starts a task for the agent of this chat at once, without the model deciding anything: **Task started: …**, then **Done: …** at the end.

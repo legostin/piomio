@@ -908,6 +908,12 @@ export class SessionRunner {
     }
   }
 
+  /** The agent still has background runs left today. */
+  hasBudget(agentId: string): boolean {
+    const agent = this.d.agents.get(agentId);
+    return !!agent && this.budgetOk(agent);
+  }
+
   private budgetOk(agent: AgentDef): boolean {
     const day = new Date().toISOString().slice(0, 10);
     const r = this.d.store.db.prepare("select count from usage where day = ? and agent_id = ? and kind = 'background_run'").get(day, agent.id) as { count: number } | undefined;
@@ -2252,7 +2258,7 @@ export class SessionRunner {
       // The agent's brains are busy with other turns (a teammate wrote while it works): the turn waits in line.
       if (!ref && busy) {
         // Still waiting after a few seconds: whoever started it hears that the agent is busy and will get to it.
-        if (waits === 1 && task?.createdBy === "agent") void this.tellStarter(task, this.queuedNote(task));
+        if (waits === 1 && task?.createdBy === "agent" && task.parentConversationId) void this.tellStarter(task, this.queuedNote(task));
         await this.brainFreed(waits++ ? 30_000 : 3_000);
         if (task && this.d.store.getTask(task.id)?.status === "cancelled") return { text: "", error: t(this.d.config.apiKeys ? "chat.cannotStart" : "chat.cannotStartPlans", { agent: agentName(agent, hubLocale()), reason: reasons.join("; ") }), awaitingApproval: false };
         attempt--;
