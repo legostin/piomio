@@ -4,11 +4,11 @@
 // A change to the page (page_update) reloads it where it is open.
 
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { ChevronRight, LayoutTemplate, X } from "lucide-react";
 import type { PageView } from "@piomio/shared";
 import { useStore } from "../../lib/store";
 import { mediaSrc } from "../../lib/media";
+import { FullscreenPanel } from "../../components/WindowTitlebar";
 import { QuietImg } from "../../components/picture";
 import { native } from "../../lib/native";
 import { sendMessage } from "../../state/app";
@@ -97,8 +97,8 @@ export function PageViewer({ page, conversationId, onClose }: { page: PageView; 
     return () => window.removeEventListener("message", onMessage);
   }, [conversationId]);
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label={page.title}>
+  return (
+    <FullscreenPanel className="z-50" role="dialog" aria-label={page.title}>
       <header className="flex items-center gap-1 border-b border-border px-2 pt-[env(safe-area-inset-top)]">
         <button type="button" onClick={onClose} aria-label={t("page.close")} title={t("page.close")} className="flex size-11 items-center justify-center rounded-xl text-muted transition hover:bg-surface-2 hover:text-fg">
           <X className="size-5" />
@@ -114,7 +114,6 @@ export function PageViewer({ page, conversationId, onClose }: { page: PageView; 
         referrerPolicy="no-referrer"
         className="min-h-0 w-full flex-1 border-0"
       />
-    </div>,
-    document.body,
+    </FullscreenPanel>
   );
 }

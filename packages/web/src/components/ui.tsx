@@ -1,5 +1,6 @@
 // Shared UI primitives. Button, Card, Badge, EmptyState and Spinner are also exposed to UI plugins (@piomio/ui).
 
+import { WindowTitlebar } from "./WindowTitlebar";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type InputHTMLAttributes, type TextareaHTMLAttributes, type SelectHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
 import { Check, Copy, Loader2, X } from "lucide-react";
@@ -276,8 +277,9 @@ export function Modal({
   }, [open]);
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+    <div className="window-modal fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div className="animate-fade absolute inset-0 bg-[rgb(20_14_6/0.32)] backdrop-blur-[6px]" onClick={onClose} />
+      <WindowTitlebar className="absolute inset-x-0 top-0 z-10" />
       <div
         ref={panel}
         tabIndex={-1}

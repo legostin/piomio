@@ -1,5 +1,6 @@
 // React renderers for plugin slots.
 
+import { WindowTitlebar } from "../components/WindowTitlebar";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { useStore } from "../lib/store";
@@ -119,8 +120,9 @@ export function RightPane({ open, onClose }: { open: boolean; onClose: () => voi
   if (!open || !current) return null;
   const C = current.component;
   return (
-    <aside className="animate-slide fixed inset-0 z-40 flex flex-col overflow-hidden bg-bg lg:static lg:z-auto lg:my-2 lg:mr-2 lg:w-[420px] lg:shrink-0 lg:rounded-[22px] lg:shadow-sheet xl:w-[480px]">
-      <div className="glass flex h-12 items-center gap-1 px-2">
+    <aside className="window-overlay animate-slide fixed inset-0 z-40 flex flex-col overflow-hidden bg-bg lg:static lg:z-auto lg:my-2 lg:mr-2 lg:w-[420px] lg:shrink-0 lg:rounded-[22px] lg:shadow-sheet xl:w-[480px]">
+      <WindowTitlebar className="lg:hidden" />
+      <div className="glass flex h-12 shrink-0 items-center gap-1 px-2">
         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
           {tabs.map((tab) => (
             <button

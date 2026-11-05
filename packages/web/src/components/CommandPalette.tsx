@@ -1,5 +1,6 @@
 // Ctrl/Cmd+K command palette: the team and group chats, settings sections, quick actions and plugin commands.
 
+import { WindowTitlebar } from "./WindowTitlebar";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
@@ -118,8 +119,9 @@ export function CommandPalette() {
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 pt-[10vh]">
+    <div className="window-modal fixed inset-0 z-50 flex items-start justify-center p-3 pt-[max(10vh,var(--owl-titlebar-height))]">
       <div className="animate-fade absolute inset-0 bg-[rgb(20_14_6/0.32)] backdrop-blur-[6px]" onClick={() => open.set(false)} />
+      <WindowTitlebar className="absolute inset-x-0 top-0 z-10" />
       <div className="animate-zoom relative w-full max-w-lg overflow-hidden rounded-3xl border border-hairline bg-surface shadow-pop" role="dialog" aria-label={t("palette.title")}>
         <div className="flex items-center gap-2 border-b border-hairline px-4">
           <Search className="size-4 text-muted" />
