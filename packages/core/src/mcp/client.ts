@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ToolResult } from "@piomio/shared";
 import type { Config } from "../config.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -74,16 +74,31 @@ interface Conn {
   retryAt?: number;
   /** Replaced or taken down: its client closing is not a drop. */
   retired?: boolean;
+  /** When it connected: a connection that held a while counts its next failure as the first. */
+  connectedAt?: number;
 }
 
 const TOOL_TIMEOUT = 10 * 60_000;
 /** A local server that keeps failing to start is started again this many times, then waits for hub_access or the person. */
 const STDIO_TRIES = 5;
+/** A connection that held this long was good: its drop starts the backoff afresh (a crash loop does not). */
+const HELD_MS = 60_000;
 /** Errors of a request that never reached the server: sending it again cannot do anything twice. */
 const UNDELIVERED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "ENETDOWN", "EADDRNOTAVAIL"]);
 
 /** What the configuration itself lacks: trying again cannot help. */
 class McpConfigError extends Error {}
+
+/**
+ * Worth trying again by itself: the network (the server unreachable, the connection dropped) or the server's own
+ * trouble (5xx). A refusal (4xx) or a protocol it does not speak stays an error until the person or hub_access acts.
+ */
+function passing(e: any, stdio: boolean): boolean {
+  if (e instanceof McpConfigError) return false;
+  if (stdio) return true;
+  if (e instanceof StreamableHTTPError) return typeof e.code === "number" && e.code >= 500;
+  return connectionFailed(e);
+}
 
 function undelivered(e: any): boolean {
   return UNDELIVERED.has(e?.cause?.code ?? e?.code ?? "");
@@ -252,9 +267,13 @@ export class McpClientManager {
     this.conns.set(name, conn);
     if (config.disabled) return;
     let stderrTail = "";
+    let client: Client | undefined;
+    // Replaced or taken down while this try was waiting (sync, a sign-in, closeAll, another try): it must touch nothing.
+    const stale = () => this.conns.get(name) !== conn || !!conn.retired;
+    const drop = () => void client?.close().catch(() => {});
+    const type = config.type ?? (config.url ? "http" : "stdio");
     try {
-      const client = new Client({ name: "piomio-hub", version: this.config.version });
-      const type = config.type ?? (config.url ? "http" : "stdio");
+      client = new Client({ name: "piomio-hub", version: this.config.version });
       if (type === "stdio") {
         if (!config.command) throw new McpConfigError("command is required");
         this.egress.revokeOwner(`mcp:${name}`);
@@ -274,6 +293,7 @@ export class McpClientManager {
         // A server that quits while starting says why on stderr: its last line becomes the error the person sees.
         transport.stderr?.on("data", (d: Buffer) => (stderrTail = (stderrTail + d.toString()).slice(-2000)));
         await client.connect(transport);
+        if (stale()) return drop();
       } else {
         if (!config.url) throw new McpConfigError("url is required");
         const headers = this.resolveSecrets(name, config.headers);
@@ -286,13 +306,17 @@ export class McpClientManager {
           await client.connect(transport);
         } catch (e) {
           if (!(e instanceof UnauthorizedError) || !oauth) throw e;
+          if (stale()) return drop();
           this.registry.unregisterOwner(`mcp:${name}`);
           Object.assign(conn, { status: "signin", error: t("mcp.needsSignin"), tools: [] });
           return;
         }
+        if (stale()) return drop();
       }
       conn.client = client;
       const { tools } = await client.listTools();
+      if (stale()) return drop();
+      const live = client;
       // Replaced as a whole: a tool the server no longer has goes, the others get this connection.
       this.registry.unregisterOwner(`mcp:${name}`);
       conn.tools = [];
@@ -314,19 +338,22 @@ export class McpClientManager {
         );
         conn.tools.push(full);
       }
-      Object.assign(conn, { status: "connected", error: undefined, attempt: 0, retryAt: undefined });
+      Object.assign(conn, { status: "connected", error: undefined, retryAt: undefined, connectedAt: Date.now() });
       // A dropped connection (the server's process ended, its stream closed) is tried again, its tools kept meanwhile.
-      client.onclose = () => {
+      live.onclose = () => {
         if (this.conns.get(name) === conn && !conn.retired) this.retryLater(conn, t("mcp.connectionClosed"));
       };
       this.audit.append("core", "mcp.connect", name, { source, tools: conn.tools.length, ...(prev ? { attempt: prev.attempt + 1 } : {}) });
     } catch (e: any) {
+      if (stale()) return drop();
       const error = stderrTail.trim().split("\n").at(-1)?.trim() || (e?.message ?? String(e));
       console.error(`[mcp] ${name}: ${error}`);
-      if (e instanceof McpConfigError) {
+      if (passing(e, type === "stdio")) this.retryLater(conn, error);
+      else {
+        drop();
         this.registry.unregisterOwner(`mcp:${name}`);
-        Object.assign(conn, { status: "error", error, tools: [] });
-      } else this.retryLater(conn, error);
+        Object.assign(conn, { status: "error", error, tools: [], retryAt: undefined });
+      }
     }
   }
 
@@ -393,7 +420,7 @@ export class McpClientManager {
       c?.status === "signin"
         ? `${name} needs the user to sign in again. Ask them (hub_integration_connect shows the button).`
         : c?.status === "reconnecting"
-          ? `${name} is reconnecting (${c.error ?? "unreachable"}; next try ${c.retryAt ? `in ${Math.max(1, Math.round((c.retryAt - Date.now()) / 1000))} s` : "soon"}). Try again later, or call hub_access with check: true. Do not ask the user to sign in: the sign-in is kept.`
+          ? `${name} is reconnecting (${c.error ?? "unreachable"}; next try ${c.retryAt ? `in ${Math.max(1, Math.round((c.retryAt - Date.now()) / 1000))} s` : "soon"}). Try again later, or call hub_access with check: true. It is the connection, not the sign-in: do not ask the user to sign in again.`
           : `${name} is not connected: ${c?.error ?? "unavailable"}.`;
     return { content: [{ type: "text", text }], isError: true };
   }
@@ -402,6 +429,9 @@ export class McpClientManager {
   private retryLater(conn: Conn, error: string): void {
     if (this.conns.get(conn.name) !== conn || conn.retired) return;
     clearTimeout(conn.timer);
+    // It held a while before it dropped: the backoff starts afresh. One that drops at once keeps climbing.
+    if (conn.connectedAt && Date.now() - conn.connectedAt >= HELD_MS) conn.attempt = 0;
+    conn.connectedAt = undefined;
     const stdio = (conn.config.type ?? (conn.config.url ? "http" : "stdio")) === "stdio";
     if (stdio && conn.attempt >= STDIO_TRIES - 1) {
       this.registry.unregisterOwner(`mcp:${conn.name}`);

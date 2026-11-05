@@ -9,7 +9,7 @@ export type ToolDescriber = (input: any) => string;
  * What this very call does, when it differs from the tool's effect (core tools only): machine_exec of a command that
  * only reads is a read. Undefined keeps the tool's own.
  */
-export type ToolEffectOf = (input: any) => ToolEffect | undefined;
+export type ToolEffectOf = (input: any, ctx: ToolCallContext) => ToolEffect | undefined;
 
 interface Entry {
   descriptor: ToolDescriptor;

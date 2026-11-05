@@ -277,10 +277,13 @@ export class EgressProxy {
         });
         res.on("close", () => up.destroy());
         up.on("error", (e) => {
+          // The client left first (its close destroyed the request): nothing failed on the way out.
+          if (cancel.signal.aborted || res.destroyed) return;
           const err = new EgressUnreachable(e.message || (e as NodeJS.ErrnoException).code || String(e));
           this.logRefusal(token, host, err);
-          if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
-          res.end(this.unreachableText(host, err));
+          // Half a body already went: an explanation appended to it would corrupt it.
+          if (res.headersSent) return void res.destroy();
+          res.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end(this.unreachableText(host, err));
         });
         req.pipe(up);
       } catch (e) {

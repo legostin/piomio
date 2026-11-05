@@ -67,14 +67,18 @@ describe("the access map", () => {
     const p = reviewPrompt(
       { tool: "machine_exec", input: { machine: "vps", command: "npm ci" }, summary: "Run on vps: npm ci", kind: "tool", effect: "external", why: "external" },
       { sessionId: "s", conversationId: "c", agentId: "dev", workspace: "/w", machine: "MacBook-Pro" },
-      { person: ["Fix the panel header"], calls: [], access: accessView(map) },
+      { person: ["Fix the panel header"], calls: [], access: accessView(map, { reviewer: true }) },
       2,
       { dataDir: "/data", language: "en" },
     );
     expect(p).toContain("<<<ACCESS\nComputers:");
     expect(p).toContain("- vps (mach_vps): online, commands on");
-    expect(p).toContain("systems that neither the person mentioned nor the agent's access lists");
-    expect(p).toContain("ordinary work on the computers, folders and services the agent's access lists");
+    expect(p).toContain("systems the person did not mention, other than the computers and folders the agent's access lists");
+    expect(p).toContain("ordinary work on the computers and folders the agent's access lists");
+    // Services are the whole hub's, and what a server said is not the hub's record.
+    expect(p).toContain("shared by every agent: not a sign that this agent should act on them");
+    expect(p).not.toContain("fetch failed");
+    expect(p).not.toContain("legostin");
   });
 });
 

@@ -76,10 +76,10 @@ In every install, a dialog's brain only looks: commands and file changes go to t
 
 ## What an agent can reach
 
-Every agent has one access map, built from what you already gave it: the computers it works on (this one, and the paired ones it is bound to) with their project folders, the internet through the hub's proxy, and the services you connected (Notion, GitHub, Google…) with how each is right now. Nothing new to set up: the map follows your folders, computers, allowed hosts and sign-ins.
+Every agent has one access map, built from what you already gave it: the computers it works on (this one and the paired ones, or only those it is bound to) with their project folders, the internet through the hub's proxy, and the services you connected (Notion, GitHub, Google…) with how each is right now. Nothing new to set up: the map follows your folders, computers, allowed hosts and sign-ins.
 
 - **Reading is free** within it: files and folders, the web, commands that only read, here and on another computer.
-- **Every change is checked** by auto mode's reviewer, which reads the agent's map: work on a computer, folder or service on it is expected, anything else is looked at more closely. See [Approvals and auto mode](approvals.md#auto-mode).
+- **Every change is checked** by auto mode's reviewer, which reads the agent's map: work on a computer or folder on it is expected; a service counts when you mentioned it or the request needs it, since services are shared by every agent; anything else is looked at more closely. See [Approvals and auto mode](approvals.md#auto-mode).
 - **Always yours**: money, messages to people, publishing (a push to `main`, tags, releases, deploys) and deleting.
 
 Ask any agent "what access do you have?" or "what can the Developer reach?": it answers from its map. When something it needs does not work, it checks the map live (`hub_access` with a check) before working around it or bothering you.

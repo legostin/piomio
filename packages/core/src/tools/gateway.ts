@@ -147,8 +147,9 @@ export class ToolGateway {
       return { content: [{ type: "text", text: `Blocked: ${hooked.blocked}` }], isError: true, _meta: { status: "denied" } };
     }
     const input = hooked.payload.input;
-    // What this call does may be less than the tool can (machine_exec of a command that only reads).
-    const effect = entry.effectOf?.(input);
+    // What this call does may be less than the tool can (machine_exec of a command that only reads); a strict agent
+    // keeps every such call asked about.
+    const effect = agent.policyProfile === "strict" ? undefined : entry.effectOf?.(input, ctx);
     const tool = effect && effect !== entry.descriptor.effect ? { ...entry.descriptor, effect } : entry.descriptor;
 
     const settings = this.d.settings.get();

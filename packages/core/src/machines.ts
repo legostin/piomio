@@ -15,7 +15,8 @@ import { InviteRegistry } from "./invites.ts";
 import type { MachineSetups } from "./machine-setup.ts";
 import type { Cluster } from "./cluster.ts";
 import { compareVersions } from "./updates.ts";
-import { readOnlyCommand } from "./policy/commands.ts";
+import { posix } from "node:path";
+import { commandParts, readOnlyCommand } from "./policy/commands.ts";
 import { PRIVATE } from "./native-permissions.ts";
 
 /**
@@ -32,12 +33,43 @@ function namesClosed(command: string): boolean {
 /** An address in a command: what it reads could carry data out to that site. */
 const ADDRESS = /[a-z][a-z0-9+.-]*:\/\/|\b[\w.-]+@[\w.-]+:/i;
 
+/** The programs another computer's unreviewed reads may use: they only show files, the repository and the computer. */
+const REMOTE_READERS = new Set([
+  "cd", "pwd", "ls", "cat", "head", "tail", "wc", "nl", "grep", "egrep", "fgrep", "rg", "find", "tree", "stat", "file", "du", "df",
+  "git", "uname", "whoami", "id", "uptime", "nproc", "date", "echo", "printf", "basename", "dirname", "realpath", "readlink",
+  "true", "false", "which", "sort", "uniq", "cut", "tr", "diff", "cmp", "comm", "sha256sum", "shasum", "md5sum",
+]);
+
+/** A path an argument names stays in the folders that computer allows (relative: from the command's folder, never up). */
+function pathAllowed(p: string, dirs: string[]): boolean {
+  if (!p.startsWith("/")) return !p.split("/").includes("..");
+  const n = posix.normalize(p);
+  return dirs.some((d) => {
+    const dn = posix.normalize(d).replace(/\/+$/, "");
+    return n === dn || n.startsWith(`${dn}/`);
+  });
+}
+
 /**
- * A command for another computer that only reads (the same shell reader as for this computer's commands,
- * policy/commands.ts) and names no credentials and no address: it needs no review, like a read here.
+ * A command for another computer that only reads and needs no review: the shell reader of this computer's commands
+ * (policy/commands.ts), only REMOTE_READERS, no credentials, no address, no globs, home or variables (paths nobody here
+ * can see), and every path inside that computer's allowed folders. Anything else goes to auto mode's reviewer.
  */
-export function readOnlyRemoteCommand(command: string): boolean {
-  return !namesClosed(command) && !ADDRESS.test(command) && readOnlyCommand(command, { home: "~", tmp: "/tmp" });
+export function readOnlyRemoteCommand(command: string, allowedDirs: string[] = []): boolean {
+  const env = { home: "~", tmp: "/tmp" };
+  if (namesClosed(command) || ADDRESS.test(command) || !readOnlyCommand(command, env)) return false;
+  const parts = commandParts(command, env);
+  if (!parts) return false;
+  for (const [name, ...args] of parts) {
+    if (!REMOTE_READERS.has(name)) return false;
+    for (const a of args) {
+      if (/[~$`*?[\]{}]/.test(a)) return false;
+      // An option's value is a path too (--file=/etc/x, -f/etc/x).
+      const v = a.startsWith("-") ? a.replace(/^-+[^=/]*=?/, "") : a;
+      if ((v.includes("/") || v === "..") && !pathAllowed(v, allowedDirs)) return false;
+    }
+  }
+  return true;
 }
 
 export const NODE_AUTH_PREFIX = "piomio-node-auth:";
@@ -61,6 +93,8 @@ export class MachineHub {
   setups?: MachineSetups;
   /** Only the leading replica sets machines up and shares their workspaces (cluster.ts). */
   cluster?: Cluster;
+  /** The computers an agent is bound to (AgentDef.machines), unset or empty: any (app.ts). */
+  boundTo?: (agentId: string) => string[] | undefined;
   /** This hub's own computer: its id for agents ("local", or its replica id) and its name (app.ts). */
   here?: () => { id: string; name: string };
   /** This hub's version: machine_list says which computers run an older Piomio. */
@@ -332,6 +366,22 @@ export class MachineHub {
     this.bus.emit("machine.updated", this.get(id)!);
   }
 
+  /**
+   * machine_exec of a command that only reads is a read there, as it is here: no review. Only on a POSIX computer (a
+   * Windows one runs it in cmd.exe, which reads quotes otherwise) whose commands are on, that the agent may use, in a
+   * session that has not read outside content; and only within that computer's allowed folders.
+   */
+  private remoteReadEffect(i: any, ctx: { agentId: string; tainted: boolean }): "read" | undefined {
+    if (ctx.tainted || typeof i?.command !== "string" || typeof i?.machine !== "string") return undefined;
+    const m = this.find(i.machine);
+    const info = m?.info;
+    if (!m || !info?.commands || /win(?:dows|32|_nt)/i.test(info.os)) return undefined;
+    const bound = this.boundTo?.(ctx.agentId);
+    if (bound?.length && !bound.includes(m.id)) return undefined;
+    if (typeof i.cwd === "string" && i.cwd && !pathAllowed(i.cwd, info.allowedDirs)) return undefined;
+    return readOnlyRemoteCommand(i.command, info.allowedDirs) ? "read" : undefined;
+  }
+
   /** The words for the hub's own computer named as a machine (English: it is for the model). */
   private hereText(): string {
     const h = this.here?.();
@@ -416,8 +466,7 @@ export class MachineHub {
         return text(`exit ${r.code}\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`, r.code !== 0);
       }),
       undefined,
-      // A command that only reads is a read there as it is here: no review (a change still has one).
-      (i) => (typeof i?.command === "string" && readOnlyRemoteCommand(i.command) ? "read" : undefined),
+      (i, ctx) => this.remoteReadEffect(i, ctx),
     );
     registry.register(
       {

@@ -149,10 +149,101 @@ describe("a service the hub cannot reach", () => {
     expect(r.isError).toBe(true);
     const text = (r.content[0] as { text: string }).text;
     expect(text).toMatch(/board is reconnecting/);
-    expect(text).toMatch(/Do not ask the user to sign in/);
+    expect(text).toMatch(/not the sign-in: do not ask the user to sign in again/);
     // Its tools stayed: the agent still sees them while the hub reconnects.
     expect(hub.tools.get("board_cards")).toBeTruthy();
     await svc.up();
     await until(() => server().status === "connected", 8000);
+  });
+});
+
+// Just enough MCP over stdio, that quits right after it listed its tools: a server in a crash loop.
+const CRASHER = `
+import { createInterface } from "node:readline";
+const out = (m) => process.stdout.write(JSON.stringify(m) + "\\n");
+createInterface({ input: process.stdin }).on("line", (l) => {
+  const m = JSON.parse(l);
+  if (m.method === "initialize") out({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "crasher", version: "1" } } });
+  else if (m.method === "tools/list") { out({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "x", inputSchema: { type: "object" } }] } }); setTimeout(() => process.exit(1), 30); }
+  else if (m.id !== undefined) out({ jsonrpc: "2.0", id: m.id, result: {} });
+});
+`;
+
+describe("what the hub does not retry forever, and a try that comes too late", () => {
+  let hub: Hub;
+  let slowPort = 0;
+  let slowDelay = 0;
+  let slowServer: Server;
+  let refuser: Server;
+  const status = (name: string) => hub.mcpClients.list().find((s) => s.name === name);
+
+  beforeAll(async () => {
+    // Refuses everyone: a revoked key is not a passing failure.
+    refuser = createHttpServer((_req, res) => res.writeHead(403, { "content-type": "application/json" }).end('{"error":"forbidden"}'));
+    await new Promise<void>((r) => refuser.listen(0, "127.0.0.1", () => r()));
+    slowPort = await freePort();
+    slowServer = createHttpServer(async (req, res) => {
+      await new Promise((r) => setTimeout(r, slowDelay));
+      const mcp = new McpServer({ name: "slow", version: "1.0.0" }, { capabilities: { tools: {} } });
+      mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: "look", description: "Look", inputSchema: { type: "object", properties: {} } }] }));
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      await mcp.connect(transport);
+      const raw = req.method === "POST" ? await body(req) : "";
+      return transport.handleRequest(req, res, raw ? JSON.parse(raw) : undefined);
+    });
+    const builtin = mkdtempSync(join(tmpdir(), "owl-reconnect2-builtin-"));
+    const plugin = (id: string, mcp: unknown, files: Record<string, string> = {}) => {
+      const dir = join(builtin, id);
+      mkdirSync(join(dir, ".piomio-plugin"), { recursive: true });
+      writeFileSync(join(dir, ".piomio-plugin", "plugin.json"), JSON.stringify({ id, name: id, builtin: true, integration: { category: "work", connect: "none", summary: id } }));
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { [id]: mcp } }));
+      for (const [f, text] of Object.entries(files)) writeFileSync(join(dir, f), text);
+    };
+    plugin("refuser", { type: "http", url: `http://127.0.0.1:${(refuser.address() as any).port}/mcp`, headers: { Authorization: "Bearer revoked" } });
+    plugin("crasher", { command: "${PIOMIO_NODE}", args: ["${PIOMIO_PLUGIN_ROOT}/server.mjs"] }, { "server.mjs": CRASHER });
+    plugin("slow", { type: "http", url: `http://127.0.0.1:${slowPort}/mcp`, headers: { Authorization: "Bearer t" } });
+    const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
+    const config = loadConfig(
+      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), PIOMIO_LANG: "en", TZ: "UTC" },
+      { dataDir: mkdtempSync(join(tmpdir(), "owl-reconnect2-")), builtinPluginsDirs: [builtin], builtinAgentsDir: join(fixtures, "agents") },
+    );
+    hub = new Hub(config);
+    hub.mcpClients.retryDelays = [100, 200];
+    await hub.start();
+  });
+
+  afterAll(async () => {
+    await hub?.stop();
+    refuser?.close();
+    slowServer?.close();
+  });
+
+  it("a server that refuses the hub (a revoked key) is an error, not 'reconnecting'", () => {
+    expect(status("refuser")).toMatchObject({ status: "error" });
+    expect(status("refuser")!.retryAt).toBeUndefined();
+  });
+
+  it("a local server that dies right after it connects is started again a few times, then waits", async () => {
+    await until(() => status("crasher")?.status === "error", 10_000);
+    const connects = hub.audit.list({ action: "mcp.connect", limit: 200 }).filter((e) => e.target === "crasher").length;
+    expect(connects).toBeGreaterThan(1);
+    expect(connects).toBeLessThanOrEqual(5);
+    expect(hub.tools.get("crasher_x")).toBeUndefined();
+  });
+
+  it("a try still waiting when its server is taken away registers nothing", async () => {
+    // The server was unreachable at the start; now it answers, slowly.
+    expect(status("slow")?.status).toBe("reconnecting");
+    slowDelay = 400;
+    await new Promise<void>((r) => slowServer.listen(slowPort, "127.0.0.1", () => r()));
+    const late = hub.mcpClients.kick("slow");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(status("slow")?.status).toBe("connecting");
+    // Taken away meanwhile (its plugin went, a sign-in started another try…).
+    await hub.mcpClients.sync([]);
+    await late;
+    await new Promise((r) => setTimeout(r, 600));
+    expect(status("slow")).toBeUndefined();
+    expect(hub.tools.get("slow_look")).toBeUndefined();
   });
 });

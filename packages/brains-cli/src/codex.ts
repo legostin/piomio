@@ -371,7 +371,7 @@ class CodexSession implements BrainSessionImpl {
             // Never `codex exec` for it: its commands have no network, and the session would stay so silently.
             this.app = undefined;
             const message = brainsT(this.p.locale?.())("codex.didNotStart", { detail: e.message });
-            this.p.error?.(`codex app-server did not start twice in session ${this.o.sessionId}: ${e.message}`);
+            this.p.error?.(`codex app-server did not start in session ${this.o.sessionId}, nor when started again: ${e.message}`);
             yield { type: "error", fatal: true, message };
             yield { type: "done", resumeToken: this.threadId };
             return;

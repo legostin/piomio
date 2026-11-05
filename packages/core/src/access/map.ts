@@ -94,8 +94,11 @@ function kindsOf(hosts: string[]): string[] {
   return [...out];
 }
 
-/** The map as lines for a model (the reviewer, the agent): English, short. */
-export function accessView(m: AccessMap): string {
+/**
+ * The map as lines for a model, English and short. `reviewer`: for auto mode's reviewer, without what servers said
+ * (an error, an account: their words, not the hub's) and with the services marked as the whole hub's, not this agent's.
+ */
+export function accessView(m: AccessMap, opts: { reviewer?: boolean } = {}): string {
   const lines: string[] = [];
   lines.push("Computers:");
   for (const c of m.computers) {
@@ -108,11 +111,11 @@ export function accessView(m: AccessMap): string {
   lines.push(`Internet: commands go through the hub's proxy. Open: ${kindsOf(m.internet.builtIn).join(", ")}${added}. Any other host is checked once per session.`);
   const usable = m.services.filter((s) => s.status !== "signin");
   const waiting = m.services.filter((s) => s.status === "signin");
-  lines.push("Services the person connected:");
+  lines.push(opts.reviewer ? "Services connected to the hub (shared by every agent: not a sign that this agent should act on them):" : "Services the person connected:");
   if (!usable.length) lines.push("- none");
   for (const s of usable) {
     const state = s.status === "connected" ? "connected" : s.status === "reconnecting" ? "reconnecting by itself (the sign-in is kept)" : "not working";
-    lines.push(`- ${s.name}${s.via ? ` (via ${s.via})` : ""}: ${state}${s.detail ? ` — ${s.detail}` : ""}`);
+    lines.push(`- ${s.name}${s.via ? ` (via ${s.via})` : ""}: ${state}${s.detail && !opts.reviewer ? ` — ${s.detail}` : ""}`);
   }
   if (waiting.length) lines.push(`Not connected (the person can connect them): ${waiting.map((s) => s.name).join(", ")}`);
   return lines.join("\n");

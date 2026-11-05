@@ -185,7 +185,8 @@ const READERS: Record<string, (args: string[]) => boolean> = {
   strings: any,
   od: any,
   hexdump: any,
-  file: any,
+  // -C compiles a magic file: it writes one.
+  file: without(/^-[A-Za-z]*C|^--compile/),
   stat: any,
   du: any,
   df: any,
@@ -199,7 +200,8 @@ const READERS: Record<string, (args: string[]) => boolean> = {
   diff: without(/^--output/),
   cmp: any,
   jq: any,
-  sort: without(/^(?:-[A-Za-z]*o|--output)/),
+  // --compress-program runs a program on what it sorts.
+  sort: without(/^(?:-[A-Za-z]*o|--output|--compress-program)/),
   // A second name is the file it writes.
   uniq: (args) => positional(args).length <= 1,
   xxd: (args) => !args.some((a) => /^-r/.test(a)) && positional(args).length <= 1,
@@ -226,7 +228,7 @@ const READERS: Record<string, (args: string[]) => boolean> = {
   uptime: any,
   sw_vers: any,
   nproc: any,
-  date: without(/^-s$|^-f/),
+  date: without(/^-s$|^--set|^-f/),
   git: gitReads,
 };
 
@@ -253,7 +255,6 @@ const GIT_READ = new Set([
   "count-objects",
   "version",
   "check-ignore",
-  "ls-remote",
 ]);
 
 function gitReads(args: string[]): boolean {
@@ -266,7 +267,9 @@ function gitReads(args: string[]): boolean {
   }
   const [sub, ...rest] = args.slice(i);
   if (!sub) return false;
-  if (rest.some((a) => /^--output(?:=|$)/.test(a) || a === "-O" || a.startsWith("--open-files-in-pager"))) return false;
+  // What runs a program of the caller's choosing (a pager, an external diff), or writes a file. ls-remote and
+  // `remote show` are gone too: they reach the network, and ls-remote's --upload-pack runs any command.
+  if (rest.some((a) => /^--output(?:=|$)/.test(a) || /^-O/.test(a) || a.startsWith("--open-files-in-pager") || /^--(?:ext-diff|upload-pack|receive-pack|exec)\b/.test(a))) return false;
   if (GIT_READ.has(sub)) return true;
   switch (sub) {
     case "branch":
@@ -274,7 +277,7 @@ function gitReads(args: string[]): boolean {
     case "tag":
       return (!rest.length || rest.some((a) => a === "-l" || a.startsWith("--list"))) && !rest.some((a) => /^-[dasfmFu]$|^--(?:delete|annotate|sign|force|message|file)/.test(a));
     case "remote":
-      return !rest.length || (rest.length === 1 && (rest[0] === "-v" || rest[0] === "--verbose")) || rest[0] === "get-url" || rest[0] === "show";
+      return !rest.length || (rest.length === 1 && (rest[0] === "-v" || rest[0] === "--verbose")) || rest[0] === "get-url";
     case "config":
       return rest.some((a) => ["--get", "--get-all", "--get-regexp", "--list", "-l"].includes(a)) && !rest.some((a) => /^--(?:add|unset|replace|rename|remove|edit)|^-e$/.test(a));
     case "stash":

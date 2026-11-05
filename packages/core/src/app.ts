@@ -274,6 +274,7 @@ export class Hub {
     this.machines.cluster = this.cluster;
     this.machines.version = config.version;
     this.machines.here = () => ({ id: this.here(), name: hubName() });
+    this.machines.boundTo = (id) => this.agents.get(id)?.machines;
     this.activity = new MachineActivityFeed(this.bus, this.machines);
     this.updates = new HubUpdates({
       config,
@@ -816,7 +817,7 @@ export class Hub {
       .filter((m) => m.role === "assistant" && (!m.agentId || m.agentId === w.agentId))
       .flatMap((m) => m.parts.flatMap((p) => (p.type === "tool_call" ? [{ name: p.name, input: this.vault.redactor.value(p.input) }] : [])));
     // The agent's access: a review never fails for want of it.
-    const access = await this.accessMap(w.agentId, w.sessionId).then(accessView, () => undefined);
+    const access = await this.accessMap(w.agentId, w.sessionId).then((m) => accessView(m, { reviewer: true }), () => undefined);
     return { person, ...(goal ? { goal } : {}), calls: calls.slice(-20), ...(access ? { access } : {}) };
   }
 
