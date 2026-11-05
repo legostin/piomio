@@ -1,6 +1,7 @@
 // The settings panel: every section that is not the conversation, opened beside the chat (docked on wide screens,
 // full-screen on phones). The home view lists the sections; a section renders its page in compact form.
 
+import { WindowTitlebar } from "./WindowTitlebar";
 import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { ArrowLeft, ChevronRight, Eraser, ExternalLink, LogOut, MessageCircleMore, ShieldCheck, X } from "lucide-react";
 import { useStore } from "../lib/store";
@@ -206,9 +207,10 @@ export function SettingsPanel() {
       <div className="animate-fade fixed inset-0 z-30 hidden bg-[rgb(20_14_6/0.22)] backdrop-blur-[2px] md:block xl:hidden" onClick={closePanel} aria-hidden />
       <aside
         aria-label={t("nav.settings")}
-        className="animate-slide fixed inset-0 z-40 flex flex-col overflow-hidden bg-bg md:inset-y-2 md:right-2 md:left-auto md:w-[540px] md:max-w-[calc(100vw-5rem)] md:rounded-[22px] md:shadow-pop xl:relative xl:inset-auto xl:z-auto xl:my-2 xl:mr-2 xl:max-w-none xl:shrink-0 xl:shadow-sheet 2xl:w-[600px]"
+        className="window-overlay animate-slide fixed inset-0 z-40 flex flex-col overflow-hidden bg-bg md:inset-y-2 md:right-2 md:left-auto md:w-[540px] md:max-w-[calc(100vw-5rem)] md:rounded-[22px] md:shadow-pop xl:relative xl:inset-auto xl:z-auto xl:my-2 xl:mr-2 xl:max-w-none xl:shrink-0 xl:shadow-sheet 2xl:w-[600px]"
         onClick={onClick}
       >
+        <WindowTitlebar className="md:hidden" />
         <div className="glass flex h-12 shrink-0 items-center gap-1 px-2">
           {!home && (
             <IconButton label={t("common.back")} onClick={panelBack} className="size-8">

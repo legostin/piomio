@@ -4,7 +4,6 @@
 // files in the browser (the phone app: its share sheet). The same library on every device: it comes from the hub.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { ChevronRight, FileText, LayoutTemplate, LibraryBig, Mic, Play, Search, X } from "lucide-react";
 import type { LibraryItem, LibraryKind } from "@piomio/shared";
 import { useStore } from "../lib/store";
@@ -16,6 +15,7 @@ import { agents, team } from "../state/app";
 import { closeLibrary, libraryStamp, libraryView, openLibrary } from "../state/library";
 import { ensurePages, pages } from "../state/pages";
 import { openViewer, saveMedia, viewer } from "../state/viewer";
+import { FullscreenPanel } from "./WindowTitlebar";
 import { PageViewer } from "../pages/chat/PageCard";
 import { QuietImg } from "./picture";
 import { Button, cx, EmptyState, Spinner } from "./ui";
@@ -192,8 +192,8 @@ function Library({ agentId }: { agentId: string }) {
     ));
   };
 
-  return createPortal(
-    <div className="animate-fade fixed inset-0 z-50 flex flex-col bg-bg" role="dialog" aria-label={t("library.title")}>
+  return (
+    <FullscreenPanel className="animate-fade z-50" role="dialog" aria-label={t("library.title")}>
       <header className="border-b border-hairline pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex w-full max-w-3xl items-center gap-1 px-2">
           <button type="button" onClick={closeLibrary} aria-label={t("page.close")} title={t("page.close")} className="flex size-11 shrink-0 items-center justify-center rounded-xl text-muted transition hover:bg-surface-2 hover:text-fg">
@@ -256,8 +256,7 @@ function Library({ agentId }: { agentId: string }) {
           }}
         />
       )}
-    </div>,
-    document.body,
+    </FullscreenPanel>
   );
 }
 

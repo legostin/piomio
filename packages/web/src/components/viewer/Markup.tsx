@@ -311,7 +311,7 @@ const iconButton = "inline-flex size-9 shrink-0 items-center justify-center roun
 
 export function EditTop({ saving, onCancel, onDone }: { saving: boolean; onCancel: () => void; onDone: () => void }) {
   return (
-    <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/55 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-8 sm:px-4">
+    <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/55 to-transparent px-3 pt-[max(0.75rem,var(--owl-safe-top))] pb-8 sm:px-4">
       <button
         type="button"
         onClick={onCancel}

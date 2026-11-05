@@ -16,6 +16,16 @@ pub const SETUP: &str = "setup";
 
 /// The menu's "Clear cache" waits for the hub window's page to load (the window was closed).
 static CLEAR_CACHE: AtomicBool = AtomicBool::new(false);
+
+/// An opaque backing even where WebKit has not painted yet (loading, resizing or rubber-band overscroll).
+/// Matches the web UI's --canvas. A transparent titlebar must reveal our window, never the application behind it.
+#[cfg(any(target_os = "macos", test))]
+fn main_background(theme: tauri::Theme) -> tauri::window::Color {
+  match theme {
+    tauri::Theme::Dark => tauri::window::Color(9, 8, 7, 255),
+    _ => tauri::window::Color(236, 231, 224, 255),
+  }
+}
 /// The page clears what it keeps on this computer and says so (state/app.ts in the web UI); it may still be starting.
 const CLEAR_CACHE_JS: &str = "(function f(n){ if (window.piomioClearCache) return void window.piomioClearCache(); if (n > 0) setTimeout(function(){ f(n - 1); }, 250); })(80)";
 
@@ -127,16 +137,28 @@ pub fn open_main(app: &AppHandle, url: Url) -> tauri::Result<()> {
   // The buttons' centre lines up with the logo and the conversation's top bar, 32 points down (Layout.tsx). The first
   // click on an inactive window reaches the page, so the window drags from its top row without being clicked first.
   #[cfg(target_os = "macos")]
-  let builder = if overlay {
-    builder
-      .title_bar_style(tauri::TitleBarStyle::Overlay)
-      .hidden_title(true)
-      .traffic_light_position(tauri::LogicalPosition::new(20.0, 34.0))
-      .accept_first_mouse(true)
-  } else {
-    builder
+  let builder = {
+    // This is the main hub window; only Pio's separate companion windows are transparent.
+    let builder = builder.transparent(false).background_color(main_background(tauri::Theme::Light));
+    if overlay {
+      builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(20.0, 34.0))
+        .accept_first_mouse(true)
+    } else {
+      builder
+    }
   };
-  builder.build()?;
+  let window = builder.build()?;
+  #[cfg(target_os = "macos")]
+  if let Ok(theme) = window.theme() {
+    window.set_background_color(Some(main_background(theme)))?;
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = window;
+  }
   dock(app, true);
   Ok(())
 }
@@ -178,6 +200,12 @@ pub fn close_main(app: &AppHandle) {
 pub fn on_event(window: &Window, event: &WindowEvent) {
   let app = window.app_handle();
   match event {
+    #[cfg(target_os = "macos")]
+    WindowEvent::ThemeChanged(theme) if window.label() == MAIN => {
+      if let Some(main) = app.get_webview_window(MAIN) {
+        let _ = main.set_background_color(Some(main_background(*theme)));
+      }
+    }
     WindowEvent::CloseRequested { api, .. } if window.label() == MAIN => {
       api.prevent_close();
       let _ = window.hide();
@@ -219,6 +247,14 @@ pub fn dock(app: &AppHandle, visible: bool) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn the_main_window_backing_is_opaque_in_both_appearances() {
+    for theme in [tauri::Theme::Light, tauri::Theme::Dark] {
+      assert_eq!(main_background(theme).3, 255, "the desktop behind the hub must never show through");
+    }
+    assert_ne!(main_background(tauri::Theme::Light), main_background(tauri::Theme::Dark));
+  }
 
   #[test]
   fn announces_the_installed_shell_version() {

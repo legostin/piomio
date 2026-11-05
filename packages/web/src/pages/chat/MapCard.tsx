@@ -5,6 +5,7 @@
 // In the chat the map ignores the scroll wheel (and, on touch screens, one-finger drags) until it is clicked, so the
 // chat scrolls past it freely; full screen it takes every gesture.
 
+import { WindowTitlebar } from "../../components/WindowTitlebar";
 import { useEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -336,10 +337,11 @@ export function MapCard({ part }: { part: MapPart }) {
       ref={card}
       className={cx(
         "flex flex-col overflow-hidden bg-surface",
-        full ? "animate-zoom fixed inset-0 z-[70] m-0 pb-[env(safe-area-inset-bottom)]" : "w-full max-w-xl rounded-[22px] border border-hairline shadow-card",
+        full ? "window-overlay animate-zoom fixed inset-0 z-[70] m-0 pb-[env(safe-area-inset-bottom)]" : "w-full max-w-xl rounded-[22px] border border-hairline shadow-card",
       )}
       aria-label={t("message.map.label", { place })}
     >
+      {full && <WindowTitlebar />}
       <div className={cx("group/map relative isolate", full ? "min-h-0 flex-1" : route ? "h-[300px]" : "h-[260px]")} onTouchStart={() => !active && !full && setNudge(true)}>
         <div ref={box} className="owl-map absolute inset-0" />
         {slots.map((el, i) => createPortal(<Glyph spot={spots[i]} />, el, `glyph-${i}`))}

@@ -1,0 +1,22 @@
+{
+  "id": "kanban",
+  "name": "%name%",
+  "version": "0.1.0",
+  "author": "Piomio",
+  "description": "%description%",
+  "builtin": true,
+  "defaultEnabled": false,
+  "server": "./server/index.ts",
+  "ui": "./ui/dist/index.js",
+  "toolPrefix": "kanban",
+  "contributes": {
+    "tools": true,
+    "http": true,
+    "widgets": ["card", "board"]
+  },
+  "integration": {"category": "work", "icon": "square-kanban", "connect": "none", "summary": "%integration.summary%", "example": "%integration.example%"},
+  "permissions": {
+    "core": ["tasks.create", "tasks.get", "agents.list", "settings.get", "notify", "ui.emit", "files.fetch", "files.deliver"],
+    "ui": ["route", "layout.sidebar"]
+  }
+}

@@ -16,6 +16,35 @@ permissions:
   contents: read
 
 jobs:
+  panel-layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Capture panels before the change
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          baseline="${PR_BASE:-$(git rev-parse HEAD^)}"
+          git restore --source="$baseline" -- packages/web/src
+          PANEL_BASELINE=1 npx playwright test --config packages/web/e2e/playwright.config.ts
+          git restore --source=HEAD -- packages/web/src
+      - name: Check panel safe areas and capture the result
+        run: npx playwright test --config packages/web/e2e/playwright.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: panel-layout
+          path: output/playwright/
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30

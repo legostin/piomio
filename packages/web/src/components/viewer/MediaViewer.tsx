@@ -3,6 +3,7 @@
 // a drag down closes; the picture grows out of its thumbnail and goes back into it. Pictures waiting in the composer
 // can be marked up here before they are sent. Motion lives in stage.ts; this file lays out and draws the controls.
 
+import { WindowTitlebar } from "../WindowTitlebar";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, ImageOff, Loader2, PenLine, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
@@ -444,6 +445,7 @@ function Viewer({ state }: { state: ViewerState }) {
       className={cx("fixed inset-0 z-[55] touch-none overflow-hidden select-none", editing ? "cursor-crosshair" : zoomedIn ? "cursor-grab active:cursor-grabbing" : "")}
       style={{ ["--viewer-bg" as string]: "0" }}
     >
+      <WindowTitlebar className="pointer-events-auto absolute inset-x-0 top-0 z-20 bg-black!" />
       <div className="absolute inset-0 bg-black" style={{ opacity: "var(--viewer-bg)" }} />
       {/* The room a picture fits in; measured, never seen. */}
       <div
@@ -452,7 +454,7 @@ function Viewer({ state }: { state: ViewerState }) {
         className={cx(
           "pointer-events-none invisible absolute",
           editing
-            ? "inset-x-3 top-[calc(env(safe-area-inset-top)+64px)] bottom-[calc(env(safe-area-inset-bottom)+150px)] sm:inset-x-20 sm:bottom-[calc(env(safe-area-inset-bottom)+96px)]"
+            ? "inset-x-3 top-[calc(var(--owl-safe-top)+64px)] bottom-[calc(env(safe-area-inset-bottom)+150px)] sm:inset-x-20 sm:bottom-[calc(env(safe-area-inset-bottom)+96px)]"
             : "inset-0 sm:inset-x-20 sm:top-16 sm:bottom-20",
         )}
       />
@@ -470,7 +472,7 @@ function Viewer({ state }: { state: ViewerState }) {
             </>
           ) : (
             <>
-              <div className="absolute inset-x-0 top-0 flex items-start gap-3 bg-gradient-to-b from-black/55 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-10 sm:px-4">
+              <div className="absolute inset-x-0 top-0 flex items-start gap-3 bg-gradient-to-b from-black/55 to-transparent px-3 pt-[max(0.75rem,var(--owl-safe-top))] pb-10 sm:px-4">
                 <div className="min-w-0 flex-1 pt-2 pl-1 text-white">
                   {many && <div className="text-[13px] font-semibold tabular-nums">{t("viewer.counter", { n: index + 1, total: items.length })}</div>}
                   {item.name && <div className="truncate text-xs text-white/70">{item.name}</div>}

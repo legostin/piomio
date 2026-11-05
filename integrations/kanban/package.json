@@ -1,0 +1,7 @@
+{
+  "name": "@piomio/integration-kanban",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Kanban: projects with their own columns, cards with attachments, agents taking work by themselves"
+}
