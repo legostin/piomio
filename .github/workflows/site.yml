@@ -36,12 +36,13 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  # Read-only release previews must not cancel an active deployment either.
+  group: ${{ github.event_name == 'workflow_run' && !startsWith(github.event.workflow_run.display_title, 'Publish v') && format('pages-preview-{0}', github.event.workflow_run.id) || 'pages' }}
   cancel-in-progress: true
 
 jobs:
   build:
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request' && startsWith(github.event.workflow_run.head_branch, 'v'))
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.display_title, 'Publish v') && github.event.workflow_run.event != 'pull_request' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     env:
       SITE_BASE: ${{ vars.SITE_BASE || '/piomio/' }}
