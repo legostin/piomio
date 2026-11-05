@@ -231,6 +231,7 @@ export default {
   "push.off": "Pushes are off on this hub (PIOMIO_PUSH_RELAY=off).",
   "push.badToken": "The phone sent a push token the hub cannot read",
   "push.relayDown": "The push relay did not answer. Pushes will be turned on the next time the app opens.",
+  "push.file": "Sent a file",
   "push.notFound": "This notification is no longer on the hub",
   "device.badSignature": "The Face ID confirmation did not check out. Try again.",
   "device.networkOff": "Phones cannot reach the hub: its port for phones is closed (PIOMIO_DEVICES=0) and access from anywhere is off.",

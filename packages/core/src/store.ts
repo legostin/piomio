@@ -260,6 +260,17 @@ export class Store {
     return r.n;
   }
 
+  /** Unread agents' messages across the person's dialogs and group chats: the app icon's badge. */
+  unreadChats(): number {
+    const r = this.db
+      .prepare(
+        "select count(*) as n from messages m join conversations c on c.id = m.conversation_id " +
+          "where c.kind in ('main', 'group') and m.role != 'user' and m.status != 'streaming' and m.quiet = 0 and m.created_at > coalesce(c.read_at, '')",
+      )
+      .get() as { n: number };
+    return r.n;
+  }
+
   /** New `members` of a group also set its lead (`agentId`), the first of them. */
   updateConversation(id: string, patch: { title?: string; agentId?: string; members?: string[] }): Conversation | undefined {
     if (patch.title !== undefined) this.db.prepare("update conversations set title = ? where id = ?").run(patch.title, id);

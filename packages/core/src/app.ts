@@ -27,7 +27,7 @@ import { PluginHost } from "./plugins/host.ts";
 import { EgressProxy } from "./egress.ts";
 import { BrainRegistry } from "./brains.ts";
 import { ChannelRegistry } from "./channels.ts";
-import { Notifier } from "./notifier.ts";
+import { inQuietHours, localHHMM, Notifier } from "./notifier.ts";
 import { SessionRunner } from "./runner.ts";
 import { Team } from "./team.ts";
 import { roadRoute } from "./routing.ts";
@@ -83,7 +83,7 @@ import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
 import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
-import { DevicePushes, PushRelay, desktopNotifyLine, pushNote } from "./push.ts";
+import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
@@ -298,12 +298,26 @@ export class Hub {
     this.devices = new DeviceRegistry({ db: this.db, bus: this.bus, audit: this.audit, invites: this.invites });
     this.locations = new UserLocations(this.settings, (id) => !!this.devices.get(id));
     this.pushes = new DevicePushes({ db: this.db, bus: this.bus, ...(config.pushRelay ? { relay: new PushRelay(config.pushRelay) } : {}) });
-    // What reached the person wakes their phones (the words stay here) and, on the desktop app's own hub, shows as this
-    // computer's notification.
+    // Every agent's message in the person's chats and what the notifier delivers wake their phones (the words stay
+    // here) and, on the desktop app's own hub, show as this computer's notifications. The badge counts unread chats.
     this.notifier.onDelivered = (n, o) => {
-      void this.pushes.send(n, { silent: o.silent, badge: this.notifier.unreadCount() });
+      void this.pushes.send(n, { silent: o.silent, badge: this.store.unreadChats() });
       if (config.desktopNotify) process.stdout.write(desktopNotifyLine(pushNote(n, o.recipient, this.notifier.agentName), o.silent));
     };
+    watchAgentMessages({
+      bus: this.bus,
+      store: this.store,
+      on: (m, c) => {
+        // A standby replica hears the leader's messages too: only the leader wakes anyone.
+        if (this.cluster && !this.cluster.leads()) return;
+        const note = messageNote(m, c, this.notifier.agentName, t("push.file"));
+        if (!note) return;
+        const s = this.settings.get();
+        const silent = inQuietHours(s.quietHours, localHHMM(s.timezone));
+        void this.pushes.send(note, { silent, badge: this.store.unreadChats() });
+        if (config.desktopNotify) process.stdout.write(desktopNotifyLine(note, silent));
+      },
+    });
     this.secrets = new SecretIntake({ db: this.db, bus: this.bus, audit: this.audit, vault: this.vault, plugins: () => this.plugins });
     this.agentDrafts = new AgentDrafts({ db: this.db, bus: this.bus });
     this.cliTools = new CliTools(config.dataDir, config.installClis);
