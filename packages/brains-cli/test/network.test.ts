@@ -85,6 +85,17 @@ describe("confined brain networking", () => {
     for (const value of ["enabled=true", "allow_upstream_proxy=true", "allow_local_binding=false", "enable_socks5=false", 'mode="full"', 'proxy_url="http://127.0.0.1:0"']) expect(network).toContain(value);
     for (const host of domains) expect(network).toContain(`${JSON.stringify(host)}="allow"`);
     expect(network).toContain('"*"="allow"');
+    // A whole inline table: Codex 0.166 refuses one left open ("invalid type: string … expected struct NetworkToml")
+    // and would not start; the hub then ran every networked Codex task without network (2026-11-05).
+    const value = network.slice(network.indexOf("=") + 1);
+    expect(value.startsWith("{") && value.endsWith("}}")).toBe(true);
+    let depth = 0;
+    for (const ch of value.replace(/"[^"]*"/g, "")) {
+      if (ch === "{") depth++;
+      if (ch === "}") depth--;
+      expect(depth).toBeGreaterThanOrEqual(0);
+    }
+    expect(depth).toBe(0);
     expect(network).not.toContain('"127.0.0.1"="allow"');
     expect(JSON.stringify(started)).not.toContain("test-credential");
   });

@@ -196,7 +196,7 @@ class CodexSession implements BrainSessionImpl {
       ...(network ? [
         // enabled alone opens unrestricted networking: the managed proxy feature MUST be enabled alongside it.
         "features.network_proxy=true",
-        `permissions.piomio.network={enabled=true,proxy_url="http://127.0.0.1:0",enable_socks5=false,enable_socks5_udp=false,allow_upstream_proxy=true,allow_local_binding=false,mode="full",domains={${network.allowedDomains.map((h) => `${tomlString(h)}="allow"`).join(",")}}`,
+        `permissions.piomio.network={enabled=true,proxy_url="http://127.0.0.1:0",enable_socks5=false,enable_socks5_udp=false,allow_upstream_proxy=true,allow_local_binding=false,mode="full",domains={${network.allowedDomains.map((h) => `${tomlString(h)}="allow"`).join(",")}}}`,
       ] : ["permissions.piomio.network.enabled=false"]),
     ];
   }
