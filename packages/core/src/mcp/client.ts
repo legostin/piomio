@@ -96,7 +96,10 @@ class McpConfigError extends Error {}
 function passing(e: any, stdio: boolean): boolean {
   if (e instanceof McpConfigError) return false;
   if (stdio) return true;
-  if (e instanceof StreamableHTTPError) return typeof e.code === "number" && e.code >= 500;
+  // 5xx, a timeout (408) or "too many requests" (429) clears by itself.
+  if (e instanceof StreamableHTTPError) return typeof e.code === "number" && (e.code >= 500 || e.code === 408 || e.code === 429);
+  // The server did not answer in time (a slow network): MCP's RequestTimeout.
+  if (e?.code === -32001) return true;
   return connectionFailed(e);
 }
 
@@ -346,6 +349,13 @@ export class McpClientManager {
       this.audit.append("core", "mcp.connect", name, { source, tools: conn.tools.length, ...(prev ? { attempt: prev.attempt + 1 } : {}) });
     } catch (e: any) {
       if (stale()) return drop();
+      // Refused after it connected (its tools listed with a token it no longer takes): the person signs in again.
+      if (e instanceof UnauthorizedError && conn.oauth) {
+        drop();
+        this.registry.unregisterOwner(`mcp:${name}`);
+        Object.assign(conn, { status: "signin", error: t("mcp.needsSignin"), tools: [], retryAt: undefined });
+        return;
+      }
       const error = stderrTail.trim().split("\n").at(-1)?.trim() || (e?.message ?? String(e));
       console.error(`[mcp] ${name}: ${error}`);
       if (passing(e, type === "stdio")) this.retryLater(conn, error);

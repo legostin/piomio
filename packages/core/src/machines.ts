@@ -33,12 +33,22 @@ function namesClosed(command: string): boolean {
 /** An address in a command: what it reads could carry data out to that site. */
 const ADDRESS = /[a-z][a-z0-9+.-]*:\/\/|\b[\w.-]+@[\w.-]+:/i;
 
-/** The programs another computer's unreviewed reads may use: they only show files, the repository and the computer. */
-const REMOTE_READERS = new Set([
-  "cd", "pwd", "ls", "cat", "head", "tail", "wc", "nl", "grep", "egrep", "fgrep", "rg", "find", "tree", "stat", "file", "du", "df",
-  "git", "uname", "whoami", "id", "uptime", "nproc", "date", "echo", "printf", "basename", "dirname", "realpath", "readlink",
-  "true", "false", "which", "sort", "uniq", "cut", "tr", "diff", "cmp", "comm", "sha256sum", "shasum", "md5sum",
-]);
+/**
+ * What another computer's unreviewed reads may run: commands that look at the computer and the repository, never at a
+ * file's contents (there is no sandbox there, and a path can hide in quotes, a bare `cd` or a recursive read). Reading
+ * files there goes to auto mode's reviewer, which knows the agent's access.
+ */
+const LOOKS = new Set(["pwd", "ls", "whoami", "id", "uname", "uptime", "nproc", "df", "du", "date", "echo", "true", "false", "which"]);
+/**
+ * git's subcommands that show the repository's state and history. Not `diff`: by default it runs the repository's
+ * configured external diff program.
+ */
+const GIT_LOOKS = new Set(["status", "log", "rev-parse", "branch", "describe", "show-ref", "shortlog", "rev-list", "count-objects", "remote", "tag", "stash", "worktree", "version", "merge-base", "name-rev"]);
+/** A flag (`-5`, `--oneline`, `--format=%h %s`). */
+const FLAG = /^--?[A-Za-z0-9][A-Za-z0-9-]*(?:=[A-Za-z0-9%._:@^~{}(), -]*)?$/;
+/** A revision or a range of them (origin/main, HEAD~1, @{u}, v1.2, main..HEAD): never an absolute path or a way up. */
+const REVISION = /^[A-Za-z0-9._@^~{}+-][A-Za-z0-9._@^~{}/+-]*$/;
+const revision = (a: string) => REVISION.test(a) && !a.split("/").includes("..");
 
 /** A path an argument names stays in the folders that computer allows (relative: from the command's folder, never up). */
 function pathAllowed(p: string, dirs: string[]): boolean {
@@ -51,23 +61,22 @@ function pathAllowed(p: string, dirs: string[]): boolean {
 }
 
 /**
- * A command for another computer that only reads and needs no review: the shell reader of this computer's commands
- * (policy/commands.ts), only REMOTE_READERS, no credentials, no address, no globs, home or variables (paths nobody here
- * can see), and every path inside that computer's allowed folders. Anything else goes to auto mode's reviewer.
+ * A command for another computer that needs no review: it passes this computer's shell reader (policy/commands.ts),
+ * names no closed store or address, runs only LOOKS or git's GIT_LOOKS, and each of its words is a flag or a revision
+ * (`ls`, `git status`, `git log origin/main..HEAD`, `df -h`). Anything else goes to auto mode's reviewer.
  */
-export function readOnlyRemoteCommand(command: string, allowedDirs: string[] = []): boolean {
+export function readOnlyRemoteCommand(command: string): boolean {
   const env = { home: "~", tmp: "/tmp" };
   if (namesClosed(command) || ADDRESS.test(command) || !readOnlyCommand(command, env)) return false;
   const parts = commandParts(command, env);
-  if (!parts) return false;
+  if (!parts?.length) return false;
   for (const [name, ...args] of parts) {
-    if (!REMOTE_READERS.has(name)) return false;
-    for (const a of args) {
-      if (/[~$`*?[\]{}]/.test(a)) return false;
-      // An option's value is a path too (--file=/etc/x, -f/etc/x).
-      const v = a.startsWith("-") ? a.replace(/^-+[^=/]*=?/, "") : a;
-      if ((v.includes("/") || v === "..") && !pathAllowed(v, allowedDirs)) return false;
+    if (name === "git") {
+      const [sub, ...rest] = args;
+      if (!sub || !GIT_LOOKS.has(sub) || !rest.every((a) => (a.startsWith("-") ? FLAG.test(a) : revision(a)))) return false;
+      continue;
     }
+    if (!LOOKS.has(name) || !args.every((a) => /^-[A-Za-z0-9]+$/.test(a) || (name === "echo" && /^[A-Za-z0-9 ._:,-]*$/.test(a)))) return false;
   }
   return true;
 }
@@ -379,7 +388,7 @@ export class MachineHub {
     const bound = this.boundTo?.(ctx.agentId);
     if (bound?.length && !bound.includes(m.id)) return undefined;
     if (typeof i.cwd === "string" && i.cwd && !pathAllowed(i.cwd, info.allowedDirs)) return undefined;
-    return readOnlyRemoteCommand(i.command, info.allowedDirs) ? "read" : undefined;
+    return readOnlyRemoteCommand(i.command) ? "read" : undefined;
   }
 
   /** The words for the hub's own computer named as a machine (English: it is for the model). */

@@ -26,39 +26,56 @@ function peerPair(): [RpcPeer, RpcPeer] {
 
 const text = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((c) => c.text ?? "").join("");
 
-describe("which commands on another computer only read", () => {
-  const dirs = ["/home/piomio/piomio-workspace"];
-  it("reads: listing, git's reads, file views, inside the computer's allowed folders", () => {
-    for (const c of ["pwd; ls -a; git rev-parse --show-toplevel; git rev-parse HEAD", "git log -5 --oneline", "cat README.md | head -20", "df -h", "uname -a", "git -C /home/piomio/piomio-workspace/site log -3", "git show origin/main:packages/core/src/app.ts | head", "grep -rn TODO src"])
-      expect(readOnlyRemoteCommand(c, dirs), c).toBe(true);
-  });
-  it("not reads: what runs a program, globs, the home, variables, paths outside the allowed folders (a review, 2026-11-05)", () => {
+describe("which commands on another computer need no review", () => {
+  it("those that look at the computer and the repository, with flags and revisions only", () => {
     for (const c of [
+      "pwd; ls -a; git rev-parse --show-toplevel; git rev-parse HEAD",
+      "git log -5 --oneline",
+      "git log --format='%h %s' origin/main..HEAD",
+      "git status --short 2>/dev/null",
+      "git log --stat -3 HEAD~1",
+      "git branch -a; git remote -v",
+      "df -h",
+      "uname -a",
+      "du -sh",
+    ])
+      expect(readOnlyRemoteCommand(c), c).toBe(true);
+  });
+  it("never a file's contents, a path, a program-running option or anything the reader does not know (reviews, 2026-11-05)", () => {
+    for (const c of [
+      "cat README.md",
+      "git show origin/main:packages/core/src/app.ts",
+      "grep -rn TODO src",
+      "git -C /home/piomio/site log",
       "git ls-remote --upload-pack='touch /tmp/x;' .",
       "git grep -O'touch /tmp/x;' -e foo",
+      "git grep --open='touch X;' -e foo",
+      "git log --out=x",
       "seq -f x%g 10 | sort -S 1 --compress-program=sh",
       "date --set=2020-01-01",
       "file -C -m X",
       "cat ~/.ss?/id_*",
-      "cat ~/.co?ex/auth.json",
       "cat ~/.s''sh/config",
-      "cat ~/.s\\sh/authorized_keys",
-      "grep -r 'BEGIN OPENSSH' ~",
-      "cd ~/.s* && cat *",
+      "cd; cat .s''sh/id_ed''25519",
+      "cd && cat .bash_hist''ory",
+      "cat .co''dex/auth.json",
+      "grep -r '' .",
+      "rg --hidden -uuu '' .",
       "jq -n env",
       "cat /proc/self/environ",
       "git ls-remote a.evil.example:x",
-      "cat /etc/hosts",
       "ls ../..",
-      "grep -f/etc/shadow x",
-      "grep --file=/home/other/x y",
-      "cat $HOME/notes",
+      "ls /home/other",
+      "git log ../../x",
+      "git diff /etc/passwd",
+      "git diff --stat HEAD~1",
+      "rm -rf build",
+      "git push origin feature",
+      "npm test",
+      "echo x > file",
+      "curl https://x.test",
     ])
-      expect(readOnlyRemoteCommand(c, dirs), c).toBe(false);
-  });
-  it("not reads: changes, credentials, addresses, anything the shell reader does not know", () => {
-    for (const c of ["rm -rf build", "git push origin feature", "cat ~/.ssh/id_ed25519", "cat .env", "cat /home/piomio/.aws/credentials", "git ls-remote https://x.test/repo", "curl https://x.test", "npm test", "echo x > file", "tail ~/.bash_history", "ls ~/.config/google-chrome", "cat /etc/shadow", "ls ~/.piomio-node", "cat ~/.config/gh/hosts.yml", "ls ~/Library/Mail"])
-      expect(readOnlyRemoteCommand(c, dirs), c).toBe(false);
+      expect(readOnlyRemoteCommand(c), c).toBe(false);
   });
 });
 
