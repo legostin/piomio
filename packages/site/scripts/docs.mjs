@@ -1,5 +1,5 @@
 // The docs for the site (docs/guide/README.md): the newest release line from docs/guide, older lines from
-// docs/versions/<major.minor> (frozen by release-on-push.yml), each with its sidebar and every page per language, and
+// docs/versions/<major.minor> (frozen through a PR before a new release line), each with its sidebar and every page per language, and
 // what one prerendered docs page carries (src/docs/page.ts).
 
 import { execFileSync } from "node:child_process";
@@ -42,13 +42,13 @@ export function readLine(dir, languages) {
 }
 
 /**
- * Every line, newest first. The newest is the root package.json's line; the release it describes is the newest
- * published one (`release`, from GitHub) when it is of that line, else package.json's version.
+ * Every line, newest first. GitHub's latest published release defines the current line. The source manifest is
+ * only an offline/development fallback: releases no longer bump it on main.
  */
 export function loadDocs({ languages, release }) {
-  const version = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
+  const version = release || JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
   const id = lineOf(version);
-  const lines = [{ id, release: release && lineOf(release) === id ? release : version, current: true, ...readLine(GUIDE, languages) }];
+  const lines = [{ id, release: version, current: true, ...readLine(GUIDE, languages) }];
   if (existsSync(VERSIONS))
     for (const old of readdirSync(VERSIONS).filter((d) => /^\d+\.\d+$/.test(d) && d !== id).sort(byNewest)) {
       const dir = join(VERSIONS, old);

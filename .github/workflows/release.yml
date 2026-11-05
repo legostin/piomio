@@ -1,59 +1,83 @@
-# A version tag (v0.2.0, the root package.json's version) builds and checks the desktop installers (desktop.yml) and
-# publishes them as that version's release. Nothing is published unless the tagged commit passes the checks
-# (checks.yml: the types and the tests).
-# Hubs of the version hand the installers out at /download/desktop/<os> (packages/core/src/server/join-page.ts), so
-# the asset names must stay what packaging/desktop/build.mjs makes. Its latest.json is what installed apps check for
-# updates (packages/desktop/src-tauri/src/update.rs). release-on-push.yml starts it on the tag it makes, since a tag
-# pushed with the workflow token triggers nothing by itself.
+# A tag is the release version. PRs and manual branch runs build a preview without creating tags or publishing.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "packages/desktop/**"
+      - "packages/tailnet/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/release-*.mjs"
+      - ".github/workflows/release*.yml"
+      - ".github/workflows/desktop.yml"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and check installers, without publishing (branches must use this)
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
+  contents: read
 
-# Releases come out one at a time in the order of their tags (release-on-push.yml can make a new one while the last is
-# still building), so the newest ends up as GitHub's latest release and the latest.json installed apps update
-# from. A newer tag waiting replaces an older one waiting: it holds all of the older one's changes.
+# Preview builds cannot cancel a production run. A release at a newer tag may supersede a queued older release.
 concurrency:
-  group: release-build
+  group: release-build-${{ github.event_name == 'pull_request' && github.ref || inputs.dry_run && github.ref || 'publish' }}
+  cancel-in-progress: false
 
 jobs:
   version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
-      - name: The tag is package.json's version
-        run: |
-          v=$(node -p "require('./package.json').version")
-          if [ "v$v" != "$GITHUB_REF_NAME" ]; then echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; fi
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve a tag or a dry-run version
+        id: version
+        env:
+          DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run }}
+        run: node scripts/release-build.mjs
 
   checks:
     needs: version
     uses: ./.github/workflows/checks.yml
-    permissions:
-      contents: read
+    with:
+      release_version: ${{ needs.version.outputs.version }}
 
-  # The installers build alongside the checks; the release waits for both.
   installers:
     needs: version
     uses: ./.github/workflows/desktop.yml
-    # The update signing key (TAURI_SIGNING_PRIVATE_KEY).
+    with:
+      release_version: ${{ needs.version.outputs.version }}
     secrets: inherit
 
   publish:
-    needs: [installers, checks]
+    needs: [version, installers, checks]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      # latest-json.mjs runs as a script (import.meta.main): Node 24, as everywhere else.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Only the installers.
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -61,15 +85,14 @@ jobs:
           merge-multiple: true
       - name: The assets the hubs link to are there
         run: |
-          v="${GITHUB_REF_NAME#v}"
+          v="$RELEASE_VERSION"
           test -f "dist/piomio-setup-$v-x64.exe"
           test -f "dist/piomio-$v.dmg"
-          # The server install: the archives with their checksums for install.sh and signatures for the hubs' updates.
+          test -f "dist/piomio-$v.pkg"
           for a in x64 arm64; do for f in "" .sha256 .sig; do test -f "dist/piomio-$v-linux-$a.tar.gz$f"; done; done
           cp packaging/linux/install.sh dist/install.sh
           node packaging/desktop/latest-json.mjs dist "$v" "$GITHUB_REPOSITORY"
-          ls -l dist
-      - name: Publish the release
+      - name: Publish once, without changing an existing release or moving latest backwards
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "Piomio ${GITHUB_REF_NAME#v}" --generate-notes
+        run: node scripts/release-publish.mjs

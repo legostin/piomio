@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     env:
       SITE_BASE: ${{ vars.SITE_BASE || '/piomio/' }}
