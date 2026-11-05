@@ -20,6 +20,8 @@ Piomio never updates behind your back. When a new release is out, you see an **U
 - **Updates are signed.** The files the desktop app and a server install update from are signed with Piomio's update key. The public half is built into the app and the hub, so they install only what that key signed.
 - **Your version** shows on the sign-in screen ("version 0.2.13"). On a server, `piomio version` prints it. Hover over **Update** to see the version it updates to.
 
+If branch protection prevents Actions from writing the version commit to main, prepare the next patch in a version-only PR: update the root package version and both root lockfile versions. After its checks pass and the PR is merged, automation creates the tag on that checked commit and explicitly starts the normal release build. It never moves an existing tag; a failed build is retried as the same workflow run.
+
 ## The desktop app
 
 The app looks for a new release a minute after it starts and then every hour; the hub also looks when you open Piomio or come back to it (at most every ten minutes), so **Update** shows soon after a release. It downloads a new one in the background, but installs nothing until you say so. There are three ways to say so:

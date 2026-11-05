@@ -50,6 +50,32 @@ jobs:
     permissions:
       contents: read
 
+  # main can be protected against writes by Actions. A version-only PR then needs only a tag and a build dispatch.
+  prepared-release:
+    needs: [check, checks]
+    if: github.event_name == 'push' && needs.check.outputs.release == 'false' && needs.checks.result == 'success'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: prepared-release
+      cancel-in-progress: false
+    permissions:
+      contents: write # Create the version tag; never update main or an existing tag.
+      actions: write # GITHUB_TOKEN's tag push cannot trigger release.yml: dispatch it explicitly.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Tag the prepared version and start its build
+        env:
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/prepared-release.mjs
+
   release:
     needs: [check, checks]
     if: ${{ !cancelled() && needs.checks.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.check.outputs.release == 'true') }}
