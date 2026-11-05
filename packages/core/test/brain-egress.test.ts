@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EgressProxy } from "../src/egress.ts";
 import { DEFAULT_BRAIN_EGRESS } from "../src/settings.ts";
+import { pluginEgress } from "../src/plugins/host.ts";
 
 describe("brain egress grants", () => {
   it("includes GitHub Git/API/download hosts, refuses unrelated hosts, and loses access when revoked", () => {
@@ -24,5 +25,13 @@ describe("brain egress grants", () => {
     expect(proxy.allowed(plugin, "extra.example").ok).toBe(false);
     proxy.extraBrainAllow = () => [];
     expect(proxy.allowed(brain, "extra.example").ok).toBe(false);
+  });
+});
+
+describe("brain plugins' own processes", () => {
+  it("reach their CLIs' model APIs; other plugins only what they were granted", () => {
+    expect(pluginEgress([], true)).toEqual(expect.arrayContaining(["chatgpt.com", "*.openai.com", "*.anthropic.com"]));
+    expect(pluginEgress(["api.example.com"], true)).toContain("api.example.com");
+    expect(pluginEgress(["api.example.com"], false)).toEqual(["api.example.com"]);
   });
 });

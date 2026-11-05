@@ -80,3 +80,84 @@ describe("egress proxy", () => {
     expect((await viaProxy(proxyPort, undefined, `http://localhost:${upstreamPort}/`)).status).toBe(407);
   });
 });
+
+/** A CONNECT through the proxy: its status line. */
+function tunnel(proxyPort: number, token: string | undefined, target: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const s = connect(proxyPort, "127.0.0.1", () => {
+      const auth = token ? `Proxy-Authorization: Basic ${Buffer.from(`${token}:x`).toString("base64")}\r\n` : "";
+      s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${auth}\r\n`);
+    });
+    let got = "";
+    s.on("data", (c) => {
+      got += c;
+      if (got.includes("\r\n")) {
+        resolve(got.split("\r\n")[0]!);
+        s.destroy();
+      }
+    });
+    s.on("error", reject);
+  });
+}
+
+describe("the proxy tells no internet from not allowed", () => {
+  const proxy = new EgressProxy();
+  const audit: Array<{ actor: string; action: string; target?: string; data?: any }> = [];
+  let proxyPort = 0;
+  let closedPort = 0;
+  let token = "";
+
+  beforeAll(async () => {
+    proxyPort = await freePort();
+    closedPort = await freePort();
+    proxy.audit = { append: (actor: string, action: string, target?: string, data?: unknown) => audit.push({ actor, action, target, data }) } as any;
+    await proxy.listen(proxyPort);
+    token = proxy.issueToken("brain:s1", ["*"]);
+  });
+  afterAll(() => proxy.close());
+
+  it("a host that does not resolve (the computer is offline) is unreachable, not a denial", async () => {
+    proxy.lookup = async () => {
+      throw Object.assign(new Error("getaddrinfo ENOTFOUND github.com"), { code: "ENOTFOUND" });
+    };
+    try {
+      const r = await viaProxy(proxyPort, token, "http://github.com/");
+      expect(r.status).toBe(502);
+      expect(r.body).toMatch(/cannot reach github\.com/);
+      expect(r.body).toMatch(/may be offline/);
+      expect(await tunnel(proxyPort, token, "github.com:443")).toMatch(/^HTTP\/1\.1 502 /);
+    } finally {
+      proxy.lookup = undefined;
+    }
+    expect(audit.some((a) => a.action === "egress.unreachable" && a.target === "github.com" && a.actor === "brain:s1")).toBe(true);
+    expect(audit.some((a) => a.action === "egress.deny")).toBe(false);
+  });
+
+  it("a host that refuses the connection is unreachable too", async () => {
+    proxy.privateAllow = () => ["localhost"];
+    try {
+      const line = await tunnel(proxyPort, token, `localhost:${closedPort}`);
+      expect(line).toMatch(/^HTTP\/1\.1 502 .*ECONNREFUSED/);
+    } finally {
+      proxy.privateAllow = () => [];
+    }
+  });
+
+  it("the proxy-auth challenge every client gets first is not audited; a real denial is, with its reason", async () => {
+    audit.length = 0;
+    expect((await viaProxy(proxyPort, undefined, "http://example.org/")).status).toBe(407);
+    expect(audit).toEqual([]);
+    const narrow = proxy.issueToken("plugin:narrow", ["example.com"]);
+    expect((await viaProxy(proxyPort, narrow, "http://example.org/")).status).toBe(403);
+    const deny = audit.find((a) => a.action === "egress.deny");
+    expect(deny).toMatchObject({ actor: "plugin:narrow", target: "example.org" });
+    expect(deny?.data?.reason).toMatch(/not allowed/);
+  });
+
+  it("knows which sessions have a live proxy token", () => {
+    const t = proxy.issueToken("brain:s2", ["*"], { sessionId: "s2", conversationId: "c", agentId: "a" });
+    expect(proxy.hasSession("s2")).toBe(true);
+    proxy.revoke(t);
+    expect(proxy.hasSession("s2")).toBe(false);
+  });
+});
