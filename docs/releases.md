@@ -112,17 +112,21 @@ owner PAT is proposed.
 
 ## Application plan (only after founder approval)
 
-1. Refresh main, the existing rulesets and effective branch rules; rebase the PR if needed and wait for all checks
-   and the four preview platforms. Confirm `v0.2.39` does not exist and the latest stable tag is still `v0.2.38`.
-2. Merge the reviewed PR through GitHub, pinning its approved head SHA. Do not bypass failing checks. It includes
-   the header fix from PR #16 (`e6e1db5`) because it is based on that main commit.
-3. Apply the main PUT and tag POST above. Read both back and inspect effective rules. Do not weaken or delete an
-   unrelated ruleset. The automatic main checks give time to apply tag protection before tag creation; if the tag
-   is already created, it receives the protection as soon as the ruleset is active.
-4. Follow `release on push`: checks → plan `v0.2.39` on the merge SHA → tag creation → explicit release dispatch.
-   The merge itself starts the release; do not rerun the old GH013 workflow. If main/tags advanced before approval,
-   recompute the expected version and review the new plan first.
-5. Verify the tag SHA, green macOS/Windows/Linux x64/Linux arm64 jobs and their install/uninstall checks; inspect
+1. Refresh main, the existing rulesets and effective branch rules. Confirm `v0.2.39` does not exist and the latest
+   stable tag is still `v0.2.38`. If main/tags advanced before approval, review the new version plan first.
+2. Merge [PR #20](https://github.com/legostin/piomio/pull/20) first, after its CI is green and the founder has
+   approved it. Preserve `[skip release]` in the merge/squash message. It fixes the gateway test's port-allocation
+   race and activity callbacks after shutdown; these fixes must precede making `test` mandatory.
+3. Refresh [PR #19](https://github.com/legostin/piomio/pull/19) against the new main without force-pushing (merge
+   main into its existing branch), then wait for all checks and the four preview platforms. Merge the reviewed
+   head through GitHub with `[skip release]` in the merge message. Do not bypass failing checks. The header fix
+   from PR #16 (`e6e1db5`) remains included. This controlled first rollout defers tagging until protection is ready.
+4. Apply the main PUT and tag POST above. Read both back and inspect effective rules. Do not weaken or delete an
+   unrelated ruleset.
+5. Run `release on push` on main with `dry_run=true`, review the exact merge SHA and `v0.2.39` plan, then dispatch
+   it with `dry_run=false` under the founder's release approval: checks → plan → tag creation → release dispatch.
+   Do not rerun the old GH013 workflow. Subsequent ordinary main merges release automatically.
+6. Verify the tag SHA, green macOS/Windows/Linux x64/Linux arm64 jobs and their install/uninstall checks; inspect
    published asset names, Linux checksums, updater signatures and `latest.json` version/URLs. Verify the published
    GitHub release and the refreshed site. Confirm no version-bump commit appeared in main.
 
