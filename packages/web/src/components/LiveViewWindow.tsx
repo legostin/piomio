@@ -3,6 +3,7 @@
 // turns into a pill a little after the work stops, and expands into a large overlay where the user can take over.
 // Which view and which mode: plugins/liveview.ts. Bottom corners stay above the chat composer.
 
+import { WindowTitlebar } from "./WindowTitlebar";
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Hand, Maximize2, Minimize2, Minus, X } from "lucide-react";
@@ -296,14 +297,15 @@ export function LiveViewWindow({ frame }: { frame?: HTMLElement }) {
           "flex flex-col overflow-hidden bg-surface outline-none",
           expanded
             ? framed
-              ? "animate-in fixed inset-0 z-50 pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
-              : // On the Mac app's window the window buttons sit in the top-left corner: the view starts below them.
-                "animate-in fixed inset-0 z-50 titlebar:top-11! sm:inset-[3vh_3vw] sm:rounded-2xl sm:border sm:border-border sm:shadow-card"
+              ? "window-overlay animate-in fixed inset-0 z-50 pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
+              : // In a Mac window the shared titlebar strip replaces the floating panel's outer margin.
+                "window-overlay animate-in fixed inset-0 z-50 titlebar:inset-0! titlebar:rounded-none sm:inset-[3vh_3vw] sm:rounded-2xl sm:border sm:border-border sm:shadow-card"
             : "animate-in fixed z-30 w-[min(52vw,240px)] rounded-2xl border shadow-card sm:w-80",
           !expanded && (attention ? "border-warning ring-2 ring-warning/30" : "border-border"),
         )}
         style={expanded ? undefined : { ...place, transform: drag.offset ? `translate(${drag.offset.x}px, ${drag.offset.y}px)` : undefined }}
       >
+        {expanded && <WindowTitlebar />}
         <TitleBar view={current} views={visible.length > 1 ? visible : []} expanded={expanded} drag={drag} />
         {expanded && attention ? (
           <div className="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning-soft px-3 py-1.5 text-sm text-warning">

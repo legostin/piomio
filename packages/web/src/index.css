@@ -7,6 +7,32 @@
    lib/desktop.ts. `titlebar:` utilities make room for them. */
 @custom-variant titlebar (&:where(.owl-titlebar, .owl-titlebar *));
 
+/* window.rs positions the traffic lights 34pt down. Reserve their full height plus clearance.
+   Panels cover this strip themselves; moving a fixed overlay's top would expose the chat behind it.
+   applyDesktopDocument removes owl-titlebar in native fullscreen. iOS keeps its own safe-area insets. */
+:root {
+  --owl-titlebar-height: 0px;
+  --owl-safe-top: max(env(safe-area-inset-top, 0px), var(--owl-titlebar-height));
+}
+html.owl-titlebar {
+  --owl-titlebar-height: 52px;
+}
+.window-titlebar {
+  height: var(--owl-titlebar-height);
+  flex: 0 0 auto;
+  background: var(--bg);
+}
+/* A translating/scaling/fading panel briefly exposes underlying content at the window's top edge. */
+.owl-titlebar .window-overlay {
+  animation: none;
+}
+.owl-titlebar .window-modal {
+  padding-top: max(1rem, var(--owl-titlebar-height));
+}
+.owl-titlebar .window-modal > [role="dialog"] {
+  max-height: min(92dvh, calc(100dvh - var(--owl-titlebar-height) - 2rem));
+}
+
 /*
  * Piomio's look, "Amber": warm ink and paper, and one light in it, the owl's amber eyes. Amber is what is yours and
  * what is alive: your messages, the button that sends, an agent at work, what is unread. Everything else stays quiet.
