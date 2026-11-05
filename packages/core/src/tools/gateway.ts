@@ -136,7 +136,6 @@ export class ToolGateway {
       this.d.audit.append(`agent:${s.agentId}`, "tool.denied", name, { reason: "not available" });
       return { content: [{ type: "text", text: `Tool ${name} is not available to this agent` }], isError: true };
     }
-    const tool = entry.descriptor;
     const ctx = this.contextFor(s, callId);
 
     // Hooks may block or rewrite the input.
@@ -148,6 +147,9 @@ export class ToolGateway {
       return { content: [{ type: "text", text: `Blocked: ${hooked.blocked}` }], isError: true, _meta: { status: "denied" } };
     }
     const input = hooked.payload.input;
+    // What this call does may be less than the tool can (machine_exec of a command that only reads).
+    const effect = entry.effectOf?.(input);
+    const tool = effect && effect !== entry.descriptor.effect ? { ...entry.descriptor, effect } : entry.descriptor;
 
     const settings = this.d.settings.get();
     const asked = this.asked(s, tool, input);

@@ -15,6 +15,20 @@ import { InviteRegistry } from "./invites.ts";
 import type { MachineSetups } from "./machine-setup.ts";
 import type { Cluster } from "./cluster.ts";
 import { compareVersions } from "./updates.ts";
+import { readOnlyCommand } from "./policy/commands.ts";
+
+/** A path or word that names credentials: a command that names one is never "only reads", wherever it runs. */
+const CREDENTIAL = /(?:^|[\s/'"=~:])\.(?:ssh|aws|gnupg|kube|docker|azure|netrc|npmrc|pypirc|git-credentials|password-store)\b|\.config\/gh\b|\.env\b|\bid_(?:rsa|ed25519|ecdsa|dsa)\b|credential|secret|token|passw|keychain/i;
+/** An address in a command: what it reads could carry data out to that site. */
+const ADDRESS = /[a-z][a-z0-9+.-]*:\/\/|\b[\w.-]+@[\w.-]+:/i;
+
+/**
+ * A command for another computer that only reads (the same shell reader as for this computer's commands,
+ * policy/commands.ts) and names no credentials and no address: it needs no review, like a read here.
+ */
+export function readOnlyRemoteCommand(command: string): boolean {
+  return !CREDENTIAL.test(command) && !ADDRESS.test(command) && readOnlyCommand(command, { home: "~", tmp: "/tmp" });
+}
 
 export const NODE_AUTH_PREFIX = "piomio-node-auth:";
 
@@ -37,6 +51,8 @@ export class MachineHub {
   setups?: MachineSetups;
   /** Only the leading replica sets machines up and shares their workspaces (cluster.ts). */
   cluster?: Cluster;
+  /** This hub's own computer: its id for agents ("local", or its replica id) and its name (app.ts). */
+  here?: () => { id: string; name: string };
   /** This hub's version: machine_list says which computers run an older Piomio. */
   version?: string;
   private peers = new Map<string, RpcPeer>();
@@ -306,8 +322,26 @@ export class MachineHub {
     this.bus.emit("machine.updated", this.get(id)!);
   }
 
+  /** The words for the hub's own computer named as a machine (English: it is for the model). */
+  private hereText(): string {
+    const h = this.here?.();
+    return (
+      `${h?.name ?? "This computer"} is the hub's own computer, not a paired machine: an agent that runs there uses its own shell ` +
+      `for commands (its network goes through the hub's proxy, and a change is checked by auto mode as everywhere). ` +
+      `From another computer, give the work a task there (task_delegate with machine "${h?.id ?? "local"}").`
+    );
+  }
+
+  /** The hub's own computer under one of its names: "local", "this", its id or its name. */
+  private isHere(name: string): boolean {
+    const h = this.here?.();
+    const n = name.trim().toLowerCase();
+    return ["local", "this", "here", "localhost"].includes(n) || (!!h && (n === h.id.toLowerCase() || n === h.name.toLowerCase()));
+  }
+
   async call<T>(machine: string, method: string, params: unknown, timeoutMs = 120_000): Promise<T> {
     const m = this.find(machine);
+    if (!m && this.isHere(machine)) throw new Error(this.hereText());
     if (!m) throw new Error(`Machine ${machine} not found`);
     const peer = this.peers.get(m.id);
     if (!peer) throw new Error(`Machine ${m.name} is offline`);
@@ -344,11 +378,13 @@ export class MachineHub {
       { name: "machine_list", owner: "core", effect: "read", description: "List the user's connected computers: status, OS, brains (subscriptions) and allowed directories.", inputSchema: { type: "object", properties: {} } },
       wrap(async () => {
         const ms = this.list();
-        if (!ms.length) return text("No machines are paired. The user can connect a computer on the Machines page.");
+        const h = this.here?.();
+        const hereLine = h ? `- ${h.name} (${h.id}) — this hub's own computer: agents running there use their own shell; work goes there with machine "${h.id}"` : "";
+        if (!ms.length) return text([hereLine, "No other machines are paired. The user can connect a computer on the Machines page."].filter(Boolean).join("\n"));
         return text(
-          ms
+          [hereLine, ...ms
             .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}${m.info.gpus?.length ? `, GPU: ${m.info.gpus.join(", ")}` : ""}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}${app(m.info)}` : ""}`)
-            .join("\n"),
+          ].filter(Boolean).join("\n"),
         );
       }),
     );
@@ -369,6 +405,9 @@ export class MachineHub {
         const r = await this.call<{ code: number; stdout: string; stderr: string }>(i.machine, "exec.run", { command: i.command, cwd: i.cwd, timeoutMs: Math.min(Number(i.timeoutSec ?? 120), 1800) * 1000 }, 1900_000);
         return text(`exit ${r.code}\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`, r.code !== 0);
       }),
+      undefined,
+      // A command that only reads is a read there as it is here: no review (a change still has one).
+      (i) => (typeof i?.command === "string" && readOnlyRemoteCommand(i.command) ? "read" : undefined),
     );
     registry.register(
       {

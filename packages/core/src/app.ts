@@ -272,6 +272,7 @@ export class Hub {
     this.cluster = new Cluster(this);
     this.machines.cluster = this.cluster;
     this.machines.version = config.version;
+    this.machines.here = () => ({ id: this.here(), name: hubName() });
     this.activity = new MachineActivityFeed(this.bus, this.machines);
     this.updates = new HubUpdates({
       config,
