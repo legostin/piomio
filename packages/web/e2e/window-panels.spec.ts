@@ -25,7 +25,7 @@ for (const panel of ["library", "page"]) {
       const top = document.elementFromPoint(1, 1);
       return { y: el.getBoundingClientRect().y, covered: !!top && el.contains(top), opacity: getComputedStyle(el).opacity, background: getComputedStyle(top!).backgroundColor };
     })).toEqual({ y: 0, covered: true, opacity: "1", background: "rgb(247, 244, 239)" });
-    await page.screenshot({ path: `output/playwright/${test.info().project.name}-${panel}-after.png` });
+    await page.screenshot({ path: `output/playwright/${test.info().project.name}-${panel}-after.png`, animations: "disabled" });
     await close.click();
     await expect(dialog).toHaveCount(0);
   });
@@ -37,7 +37,7 @@ for (const panel of ["library", "page"]) {
     const dialog = page.getByRole("dialog");
     await expect(dialog.locator(".window-titlebar")).toHaveCSS("height", "0px");
     expect((await dialog.locator("header button").first().boundingBox())!.y).toBe(0);
-    await page.screenshot({ path: `output/playwright/${test.info().project.name}-${panel}-mobile.png` });
+    await page.screenshot({ path: `output/playwright/${test.info().project.name}-${panel}-mobile.png`, animations: "disabled" });
   });
 }
 
