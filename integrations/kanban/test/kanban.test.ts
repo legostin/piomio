@@ -24,6 +24,8 @@ class FakeHub {
   delivered: Array<{ name?: string; path?: string; bytes: number }> = [];
   received = new Map<string, Buffer>();
   listed = 0;
+  /** Called while tasks.create is still answering: what the hub says about a task before the plugin knows it is its own. */
+  onCreate?: (task: { id: string }) => void;
 
   call = (method: string, p: any): unknown => {
     switch (method) {
@@ -37,6 +39,7 @@ class FakeHub {
         if (this.noBudget && p.skipIfNoBudget) return { skipped: "budgetExhausted" };
         const task = { id: `t_${this.tasks.length + 1}`, status: "queued", ...p };
         this.tasks.push(task);
+        this.onCreate?.(task);
         return task;
       }
       case "tasks.get":
@@ -423,6 +426,41 @@ describe("how a run ends", () => {
     await until(() => expect(b.hub.tasks).toHaveLength(1));
     return b;
   }
+
+  it("a run that ends before the hub has answered still moves the card on, and frees the agent", async () => {
+    const hub = new FakeHub();
+    const { h, put, tile, rule, card } = await withProject(hub);
+    hub.onCreate = (task) => {
+      hub.onCreate = undefined;
+      h.emit("task.updated", { id: task.id, status: "done", result: "Quick" });
+    };
+    await put({ title: "Do it" });
+    await h.invoke("pickup", { on: true, agent: "coder" });
+    await until(() => expect(hub.tasks).toHaveLength(1));
+    await until(async () => expect((await tile("SITE-1")).columnType).toBe("review"));
+    expect((await card("SITE-1")).runs[0]).toMatchObject({ status: "done", result: "Quick" });
+    await until(() => expect(hub.notified).toHaveLength(1));
+    expect(hub.notified[0]).toMatchObject({ title: "Ready for review: SITE-1 Do it", taskId: "t_1" });
+
+    // Its place is free: the next card is taken at once, not after the minute's catching up.
+    expect((await rule("coder")).state).toBe("ready");
+    await put({ title: "Next" });
+    await until(() => expect(hub.tasks).toHaveLength(2));
+  });
+
+  it("a run that fails before the hub has answered leaves its reason and rests the agent", async () => {
+    const hub = new FakeHub();
+    const { h, put, tile, rule } = await withProject(hub);
+    hub.onCreate = (task) => {
+      hub.onCreate = undefined;
+      h.emit("task.updated", { id: task.id, status: "failed", error: "No brain is free" });
+    };
+    await put({ title: "Do it" });
+    await h.invoke("pickup", { on: true, agent: "coder" });
+    await until(async () => expect((await tile("SITE-1"))?.run?.status).toBe("failed"));
+    expect((await tile("SITE-1")).run.error).toBe("No brain is free");
+    await until(async () => expect((await rule("coder")).state).toBe("cooldown"));
+  });
 
   it("with a review column the card waits there and the person hears", async () => {
     const { hub, end, tile, card } = await takenCard();

@@ -35,6 +35,8 @@ export class Work {
   /** Cards on their way to a run (the hub has not answered yet), and whose. */
   private claiming = new Map<string, string>();
   private byTask = new Map<string, string>();
+  /** What the hub said about tasks while a start waited for its answer: a run can end before tasks.create returns. */
+  private early = new Map<string, Task>();
 
   constructor(ctx: PluginContext, board: Board) {
     this.ctx = ctx;
@@ -107,16 +109,22 @@ export class Work {
       const active = this.board.firstOfType(project, "active");
       if (active && this.board.columnOf(card).type !== "active") this.board.move(card, active, { by: o.by });
       else this.board.saveCard(card);
+      const early = this.early.get(task.id);
+      if (early) this.onTask(early);
       return { taskId: task.id };
     } finally {
       this.claiming.delete(card.id);
+      if (!this.claiming.size) this.early.clear();
     }
   }
 
   /** The hub says what became of a task. */
   onTask(task: Task): void {
     const cardId = this.byTask.get(task.id);
-    if (!cardId) return;
+    if (!cardId) {
+      if (this.claiming.size) this.early.set(task.id, task);
+      return;
+    }
     const card = this.board.cards.get(cardId);
     const run = card?.runs.find((r) => r.taskId === task.id);
     if (!card || !run) {
