@@ -8,6 +8,8 @@ import { randomBytes } from "node:crypto";
 import { hostMatches } from "@piomio/shared";
 import type { AuditLog } from "./audit.ts";
 
+export const NETWORK_APPROVAL_WAIT_MS = 10 * 60_000;
+
 const PRIVATE_V4: Array<[string, number]> = [
   ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12],
   ["168.63.129.16", 32], ["192.0.0.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["224.0.0.0", 4], ["240.0.0.0", 4],
@@ -178,7 +180,7 @@ export class EgressProxy {
     if (!pending) {
       if ([...this.pending.keys()].filter((k) => k.startsWith(`${token}|`)).length >= 16) throw new Error("Too many pending network permissions");
       const cancel = new AbortController();
-      const abort = () => cancel.abort();
+      const abort = () => cancel.abort("session_ended");
       g.cancel.signal.addEventListener("abort", abort, { once: true });
       const promise = this.requestApproval({ ...g.context, host, port, ...(look ? { listed: true } : {}), signal: cancel.signal }).then(() => {
         if (cancel.signal.aborted || !this.grants.has(token!)) throw new Error(`Host ${address} is not allowed: request cancelled`);
@@ -204,7 +206,7 @@ export class EgressProxy {
       ]);
     } finally {
       if (abort) signal?.removeEventListener("abort", abort);
-      if (--pending.users === 0) pending.cancel.abort();
+      if (--pending.users === 0) pending.cancel.abort("connection_closed");
     }
     if (!this.grants.has(token!)) throw new Error("Proxy permission revoked");
     // The person may have taken a minute; recheck DNS, then pin the fresh public result.
@@ -255,24 +257,40 @@ export class EgressProxy {
       client.on("error", () => {});
       const cancel = new AbortController();
       client.on("close", () => cancel.abort());
+      // CONNECT sockets may half-close (FIN) before `close`; there is no live caller left to approve then.
+      client.on("end", () => cancel.abort());
       const token = this.tokenFrom(req);
       let host = "unknown";
+      // Read bounded early bytes so a FIN is observed while permission is pending; never forward them early.
+      const early: Buffer[] = head.length ? [head] : [];
+      let earlySize = head.length;
+      const hold = (chunk: Buffer) => {
+        earlySize += chunk.length;
+        if (earlySize > 64 * 1024) { cancel.abort(); client.destroy(); }
+        else early.push(chunk);
+      };
+      client.on("data", hold);
       try {
+        if (earlySize > 64 * 1024) throw new Error("Too much data before CONNECT approval");
         const match = /^(\[[0-9a-fA-F:.]+\]|[^:\s/]+):(\d{1,5})$/.exec(req.url ?? "");
         if (!match) throw new Error("Invalid CONNECT host and port");
         host = match[1].replace(/^\[|\]$/g, "").toLowerCase();
         const port = Number(match[2]);
         const addrs = await this.authorize(token, host, port, cancel.signal);
-        if (cancel.signal.aborted) return;
+        if (cancel.signal.aborted || client.destroyed) return;
+        client.pause();
+        client.off("data", hold);
         const upstream = net.connect({ host, port, lookup: pinnedLookup(addrs), autoSelectFamily: true }, () => {
+          if (cancel.signal.aborted || client.destroyed) { upstream.destroy(); client.destroy(); return; }
           client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          if (head?.length) upstream.write(head);
+          if (earlySize) upstream.write(Buffer.concat(early));
           upstream.pipe(client);
           client.pipe(upstream);
         });
         upstream.on("error", () => client.destroy());
         client.on("close", () => upstream.destroy());
       } catch (e) {
+        client.off("data", hold);
         this.logDeny(this.allowed(token, host).owner, host);
         // CONNECT clients often discard the response body: keep the explanation in the status reason too.
         const reason = String((e as Error).message).replace(/[^\x20-\x7e]/g, " ").slice(0, 300);
@@ -281,6 +299,8 @@ export class EgressProxy {
       }
     });
     this.server = server;
+    // Do not let Node's default five-minute request timer beat a live permission card.
+    server.requestTimeout = NETWORK_APPROVAL_WAIT_MS + 60_000;
     server.on("connection", (sock) => { this.sockets.add(sock); sock.on("close", () => this.sockets.delete(sock)); });
     return new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", () => resolve()); });
   }

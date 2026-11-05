@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type Reply = { status: number; body?: unknown };
+type Reply = { status: number; body?: unknown; hang?: boolean };
 
 const BOOTSTRAP = { csrf: "csrf-1", version: "1", language: "en", locales: ["en"], uiPlugins: [], channels: [], mainConversationId: "c1", defaultAgent: "owl" };
 
@@ -32,6 +32,7 @@ async function start(pathname: string, routes: Record<string, Reply>, app: boole
   const fetch = vi.fn(async (url: string) => {
     const path = url.split("?")[0];
     const r = routes[path] ?? { status: 200, body: [] };
+    if (r.hang) await new Promise(() => {});
     return new Response(r.body === undefined ? "" : JSON.stringify(r.body), { status: r.status });
   });
   vi.stubGlobal("fetch", fetch);
@@ -43,6 +44,104 @@ async function start(pathname: string, routes: Record<string, Reply>, app: boole
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.doUnmock("../lib/cache");
+});
+
+/** This device kept a copy of the hub: the keys and values lib/cache.ts would find. */
+function deviceCopy(kept: Record<string, unknown>) {
+  vi.doMock("../lib/cache", async (original) => ({ ...(await original<typeof import("../lib/cache")>()), cacheGet: async (key: string) => kept[key] }));
+}
+
+const settled = () => new Promise((r) => setTimeout(r, 5));
+
+describe("a page this device has a copy of", () => {
+  const kept = { bootstrap: { ...BOOTSTRAP, csrf: "" }, team: [{ agentId: "owl", conversationId: "c1" }] };
+
+  it("shows it without waiting for the hub", async () => {
+    deviceCopy(kept);
+    const { state, paths } = await start("/", { "/api/auth/state": { status: 200, hang: true }, "/api/bootstrap": { status: 200, hang: true } }, false);
+    await state.init();
+    expect(state.phase.get().kind).toBe("ready");
+    expect(state.team.get()).toEqual(kept.team);
+    expect(paths()).not.toContain("/api/auth/state");
+  });
+
+  it("then takes the hub's session, with its CSRF token", async () => {
+    deviceCopy(kept);
+    const { state } = await start("/", { "/api/bootstrap": { status: 200, body: { ...BOOTSTRAP, version: "2" } } }, false);
+    await state.init();
+    await settled();
+    expect(state.session.get()).toMatchObject({ csrf: "csrf-1", version: "2" });
+  });
+
+  it("goes to the sign-in screen when the hub says the session is over", async () => {
+    deviceCopy(kept);
+    const { state } = await start(
+      "/",
+      { "/api/bootstrap": { status: 401, body: { error: "auth.required" } }, "/api/auth/state": { status: 200, body: { hasPassword: true, authenticated: false, passkeys: 0, version: "1" } } },
+      false,
+    );
+    await state.init();
+    await settled();
+    expect(state.phase.get().kind).toBe("login");
+    expect(state.session.get()).toBeNull();
+  });
+
+  it("without a copy, nothing shows before the hub answers", async () => {
+    deviceCopy({});
+    const { state, paths } = await start("/", { "/api/auth/state": { status: 200, body: { hasPassword: true, authenticated: false, passkeys: 0, version: "1" } } }, false);
+    await state.init();
+    expect(paths()[0]).toBe("/api/auth/state");
+    expect(state.phase.get().kind).toBe("login");
+  });
+});
+
+describe("after a reconnect", () => {
+  it("asks the hub again only for the dialogs on screen; the others when they open", async () => {
+    const message = (id: string) => [{ id, conversationId: "x", role: "user", parts: [], status: "complete", createdAt: "2026-01-01T00:00:00.000Z" }];
+    const { state, fetch } = await start(
+      "/m/chat/a",
+      { "/api/bootstrap": { status: 200, body: BOOTSTRAP }, "/api/conversations/a/messages": { status: 200, body: message("ma") }, "/api/conversations/b/messages": { status: 200, body: message("mb") } },
+      true,
+    );
+    await state.init();
+    await state.loadMessages("a");
+    await state.loadMessages("b");
+    const leave = state.showingDialog("a");
+    const asked = (id: string) => fetch.mock.calls.filter((c) => String(c[0]).startsWith(`/api/conversations/${id}/messages`)).length;
+    expect([asked("a"), asked("b")]).toEqual([1, 1]);
+
+    state.refreshDialogs();
+    await settled();
+    expect([asked("a"), asked("b")]).toEqual([2, 1]);
+    // What it already had stays on the page until then.
+    expect(state.messages.get().b.messages.map((m) => m.id)).toEqual(["mb"]);
+
+    await state.loadMessages("b");
+    expect(asked("b")).toBe(2);
+    await state.loadMessages("b");
+    expect(asked("b")).toBe(2);
+
+    leave();
+    state.refreshDialogs();
+    await settled();
+    expect(asked("a")).toBe(2);
+  });
+
+  it("a dialog shown in two places stays on screen until both leave", async () => {
+    const { state, fetch } = await start("/m/chat/a", { "/api/bootstrap": { status: 200, body: BOOTSTRAP } }, true);
+    await state.init();
+    await state.loadMessages("a");
+    const one = state.showingDialog("a");
+    const two = state.showingDialog("a");
+    one();
+    state.refreshDialogs();
+    await settled();
+    two();
+    state.refreshDialogs();
+    await settled();
+    expect(fetch.mock.calls.filter((c) => String(c[0]).startsWith("/api/conversations/a/messages")).length).toBe(2);
+  });
 });
 
 describe("init", () => {

@@ -153,7 +153,7 @@ Below the **Acts** initiative, a background run can only read and suggest (see [
 
 Opening the Inbox marks what you see as read, and reading the chat it came to counts too.
 
-Notifications and questions also come as cards in the dialog of the agent that raised them, and to Telegram when it is connected (see [Telegram](telegram.md)). The app shows a short toast for each one. The desktop app that runs your hub shows them as the computer's own notifications while you're not looking at its window, and a connected iPhone gets them as pushes ([The iPhone app](phone.md#notifications)).
+Notifications and questions also come as cards in the dialog of the agent that raised them, and to Telegram when it is connected (see [Telegram](telegram.md)). The app shows a short toast for each one. The desktop app that runs your hub shows them, and every message an agent writes to you in a chat, as the computer's own notifications while you're not looking at its window; a connected iPhone gets them as pushes ([The iPhone app](phone.md#notifications)).
 
 ## The digest
 

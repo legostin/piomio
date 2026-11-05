@@ -1,8 +1,11 @@
 // Shared HTTP helpers for the main app and the security console.
 
 import { createReadStream, existsSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
-import type { FastifyReply, FastifyRequest } from "fastify";
+import { promisify } from "node:util";
+import { brotliCompress, constants as zlib, gzip } from "node:zlib";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Params } from "@piomio/shared";
 import { LocalizedError } from "../i18n.ts";
 
@@ -74,22 +77,106 @@ export function byteRange(header: string | undefined, size: number): { start: nu
   return { start, end };
 }
 
+// ---------- compression ----------
+//
+// Over Tailscale a megabyte is what the person waits for: the web UI's files shrink to a quarter, the API's JSON more.
+// Session cookies are SameSite=Strict, so no other site can have the browser fetch an authenticated answer and measure
+// its compressed size (BREACH).
+
+export type Encoding = "br" | "gzip";
+
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript|manifest\+json)\b|image\/svg\+xml\b)/i;
+/** Below this, compressing saves about nothing. */
+const MIN_COMPRESS = 1024;
+/** Brotli quality for what is compressed per answer, and for files (compressed once, then kept). */
+const QUALITY_LIVE = 4;
+const QUALITY_FILE = 9;
+/** Compressed files kept in memory; the oldest goes first. */
+const MAX_ZIPPED = 128;
+
+const brotli = promisify(brotliCompress);
+const gz = promisify(gzip);
+
+function compress(data: string | Buffer, encoding: Encoding, quality: number): Promise<Buffer> {
+  return encoding === "br" ? brotli(data, { params: { [zlib.BROTLI_PARAM_QUALITY]: quality, [zlib.BROTLI_PARAM_SIZE_HINT]: Buffer.byteLength(data) } }) : gz(data);
+}
+
+/** What the client takes: brotli if it can, else gzip. */
+export function acceptedEncoding(header: string | undefined): Encoding | undefined {
+  const accepted = new Set<string>();
+  for (const item of (header ?? "").split(",")) {
+    const [name, ...params] = item.trim().toLowerCase().split(";");
+    const q = params.map((p) => p.trim()).find((p) => p.startsWith("q="));
+    if (name && (!q || Number(q.slice(2)) > 0)) accepted.add(name);
+  }
+  return accepted.has("br") ? "br" : accepted.has("gzip") ? "gzip" : undefined;
+}
+
+/** A browser on the hub's own computer has no network to save: compressing would only cost it time. */
+function encodingFor(req: FastifyRequest): Encoding | undefined {
+  if (/^(127\.|::1$|::ffff:127\.)/.test(clientIp(req))) return undefined;
+  return acceptedEncoding(req.headers["accept-encoding"]);
+}
+
+function varyOnEncoding(reply: FastifyReply): void {
+  const vary = reply.getHeader("vary");
+  if (!/\baccept-encoding\b/i.test(String(vary ?? ""))) reply.header("vary", vary ? `${String(vary)}, accept-encoding` : "accept-encoding");
+}
+
+/** Answers made in memory (the API's JSON, pages) go out compressed. Register it before the routes. */
+export function registerCompression(app: FastifyInstance): void {
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (req.method === "HEAD" || reply.hasHeader("content-encoding")) return payload;
+    if (typeof payload !== "string" && !Buffer.isBuffer(payload)) return payload;
+    if (Buffer.byteLength(payload) < MIN_COMPRESS || !COMPRESSIBLE.test(String(reply.getHeader("content-type") ?? ""))) return payload;
+    const encoding = encodingFor(req);
+    if (!encoding) return payload;
+    varyOnEncoding(reply);
+    reply.header("content-encoding", encoding);
+    reply.removeHeader("content-length");
+    return compress(payload, encoding, QUALITY_LIVE);
+  });
+}
+
+const zipped = new Map<string, Promise<Buffer>>();
+
+/** A file's compressed copy, made once per version of the file (`tag`). */
+function zippedFile(file: string, tag: string, encoding: Encoding): Promise<Buffer> {
+  const key = `${file}|${tag}`;
+  let copy = zipped.get(key);
+  if (!copy) {
+    copy = readFile(file).then((data) => compress(data, encoding, QUALITY_FILE));
+    copy.catch(() => zipped.delete(key));
+    zipped.set(key, copy);
+    if (zipped.size > MAX_ZIPPED) zipped.delete(zipped.keys().next().value!);
+  }
+  return copy;
+}
+
 /**
  * A file with its length (a download shows progress), a validator (opened again, it comes back as 304) and byte
- * ranges (Safari plays a video only from a server that answers them).
+ * ranges (Safari plays a video only from a server that answers them). `compress`: the web UI's own files, which go
+ * over the network compressed, unless a byte range is asked for.
  */
-export function sendFile(reply: FastifyReply, file: string, opts: { cache?: boolean; download?: boolean } = {}): FastifyReply {
+export function sendFile(reply: FastifyReply, file: string, opts: { cache?: boolean; download?: boolean; compress?: boolean } = {}): FastifyReply | Promise<FastifyReply> {
   const st = statSync(file);
   const type = MIME[extname(file).toLowerCase()] ?? "application/octet-stream";
-  const etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+  const headers = reply.request.headers;
+  const worthIt = !!opts.compress && st.size >= MIN_COMPRESS && COMPRESSIBLE.test(type);
+  const encoding = worthIt && !headers.range ? encodingFor(reply.request) : undefined;
+  const version = `${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}`;
+  const etag = `"${version}${encoding ? `-${encoding}` : ""}"`;
   reply.header("content-type", type);
   reply.header("cache-control", opts.cache ? "public, max-age=31536000, immutable" : "no-cache");
   reply.header("etag", etag);
   reply.header("last-modified", st.mtime.toUTCString());
-  reply.header("accept-ranges", "bytes");
+  if (worthIt) varyOnEncoding(reply);
   if (opts.download) reply.header("content-disposition", attachmentDisposition(file.split(/[\\/]/).pop()!));
-  const headers = reply.request.headers;
   if (headers["if-none-match"]?.split(",").some((t) => t.trim().replace(/^W\//, "") === etag)) return reply.code(304).send();
+  if (encoding) {
+    return zippedFile(file, etag, encoding).then((data) => reply.header("content-encoding", encoding).header("content-length", data.length).send(data));
+  }
+  reply.header("accept-ranges", "bytes");
   const ifRange = headers["if-range"];
   const range = ifRange === undefined || ifRange === etag ? byteRange(headers.range, st.size) : undefined;
   if (range === "unsatisfiable") return reply.code(416).header("content-range", `bytes */${st.size}`).send();

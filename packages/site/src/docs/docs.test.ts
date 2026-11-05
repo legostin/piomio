@@ -1,5 +1,6 @@
-// The docs themselves (docs/guide, docs/versions/*): every page in every language, with a title and a description,
-// the same sections in each language, and links that lead somewhere.
+// The docs themselves (docs/guide, docs/versions/*): every page in every language that has its own folder, with a title
+// and a description, the same sections in each language, and links that lead somewhere. A site language with no folder
+// is published from English (see scripts/docs.mjs).
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -15,8 +16,10 @@ for (const dir of lines)
   describe(`the docs in ${dir.slice(ROOT.length + 1)}`, () => {
     const nav = JSON.parse(readFileSync(join(dir, "nav.json"), "utf8")) as { groups: Array<{ title: Record<string, string>; pages: string[] }> };
     const slugs = nav.groups.flatMap((g) => g.pages);
+    // A site language with no folder (zh, for now) is served from the English pages. Languages that have a folder must be complete.
+    const translated = siteConfig.languages.filter((lang) => existsSync(join(dir, lang)));
     const docs: Record<string, Record<string, Doc>> = {};
-    for (const lang of siteConfig.languages) {
+    for (const lang of translated) {
       docs[lang] = {};
       for (const slug of slugs) {
         const file = join(dir, lang, `${slug}.md`);
@@ -24,14 +27,15 @@ for (const dir of lines)
       }
     }
 
-    it("list each page once, starting with the overview, with group titles in every language", () => {
+    it("list each page once, starting with the overview, with group titles in every translated language", () => {
       expect(slugs[0]).toBe("index");
       expect(new Set(slugs).size).toBe(slugs.length);
-      for (const g of nav.groups) for (const lang of siteConfig.languages) expect(g.title[lang]?.trim(), `${lang}: ${g.title.en}`).toBeTruthy();
+      expect(translated, "English is the fallback and must exist").toContain("en");
+      for (const g of nav.groups) for (const lang of translated) expect(g.title[lang]?.trim(), `${lang}: ${g.title.en}`).toBeTruthy();
     });
 
-    it("have every page in every language, and no page that isn't listed", () => {
-      for (const lang of siteConfig.languages) {
+    it("have every page in every language that has its own docs, and no page that isn't listed", () => {
+      for (const lang of translated) {
         expect(Object.keys(docs[lang]).sort(), lang).toEqual([...slugs].sort());
         const files = readdirSync(join(dir, lang)).filter((f) => f.endsWith(".md"));
         expect(files.map((f) => f.slice(0, -3)).sort(), lang).toEqual([...slugs].sort());
@@ -39,7 +43,7 @@ for (const dir of lines)
     });
 
     it("give each page a title and a description, and no title of its own in the body", () => {
-      for (const lang of siteConfig.languages)
+      for (const lang of translated)
         for (const [slug, doc] of Object.entries(docs[lang])) {
           expect(doc.meta.title, `${lang}/${slug}`).toBeTruthy();
           expect(doc.meta.description, `${lang}/${slug}`).toBeTruthy();
@@ -51,12 +55,12 @@ for (const dir of lines)
     it("have the same sections in every language", () => {
       const sections = (doc: Doc) => doc.blocks.filter((b) => b.t === "h" && b.level === 2).length;
       for (const slug of slugs)
-        for (const lang of siteConfig.languages)
+        for (const lang of translated)
           if (docs[lang][slug] && docs.en[slug]) expect(sections(docs[lang][slug]), `${lang}/${slug}`).toBe(sections(docs.en[slug]));
     });
 
     it("link only to pages and sections that exist", () => {
-      for (const lang of siteConfig.languages)
+      for (const lang of translated)
         for (const [slug, doc] of Object.entries(docs[lang]))
           for (const href of links(doc.blocks)) {
             const where = `${lang}/${slug}.md → ${href}`;
@@ -77,7 +81,8 @@ describe("the site's links into the docs", () => {
       for (const [key, value] of Object.entries(catalog)) {
         const m = /^docs\/([a-z0-9-]+)\/(?:#(.+))?$/.exec(value);
         if (!m) continue;
-        const file = join(ROOT, "docs/guide", lang, `${m[1]}.md`);
+        const langDir = existsSync(join(ROOT, "docs/guide", lang)) ? lang : "en";
+        const file = join(ROOT, "docs/guide", langDir, `${m[1]}.md`);
         expect(existsSync(file), `${lang} ${key}`).toBe(true);
         if (m[2]) expect(anchors(parseDoc(readFileSync(file, "utf8")).blocks), `${lang} ${key}`).toContain(m[2]);
       }

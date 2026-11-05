@@ -348,6 +348,7 @@
   "footer.releases": "Релизы",
   "footer.disclaimer": "Независимый проект с открытым кодом, не связан с Anthropic, OpenAI и Moonshot AI и не одобрен ими. Claude и Claude Code — товарные знаки Anthropic, ChatGPT и Codex — товарные знаки OpenAI, Kimi — товарный знак Moonshot AI.",
   "docs.meta.suffix": "документация Piomio",
+  "docs.untranslated": "Эта статья пока не переведена на выбранный язык. Ниже — английский оригинал.",
   "docs.menu": "Документация",
   "docs.pages": "Страницы документации",
   "docs.version": "Версия",

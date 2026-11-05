@@ -12,15 +12,15 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyWebsocket from "@fastify/websocket";
 import type { WebSocket } from "ws";
 import type { Device } from "@piomio/shared";
-import { errorText, LocalizedError, requestLocale } from "../i18n.ts";
+import { errorText, LocalizedError, requestLocale, tFor } from "../i18n.ts";
 import type { Hub } from "../app.ts";
 import { agentName } from "../agents.ts";
-import { pushNote } from "../push.ts";
+import { messageNote, pushNote } from "../push.ts";
 import type { DeviceTls } from "../devices-tls.ts";
 import { DEVICE_COOKIE } from "../devices.ts";
 import { hubName } from "../pairing.ts";
 import { registerApi } from "./api.ts";
-import { clientIp, HttpError } from "./http.ts";
+import { clientIp, HttpError, registerCompression } from "./http.ts";
 import { registerSpa } from "./spa.ts";
 import { registerPages } from "./pages.ts";
 
@@ -41,6 +41,7 @@ export async function buildDeviceApp(hub: Hub, tls: DeviceTls, opts: { remote?: 
   await app.register(fastifyCookie);
   // Replica links (replica-link.ts) carry batches of rows and pieces of files: up to 64 MB a frame.
   await app.register(fastifyWebsocket, { options: { maxPayload: 64 * 1024 * 1024 } });
+  registerCompression(app);
 
   /** The page's own origin: phones reach the port by IP, so there is no fixed list of hosts. */
   const sameOrigin = (req: FastifyRequest) => !!req.headers.host && req.headers.origin === `https://${req.headers.host}`;
@@ -173,14 +174,23 @@ export async function buildDeviceApp(hub: Hub, tls: DeviceTls, opts: { remote?: 
       return { ok: true };
     });
     // What a push was about: the app's notification extension shows these words in place of "New message".
+    // A push's id is an agent's message (m_…) or a notification.
     api.get("/api/devices/notifications/:id", async (req) => {
-      const n = hub.notifier.get((req.params as { id: string }).id);
-      if (!n?.deliveredAt) throw new HttpError(404, "push.notFound");
+      const id = (req.params as { id: string }).id;
       const locale = requestLocale(req);
-      return pushNote(n, hub.settings.get().defaultAgent, (id) => {
-        const a = hub.agents.get(id);
-        return a ? agentName(a, locale) : id;
-      });
+      const name = (agentId: string) => {
+        const a = hub.agents.get(agentId);
+        return a ? agentName(a, locale) : agentId;
+      };
+      const m = hub.store.getMessage(id);
+      const c = m && hub.store.getConversation(m.conversationId);
+      if (m && c && m.role === "assistant") {
+        const note = messageNote(m, c, name, tFor(locale)("push.file"));
+        if (note) return note;
+      }
+      const n = hub.notifier.get(id);
+      if (!n?.deliveredAt) throw new HttpError(404, "push.notFound");
+      return pushNote(n, hub.settings.get().defaultAgent, name);
     });
 
     // ----- approvals: listed with everything the card shows; approving needs the phone's key (Face ID) -----

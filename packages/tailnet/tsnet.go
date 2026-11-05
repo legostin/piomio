@@ -37,12 +37,12 @@ func (t *tsBackend) Listen() error {
 	if err != nil {
 		return err
 	}
-	web, err := t.srv.ListenFunnel("tcp", ":443")
+	web, err := t.srv.ListenFunnel("tcp", ":443", tsnet.FunnelTLSConfig(&tls.Config{GetCertificate: t.lc.GetCertificate, NextProtos: alpn}))
 	if err != nil {
 		return err
 	}
 	// Phones pin the hub's own certificate: the same one here as on the home Wi-Fi.
-	device, err := t.srv.ListenFunnel("tcp", ":8443", tsnet.FunnelTLSConfig(&tls.Config{Certificates: []tls.Certificate{cert}}))
+	device, err := t.srv.ListenFunnel("tcp", ":8443", tsnet.FunnelTLSConfig(&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: alpn}))
 	if err != nil {
 		web.Close()
 		return err

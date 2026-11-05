@@ -114,6 +114,10 @@ A new agent thinks **Auto**. Each brain turns a preset into its own model and ef
 
 The same menu lists the agent's brains: picking one makes it the first for the chat. **Different for tasks, channels, schedules** opens a short chat with the agent to set each kind of work apart; a kind without its own choice thinks as in the chat. **Connect another brain** opens the Brains page.
 
+Agents on Codex always run at its standard speed. The **Fast** preset is only a model and an effort: Codex's own Fast mode, which uses up a plan quicker, stays off for agents even when your `~/.codex/config.toml` turns it on.
+
+Between your messages, the Claude Code or Codex of a chat stays running for 10 minutes, for up to three chats per brain, so the next answer starts sooner. While it waits it uses no tokens.
+
 ### /brain and /effort
 
 The hub answers these at once, without asking the model:

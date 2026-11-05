@@ -260,6 +260,17 @@ export class Store {
     return r.n;
   }
 
+  /** Unread agents' messages across the person's dialogs and group chats: the app icon's badge. */
+  unreadChats(): number {
+    const r = this.db
+      .prepare(
+        "select count(*) as n from messages m join conversations c on c.id = m.conversation_id " +
+          "where c.kind in ('main', 'group') and m.role != 'user' and m.status != 'streaming' and m.quiet = 0 and m.created_at > coalesce(c.read_at, '')",
+      )
+      .get() as { n: number };
+    return r.n;
+  }
+
   /** New `members` of a group also set its lead (`agentId`), the first of them. */
   updateConversation(id: string, patch: { title?: string; agentId?: string; members?: string[] }): Conversation | undefined {
     if (patch.title !== undefined) this.db.prepare("update conversations set title = ? where id = ?").run(patch.title, id);
@@ -331,6 +342,11 @@ export class Store {
     const rows = this.db.prepare("select * from messages where status = 'streaming'").all().map(msgFrom);
     for (const m of rows) {
       this.updateMessage(m.id, { status: "error", parts: [...m.parts, { type: "error", message: t("message.interruptedByRestart") }] }, false);
+    }
+    const inputs = this.db.prepare("select * from messages where role = 'user' and instr(parts, 'input_status') > 0").all().map(msgFrom);
+    for (const m of inputs) {
+      if (!m.parts.some((p) => p.type === "input_status" && (p.state === "sending" || p.state === "queued"))) continue;
+      this.updateMessage(m.id, { parts: m.parts.map((p) => p.type === "input_status" && (p.state === "sending" || p.state === "queued") ? { ...p, state: "failed" } : p) }, false);
     }
   }
 

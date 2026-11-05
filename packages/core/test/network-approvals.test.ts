@@ -11,7 +11,7 @@ import { AuditLog } from "../src/audit.ts";
 import { RuleStore } from "../src/policy/rules.ts";
 import { ApprovalService } from "../src/approvals.ts";
 import { Settings } from "../src/settings.ts";
-import { EgressProxy, networkHost, networkPattern } from "../src/egress.ts";
+import { EgressProxy, NETWORK_APPROVAL_WAIT_MS, networkHost, networkPattern } from "../src/egress.ts";
 import { wireNetworkApprovals } from "../src/network-approvals.ts";
 import { AutoMode, type Reviewer } from "../src/policy/auto.ts";
 
@@ -52,7 +52,51 @@ describe("network cards and proxy", () => {
     wireNetworkApprovals({ egress: proxy, approvals, settings, store, audit, timeoutMs: 200 });
     vi.spyOn(proxy, "resolveTarget").mockResolvedValue(["93.184.216.34"]);
   });
-  afterEach(async () => { await proxy.close(); db.close(); vi.restoreAllMocks(); });
+  afterEach(async () => { await proxy.close(); db.close(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("gives a live request ten minutes, accepts a decision after 90 seconds, and expires at the deadline", async () => {
+    wireNetworkApprovals({ egress: proxy, approvals, settings, store, audit });
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const start = Date.now();
+    const waiting = ask(); await vi.advanceTimersByTimeAsync(0);
+    const card = approvals.list(["pending"])[0]!;
+    expect(Date.parse(card.ask!.networkExpiresAt!)).toBe(start + NETWORK_APPROVAL_WAIT_MS);
+    await vi.advanceTimersByTimeAsync(90_001);
+    expect(approvals.get(card.id)!.status).toBe("pending");
+    approvals.resolve(card.id, "approve", { via: "web" }); await waiting;
+    const next = ask("later.example"); const failed = expect(next).rejects.toThrow("user did not answer in time");
+    await vi.advanceTimersByTimeAsync(0);
+    const expired = approvals.list(["pending"])[0]!;
+    await vi.advanceTimersByTimeAsync(NETWORK_APPROVAL_WAIT_MS);
+    await failed;
+    expect(approvals.get(expired.id)).toMatchObject({ status: "expired", ask: { networkClosedReason: "timeout" } });
+    expect(() => approvals.resolve(expired.id, "approve", { via: "web", remember: true })).toThrow();
+    expect(settings.get().brainEgressAllow).toEqual([]);
+  });
+
+  it("an explicit retry never reopens or grants the old request and is recorded only once", async () => {
+    await expect(ask()).rejects.toThrow("user did not answer in time");
+    const old = approvals.list(["expired"])[0]!;
+    expect(approvals.requestNetworkRetry(old.id).fresh).toBe(true);
+    expect(approvals.requestNetworkRetry(old.id).fresh).toBe(false);
+    expect(approvals.get(old.id)).toMatchObject({ status: "expired", ask: { networkRetryRequestedAt: expect.any(String) } });
+    expect(approvals.list(["pending"])).toHaveLength(0);
+    expect(settings.get().brainEgressAllow).toEqual([]);
+    const fresh = ask(); const denied = expect(fresh).rejects.toThrow("user declined");
+    const newCard = await pending(); expect(newCard.id).not.toBe(old.id);
+    approvals.resolve(newCard.id, "deny", { via: "web" }); await denied;
+    expect(approvals.get(old.id)!.status).toBe("expired");
+  });
+
+  it("late decisions are refused even before the timer callback runs", async () => {
+    const waiting = ask(); const failed = expect(waiting).rejects.toThrow("not allowed");
+    const card = await pending();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse(card.ask!.networkExpiresAt!) + 1);
+    expect(() => approvals.resolve(card.id, "approve", { via: "web", remember: true })).toThrow(/expired/);
+    await failed;
+    expect(approvals.get(card.id)).toMatchObject({ status: "expired", ask: { networkClosedReason: "timeout" } });
+    expect(settings.get().brainEgressAllow).toEqual([]);
+  });
 
   it("known hosts do not ask; unknown waits, once is limited to this session and port", async () => {
     await ask("known.example");
@@ -140,6 +184,7 @@ describe("network cards and proxy", () => {
 
   async function listen() {
     await proxy.listen(0);
+    expect((proxy as any).server.requestTimeout).toBeGreaterThan(NETWORK_APPROVAL_WAIT_MS);
     return ((proxy as any).server.address() as net.AddressInfo).port;
   }
   function httpGet(port: number, host: string, auth = token): Promise<{ status: number; body: string }> {
@@ -151,6 +196,12 @@ describe("network cards and proxy", () => {
   }
 
   it("HTTP forwards a listed host immediately and an unknown host only after approval", async () => {
+    // Socket integration must not race the 200 ms timeout used by the expiry unit tests.
+    wireNetworkApprovals({ egress: proxy, approvals, settings, store, audit });
+    // The fixture pins every upstream to loopback; a brain's global environment proxy must not send its mock host outside.
+    const localAgent = new http.Agent({ proxyEnv: {} });
+    const request = http.request;
+    const localRequest = vi.spyOn(http, "request").mockImplementation(((options: any, cb: any) => request({ ...options, agent: localAgent }, cb)) as typeof http.request);
     let hits = 0;
     const upstream = http.createServer((_req, res) => { hits++; res.end("upstream reached"); });
     await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
@@ -167,7 +218,7 @@ describe("network cards and proxy", () => {
       const card = await pending(); expect(hits).toBe(1);
       approvals.resolve(card.id, "approve", { via: "web" });
       expect(await request).toEqual({ status: 200, body: "upstream reached" }); expect(hits).toBe(2);
-    } finally { upstream.closeAllConnections(); await new Promise<void>((r) => upstream.close(() => r())); }
+    } finally { localRequest.mockRestore(); localAgent.destroy(); upstream.closeAllConnections(); await new Promise<void>((r) => upstream.close(() => r())); }
   });
 
   it("CONNECT opens its tunnel only after approval and forwards its buffered payload", async () => {
@@ -181,8 +232,10 @@ describe("network cards and proxy", () => {
     const response = new Promise<string>((resolve) => { let out = ""; client.on("data", (b) => out += b); client.on("end", () => resolve(out)); });
     try {
       const card = await pending(); expect(hits).toBe(0);
+      client.write("tail"); await new Promise((r) => setTimeout(r, 10));
+      expect(hits).toBe(0);
       approvals.resolve(card.id, "approve", { via: "web" });
-      expect(await response).toContain("200 Connection Established\r\n\r\npayload"); expect(hits).toBe(1);
+      expect(await response).toContain("200 Connection Established\r\n\r\npayloadtail"); expect(hits).toBe(1);
     } finally { client.destroy(); await new Promise<void>((r) => upstream.close(() => r())); }
   });
 
@@ -195,6 +248,18 @@ describe("network cards and proxy", () => {
     const plugin = proxy.issueToken("plugin:test", []);
     expect((await httpGet(port, "new.example", plugin)).status).toBe(403);
     expect(approvals.list(["pending"])).toHaveLength(0);
+  });
+
+  it("bounds pre-approval CONNECT data and grants no access when the buffer overflows", async () => {
+    const port = await listen();
+    const client = net.connect(port, "127.0.0.1", () => client.write(`CONNECT new.example:443 HTTP/1.1\r\nProxy-Authorization: Basic ${Buffer.from(`${token}:x`).toString("base64")}\r\n\r\n`));
+    client.on("error", () => {});
+    const card = await pending();
+    client.write(Buffer.alloc(64 * 1024 + 1, 120));
+    await until(() => approvals.get(card.id)?.status === "expired" || undefined);
+    expect(approvals.get(card.id)!.ask!.networkClosedReason).toBe("connection_closed");
+    expect(settings.get().brainEgressAllow).toEqual([]);
+    client.destroy();
   });
 
   it("CONNECT includes readable denial in the status and body; closed sockets expire their cards", async () => {
@@ -211,6 +276,7 @@ describe("network cards and proxy", () => {
     expect(text).toContain("Host new.example");
     const closed = connect(); const card = await pending(); closed.destroy();
     await until(() => approvals.get(card.id)?.status === "expired" || undefined);
+    expect(approvals.get(card.id)!.ask!.networkClosedReason).toBe("connection_closed");
   });
 });
 

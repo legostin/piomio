@@ -14,7 +14,7 @@ import { forwardToLeader, pipeToLeader } from "./forward.ts";
 import type { WebSocket } from "ws";
 import type { Hub } from "../app.ts";
 import { AuthError, type AuthSession } from "../auth.ts";
-import { clientIp, FailureBudget, hostAllowed, HttpError, originAllowed, originsFor, sendFile } from "./http.ts";
+import { clientIp, FailureBudget, hostAllowed, HttpError, originAllowed, originsFor, registerCompression, sendFile } from "./http.ts";
 import { registerJoinPage } from "./join-page.ts";
 import { registerApi } from "./api.ts";
 import { registerSpa } from "./spa.ts";
@@ -41,6 +41,7 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
   const app = Fastify({ logger: false, bodyLimit: 20 * 1024 * 1024, trustProxy });
   await app.register(fastifyCookie);
   await app.register(fastifyWebsocket, { options: { maxPayload: 4 * 1024 * 1024 } });
+  registerCompression(app);
 
   const secure = !!remote || cfg.publicUrl.startsWith("https://");
   const localOrigins = originsFor(cfg.publicUrl, cfg.allowedHosts, cfg.port);

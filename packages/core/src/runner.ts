@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
-import { bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
+import { replyText, replyContext, bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
 import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { confinement } from "./native-permissions.ts";
 import { foldersOn, localFolderPaths } from "./agent-folders.ts";
@@ -110,6 +110,8 @@ export interface RunnerDeps {
 const WEB_CHANNEL = "web";
 
 interface TurnOpts {
+  /** Busy-chat inputs picked up by this queued turn. */
+  inputMessageIds?: string[];
   task?: Task;
   /** The channel the user's message came from: the reply goes back there. */
   replyChannel?: string;
@@ -245,6 +247,8 @@ export class SessionRunner {
   private freed = new Set<() => void>();
   /** By conversation: user messages written while a turn runs, which reach the agent together as its next turn. */
   private pending = new Map<string, Pending[]>();
+  /** Input preparation/steering is serial too: slow transcription must not reorder later text. */
+  private inputs = new Map<string, Promise<void>>();
   /** When each live session last got the current time (clock.ts). */
   private clock = new TurnClock();
   /** The `[You now]` block each live session saw last (situation.ts). */
@@ -337,7 +341,7 @@ export class SessionRunner {
   async userMessage(
     conversationId: string,
     text: string,
-    opts: { channel?: string; attachments?: AttachmentPart[]; context?: string; onCapture?: (c: CaptureResult) => void } = {},
+    opts: { channel?: string; attachments?: AttachmentPart[]; replyTo?: string; context?: string; onCapture?: (c: CaptureResult) => void } = {},
   ): Promise<Message> {
     const conv = this.d.store.getConversation(conversationId);
     if (!conv) throw new LocalizedError("conversation.notFound");
@@ -347,6 +351,14 @@ export class SessionRunner {
     }
     // So does a group chat in the archive.
     if (conv.kind === "group" && this.d.groupArchived?.(conv.id)) throw new LocalizedError("group.archivedChat", { title: conv.title }, 409);
+    // Resolve on the server: clients send only an id, never a trusted quote or author.
+    const original = opts.replyTo !== undefined ? this.d.store.getMessage(opts.replyTo) : undefined;
+    if (opts.replyTo !== undefined && (!original || original.conversationId !== conversationId || original.role === "system" || original.status === "streaming" || original.quiet)) {
+      throw new LocalizedError("message.invalidReply", undefined, 400);
+    }
+    const replyPart: Extract<MessagePart, { type: "reply_to" }> | undefined = original ? {
+      type: "reply_to", messageId: original.id, text: replyText(original), author: original.agentId ? this.agentLabel(original.agentId) : original.role === "user" ? "User" : this.agentLabel(conv.agentId),
+    } : undefined;
     // Secrets come out first: message hooks, the stored message and the model only see vault:// references.
     const cap = this.d.secrets.capture(text, conversationId, "user");
     if (cap.stored.length || cap.withheld || cap.refused) opts.onCapture?.(cap);
@@ -355,7 +367,7 @@ export class SessionRunner {
       r.block ? { blocked: r.block } : r.text !== undefined ? { ...p, text: r.text } : p,
     );
     const attachments = opts.attachments ?? [];
-    const parts: MessagePart[] = [...(text || !attachments.length ? [{ type: "text" as const, text }] : []), ...attachments];
+    const parts: MessagePart[] = [...(replyPart ? [replyPart] : []), ...(text || !attachments.length ? [{ type: "text" as const, text }] : []), ...attachments];
     // The person's own pictures are theirs to show.
     if (text) this.d.pictures?.trust(markdownPictures(text));
     const msg = this.d.store.addMessage({ conversationId, role: "user", parts, status: "complete", channel: opts.channel });
@@ -374,12 +386,13 @@ export class SessionRunner {
     const expanded = command?.prompt ?? this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
     const voiceContext = this.voiceContext.get(conversationId);
     this.voiceContext.delete(conversationId);
-    const prompt = [opts.context?.trim(), voiceContext, note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
+    const prompt = [replyPart ? replyContext(replyPart) : undefined, opts.context?.trim(), voiceContext, note ? `${expanded}\n\n${note}` : expanded].filter(Boolean).join("\n");
     // From the web UI: the user's words travel with a mirrored reply, so the phone shows the exchange.
     const fromWeb = !opts.channel || opts.channel === WEB_CHANNEL;
     const files = attachments.length ? { attachments } : {};
     if (conv.kind === "group") {
-      this.startGroupRound(conv, hooked.payload.text, prompt, msg.id, { replyChannel: opts.channel, ...files });
+      if (this.isRunning(conversationId)) this.inputStatus(msg.id, "queued");
+      this.startGroupRound(conv, hooked.payload.text, prompt, msg.id, { replyAgentId: original?.agentId ?? (original?.role === "assistant" ? conv.agentId : undefined), replyChannel: opts.channel, ...files });
       return msg;
     }
     const quote = [text, ...attachments.map((a) => `📎 ${a.name}`)].filter(Boolean).join("\n");
@@ -387,24 +400,35 @@ export class SessionRunner {
     const task = conv.taskId ? this.d.store.getTask(conv.taskId) : undefined;
     // A turn is running here: the message joins it and the brain takes it at its next step (voice notes become words
     // first). A brain that cannot take it, or a turn that ended meanwhile, gets it as the next turn.
-    if (this.activeTurns.has(conversationId)) {
-      void (async () => {
-        const files: Pick<TurnOpts, "attachments" | "speech"> = attachments.length ? await this.transcribeParts(msg.id, attachments) : {};
-        if (await this.steerInto(conversationId, prompt, { ...reply, ...files, fromUser: true })) return;
-        if (task) await this.wakeTask(task, prompt, { ...reply, ...files, fromUser: true });
-        else this.queueUserTurn(conv, { messageId: msg.id, prompt, attachments: files.attachments ?? [], ...reply });
-      })();
-      return msg;
-    }
-    // Written on a task's page: the task carries on with it (its status, result and report follow). A goal waiting for
-    // the person has its answer: it goes on round after round.
     if (task?.kind === "goal" && task.question) this.d.store.updateTask(task.id, { question: undefined });
-    if (task) {
-      void (async () => this.wakeTask(task, prompt, { ...reply, fromUser: true, ...(attachments.length ? await this.transcribeParts(msg.id, attachments) : {}) }))();
-      return msg;
+    if (task || this.activeTurns.has(conversationId) || this.isRunning(conversationId) || this.inputs.has(conversationId)) {
+      this.inputStatus(msg.id, "sending");
+      const previous = this.inputs.get(conversationId) ?? Promise.resolve();
+      const input = previous.then(async () => {
+        const files: Pick<TurnOpts, "attachments" | "speech"> = attachments.length ? await this.transcribeParts(msg.id, attachments) : {};
+        if (await this.steerInto(conversationId, prompt, { ...reply, ...files, fromUser: true })) {
+          this.inputStatus(msg.id, "steered");
+          return;
+        }
+        this.inputStatus(msg.id, "queued");
+        if (task) {
+          const mode = await this.wakeTask(task, prompt, { ...reply, ...files, fromUser: true, inputMessageIds: [msg.id] });
+          if (mode === "cancelled") this.inputStatus(msg.id, "failed");
+        } else this.queueUserTurn(conv, { messageId: msg.id, prompt, attachments: files.attachments ?? [], ...reply });
+      }).catch(() => { this.inputStatus(msg.id, "failed"); });
+      this.inputs.set(conversationId, input);
+      void input.finally(() => { if (this.inputs.get(conversationId) === input) this.inputs.delete(conversationId); });
+      return this.d.store.getMessage(msg.id) ?? msg;
     }
     this.queueUserTurn(conv, { messageId: msg.id, prompt, attachments, ...reply });
     return msg;
+  }
+
+  /** Update persisted UI metadata without replacing transcripts or the user's words. */
+  private inputStatus(messageId: string, state: Extract<MessagePart, { type: "input_status" }>["state"], onlyExisting = false): void {
+    const m = this.d.store.getMessage(messageId);
+    if (!m || (onlyExisting && !m.parts.some((p) => p.type === "input_status"))) return;
+    this.d.store.updateMessage(messageId, { parts: [...m.parts.filter((p) => p.type !== "input_status"), { type: "input_status", state }] });
   }
 
   /**
@@ -432,12 +456,13 @@ export class SessionRunner {
       }
       const quote = batch.flatMap((b) => (b.quote ? [b.quote] : [])).join("\n");
       return this.runTurn(conv, batch.map((b) => b.prompt).join("\n\n"), {
+        inputMessageIds: batch.map((b) => b.messageId),
         fromUser: true,
         replyChannel: batch[0].replyChannel,
         ...(quote ? { quote } : {}),
         ...(attachments.length ? { attachments, speech } : {}),
       });
-    });
+    }).catch(() => { for (const b of batch) this.inputStatus(b.messageId, "failed", true); });
   }
 
   /** More input for the turn running in the conversation: true when its brain took it (the reply goes on there). */
@@ -454,7 +479,7 @@ export class SessionRunner {
       if (this.activeTurns.get(conversationId) !== a) return false;
       if (extra) text = `${extra}\n\n${text}`;
     }
-    if (!(await a.handle.steer(this.turnInput(a.row, text, opts)))) {
+    if (!(await a.handle.steer(this.turnInput(a.row, text, opts)).catch(() => false))) {
       if (a.voiceInterrupted) {
         a.stopped = true;
         void a.handle.interrupt();
@@ -524,9 +549,9 @@ export class SessionRunner {
   }
 
   /** The user wrote in a group: the members it mentions answer one after another (or the lead), in the conversation queue. */
-  private startGroupRound(conv: Conversation, text: string, prompt: string, triggerId: string, opts: { replyChannel?: string; attachments?: AttachmentPart[] }): void {
+  private startGroupRound(conv: Conversation, text: string, prompt: string, triggerId: string, opts: { replyChannel?: string; attachments?: AttachmentPart[]; replyAgentId?: string }): void {
     const epoch = this.groupEpoch.get(conv.id) ?? 0;
-    const speakers = firstSpeakers(text, this.groupMembers(conv));
+    const speakers = firstSpeakers(text, this.groupMembers(conv), opts.replyAgentId);
     void this.enqueue(conv.id, () => this.runGroupRound(conv.id, epoch, speakers, prompt, triggerId, opts));
   }
 
@@ -539,7 +564,8 @@ export class SessionRunner {
     opts: { replyChannel?: string; attachments?: AttachmentPart[]; speech?: Record<string, string> },
   ): Promise<void> {
     const stopped = () => (this.groupEpoch.get(conversationId) ?? 0) !== epoch;
-    if (stopped()) return;
+    if (stopped()) { this.inputStatus(triggerId, "failed", true); return; }
+    this.inputStatus(triggerId, "started", true);
     if (opts.attachments?.length) opts = { ...opts, ...(await this.transcribeParts(triggerId, opts.attachments)) };
     const queue = [...speakers];
     const handedBy = new Map<string, string>();
@@ -600,24 +626,26 @@ export class SessionRunner {
   }
 
   /** A card (secret request, plugin setup, images, a map) for the message the agent is writing right now in this conversation. */
-  attachPart(conversationId: string, part: MessagePart): void {
+  attachPart(conversationId: string, part: MessagePart): boolean {
     const msgId = this.streamingMessage.get(conversationId);
     const m = msgId ? this.d.store.getMessage(msgId) : undefined;
     // The same card twice in one reply (the agent called the tool again) shows once.
     const key = attachedKey(part);
-    if (m && key && m.parts.some((p) => attachedKey(p) === key)) return;
+    if (m && key && m.parts.some((p) => attachedKey(p) === key)) return false;
     if (m) this.d.store.updateMessage(m.id, { parts: [...m.parts, part] });
     else this.d.store.addMessage({ conversationId, role: "system", parts: [part], status: "complete" });
+    return true;
   }
 
   /**
-   * Something for the person to see (pictures): in the conversation it was made in, and when that is a task, also in
+   * Something for the person to see (pictures, connection cards): in the conversation it was made in, and when that is a task, also in
    * the dialog that started it, under the task's line, as its questions are: the person reads the dialog.
    */
   showToPerson(conversationId: string, part: MessagePart, taskId?: string): void {
-    this.attachPart(conversationId, part);
+    // A repeated tool call in one reply must not duplicate the card in the parent either.
+    if (!this.attachPart(conversationId, part)) return;
     const dialog = this.starterDialog(taskId);
-    if (dialog && taskId) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId }, part], status: "complete" });
+    if (dialog && dialog.id !== conversationId && taskId) this.d.store.addMessage({ conversationId: dialog.id, role: "assistant", agentId: dialog.agentId, parts: [{ type: "task", taskId }, part], status: "complete" });
   }
 
   /** The folders of the tasks a conversation started (and theirs, in turn): what it may show the person from. */
@@ -708,7 +736,9 @@ export class SessionRunner {
 
   private updateSecretPart(r: SecretRequest): void {
     if (!r.conversationId) return;
-    for (const m of this.d.store.listMessages(r.conversationId, { limit: 50 })) {
+    const taskId = this.d.store.getConversation(r.conversationId)?.taskId;
+    const where = new Set([r.conversationId, this.starterDialog(taskId)?.id].filter((id): id is string => !!id));
+    for (const conversationId of where) for (const m of this.d.store.listMessages(conversationId, { limit: 50 })) {
       if (m.parts.some((p) => p.type === "secret_request" && p.requestId === r.id && p.status !== r.status)) {
         this.d.store.updateMessage(m.id, { parts: m.parts.map((p) => (p.type === "secret_request" && p.requestId === r.id ? { ...p, status: r.status } : p)) });
       }
@@ -933,19 +963,22 @@ export class SessionRunner {
     const history = this.d.store.listMessages(conv.id, { limit: 50 });
     const resumed = fresh.status === "paused" || history.some((m) => m.role === "assistant");
     // What reached the task before it started (its starter's clarifications, the user's words on its page).
-    const notes = resumed ? [] : history.slice(1).flatMap((m) => m.parts.flatMap((p) => (p.type === "text" && p.text.trim() ? [p.text.trim()] : [])));
+    // Inputs still being prepared join through steering afterwards; do not deliver their text twice.
+    const pendingInputs = history.filter((m) => m.parts.some((p) => p.type === "input_status" && p.state === "queued"));
+    const readyHistory = history.slice(1).filter((m) => !m.parts.some((p) => p.type === "input_status" && p.state === "sending"));
+    const notes = (resumed ? pendingInputs : readyHistory).flatMap((m) => m.parts.flatMap((p) => (p.type === "text" && p.text.trim() ? [p.text.trim()] : [])));
     const sender = fresh.kind === "message" ? this.threadSender(fresh) : undefined;
     // A teammate's thread reads as their message; the reply is the answer.
     const thread = (): string =>
       resumed
-        ? "Continue where you stopped; your reply goes back to your teammate."
+        ? ["Continue where you stopped; your reply goes back to your teammate.", ...notes].join("\n\n")
         : [`Message from your teammate ${sender!.name} (agent "${sender!.id}"). Your reply goes back to them automatically.`, "", fresh.goal, ...notes.flatMap((n) => ["", n])].join("\n");
     const prompt = sender
       ? thread()
       : fresh.kind === "goal"
-        ? goalPrompt(fresh, !resumed, goalLimit(fresh.rounds ?? 0))
+        ? [goalPrompt(fresh, !resumed, goalLimit(fresh.rounds ?? 0)), ...notes].join("\n\n")
         : resumed
-        ? "Continue working on the task from where you stopped."
+        ? ["Continue working on the task from where you stopped.", ...notes].join("\n\n")
         : [
             `Task: ${fresh.title}`,
             "",
@@ -955,7 +988,8 @@ export class SessionRunner {
             taskEnding(fresh),
           ].join("\n");
 
-    const r = await this.runTurn(conv, prompt, { task: fresh });
+    const attachments = pendingInputs.flatMap((m) => m.parts.filter((p): p is AttachmentPart => p.type === "attachment"));
+    const r = await this.runTurn(conv, prompt, { task: fresh, inputMessageIds: pendingInputs.map((m) => m.id), ...(attachments.length ? { attachments } : {}) });
     // A run counts against the day's budget once it really ran, not for each look at whether its brains are back.
     if (fresh.background && r.errorCode !== "brain-offline") this.countUsage(agent.id, "background_run");
     await this.afterTaskTurn(fresh.id, r);
@@ -1117,18 +1151,24 @@ export class SessionRunner {
    * Something for a task (its starter's answer or clarification, the user's words on its page): it joins the running
    * turn, waits for the first turn of a task that has not started, or gives the task another turn.
    */
-  async wakeTask(task: Task, text: string, opts: Pick<TurnOpts, "replyChannel" | "quote" | "attachments" | "speech" | "taint" | "fromUser"> = {}): Promise<"steered" | "queued" | "started" | "cancelled"> {
+  async wakeTask(task: Task, text: string, opts: Pick<TurnOpts, "replyChannel" | "quote" | "attachments" | "speech" | "taint" | "fromUser" | "inputMessageIds"> = {}): Promise<"steered" | "queued" | "started" | "cancelled"> {
     const cur = this.d.store.getTask(task.id) ?? task;
     if (cur.status === "cancelled") return "cancelled";
     // Outside content stays marked in every session of the task from now on.
     if (opts.taint && !cur.tainted) this.d.store.updateTask(cur.id, { tainted: true });
-    if (await this.steerInto(cur.conversationId, text, opts)) return "steered";
+    if (await this.steerInto(cur.conversationId, text, opts)) {
+      for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "steered");
+      return "steered";
+    }
     if (cur.status === "queued") return "queued";
     const conv = this.d.store.getConversation(cur.conversationId);
     if (!conv) return "cancelled";
     void this.enqueue(conv.id, async () => {
       const now = this.d.store.getTask(cur.id);
-      if (!now || now.status === "cancelled") return;
+      if (!now || now.status === "cancelled") {
+        for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "failed");
+        return;
+      }
       this.d.store.updateTask(now.id, { status: "running", resumeAt: undefined, error: undefined });
       const r = await this.runTurn(conv, text, { ...opts, task: now });
       await this.afterTaskTurn(now.id, r);
@@ -1606,7 +1646,7 @@ export class SessionRunner {
       for (const m of this.d.store.listMessages(conversationId, { limit: 50 })) {
         if (m.parts.some((p) => p.type === "approval" && p.approvalId === a.id)) {
           this.d.store.updateMessage(m.id, {
-            parts: m.parts.map((p) => (p.type === "approval" && p.approvalId === a.id ? { ...p, status: a.status } : p)),
+            parts: m.parts.map((p) => (p.type === "approval" && p.approvalId === a.id ? { ...p, status: a.status, ...(a.ask ? { ask: a.ask } : {}) } : p)),
           });
         }
       }
@@ -1992,9 +2032,13 @@ export class SessionRunner {
   async runTurn(conv: Conversation, prompt: string, opts: TurnOpts): Promise<TurnResult> {
     // A group chat in the archive sleeps: what comes back to it later (a task's report, an answered card) wakes nobody.
     if (conv.kind === "group" && this.d.groupArchived?.(conv.id)) return { text: "", awaitingApproval: false };
+    for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "started", true);
     this.setTurning(conv.id, 1);
     try {
       return await this.turn(conv, prompt, opts);
+    } catch (error) {
+      for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "failed", true);
+      throw error;
     } finally {
       this.setTurning(conv.id, -1);
     }

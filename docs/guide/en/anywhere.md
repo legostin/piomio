@@ -30,6 +30,8 @@ Never through the link:
 - the security console with approvals, the vault, rules and the audit: it stays on the computer;
 - plugin webhooks, and the pages a sign-in returns to (Google's, an MCP service's): when one doesn't come back, the card asks you to paste the address from the browser's address bar instead.
 
+A device that has opened the hub before shows its own copy at once and brings it up to date when the hub answers. If the session has ended by then, the page goes to the sign-in screen. The page, its files and the hub's answers travel compressed over HTTP/2, and after an update the browser downloads only the files that changed.
+
 ## Wrong passwords
 
 Each address gets 10 wrong passwords in 15 minutes, then it has to wait. Through the link, wrong passwords also count together, from every address: 30 within an hour pause signing in from outside for an hour, and you get a notification, **Someone is guessing your password**. Signing in on the computer itself keeps working. If it wasn't you, change the password in the security console on that computer.

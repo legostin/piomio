@@ -37,7 +37,7 @@ async function fixture(ref = "fake@local", accepts = true) {
   const done = internals.enqueue("c", () => internals.streamTurn(conv, row, { handle, brainRef: ref }, agent, { text: "question" }));
   const nextTurn = internals.runTurn = vi.fn(async () => ({ text: "next", awaitingApproval: false }));
   await tick();
-  return { runner, messages, handle, done, nextTurn, event: (e: BrainEvent) => event(e), finish: () => finish() };
+  return { runner, internals, messages, handle, done, nextTurn, event: (e: BrainEvent) => event(e), finish: () => finish() };
 }
 
 describe("heard history", () => {
@@ -116,5 +116,56 @@ describe("the actual runner stream at barge-in", () => {
     expect(() => f.runner.interruptVoice("c", [{ messageId: "foreign", end: 0 }])).toThrow();
     expect(f.handle.interrupt).not.toHaveBeenCalled(); f.finish(); await f.done;
     expect(text(f.messages.get("m0")!)).toBe("Answer.");
+  });
+});
+
+
+describe("typed input while the agent works", () => {
+  const state = (f: Awaited<ReturnType<typeof fixture>>, id: string) => f.messages.get(id)?.parts.find((p) => p.type === "input_status");
+
+  it("stores the clarification, joins the running turn and never interrupts or starts another", async () => {
+    const f = await fixture();
+    f.event({ type: "text", delta: "Original work." });
+    const m = await f.runner.userMessage("c", "also check tests"); await tick();
+    expect(text(f.messages.get(m.id)!)).toBe("also check tests");
+    expect(state(f, m.id)).toEqual({ type: "input_status", state: "steered" });
+    expect(f.handle.steer).toHaveBeenCalledOnce();
+    expect(f.handle.interrupt).not.toHaveBeenCalled();
+    f.finish(); await f.done; await tick();
+    expect(f.handle.send).toHaveBeenCalledOnce();
+    expect(f.nextTurn).not.toHaveBeenCalled();
+    expect(text(f.messages.get("m0")!)).toBe("Original work.");
+  });
+
+  it.each([false, "error"])("queues several inputs serially when steering returns %s", async (result) => {
+    const f = await fixture("fake2@local", false);
+    if (result === "error") f.handle.steer.mockRejectedValue(new Error("transport unavailable"));
+    const a = await f.runner.userMessage("c", "first clarification");
+    const b = await f.runner.userMessage("c", "second clarification"); await tick();
+    for (const m of [a, b]) expect(state(f, m.id)).toEqual({ type: "input_status", state: "queued" });
+    expect(f.nextTurn).not.toHaveBeenCalled();
+    expect(f.handle.interrupt).not.toHaveBeenCalled();
+    f.finish(); await f.done; await tick();
+    expect(f.nextTurn).toHaveBeenCalledOnce();
+    expect(f.nextTurn.mock.calls[0][1]).toBe("first clarification\n\nsecond clarification");
+  });
+
+  it("keeps later text behind slow attachment preparation", async () => {
+    const f = await fixture();
+    let ready!: () => void;
+    f.internals.turnInput = (_row: unknown, text: string, opts: unknown) => ({ text, ...opts as object });
+    f.internals.transcribeParts = async (_id: string, attachments: unknown[]) => {
+      await new Promise<void>((r) => { ready = r; });
+      return { attachments, speech: {} };
+    };
+    const a = await f.runner.userMessage("c", "first with audio", { attachments: [{ type: "attachment", path: "voice.ogg", name: "voice.ogg" }] });
+    await tick();
+    const b = await f.runner.userMessage("c", "second text"); await tick();
+    expect(f.handle.steer).not.toHaveBeenCalled();
+    expect(state(f, b.id)).toEqual({ type: "input_status", state: "sending" });
+    ready(); await tick(); await tick();
+    expect(f.handle.steer.mock.calls.map(([input]) => input.text)).toEqual(["first with audio", "second text"]);
+    for (const m of [a, b]) expect(state(f, m.id)).toEqual({ type: "input_status", state: "steered" });
+    f.finish(); await f.done;
   });
 });

@@ -2,7 +2,10 @@
 // Syntax: {name} placeholders, "{n, plural, one {…} other {…}}" plurals (see packages/shared/src/i18n.ts).
 
 export default {
+  "message.invalidReply": "The original message is unavailable for reply",
   "network.ask": "Allow network access to {host}:{port}?",
+  "network.retryUnavailable": "This network request cannot be renewed. Ask the agent for a new request.",
+  "network.retryMessage": "Request fresh network permission for {host}:{port} if it is still needed for this work. The old request is closed; this message does not approve it. Use a new permission card in your current session before connecting. Do not replay the old connection or automatically retry denied access.",
   "network.badList": "Enter host names or public IPs, optionally with a leading *. wildcard. URLs, ports and private addresses are not allowed.",
 
   // auth
@@ -228,6 +231,7 @@ export default {
   "push.off": "Pushes are off on this hub (PIOMIO_PUSH_RELAY=off).",
   "push.badToken": "The phone sent a push token the hub cannot read",
   "push.relayDown": "The push relay did not answer. Pushes will be turned on the next time the app opens.",
+  "push.file": "Sent a file",
   "push.notFound": "This notification is no longer on the hub",
   "device.badSignature": "The Face ID confirmation did not check out. Try again.",
   "device.networkOff": "Phones cannot reach the hub: its port for phones is closed (PIOMIO_DEVICES=0) and access from anywhere is off.",

@@ -237,6 +237,8 @@ describe("device port", () => {
   });
 
   it("wakes a phone through the relay with only the notification's id, and gives the phone the words itself", async () => {
+    // This delivery test must send a push even when CI runs during quiet hours.
+    hub.settings.update({ quietHours: { enabled: false, start: "23:00", end: "08:00" } });
     const pairing = (await web.req("POST", "/api/devices/pairing", {})).json;
     const fp = parsePairingLink(pairing.link)!.fingerprint;
     const paired = (await phoneRequest(devicePort, fp, "POST", "/api/devices/pair", { code: pairing.code, name: "Push phone", platform: "ios", publicKey: phoneKey().publicKey })).json;
@@ -259,6 +261,7 @@ describe("device port", () => {
     expect((await phoneRequest(devicePort, fp, "GET", "/api/devices/me", undefined, token)).json.push).toBe(true);
 
     const n = await hub.notifier.notify({ level: "notify", title: "Anna wrote", body: "Lunch at one?", agentId: "assistant" });
+    expect(n.effectiveLevel).toBe("notify");
     await new Promise((r) => setTimeout(r, 50));
     const push = calls.find((c) => c.path === "/v1/push")!;
     // The relay hears the handle and an opaque id: no title, no body, no agent.
@@ -270,6 +273,23 @@ describe("device port", () => {
     expect(note.json).toMatchObject({ id: n.id, title: "Anna wrote", body: "Lunch at one?", agentId: "assistant", path: "/agent/assistant" });
     expect((await phoneRequest(devicePort, fp, "GET", `/api/devices/notifications/${n.id}`)).status).toBe(401);
     expect((await phoneRequest(devicePort, fp, "GET", "/api/devices/notifications/n_missing", undefined, token)).status).toBe(404);
+
+    // Every agent's message in a chat wakes the phone too, once, when it is done; the words come from the hub.
+    const pushes = () => calls.filter((c) => c.path === "/v1/push");
+    const before = pushes().length;
+    const dialog = hub.store.agentConversation("assistant");
+    const reply = hub.store.addMessage({ conversationId: dialog.id, role: "assistant", parts: [{ type: "text", text: "" }], status: "streaming", agentId: "assistant" });
+    hub.store.updateMessage(reply.id, { parts: [{ type: "text", text: "Booked the table for one." }] });
+    hub.store.updateMessage(reply.id, { status: "complete" });
+    hub.store.updateMessage(reply.id, { parts: [{ type: "text", text: "Booked the table for one!" }] });
+    hub.store.addMessage({ conversationId: dialog.id, role: "user", parts: [{ type: "text", text: "thanks" }], status: "complete" });
+    const task = hub.store.createConversation({ kind: "task", title: "Work", agentId: "assistant" });
+    hub.store.addMessage({ conversationId: task.id, role: "assistant", parts: [{ type: "text", text: "step 1" }], status: "complete", agentId: "assistant" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(pushes().slice(before).map((c) => c.body.id)).toEqual([reply.id]);
+    expect(JSON.stringify(pushes().at(-1)!.body)).not.toMatch(/Booked/);
+    const said = await phoneRequest(devicePort, fp, "GET", `/api/devices/notifications/${reply.id}`, undefined, token);
+    expect(said.json).toMatchObject({ id: reply.id, kind: "message", body: "Booked the table for one!", agentId: "assistant", conversationId: dialog.id, path: "/agent/assistant" });
 
     // The app was deleted from the phone: Apple says so, the hub drops the handle.
     gone = true;

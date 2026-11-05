@@ -161,6 +161,11 @@ export interface ApprovalAsk {
   listed?: boolean;
   agent?: string;
   task?: string;
+  /** Server deadline for a live network permission; does not promise that a TCP client stays connected. */
+  networkExpiresAt?: string;
+  networkClosedReason?: "timeout" | "connection_closed" | "session_ended";
+  /** A user explicitly requested a fresh decision; this never reopens the old approval. */
+  networkRetryRequestedAt?: string;
 }
 
 /**
@@ -262,6 +267,8 @@ export interface AgentDraft {
 export type MessageRole = "user" | "assistant" | "system";
 
 export type MessagePart =
+  /** Delivery of input sent while the conversation is busy. UI metadata, never model input. */
+  | { type: "input_status"; state: "sending" | "steered" | "queued" | "started" | "failed" }
   | { type: "text"; text: string; /** A completed-playback prefix, sealed against late/repeated acknowledgements. */ voiceInterrupted?: boolean }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
@@ -317,7 +324,7 @@ export type MessagePart =
    */
   | { type: "task"; taskId: string; text?: string; reply?: string }
   /** The user's message this reply answers, when the dialog moved on since (a task's result for the request that started it). */
-  | { type: "reply_to"; messageId: string; text: string }
+  | { type: "reply_to"; messageId: string; text: string; author?: string }
   /** News the agent shows (show_news): cards from a channel's posts or found by the agent; `feedId` links the channel. */
   | { type: "news"; title?: string; feedId?: string; items: NewsItem[] }
   /**

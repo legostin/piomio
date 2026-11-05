@@ -10,6 +10,9 @@ import { groupParts } from "../../lib/parts";
 import { fileSize, formatDuration, formatTime } from "../../lib/format";
 import { useStore } from "../../lib/store";
 import { api, errorText } from "../../lib/api";
+import { selectReply } from "../../state/replies";
+import { jumpToMessage } from "../../state/reply-navigation";
+import { toast } from "../../state/toast";
 import { showDetails } from "../../state/prefs";
 import { openViewer, saveMedia } from "../../state/viewer";
 import { fileHref, mediaKind, partKey } from "../../lib/gallery";
@@ -246,26 +249,31 @@ function Attachment({ part, message, index }: { part: Extract<MessagePart, { typ
 }
 
 /** The person's message this reply answers (a task's report after the talk moved on): a click scrolls to it. */
-function ReplyQuote({ part }: { part: Extract<MessagePart, { type: "reply_to" }> }) {
-  const jump = () => {
-    const el = document.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(part.messageId)}"]`);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.classList.remove("reply-flash");
-    void el.offsetWidth;
-    el.classList.add("reply-flash");
+function ReplyQuote({ part, conversationId }: { part: Extract<MessagePart, { type: "reply_to" }>; conversationId: string }) {
+  const [loading, setLoading] = useState(false);
+  const jump = async () => {
+    setLoading(true);
+    try {
+      if (!await jumpToMessage(conversationId, part.messageId)) toast(t("message.originalUnavailable"), "info");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally { setLoading(false); }
   };
   return (
-    <button
-      type="button"
-      onClick={jump}
-      title={t("message.replyTo")}
-      className="press flex max-w-full items-center gap-1.5 self-start rounded-xl border-l-[3px] border-accent bg-surface-2/80 py-1 pr-3 pl-2 text-left text-[13px] text-muted hover:text-fg"
-    >
+    <button type="button" disabled={loading} onClick={() => void jump()} title={t("message.replyTo")}
+      className="press flex max-w-full items-center gap-1.5 self-start rounded-xl border-l-[3px] border-accent bg-surface-2/80 py-1 pr-3 pl-2 text-left text-[13px] text-muted hover:text-fg disabled:opacity-50">
       <CornerUpLeft className="size-3.5 shrink-0" />
-      <span className="min-w-0 truncate">{part.text}</span>
+      <span className="min-w-0 truncate">{part.author && <span className="block font-semibold">{part.author === "User" ? t("message.you") : part.author}</span>}{part.text}</span>
     </button>
   );
+}
+
+function ReplyButton({ message, author }: { message: Message; author: string }) {
+  if (message.role === "system" || message.status === "streaming" || message.quiet) return null;
+  return <button type="button" onClick={() => selectReply(message, author)} aria-label={t("message.reply")} title={t("message.reply")}
+    className="inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-xs text-muted hover:bg-surface-2 hover:text-fg focus-visible:outline-accent">
+    <CornerUpLeft className="size-3.5" /><span>{t("message.reply")}</span>
+  </button>;
 }
 
 function TypingDots() {
@@ -334,6 +342,8 @@ function Parts({ message }: { message: Message }) {
         if (it.kind === "orphan_result") return <ToolCard key={it.key} result={it.result} />;
         const p = it.part;
         switch (p.type) {
+          case "input_status":
+            return <div key={it.key} role="status" className="px-1 text-xs text-muted">{t(`message.input.${p.state}`)}</div>;
           case "text": {
             const caret = streaming && idx === items.length - 1 && lastPart?.type === "text";
             return message.role === "user" && !message.agentId ? (
@@ -375,7 +385,7 @@ function Parts({ message }: { message: Message }) {
           case "task":
             return <TaskLine key={it.key} taskId={p.taskId} text={p.text} reply={p.reply} from={message.agentId} />;
           case "reply_to":
-            return <ReplyQuote key={it.key} part={p} />;
+            return <ReplyQuote key={it.key} part={p} conversationId={message.conversationId} />;
           case "news":
             return <NewsCard key={it.key} part={p} />;
           case "choices":
@@ -444,6 +454,7 @@ export const DefaultMessage = memo(function DefaultMessage({
             <Parts message={message} />
           </div>
           <div className="ml-auto translate-y-[2px] text-[10.5px] leading-5 font-medium whitespace-nowrap tabular-nums opacity-55">
+            <ReplyButton message={message} author={t("message.you")} />
             {channelLabel(message.channel)}
             {formatTime(message.createdAt)}
           </div>
@@ -474,6 +485,7 @@ export const DefaultMessage = memo(function DefaultMessage({
         )}
         <div className={cx("msg-parts text-[15px] leading-relaxed", grouped && "group/msg relative")}>
           <Parts message={message} />
+          <ReplyButton message={message} author={name} />
           {/* A reply after another of the agent's: its mark shows on hover (the first one's is in the header). */}
           {grouped && !streaming && <ModelBadge message={message} className="absolute top-0 -right-1 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100" />}
         </div>

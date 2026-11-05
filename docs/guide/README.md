@@ -20,7 +20,7 @@ agents.
 
 - `nav.json`: the groups of the sidebar (titles in every language) and the pages in them, in order. A page that is not
   listed there is not published.
-- `<lang>/<page>.md`: a page. Every page exists in every language (`npm test` checks it), with the same sections.
+- `<lang>/<page>.md`: a page. Every language that has a folder here has every page (`npm test` checks it), with the same sections. A site language with no folder is published from the English pages (Simplified Chinese, `/zh/docs/`, for now).
 
 A page starts with its title and a sentence about it, for search engines and link previews:
 

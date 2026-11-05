@@ -102,11 +102,91 @@ describe("agents making integrations", () => {
   });
 
   it("updates an integration it installed before", async () => {
+    const previousUrl = hub.plugins.uiPlugins().find((p) => p.id === "sunny")!.url;
+    hub.plugins.setSettings("sunny", { apiUrl: "http://127.0.0.1:1" });
     const dir = build("sunny");
+    const uiSource = join(dir, "ui", "src", "index.tsx");
+    writeFileSync(uiSource, readFileSync(uiSource, "utf8").replace('glyph="↑"', 'glyph="updated"'));
+    const serverSource = join(dir, "server", "index.ts");
+    writeFileSync(serverSource, readFileSync(serverSource, "utf8").replace("lat and lon must be coordinates in degrees.", "Updated coordinate validation."));
     mkdirSync(join(dir, "extra"), { recursive: true });
     const call = install(join(dir));
     hub.approvals.resolve((await until(pending, "the approval card")).id, "approve", { via: "web" });
-    expect((await call).isError).toBeFalsy();
-    expect(existsSync(join(hub.plugins.get("sunny")!.dir, "extra"))).toBe(true);
+    const result = await call;
+    expect(result.isError, textOf(result)).toBeFalsy();
+    const rec = hub.plugins.get("sunny")!;
+    expect(rec.status).toBe("running");
+    expect(rec.settings).toEqual({ apiUrl: "http://127.0.0.1:1" });
+    expect(existsSync(join(rec.dir, "extra"))).toBe(true);
+    expect(readFileSync(rec.layout!.uiEntry!, "utf8")).toContain('"updated"');
+    const ui = hub.plugins.uiPlugins().find((p) => p.id === "sunny")!;
+    expect(ui.url).not.toBe(previousUrl);
+    expect(hub.plugins.uiPlugins().find((p) => p.id === "sunny")!.url).toBe(ui.url);
+    const reply = await hub.tools.get("sunny_times")!.invoke({ lat: 999, lon: 0 }, ctx);
+    expect(textOf(reply)).toBe("Updated coordinate validation.");
+  });
+
+  it("refreshes the UI for a translation-only update without changing the plugin version", async () => {
+    const previous = hub.plugins.uiPlugins().find((p) => p.id === "sunny")!;
+    const dir = join(workspace, "integrations", "sunny");
+    const messagesFile = join(dir, ".piomio-plugin", "locales", "en.json");
+    const messages = JSON.parse(readFileSync(messagesFile, "utf8"));
+    messages["card.sunrise"] = "Updated sunrise";
+    writeFileSync(messagesFile, JSON.stringify(messages));
+    const call = install(dir);
+    hub.approvals.resolve((await until(pending, "the approval card")).id, "approve", { via: "web" });
+    const result = await call;
+    expect(result.isError, textOf(result)).toBeFalsy();
+    const current = hub.plugins.uiPlugins().find((p) => p.id === "sunny")!;
+    expect(current.url).not.toBe(previous.url);
+    expect(current.messages.en["card.sunrise"]).toBe("Updated sunrise");
+  });
+
+  it("finishes stopping the old process before returning, including concurrent stop requests", async () => {
+    const dir = build("stoppable");
+    writeFileSync(join(dir, "server", "index.ts"), `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      export default {
+        activate(ctx) {
+          process.once("exit", () => writeFileSync(join(ctx.dataDir, "exited"), "yes"));
+        }
+      };
+    `);
+    const call = install(dir);
+    hub.approvals.resolve((await until(pending, "the approval card")).id, "approve", { via: "web" });
+    const result = await call;
+    expect(result.isError, textOf(result)).toBeFalsy();
+    const exited = join(hub.plugins.dataDirOf("stoppable"), "exited");
+    expect(existsSync(exited)).toBe(false);
+    await Promise.all([hub.plugins.stop("stoppable"), hub.plugins.stop("stoppable")]);
+    expect(readFileSync(exited, "utf8")).toBe("yes");
+    expect(hub.plugins.get("stoppable")!.status).toBe("stopped");
+  });
+
+  it("terminates a plugin that never finishes deactivating before replacing it", async () => {
+    const dir = build("unresponsive");
+    writeFileSync(join(dir, "server", "index.ts"), `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      export default {
+        activate(ctx) { writeFileSync(join(ctx.dataDir, "pid"), String(process.pid)); },
+        deactivate() { return new Promise(() => {}); }
+      };
+    `);
+    const first = install(dir);
+    hub.approvals.resolve((await until(pending, "the approval card")).id, "approve", { via: "web" });
+    const result = await first;
+    expect(result.isError, textOf(result)).toBeFalsy();
+    const pid = Number(readFileSync(join(hub.plugins.dataDirOf("unresponsive"), "pid"), "utf8"));
+
+    build("unresponsive");
+    const update = install(dir);
+    hub.approvals.resolve((await until(pending, "the approval card")).id, "approve", { via: "web" });
+    const updated = await update;
+    expect(updated.isError, textOf(updated)).toBeFalsy();
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(hub.plugins.get("unresponsive")!.status).toBe("running");
+    expect(hub.tools.get("unresponsive_times")).toBeDefined();
   });
 });

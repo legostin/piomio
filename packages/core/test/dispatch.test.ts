@@ -123,6 +123,7 @@ describe("agents as entry points (integration)", () => {
       ["user", "and the tests too"],
       ["assistant", "fake also heard: and the tests too"],
     ]);
+    expect(ms.find((m) => textOf(m) === "and the tests too")?.parts).toContainEqual({ type: "input_status", state: "steered" });
     // One turn: nothing queued after it.
     await sleep(500);
     expect((await messages(c)).filter((m) => m.role === "assistant")).toHaveLength(ms.filter((m) => m.role === "assistant").length);
@@ -137,6 +138,28 @@ describe("agents as entry points (integration)", () => {
     await idle(c);
     const answers = (await messages(c)).filter((m) => m.role === "assistant").map(textOf);
     expect(answers).toEqual(["fake2 is thinking", "fake2 heard: second"]);
+    expect((await messages(c)).find((m) => textOf(m) === "second")?.parts).toContainEqual({ type: "input_status", state: "started" });
+  });
+
+  it("delivers typed input on a running task page without stopping its original work", async () => {
+    const t = hub.runner.createTask({ agentId: "assistant", title: "Task page steering", goal: "original task SLOW", background: false, createdBy: "user" });
+    await until(async () => (await messages(t.conversationId)).some((m) => m.role === "assistant" && textOf(m).includes("fake is thinking")), "task work");
+    await say(t.conversationId, "include this clarification");
+    await until(async () => (await task(t.id)).status === "done", "task completion");
+    const ms = await messages(t.conversationId);
+    expect(textOf(ms[0])).toBe("original task SLOW");
+    expect(ms.find((m) => textOf(m) === "include this clarification")?.parts).toContainEqual({ type: "input_status", state: "steered" });
+    expect(ms.filter((m) => m.role === "assistant").map(textOf).join("\n")).toContain("fake also heard: include this clarification");
+  });
+
+  it("keeps input typed before a queued goal starts, with the original goal", async () => {
+    const t = hub.runner.createTask({ agentId: "assistant", title: "Queued goal", goal: "original objective", kind: "goal", background: false, createdBy: "user" });
+    const m = await hub.runner.userMessage(t.conversationId, "new constraint");
+    await until(() => hub.store.getMessage(m.id)?.parts.some((p) => p.type === "input_status" && p.state === "started"), "queued goal input picked up");
+    await until(async () => (await messages(t.conversationId)).some((m) => m.role === "assistant" && textOf(m).includes("new constraint")), "goal prompt includes clarification");
+    const answers = (await messages(t.conversationId)).filter((m) => m.role === "assistant").map(textOf).join("\n");
+    expect(answers).toContain("original objective");
+    hub.runner.cancelTask(t.id);
   });
 
   it("runs a task on the side that asks its starter, waits for the answer, then reports", async () => {
@@ -252,6 +275,7 @@ describe("agents as entry points (integration)", () => {
     const inTask = buildSystemPrompt({ ...base, task: { id: "t1", title: "x", createdBy: "agent" } as Task });
     expect(inTask).not.toContain("## How you work");
     expect(inTask).toContain("`task_ask`");
+    expect(inTask).toContain("while continuing the original task");
     // An obstacle is a reason to try another way; the person's no is not one to work around.
     expect(inTask).toContain("Try two or three really different ways");
     expect(inTask).toContain("Never work around the person's no");
