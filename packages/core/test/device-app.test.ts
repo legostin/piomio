@@ -274,6 +274,23 @@ describe("device port", () => {
     expect((await phoneRequest(devicePort, fp, "GET", `/api/devices/notifications/${n.id}`)).status).toBe(401);
     expect((await phoneRequest(devicePort, fp, "GET", "/api/devices/notifications/n_missing", undefined, token)).status).toBe(404);
 
+    // Every agent's message in a chat wakes the phone too, once, when it is done; the words come from the hub.
+    const pushes = () => calls.filter((c) => c.path === "/v1/push");
+    const before = pushes().length;
+    const dialog = hub.store.agentConversation("assistant");
+    const reply = hub.store.addMessage({ conversationId: dialog.id, role: "assistant", parts: [{ type: "text", text: "" }], status: "streaming", agentId: "assistant" });
+    hub.store.updateMessage(reply.id, { parts: [{ type: "text", text: "Booked the table for one." }] });
+    hub.store.updateMessage(reply.id, { status: "complete" });
+    hub.store.updateMessage(reply.id, { parts: [{ type: "text", text: "Booked the table for one!" }] });
+    hub.store.addMessage({ conversationId: dialog.id, role: "user", parts: [{ type: "text", text: "thanks" }], status: "complete" });
+    const task = hub.store.createConversation({ kind: "task", title: "Work", agentId: "assistant" });
+    hub.store.addMessage({ conversationId: task.id, role: "assistant", parts: [{ type: "text", text: "step 1" }], status: "complete", agentId: "assistant" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(pushes().slice(before).map((c) => c.body.id)).toEqual([reply.id]);
+    expect(JSON.stringify(pushes().at(-1)!.body)).not.toMatch(/Booked/);
+    const said = await phoneRequest(devicePort, fp, "GET", `/api/devices/notifications/${reply.id}`, undefined, token);
+    expect(said.json).toMatchObject({ id: reply.id, kind: "message", body: "Booked the table for one!", agentId: "assistant", conversationId: dialog.id, path: "/agent/assistant" });
+
     // The app was deleted from the phone: Apple says so, the hub drops the handle.
     gone = true;
     await hub.notifier.notify({ level: "notify", title: "Again", body: "x" });

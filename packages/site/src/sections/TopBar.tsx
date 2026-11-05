@@ -36,7 +36,7 @@ export function TopBar({ page = "home", hrefFor }: { page?: Page; hrefFor?: (lan
             {t("nav.docs")}
           </a>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
           {/* Below lg the page's parts hide; the docs stay, as a word, or a book where even that doesn't fit. */}
           <a
             href={docs}
@@ -47,7 +47,7 @@ export function TopBar({ page = "home", hrefFor }: { page?: Page; hrefFor?: (lan
             <Book size={18} className="sm:hidden" />
             <span className="hidden text-[14px] font-medium sm:inline">{t("nav.docs")}</span>
           </a>
-          <div className="flex rounded-full bg-surface-2 p-0.5 text-[12.5px] font-semibold" role="group" aria-label={t("nav.language")}>
+          <div className="flex rounded-full bg-surface-2 p-0.5 text-[12px] font-semibold sm:text-[12.5px]" role="group" aria-label={t("nav.language")}>
             {siteConfig.languages.map((l) => (
               <a
                 key={l}
@@ -55,7 +55,7 @@ export function TopBar({ page = "home", hrefFor }: { page?: Page; hrefFor?: (lan
                 hrefLang={l}
                 lang={l}
                 aria-current={l === lang ? "page" : undefined}
-                className={`rounded-full px-2.5 py-1 uppercase transition-colors ${l === lang ? "bg-surface text-fg shadow-[var(--shadow)]" : "text-muted hover:text-fg"}`}
+                className={`rounded-full px-1.5 py-1 uppercase transition-colors sm:px-2.5 ${l === lang ? "bg-surface text-fg shadow-[var(--shadow)]" : "text-muted hover:text-fg"}`}
               >
                 {l}
               </a>

@@ -17,20 +17,28 @@ const byNewest = (a, b) => {
   return y[0] - x[0] || y[1] - x[1];
 };
 
-/** One line's sidebar and pages from its folder; a page listed in nav.json but missing in a language stops the build. */
+/**
+ * One line's sidebar and pages from its folder. A page listed in nav.json but missing in a language that has its own
+ * folder stops the build. A site language with no folder (Simplified Chinese, for now) is published from the English
+ * pages: same sections, English anchors, and the edit link points at the English file.
+ */
 export function readLine(dir, languages) {
   const nav = JSON.parse(readFileSync(join(dir, "nav.json"), "utf8"));
   const pages = {};
+  /** Which folder each language's Markdown was read from. */
+  const sourceLang = {};
   for (const lang of languages) {
+    const from = existsSync(join(dir, lang)) ? lang : "en";
+    sourceLang[lang] = from;
     pages[lang] = {};
     for (const group of nav.groups)
       for (const slug of group.pages) {
-        const file = join(dir, lang, `${slug}.md`);
+        const file = join(dir, from, `${slug}.md`);
         if (!existsSync(file)) throw new Error(`docs: ${file} is missing (nav.json lists "${slug}")`);
         pages[lang][slug] = readFileSync(file, "utf8");
       }
   }
-  return { nav, pages };
+  return { nav, pages, sourceLang };
 }
 
 /**
@@ -83,12 +91,14 @@ export function pageData({ lines, line, lang, slug, prefix, repo }) {
   return {
     lang,
     slug,
+    sourceLang: line.sourceLang?.[lang] ?? lang,
+    translatedLangs: Object.keys(line.pages).filter((l) => (line.sourceLang?.[l] ?? l) === l),
     source: line.pages[lang][slug],
     version: { id: line.id, release: line.release, current: line.current },
     prefix,
     versions: lines.map((l) => ({ id: l.id, release: l.release, current: l.current })),
     nav,
-    ...(tagHasDocs(line.release) ? { sourceUrl: `https://github.com/${repo}/blob/v${line.release}/docs/guide/${lang}/${slug}.md` } : {}),
-    ...(line.current ? { editUrl: `https://github.com/${repo}/edit/main/docs/guide/${lang}/${slug}.md` } : {}),
+    ...(tagHasDocs(line.release) ? { sourceUrl: `https://github.com/${repo}/blob/v${line.release}/docs/guide/${line.sourceLang?.[lang] ?? lang}/${slug}.md` } : {}),
+    ...(line.current ? { editUrl: `https://github.com/${repo}/edit/main/docs/guide/${line.sourceLang?.[lang] ?? lang}/${slug}.md` } : {}),
   };
 }

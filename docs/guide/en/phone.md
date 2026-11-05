@@ -58,7 +58,7 @@ Behind a port forward or a proxy the hub can't see the address phones should use
 
 ## Notifications
 
-After you connect the phone, the app asks once whether it may send notifications. Allowed, the phone gets what reaches you: notes and questions from your agents, scheduled reports, digests and approvals waiting for you. They follow the same rules as everywhere else: quiet hours make them silent, and what goes into the digest doesn't buzz on its own ([Tasks and schedules](tasks.md)). A tap opens the agent's dialog or the task; the app's icon shows how many Inbox items are unread.
+After you connect the phone, the app asks once whether it may send notifications. Allowed, the phone gets every message your agents write to you, in their dialogs and in group chats, and what reaches you besides: notes and questions, scheduled reports, digests and approvals waiting for you. Task threads stay quiet; a task's result comes to the dialog. In quiet hours pushes come without a sound, and what goes into the digest doesn't buzz on its own ([Tasks and schedules](tasks.md)). While a chat is open on the phone, its messages don't pop up over it. A tap opens the chat or the task; the app's icon shows how many messages are unread.
 
 Nothing personal goes through anyone else on the way:
 

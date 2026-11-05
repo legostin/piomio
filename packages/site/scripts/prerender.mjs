@@ -71,7 +71,7 @@ ${head}
 </style>
 </head>
 <body>
-<p><a href="${base}en/" hreflang="en">English</a> · <a href="${base}ru/" hreflang="ru">Русский</a></p>
+<p>${languages.map((l) => `<a href="${base}${l}/" hreflang="${l}">${{ en: "English", ru: "Русский", zh: "简体中文" }[l] ?? l}</a>`).join(" · ")}</p>
 </body>
 </html>
 `;
@@ -89,6 +89,6 @@ ${head}
   );
 
   const paths = indexablePaths(PAGES.map(pagePath), docSlugs);
-  writeFileSync(join(dist, "sitemap.xml"), sitemapXml({ origin, base, languages, paths, lastmod: new Date().toISOString().slice(0, 10) }));
+  writeFileSync(join(dist, "sitemap.xml"), sitemapXml({ origin, base, languages, paths, docLanguages: languages.filter((l) => newest.sourceLang[l] === l), lastmod: new Date().toISOString().slice(0, 10) }));
   writeFileSync(join(dist, "robots.txt"), robotsTxt({ origin, base }));
 }

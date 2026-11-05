@@ -16,7 +16,8 @@
   <a href="#день-с-командой">Что умеет</a> &nbsp;·&nbsp;
   <a href="#как-это-устроено">Как устроено</a> &nbsp;·&nbsp;
   <a href="https://piomio.io/ru/docs/">Документация</a> &nbsp;·&nbsp;
-  <a href="README.md">English</a>
+  <a href="README.md">English</a> &nbsp;·&nbsp;
+  <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">

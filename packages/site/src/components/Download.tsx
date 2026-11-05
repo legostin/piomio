@@ -65,7 +65,7 @@ export function DownloadButton({ size = "lg" }: { size?: "sm" | "lg" }) {
   const Icon = os === "mac" ? Apple : Windows;
   if (size === "sm")
     return (
-      <a href={downloadHref(os)} data-ga="download" className="candy inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[14px] font-semibold">
+      <a href={downloadHref(os)} data-ga="download" className="candy inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[14px] font-semibold sm:px-3.5">
         <Icon size={15} />
         {t("nav.download")}
       </a>

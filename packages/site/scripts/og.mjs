@@ -5,20 +5,24 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const FONTS = resolve(import.meta.dirname, "../../web/src/assets/fonts");
+const CJK = resolve(import.meta.dirname, "../src/assets/fonts");
 
 function card(t) {
   const font = (name) => pathToFileURL(join(FONTS, name)).href;
+  const cjk = (name) => pathToFileURL(join(CJK, name)).href;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 @font-face { font-family: Onest; src: url(${font("onest-latin-wght-normal.woff2")}); unicode-range: U+0000-00FF, U+2000-206F; font-weight: 100 900; }
 @font-face { font-family: Onest; src: url(${font("onest-cyrillic-wght-normal.woff2")}); unicode-range: U+0400-045F; font-weight: 100 900; }
 @font-face { font-family: Unbounded; src: url(${font("unbounded-latin-wght-normal.woff2")}); unicode-range: U+0000-00FF, U+2000-206F; font-weight: 200 900; }
 @font-face { font-family: Unbounded; src: url(${font("unbounded-cyrillic-wght-normal.woff2")}); unicode-range: U+0400-045F; font-weight: 200 900; }
+@font-face { font-family: "Noto Sans SC"; src: url(${cjk("noto-sans-sc-400.woff2")}); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Noto Sans SC"; src: url(${cjk("noto-sans-sc-700.woff2")}); font-weight: 700; font-display: swap; }
 * { box-sizing: border-box; }
-body { margin: 0; width: 1200px; height: 630px; background: #f7f4ef; color: #1c1814; font-family: Onest, sans-serif; overflow: hidden; position: relative; }
+body { margin: 0; width: 1200px; height: 630px; background: #f7f4ef; color: #1c1814; font-family: Onest, "Noto Sans SC", "WenQuanYi Micro Hei", sans-serif; overflow: hidden; position: relative; }
 .glow { position: absolute; right: -120px; top: -80px; width: 760px; height: 760px; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,190,60,.35), transparent); }
 .left { position: absolute; left: 72px; top: 70px; width: 600px; }
 .brand { display: flex; align-items: center; gap: 14px; font: 700 30px Unbounded; }
-h1 { font: 800 60px/1.06 Unbounded; letter-spacing: -0.02em; margin: 52px 0 0; }
+h1 { font: 800 60px/1.06 Unbounded, "Noto Sans SC", "WenQuanYi Micro Hei", sans-serif; letter-spacing: -0.02em; margin: 52px 0 0; }
 mark { background: linear-gradient(transparent 58%, #ffd56b 58%, #ffc43d 92%, transparent 92%); color: inherit; padding: 0 6px; }
 p { font-size: 24px; line-height: 1.45; color: #5d564d; margin: 26px 0 0; width: 540px; }
 .win { position: absolute; right: 56px; top: 92px; width: 440px; height: 450px; border-radius: 22px; background: #ece7e0; box-shadow: 0 0 0 1px rgba(70,50,20,.08), 0 40px 80px -30px rgba(70,45,10,.35); overflow: hidden; }
@@ -69,6 +73,15 @@ const TEXT = {
     answer: "Готово: 47 писем. Важного три, ответ Анне готов.",
     card: "Отправить письмо anna@sever-studio.example",
     approve: "Разрешить",
+  },
+  zh: {
+    lead: "你自己的 AI 团队",
+    marker: "就在你的电脑上",
+    sub: "免费、开源。用你已有的 Claude Code 或 Codex 订阅，对外发出任何东西之前都会先问你。",
+    ask: "整理我的邮件",
+    answer: "好了：47 封邮件。重要的有三封，给 Anna 的回复已经起草。",
+    card: "发送邮件到 anna@studio-north.example",
+    approve: "允许",
   },
 };
 

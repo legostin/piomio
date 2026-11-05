@@ -43,7 +43,12 @@ export function DocsPage({ data }: { data: DocPageData }) {
             </div>
           </details>
 
-          <article className="max-w-[46rem] pt-8 pb-20 sm:pt-10 lg:pt-12">
+          {data.sourceLang && data.sourceLang !== data.lang && (
+            <p className="mt-8 rounded-2xl border-l-4 border-accent bg-accent-soft/60 px-5 py-4 text-[15px] leading-relaxed">
+              {t("docs.untranslated")}
+            </p>
+          )}
+          <article lang={data.sourceLang ?? data.lang} className="max-w-[46rem] pt-8 pb-20 sm:pt-10 lg:pt-12">
             {!data.version.current && latest && (
               <p className="mb-8 rounded-2xl border-l-4 border-accent bg-accent-soft/60 px-5 py-4 text-[15px] leading-relaxed text-fg">
                 {t("docs.older", { version: data.version.release })}{" "}
