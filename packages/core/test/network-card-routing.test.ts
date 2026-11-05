@@ -34,9 +34,10 @@ describe("a task's network permission in the starter dialog", () => {
     off();
   });
 
-  it("an authenticated explicit retry asks for a fresh context once and never approves or connects", async () => {
+  it("an authenticated task retry asks its own agent for a fresh context once and never approves or connects", async () => {
     const dialog = hub.store.agentConversation("assistant");
-    const a = hub.approvals.create({ sessionId: "old-session", conversationId: dialog.id, agentId: "assistant", tool: "hub_network_request", input: {}, summary: "Network", ask: { kind: "network", detail: "new.example:443", host: "new.example", port: 443 }, effect: "read", tainted: true });
+    const task = hub.store.createTask({ agentId: "assistant", title: "Retry network", goal: "Check", createdBy: "user", parentConversationId: dialog.id, status: "running" });
+    const a = hub.approvals.create({ sessionId: "old-session", conversationId: task.conversationId, taskId: task.id, agentId: "assistant", tool: "hub_network_request", input: {}, summary: "Network", ask: { kind: "network", detail: "new.example:443", host: "new.example", port: 443 }, effect: "read", tainted: true });
     const userMessage = vi.spyOn(hub.runner, "userMessage").mockResolvedValue({} as any);
     const connect = vi.spyOn(hub.egress, "requestHost");
     hub.approvals.expire(a.id, "connection_closed");
@@ -45,7 +46,7 @@ describe("a task's network permission in the starter dialog", () => {
     const results = await Promise.all([post(`/api/approvals/${a.id}/network-retry`), post(`/api/approvals/${a.id}/network-retry`)]);
     expect(results.map((r) => r.status)).toEqual([202, 202]);
     expect(userMessage).toHaveBeenCalledTimes(1);
-    expect(userMessage).toHaveBeenCalledWith(dialog.id, expect.stringContaining("new permission card in your current session"), { channel: "web" });
+    expect(userMessage).toHaveBeenCalledWith(task.conversationId, expect.stringContaining("new permission card in your current session"), { channel: "web" });
     expect(connect).not.toHaveBeenCalled();
     expect(hub.approvals.get(a.id)).toMatchObject({ status: "expired", ask: { networkRetryRequestedAt: expect.any(String) } });
     expect((await post(`/api/approvals/${a.id}`, { decision: "approve", remember: true })).status).toBe(409);
