@@ -6,7 +6,7 @@ on:
   push:
     branches-ignore: [main]
   workflow_dispatch:
-  # release-on-push.yml and release.yml wait for these checks.
+  # release-on-push.yml and release-tags.yml wait for these checks.
   workflow_call:
     inputs:
       release_version:

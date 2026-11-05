@@ -9,9 +9,9 @@ older development version. Do not merge the old version-only release branches to
 
 `release-on-push.yml` runs `checks.yml`, computes the plan without writes, then recomputes it in the serialized tag
 job with fresh tags. It creates only a new lightweight `refs/tags/vX.Y.Z` through the GitHub API. Its `GITHUB_TOKEN`
-has `contents: write` and `actions: write`; it explicitly dispatches `release.yml` **on that tag**, with
+has `contents: write` and `actions: write`; it explicitly dispatches `release-tags.yml` **on that tag**, with
 `dry_run=false`. The token's tag creation does not itself start a tag-push workflow. No owner token or new secret is
-needed. The owner's manually created stable tag also starts `release.yml` through its tag-push event.
+needed. The owner's manually created stable tag also starts `release-tags.yml` through its tag-push event.
 
 Every push to main runs checks. A push with `[skip release]` in any commit defers its release without skipping CI.
 A later push compares shipped files against the newest stable tag, so deferred changes are included. Site, docs,
@@ -48,14 +48,20 @@ Required PR check contexts from `checks.yml` are exactly `typecheck`, `test`, `s
 GitHub Actions (integration `15368`). Typecheck has its own job. Called workflows show `checks / …` in release runs;
 those nested names are not the contexts required on the PR. There are no path filters on these four PR checks.
 
-PRs touching packaging or release code automatically run `release.yml` as a preview: resolve the next version,
+PRs touching packaging or release code automatically run `release-tags.yml` as a preview: resolve the next version,
 stamp it, run checks, build/install/test Windows, universal macOS, Linux x64 and arm64. The publish job is disabled
 for every PR. No tag or release is created. The artifacts are for CI validation, not distribution.
+
+The new workflow has its own filename (`release-tags.yml`) and name (`tag release`). This matters during the
+first rollout: [workflow_run uses the default branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
+where the old site workflow still listens to `release` without a PR filter. The separate name keeps successful
+pre-merge previews from deploying the site. After merge, site.yml listens to `tag release` and accepts only
+successful `Publish v...` runs. Dry runs cannot deploy the site or cancel an active site deployment.
 
 Manual dry runs (safe defaults):
 
 - `release on push` on a branch, `dry_run=true`: checks and a version plan, no tag or dispatch.
-- `release` on a branch, `dry_run=true`: full installer preview, no publication. Non-tag publication is rejected.
+- `tag release` on a branch, `dry_run=true`: full installer preview, no publication. Non-tag publication is rejected.
 - Local policy preview: `GITHUB_SHA=$(git rev-parse HEAD) node scripts/release-on-push.mjs` (no network writes).
 
 Production runs require explicit authorization. For an existing tag whose build failed, rerun the failed release

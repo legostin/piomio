@@ -1,4 +1,4 @@
-# Checks the exact main event commit, reserves a version tag, then explicitly dispatches release.yml.
+# Checks the exact main event commit, reserves a version tag, then explicitly dispatches release-tags.yml.
 # GITHUB_TOKEN tag creation cannot trigger the tag-push workflow. No job writes to main.
 name: release on push
 

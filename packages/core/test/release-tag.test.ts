@@ -23,11 +23,11 @@ function service({ existing = false, target = plan.sha, race = false, denied = f
 }
 
 describe("tag creation and explicit release dispatch", () => {
-  it("creates only the tag, then explicitly dispatches release.yml at that tag", async () => {
+  it("creates only the tag, then explicitly dispatches release-tags.yml at that tag", async () => {
     const s = service(); expect(await publishTagRelease(plan, s.api)).toBe("dispatched");
     expect(s.writes).toEqual([
       { path: "git/refs", body: { ref: "refs/tags/v0.2.37", sha: plan.sha } },
-      { path: "actions/workflows/release.yml/dispatches", body: { ref: plan.tag, inputs: { dry_run: "false" } } },
+      { path: "actions/workflows/release-tags.yml/dispatches", body: { ref: plan.tag, inputs: { dry_run: "false" } } },
     ]);
   });
   it("accepts a concurrent creator of the exact same tag, rejects a different target", async () => {
@@ -62,7 +62,7 @@ describe("tag creation and explicit release dispatch", () => {
   it("does not confuse a successful preview with a published build", async () => {
     const s = service({ existing: true, runs: [{ head_sha: plan.sha, head_branch: plan.tag, display_title: `Preview ${plan.tag}`, status: "completed", conclusion: "success" }] });
     expect(await publishTagRelease(plan, s.api)).toBe("dispatched");
-    expect(s.writes).toEqual([{ path: "actions/workflows/release.yml/dispatches", body: { ref: plan.tag, inputs: { dry_run: "false" } } }]);
+    expect(s.writes).toEqual([{ path: "actions/workflows/release-tags.yml/dispatches", body: { ref: plan.tag, inputs: { dry_run: "false" } } }]);
   });
   it("treats only an explicit 404 as absence, and does not leak the workflow token in an error", async () => {
     const api = githubApi("legostin/piomio", "private-token", async () => new Response("", { status: 403 }));

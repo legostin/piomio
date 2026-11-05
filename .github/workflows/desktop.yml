@@ -1,10 +1,10 @@
 # Builds the desktop app and its installers, and the Linux server archives, and checks them on clean runners: install,
-# the hub answers, quit or uninstall, the data stays. release.yml calls it on a version tag and publishes what it built.
+# the hub answers, quit or uninstall, the data stays. release-tags.yml calls it on a version tag and publishes what it built.
 name: desktop app
 
 on:
   workflow_dispatch:
-  # release.yml builds the installers it publishes with this workflow.
+  # release-tags.yml builds the installers it publishes with this workflow.
   workflow_call:
     inputs:
       release_version:

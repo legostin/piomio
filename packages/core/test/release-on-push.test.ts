@@ -43,7 +43,7 @@ describe("release on push", () => {
     expect(releaseDecision({ cwd: r.cwd, before: docs, sha: code }).release).toBe(true);
     expect(ships("scripts/release-on-push.mjs")).toBe(false);
     expect(ships("packages/core/test/fix.test.ts")).toBe(false);
-    expect(ships(".github/workflows/release.yml")).toBe(true);
+    expect(ships(".github/workflows/release-tags.yml")).toBe(true);
     expect(ships("packages/web/src/demo/content.md")).toBe(true);
   });
 

@@ -1,5 +1,5 @@
 # A tag is the release version. PRs and manual branch runs build a preview without creating tags or publishing.
-name: release
+name: tag release
 run-name: "${{ (github.event_name == 'pull_request' || inputs.dry_run) && 'Preview' || 'Publish' }} ${{ github.ref_name }}"
 
 on:
