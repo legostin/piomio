@@ -17,6 +17,12 @@
 html.owl-titlebar {
   --owl-titlebar-height: 52px;
 }
+/* Paint the document canvas as well as each panel. The native window paints the backing below WebKit. */
+html.owl-titlebar,
+html.owl-titlebar body,
+html.owl-titlebar #root {
+  background-color: var(--canvas);
+}
 .window-titlebar {
   height: var(--owl-titlebar-height);
   flex: 0 0 auto;

@@ -14,6 +14,9 @@ Coverage: full-window coverage and opacity, 52px traffic-light clearance, close 
 the desktop inset in fullscreen/web/mobile, responsive settings, and a tall modal in a short window.
 
 The fixture does not emulate native traffic lights, dragging a real Tauri window, an iOS notch, or touch gestures.
+Browser screenshots cannot prove that the native window is opaque. On macOS put another application with large,
+contrasting text behind Piomio and inspect the top edge while opening panels, resizing, overscrolling and switching
+between light/dark appearance. The text behind Piomio must never show through, including before WebKit paints.
 Before merging, verify those on macOS: library → page → close → search, photo → edit/cancel, full-screen map, expanded
 live view, settings and plugin panes at narrow/wide widths, connection cards and Cmd+K. Drag the top strip, click the
 close buttons, enter/leave native fullscreen, and confirm no chat text shows above the panel. Compare web and iPhone.

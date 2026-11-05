@@ -12,6 +12,9 @@ for (const panel of ["library", "page"]) {
     await page.goto(`/e2e/panels.html?panel=${panel}`);
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
+    for (const selector of ["html", "body", "#root"]) {
+      await expect(page.locator(selector)).toHaveCSS("background-color", "rgb(236, 231, 224)");
+    }
     const strip = dialog.locator(".window-titlebar");
     await expect(strip).toHaveAttribute("data-tauri-drag-region", "");
     expect((await strip.boundingBox())?.height).toBe(52);
