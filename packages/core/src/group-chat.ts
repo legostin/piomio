@@ -3,7 +3,7 @@
 // has not seen yet: the user's and the other members' messages since its last reply, as "[Name]: text" lines.
 
 import type { Message } from "@piomio/shared";
-import { parseMentions, truncate, type Mentionable } from "@piomio/shared";
+import { replyContext, parseMentions, truncate, type Mentionable } from "@piomio/shared";
 
 /** At most this many hand-offs (an agent mentioning another member) per user message. */
 export const MAX_HANDOFFS = 3;
@@ -15,10 +15,12 @@ const MAX_LINES = 40;
 /** How the user appears in the members' prompts. */
 export const USER_LABEL = "User";
 
-/** The members who answer a user's message, in order: the ones it mentions, or else the lead. */
-export function firstSpeakers(text: string, members: readonly Mentionable[]): string[] {
+/** Explicit mentions take priority, then the quoted member (if still here), then the lead. */
+export function firstSpeakers(text: string, members: readonly Mentionable[], replyAgentId?: string): string[] {
   const named = parseMentions(text, members);
-  return named.length ? named : members.slice(0, 1).map((m) => m.id);
+  if (named.length) return named;
+  if (replyAgentId && members.some((m) => m.id === replyAgentId)) return [replyAgentId];
+  return members.slice(0, 1).map((m) => m.id);
 }
 
 /**
@@ -62,7 +64,8 @@ export function spokenText(m: Message): string {
       )
       .join("")
       .trim();
-  return pick(lastTool + 1) || pick(0);
+  const quote = m.parts.find((p) => p.type === "reply_to");
+  return [pick(lastTool + 1) || pick(0), quote ? replyContext(quote) : ""].filter(Boolean).join("\n");
 }
 
 export interface GroupTurnInput {

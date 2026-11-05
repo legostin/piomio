@@ -11,6 +11,7 @@
     "./thinking": "./src/thinking.ts",
     "./commands": "./src/commands.ts",
     "./models": "./src/models.ts",
+    "./replies": "./src/replies.ts",
     "./pages": "./src/pages.ts",
     "./user-path": "./src/user-path.ts",
     "./hardware": "./src/hardware.ts"

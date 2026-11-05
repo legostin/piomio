@@ -136,7 +136,8 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   });
   api.post("/api/conversations/:id/messages", async (req) => {
     const id = (req.params as any).id;
-    const b = (req.body ?? {}) as { text?: string; attachments?: unknown };
+    const b = (req.body ?? {}) as { text?: string; attachments?: unknown; replyTo?: unknown };
+    if (b.replyTo !== undefined && (typeof b.replyTo !== "string" || !b.replyTo)) throw new HttpError(400, "message.invalidReply");
     const text = String(b.text ?? "").trim();
     // Paths from POST .../attachments: only this conversation's own files.
     const paths = Array.isArray(b.attachments) ? [...new Set(b.attachments)] : [];
@@ -152,7 +153,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       }
     }
     if (!text && !attachments.length) throw new HttpError(400, "message.empty");
-    return hub.runner.userMessage(id, text, { channel: opts.kind === "device" ? "app" : "web", ...(attachments.length ? { attachments } : {}) });
+    return hub.runner.userMessage(id, text, { ...(typeof b.replyTo === "string" ? { replyTo: b.replyTo } : {}), channel: opts.kind === "device" ? "app" : "web", ...(attachments.length ? { attachments } : {}) });
   });
   // A quick reply tapped (a `choices` part): it becomes the person's message.
   api.post("/api/messages/:id/choose", async (req) => {

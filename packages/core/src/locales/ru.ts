@@ -1,6 +1,7 @@
 import type en from "./en.ts";
 
 export default {
+  "message.invalidReply": "Исходное сообщение недоступно для ответа",
   "network.ask": "Разрешить соединение с {host}:{port}?",
   "network.badList": "Укажите имена хостов или публичные IP, при необходимости с *. в начале. URL, порты и приватные адреса не допускаются.",
 
