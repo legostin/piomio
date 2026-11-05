@@ -196,6 +196,8 @@ describe("network cards and proxy", () => {
   }
 
   it("HTTP forwards a listed host immediately and an unknown host only after approval", async () => {
+    // Socket integration must not race the 200 ms timeout used by the expiry unit tests.
+    wireNetworkApprovals({ egress: proxy, approvals, settings, store, audit });
     // The fixture pins every upstream to loopback; a brain's global environment proxy must not send its mock host outside.
     const localAgent = new http.Agent({ proxyEnv: {} });
     const request = http.request;
