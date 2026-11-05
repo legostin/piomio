@@ -4,7 +4,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, stat
 import { basename, join, resolve, sep } from "node:path";
 import type { AttachmentKind, CoreMethod } from "@piomio/shared";
 import { AGENT_PRESENCES, parseBrainRef } from "@piomio/shared";
+import { agentName } from "./agents.ts";
 import type { Hub } from "./app.ts";
+import { hubLocale } from "./i18n.ts";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, safeFileName, saveAttachment, type IncomingFile } from "./attachments.ts";
 import { MAX_TRANSCRIBE_BYTES, uploadName } from "./transcribe.ts";
 import { notifyInputError } from "./notifier.ts";
@@ -131,6 +133,8 @@ export function createCoreCall(hub: Hub) {
         if (!hub.agents.get(agentId)) throw new Error(`unknown agent ${agentId}`);
         // An agent in the archive sleeps: a schedule's run is skipped, not failed.
         if (hub.agents.isArchived(agentId)) return { skipped: "agentArchived" };
+        // skipIfNoBudget: work that can wait for tomorrow (a card an agent takes by itself), instead of a failed task now.
+        if (p.skipIfNoBudget === true && !hub.runner.hasBudget(agentId)) return { skipped: "budgetExhausted" };
         let goal = String(p.goal ?? "");
         // skill: the run follows one of the hub's skills (a trigger's run of a skill the person taught).
         const skill = typeof p.skill === "string" && p.skill.trim() ? p.skill.trim() : undefined;
@@ -153,8 +157,12 @@ export function createCoreCall(hub: Hub) {
           background: p.background !== false,
           // quiet: a plugin's own background work (memory's nightly reflection) reports like a trigger's run, only
           // through the agent's notify(), not with a "Task done" notification.
-          createdBy: p.triggerId || p.quiet === true ? "trigger" : "user",
+          // byAgent: an agent started it, not the person: its result goes to parentConversationId if there is one, and
+          // otherwise the plugin says how it went (a failure still reaches the person).
+          createdBy: p.triggerId || p.quiet === true ? "trigger" : p.byAgent === true ? "agent" : "user",
           triggerId: p.triggerId,
+          // tainted: the goal holds outside content the plugin knows of. A plugin can only raise this.
+          ...(p.tainted === true ? { tainted: true } : {}),
           // report: the run's final reply is delivered to the person as a report (a trigger set to report).
           ...(p.report === true ? { deliver: "report" as const } : {}),
           parentConversationId: p.parentConversationId,
@@ -192,7 +200,7 @@ export function createCoreCall(hub: Hub) {
         };
       }
       case "agents.list":
-        return hub.agents.list().map((a) => ({ id: a.id, name: a.name, description: a.description, initiative: a.initiative }));
+        return hub.agents.list().map((a) => ({ id: a.id, name: agentName(a, hubLocale()), description: a.description, initiative: a.initiative }));
       case "ui.emit":
         hub.bus.emit("plugin.event", { pluginId, channel: String(p.channel ?? "default"), payload: hub.vault.redactor.value(p.payload) });
         return {};
