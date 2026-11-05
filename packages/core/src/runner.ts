@@ -1640,7 +1640,7 @@ export class SessionRunner {
       for (const m of this.d.store.listMessages(conversationId, { limit: 50 })) {
         if (m.parts.some((p) => p.type === "approval" && p.approvalId === a.id)) {
           this.d.store.updateMessage(m.id, {
-            parts: m.parts.map((p) => (p.type === "approval" && p.approvalId === a.id ? { ...p, status: a.status } : p)),
+            parts: m.parts.map((p) => (p.type === "approval" && p.approvalId === a.id ? { ...p, status: a.status, ...(a.ask ? { ask: a.ask } : {}) } : p)),
           });
         }
       }

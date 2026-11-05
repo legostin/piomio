@@ -9,7 +9,7 @@ import type { AuditLog } from "./audit.ts";
 import type { AgentRegistry } from "./agents.ts";
 import { agentName } from "./agents.ts";
 import { hubLocale, t } from "./i18n.ts";
-import { networkPattern, type EgressProxy, type NetworkRequest } from "./egress.ts";
+import { NETWORK_APPROVAL_WAIT_MS, networkPattern, type EgressProxy, type NetworkRequest } from "./egress.ts";
 import type { AutoMode } from "./policy/auto.ts";
 
 export function wireNetworkApprovals(d: {
@@ -26,7 +26,7 @@ export function wireNetworkApprovals(d: {
   d.egress.ownHosts = BRAIN_MODEL_EGRESS;
   // Sockets cannot survive a restart. Old network cards must not grant access after their request has gone.
   const stale = approvals.db.prepare("select id from approvals where status = 'pending' and tool = 'hub_network_request'").all() as { id: string }[];
-  for (const a of stale) approvals.expire(a.id);
+  for (const a of stale) approvals.expire(a.id, "session_ended");
   approvals.onNetworkRemember = (a) => {
     // Already on the allowlist: "always" cannot widen it, the once decision stands.
     if (a.ask?.listed) return;
@@ -76,18 +76,19 @@ export function wireNetworkApprovals(d: {
         throw new Error(message);
       }
     }
-    const approval = approvals.create(question);
+    const expiresAt = Date.now() + (d.timeoutMs ?? NETWORK_APPROVAL_WAIT_MS);
+    const approval = approvals.create({ ...question, ask: { ...question.ask, networkExpiresAt: new Date(expiresAt).toISOString() } });
     if (r.taskId && ["done", "failed", "cancelled"].includes(store.getTask(r.taskId)?.status ?? "cancelled")) {
-      approvals.expire(approval.id);
+      approvals.expire(approval.id, "session_ended");
       throw new Error("Network permission task is no longer running");
     }
     if (task?.status === "running") store.updateTask(task.id, { status: "waiting_approval" });
-    const abort = () => approvals.expire(approval.id);
+    const abort = () => approvals.expire(approval.id, r.signal.reason === "connection_closed" ? "connection_closed" : "session_ended");
     r.signal.addEventListener("abort", abort, { once: true });
     if (r.signal.aborted) abort();
     try {
-      const outcome = await approvals.wait(approval.id, d.timeoutMs ?? 90_000);
-      if (outcome === "timeout") approvals.expire(approval.id);
+      const outcome = await approvals.wait(approval.id, Math.max(0, expiresAt - Date.now()));
+      if (outcome === "timeout") approvals.expire(approval.id, "timeout");
       const cancelled = r.signal.aborted;
       audit.append(`agent:${r.agentId}`, "egress.decision", r.host, { approvalId: approval.id, port: r.port, sessionId: r.sessionId, outcome: cancelled ? "cancelled" : outcome });
       if (outcome !== "approved" || cancelled) {

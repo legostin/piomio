@@ -46,7 +46,9 @@ How long it waits:
 
 ### Network permission
 
-A new public host has its own card: agent, task, host and port, with **Allow once**, **Always allow** and **Deny**. It waits for 90 seconds; once is scoped to the current session and port, always adds the exact host to `brainEgressAllow`. It never creates an action rule. A denied or expired connection is never executed later. See [The network filter](security.md#the-network-filter).
+A new public host has its own card: agent, task, host and port, with **Allow once**, **Always allow** and **Deny**. A live request waits up to 10 minutes; once is scoped to the current session and port, always adds the exact host to `brainEgressAllow`. It never creates an action rule. A denied or expired connection is never executed later. See [The network filter](security.md#the-network-filter).
+
+The card shows the server deadline. If the program closes its connection sooner, the card closes immediately and says why; it cannot approve a dead connection. **Request again** asks the agent to create a fresh permission request in its current session, without granting access or replaying the old connection. If the request was already sent, repeated clicks do not send it again. A listed host can still ask after the agent reads outside content: allowing a host is not permission to send arbitrary data to it.
 
 ### Other places to answer
 
