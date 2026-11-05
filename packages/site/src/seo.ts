@@ -30,12 +30,13 @@ export function indexablePaths(pagePaths: readonly string[], docSlugs: readonly 
   return [...pagePaths, ...docSlugs.map((slug) => (slug === "index" ? "docs/" : `docs/${slug}/`))];
 }
 
-export function sitemapXml(o: { origin: string; base: string; languages: readonly string[]; paths: readonly string[]; lastmod: string }): string {
+export function sitemapXml(o: { origin: string; base: string; languages: readonly string[]; paths: readonly string[]; lastmod: string; docLanguages?: readonly string[] }): string {
   if (o.paths.length === 0 || o.languages.length === 0) throw new Error("sitemap has no public pages");
+  const languagesFor = (path: string) => path.startsWith("docs/") ? o.docLanguages ?? o.languages : o.languages;
   const urls = o.paths.flatMap((path) =>
-    o.languages.map((lang) => {
+    languagesFor(path).map((lang) => {
       const alternates = [
-        ...o.languages.map((l) => `    <xhtml:link rel="alternate" hreflang="${l}" href="${xml(pageUrl(o.origin, o.base, l, path))}" />`),
+        ...languagesFor(path).map((l) => `    <xhtml:link rel="alternate" hreflang="${l}" href="${xml(pageUrl(o.origin, o.base, l, path))}" />`),
         `    <xhtml:link rel="alternate" hreflang="x-default" href="${xml(pageUrl(o.origin, o.base, "en", path))}" />`,
       ];
       return `  <url>
@@ -102,14 +103,14 @@ export function analyticsSnippet(id: string | undefined | null): string {
 export function assertPublishedSeo(
   sitemap: string,
   robots: string,
-  o: { origin: string; base: string; languages: readonly string[]; pagePaths: readonly string[]; docSlugs: readonly string[] },
+  o: { origin: string; base: string; languages: readonly string[]; pagePaths: readonly string[]; docSlugs: readonly string[]; docLanguages?: readonly string[] },
 ): void {
   if (!sitemap.trim() || !sitemap.includes("<urlset")) throw new Error("sitemap.xml is empty");
   if (!robots.trim()) throw new Error("robots.txt is empty");
   const locs = new Set([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]));
   if (locs.size === 0) throw new Error("sitemap.xml is empty");
   for (const path of indexablePaths(o.pagePaths, o.docSlugs))
-    for (const lang of o.languages) {
+    for (const lang of path.startsWith("docs/") ? o.docLanguages ?? o.languages : o.languages) {
       const url = pageUrl(o.origin, o.base, lang, path);
       if (!locs.has(url)) throw new Error(`sitemap.xml is missing ${url}`);
     }

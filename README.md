@@ -16,7 +16,8 @@
   <a href="#a-day-with-the-team">What it does</a> &nbsp;·&nbsp;
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
   <a href="https://piomio.io/en/docs/">Docs</a> &nbsp;·&nbsp;
-  <a href="README.ru.md">Русский</a>
+  <a href="README.ru.md">Русский</a> &nbsp;·&nbsp;
+  <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">

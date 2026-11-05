@@ -5,9 +5,10 @@ import { createContext, useContext } from "react";
 import type { Lang } from "../site.config";
 import en from "./locales/en.json";
 import ru from "./locales/ru.json";
+import zh from "./locales/zh.json";
 
 export type MessageKey = keyof typeof en;
-export const CATALOGS: Record<Lang, Record<string, string>> = { en, ru };
+export const CATALOGS: Record<Lang, Record<string, string>> = { en, ru, zh };
 
 export function translator(lang: Lang) {
   const own = CATALOGS[lang] ?? en;

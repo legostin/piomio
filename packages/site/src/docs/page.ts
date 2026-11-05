@@ -15,6 +15,10 @@ export interface DocVersion {
 export interface DocPageData {
   lang: Lang;
   slug: string;
+  /** Language of the Markdown, which may fall back to English. */
+  sourceLang?: Lang;
+  /** Languages with their own articles in this release line. */
+  translatedLangs?: Lang[];
   /** The page's Markdown. */
   source: string;
   version: DocVersion;

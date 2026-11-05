@@ -18,7 +18,7 @@ export const siteConfig = {
   installScript: "https://piomio.io/install.sh",
   /** What an agent follows to install Piomio for the person (public/setup.md), named in the prompt the site and the README give. */
   setupGuide: "https://piomio.io/setup.md",
-  languages: ["en", "ru"] as const,
+  languages: ["en", "ru", "zh"] as const,
 };
 
 export type Lang = (typeof siteConfig.languages)[number];
