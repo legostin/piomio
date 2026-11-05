@@ -12,6 +12,11 @@ for (const platform of ["mac", "phone"]) {
       const surface = ["settings", "plugin"].includes(panel) ? page.locator("aside") : panel === "map" ? page.locator("figure") : page.getByRole("dialog");
       await expect(surface).toBeVisible();
       await surface.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))));
+      expect(await surface.evaluate(el => {
+        const box = el.getBoundingClientRect();
+        const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        return !!top && el.contains(top);
+      })).toBe(true);
       if (["media", "edit"].includes(panel)) await expect(page.locator("[data-viewer-ui]")).toHaveCSS("opacity", "1");
       const controls = panel === "palette" ? surface.locator("input")
         : ["library", "page"].includes(panel) ? surface.locator("header button")

@@ -58,7 +58,7 @@ function Fixture() {
     {params.get("panel") === "page" && open && <PageViewer page={page} conversationId="fixture" onClose={() => setOpen(false)} />}
     {params.get("panel") === "settings" && <SettingsPanel />}
     {params.get("panel") === "modal" && <Modal open={open} title="Connection card" onClose={() => setOpen(false)}><div style={{ height: "150vh" }}>Tall card</div></Modal>}
-    {params.get("panel") === "plugin" && <div style={{ display: "flex", height: "100dvh", justifyContent: "flex-end" }}><RightPane open={open} onClose={() => setOpen(false)} /></div>}
+    {params.get("panel") === "plugin" && <div style={{ position: "relative", display: "flex", height: "100dvh", justifyContent: "flex-end" }}><RightPane open={open} onClose={() => setOpen(false)} /></div>}
     {params.get("panel") === "live" && <LiveViewWindow />}
     {params.get("panel") === "palette" && <CommandPalette />}
     {["media", "edit"].includes(params.get("panel") ?? "") && <MediaViewer />}
