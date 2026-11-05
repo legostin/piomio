@@ -476,7 +476,7 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
                 onError={(reason) => setMicNote({ text: t("composer.micFailed", { reason }), error: true })}
               />
             )}
-            {streaming ? (
+            {streaming && (
               <button
                 type="button"
                 onClick={() => void stop()}
@@ -487,7 +487,8 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
               >
                 <Square className="size-3 fill-current" />
               </button>
-            ) : showMic ? null : (
+            )}
+            {!showMic && (
               <button
                 type="button"
                 onClick={() => void submit()}

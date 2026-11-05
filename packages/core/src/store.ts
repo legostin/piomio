@@ -332,6 +332,11 @@ export class Store {
     for (const m of rows) {
       this.updateMessage(m.id, { status: "error", parts: [...m.parts, { type: "error", message: t("message.interruptedByRestart") }] }, false);
     }
+    const inputs = this.db.prepare("select * from messages where role = 'user' and instr(parts, 'input_status') > 0").all().map(msgFrom);
+    for (const m of inputs) {
+      if (!m.parts.some((p) => p.type === "input_status" && (p.state === "sending" || p.state === "queued"))) continue;
+      this.updateMessage(m.id, { parts: m.parts.map((p) => p.type === "input_status" && (p.state === "sending" || p.state === "queued") ? { ...p, state: "failed" } : p) }, false);
+    }
   }
 
   // ---------- tasks ----------
