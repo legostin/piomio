@@ -110,6 +110,8 @@ Keep in mind:
 
 Commands are off on a new computer, so its programs (Blender, a build) don't start from the hub. To allow them, say so in the chat: "allow commands on LEGOSTIN-PC". The assistant shows a card, **Allow commands on the computer LEGOSTIN-PC**, and after your **Allow** the computer turns `exec.enabled` on in its own policy. From then on Claude Code there asks the hub about each command it isn't allowed by itself, and auto mode checks it the way it does on the hub's computer (see [Approvals and auto mode](approvals.md)). "Forbid commands on LEGOSTIN-PC" turns them off the same way. The computer needs Piomio 0.2.20 or newer for this; with `"hubChanges": false` in its policy it refuses.
 
+A command there that only reads (`ls`, `cat`, `git log`, `git rev-parse`, `df`…) runs without a review, as it does on the hub's computer, unless it names credentials (`~/.ssh`, `.env`, tokens) or a web address. A command that changes something is checked by auto mode. The hub's own computer is first in the agents' list of computers: an agent there runs its commands in its own shell, not through `machine_exec`.
+
 ## Who works where right now
 
 Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, or "needs you" while it waits for your approval. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.

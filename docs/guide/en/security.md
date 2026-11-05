@@ -74,6 +74,23 @@ Run as root, `install.sh` creates a user `piomio` without sudo and installs for 
 
 In every install, a dialog's brain only looks: commands and file changes go to tasks.
 
+## What an agent can reach
+
+Every agent has one access map, built from what you already gave it: the computers it works on (this one, and the paired ones it is bound to) with their project folders, the internet through the hub's proxy, and the services you connected (Notion, GitHub, Google…) with how each is right now. Nothing new to set up: the map follows your folders, computers, allowed hosts and sign-ins.
+
+- **Reading is free** within it: files and folders, the web, commands that only read, here and on another computer.
+- **Every change is checked** by auto mode's reviewer, which reads the agent's map: work on a computer, folder or service on it is expected, anything else is looked at more closely. See [Approvals and auto mode](approvals.md#auto-mode).
+- **Always yours**: money, messages to people, publishing (a push to `main`, tags, releases, deploys) and deleting.
+
+Ask any agent "what access do you have?" or "what can the Developer reach?": it answers from its map. When something it needs does not work, it checks the map live (`hub_access` with a check) before working around it or bothering you.
+
+Access does not break quietly:
+
+- a service that can't be reached (the hub started before the network, the Mac slept, the service restarted) reconnects by itself, its sign-in kept: in 5 s, 15 s, 1 min, 5 min, then every 10 min. A call made meanwhile waits a moment for it. You are asked to sign in again only when the service itself refuses the sign-in;
+- the proxy tells "not allowed" from "cannot reach" (no internet, a host down), and only real refusals go into the audit log as refusals;
+- a Codex that fails to start is started again and, failing again, says why; it no longer drops to a mode where its commands have no network;
+- agents' Codex sessions see only the hub's tools: your own Codex MCP servers, plugins and ChatGPT apps (Computer Use and the like) are off there, because they ran outside the hub's checks. They stay as they are in your own Codex.
+
 ## The network filter
 
 Brains and plugins reach the network through the hub's egress proxy, each with its own allowlist:
@@ -81,7 +98,8 @@ Brains and plugins reach the network through the hub's egress proxy, each with i
 - Brains: their providers' and sign-in hosts (Anthropic, Claude, OpenAI, ChatGPT, Kimi), Google APIs, OpenRouter, npm, PyPI, GitHub and a few hosts the CLIs themselves report errors and usage to. Add more under **Settings** → **General** → **Brains** → **Extra allowed hosts** (`brainEgressAllow`).
 - Plugins: the hosts their permissions list, which you see when you install one and under **Account** → **Plugins and their permissions** in the console. An MCP server you add yourself may reach any public host unless its config lists `network`.
 - Private addresses (your home network, loopback, link-local, Tailscale's `100.64.0.0/10`) are refused for everyone unless the host is in `egressPrivateAllow`. That setting has no field yet; it is set through `PATCH /api/settings`.
-- The proxy resolves a name once and connects to exactly that address, so a DNS answer can't change in between. Refusals go into the audit log.
+- The proxy resolves a name once and connects to exactly that address, so a DNS answer can't change in between. Refusals go into the audit log as `egress.deny`, with the reason.
+- A host that does not resolve or refuses the connection is not a refusal: the proxy answers "cannot reach … the network, not a permission" (`502`), and the audit log has `egress.unreachable`, once a minute per program and host.
 
 An agent can propose a public host with `hub_network_request`; the same network card asks you to decide. It cannot edit the allowlist directly.
 

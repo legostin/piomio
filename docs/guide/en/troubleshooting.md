@@ -237,6 +237,20 @@ Chromium needs system libraries, which the installer puts in only on the first i
 
 A plugin or a brain tried to reach a host on your local network, which the egress filter refuses. If that host is yours, add it to `egressPrivateAllow`, see [Settings without a field](settings.md#settings-without-a-field).
 
+## Agents and access
+
+### An agent says the proxy doesn't answer, or git can't fetch
+
+Ask the agent to check its access (it does so itself with `hub_access`). If its shell can't reach `127.0.0.1:<port>`, its command sandbox has no network in this session: usually a Codex too old for the hub's proxy, which the session says in a warning; update Codex. If the proxy answers "cannot reach … the network, not a permission", this computer has no internet right now (it was asleep, the Wi-Fi dropped): the work can go on once it is back.
+
+### An agent says a service wants you to sign in again
+
+Usually it doesn't: the hub could not reach the service for a moment and reconnects by itself, keeping your sign-in. The service's card in **Plugins** says "reconnecting by itself". A real new sign-in shows its **Sign in** button on the card and in the chat.
+
+### "Codex did not start: …"
+
+Codex was started twice and failed both times; the text after the colon is Codex's own. The next message tries again. If it keeps failing, run `codex --version` and `codex login status` in a terminal.
+
 ## Where the logs are
 
 | Where Piomio runs | The log |
