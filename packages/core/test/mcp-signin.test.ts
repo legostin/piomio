@@ -108,6 +108,7 @@ describe("an integration with its own sign-in", () => {
   const svc = fakeService();
   let hub: Hub;
   let port: number;
+  let connectionDialog: string;
 
   const notes = async () => (await listIntegrations(hub, "en")).find((i) => i.id === "notes")!;
   const server = () => hub.mcpClients.list().find((s) => s.name === "notes")!;
@@ -153,9 +154,19 @@ describe("an integration with its own sign-in", () => {
     expect(parts.some((p) => p.type === "plugin_setup")).toBe(false);
   });
 
+  it("also shows the sign-in card in the task's starter dialog", async () => {
+    const dialog = hub.store.createConversation({ agentId: "assistant", kind: "dialog", title: "Connect notes" });
+    connectionDialog = dialog.id;
+    const task = hub.store.createTask({ agentId: "assistant", title: "Connect notes", goal: "Connect notes", createdBy: "user", parentConversationId: dialog.id });
+    const ctx = { conversationId: task.conversationId, taskId: task.id, agentId: "assistant", sessionId: "s", machineId: "local", workspace: tmpdir(), tainted: false, background: false } as any;
+    await hub.tools.get("hub_integration_connect")!.invoke({ id: "notes" }, ctx);
+    expect(hub.store.listMessages(dialog.id)[0]!.parts).toEqual([{ type: "task", taskId: task.id }, { type: "integration", id: "notes" }]);
+    expect(hub.store.listMessages(task.conversationId)[0]!.parts).toEqual([{ type: "integration", id: "notes" }]);
+  });
+
   it("signs in through the browser and the hub's /oauth/mcp, and the tools arrive", async () => {
     hub.vault.init("signin-test-passphrase");
-    const url = new URL(await hub.mcpClients.signIn("notes"));
+    const url = new URL(await hub.mcpClients.signIn("notes", connectionDialog));
     expect(url.origin + url.pathname).toBe(`${svc.url()}/authorize`);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("redirect_uri")).toBe(`http://localhost:${port}/oauth/mcp`);
@@ -168,6 +179,7 @@ describe("an integration with its own sign-in", () => {
     expect(await page.text()).toContain("Notes");
 
     expect(server().status).toBe("connected");
+    expect(hub.store.listMessages(connectionDialog).flatMap((m) => m.parts).some((p) => p.type === "text" && p.text.includes("[System] The user signed in to notes"))).toBe(true);
     expect(await notes()).toMatchObject({ status: "connected" });
     expect(hub.vault.getMeta(oauthVaultId("notes"))).toBeDefined();
     // What the integration vouches for only reads; anything else asks the person.

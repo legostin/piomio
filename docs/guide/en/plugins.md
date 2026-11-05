@@ -24,6 +24,8 @@ The assistant shows the integration's card in the chat, with its status and the 
 Once it is connected, the agent hears about it and carries on with what you asked. A card shows **Not connected**,
 **Needs reconnecting** or **Unavailable** when something is missing, and the agent tells you what to press.
 
+If an agent handles the connection in a delegated task, the card also appears in the dialog that started the task. You can complete the connection there.
+
 ## The Plugins catalog
 
 Everything is also under **Settings → Plugins**:

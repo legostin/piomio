@@ -66,8 +66,8 @@ describe("integrations and the Google sign-in", () => {
     return `${u.searchParams.get("redirect_uri")}?state=${u.searchParams.get("state")}&code=${code}&scope=x`;
   };
   const integration = async (id: string) => (await listIntegrations(hub, "en")).find((i) => i.id === id)!;
-  const tool = (name: string, input: unknown = {}, conversationId = hub.store.agentConversation("assistant").id) =>
-    hub.tools.get(name)!.invoke(input, { conversationId, agentId: "assistant", sessionId: "s", machineId: "local", workspace: tmpdir(), tainted: false, background: false } as any);
+  const tool = (name: string, input: unknown = {}, conversationId = hub.store.agentConversation("assistant").id, taskId?: string) =>
+    hub.tools.get(name)!.invoke(input, { conversationId, taskId, agentId: "assistant", sessionId: "s", machineId: "local", workspace: tmpdir(), tainted: false, background: false } as any);
   const textOf = (r: any) => r.content.map((c: any) => c.text).join("");
 
   beforeAll(async () => {
@@ -171,6 +171,73 @@ describe("integrations and the Google sign-in", () => {
     expect(await integration("fakecal")).toMatchObject({ status: "connected" });
     await until(() => hub.store.listMessages(conv.id).some((m) => m.parts.some((p) => p.type === "text" && p.text.includes("[System] The user connected Google as anna@example.com (fakecal)"))), "the note to the agent");
     expect(textOf(await tool("hub_integrations_list"))).toContain("fakecal — Fake calendar [work]: connected (anna@example.com)");
+  });
+
+  for (const [name, input, card] of [
+    ["hub_integration_connect", { id: "fakecal" }, { type: "integration", id: "fakecal" }],
+    ["hub_plugin_setup", { id: "fakecal" }, { type: "integration", id: "fakecal" }],
+    ["hub_plugin_setup", { id: "fakeset" }, { type: "plugin_setup", pluginId: "fakeset" }],
+    ["hub_connect_device", {}, { type: "device_pairing" }],
+  ] as const) {
+    for (const delegated of [false, true]) {
+      it(`${name} ${JSON.stringify(input)} routes ${delegated ? "nested task → starter dialog" : "ordinary dialog"} once per reply`, async () => {
+        const dialog = hub.store.createConversation({ agentId: "assistant", kind: "dialog", title: "Connect a service" });
+        const unrelated = hub.store.createConversation({ agentId: "assistant", kind: "dialog", title: "Unrelated" });
+        const parent = delegated ? hub.store.createTask({ agentId: "assistant", title: "Connect", goal: "Connect", createdBy: "user", parentConversationId: dialog.id }) : undefined;
+        const task = parent ? hub.store.createTask({ agentId: "assistant", title: "Setup", goal: "Setup", createdBy: "agent", parentConversationId: parent.conversationId, parentTaskId: parent.id }) : undefined;
+        const conversationId = task?.conversationId ?? dialog.id;
+        const reply = hub.store.addMessage({ conversationId, role: "assistant", parts: [], status: "streaming" });
+        // Simulate the live reply in which tools attach their cards; repeat calls must deduplicate both destinations.
+        const streaming = (hub.runner as any).streamingMessage as Map<string, string>;
+        streaming.set(conversationId, reply.id);
+        try {
+          await tool(name, input, conversationId, task?.id);
+          await tool(name, input, conversationId, task?.id);
+          expect(hub.store.getMessage(reply.id)!.parts).toEqual([card]);
+          const shown = hub.store.listMessages(dialog.id);
+          expect(shown).toHaveLength(1);
+          expect(shown[0]!.parts).toEqual(task ? [{ type: "task", taskId: task.id }, card] : [card]);
+          expect(hub.store.listMessages(unrelated.id)).toHaveLength(0);
+          if (parent) expect(hub.store.listMessages(parent.conversationId)).toHaveLength(0);
+          // A later reply may deliberately show the same card again.
+          const next = hub.store.addMessage({ conversationId, role: "assistant", parts: [], status: "streaming" });
+          streaming.set(conversationId, next.id);
+          await tool(name, input, conversationId, task?.id);
+          expect(hub.store.listMessages(dialog.id)).toHaveLength(2);
+        } finally {
+          streaming.delete(conversationId);
+        }
+      });
+    }
+  }
+
+  it("keeps a mirrored secret request live and stores the value only in the vault", async () => {
+    const dialog = hub.store.createConversation({ agentId: "assistant", kind: "dialog", title: "Secret" });
+    const task = hub.store.createTask({ agentId: "assistant", title: "Setup", goal: "Setup", createdBy: "user", parentConversationId: dialog.id });
+    const pending = tool("hub_secret_request", { vault: "task_token", title: "Task token" }, task.conversationId, task.id);
+    const part = await until(() => hub.store.listMessages(dialog.id).flatMap((m) => m.parts).find((p) => p.type === "secret_request"), "mirrored secret request");
+    if (part.type !== "secret_request") throw new Error("expected secret card");
+    expect(hub.secrets.get(part.requestId)?.conversationId).toBe(task.conversationId);
+    hub.secrets.fulfil(part.requestId, "private-test-token", "user");
+    expect(textOf(await pending)).toContain("Saved as vault://task_token");
+    for (const id of [dialog.id, task.conversationId]) {
+      const messages = hub.store.listMessages(id);
+      expect(messages.flatMap((m) => m.parts).find((p) => p.type === "secret_request")).toMatchObject({ requestId: part.requestId, status: "saved" });
+      expect(JSON.stringify(messages)).not.toContain("private-test-token");
+    }
+  });
+
+  it("still hides connection tools from agents other than the default agent", () => {
+    const session = { id: "s", conversationId: "c", agentId: "assistant", brainRef: "fake@local", tainted: false, status: "active" as const, background: false, createdAt: "", updatedAt: "" };
+    expect(hub.gateway.listFor(session).map((t) => t.name)).toContain("hub_integration_connect");
+    const original = hub.settings.get().defaultAgent;
+    try {
+      hub.settings.update({ defaultAgent: "someone-else" });
+      const names = hub.gateway.listFor(session).map((t) => t.name);
+      for (const name of ["hub_integration_connect", "hub_plugin_setup", "hub_secret_request", "hub_brain_login", "hub_connect_device"]) expect(names).not.toContain(name);
+    } finally {
+      hub.settings.update({ defaultAgent: original });
+    }
   });
 
   it("puts the plugins' sections into the digest, even with nothing else waiting", async () => {
