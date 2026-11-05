@@ -44,6 +44,7 @@ import { registerPageTools } from "./tools/page-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
 import { AutoMode, type AutoContext, type AutoWhere } from "./policy/auto.ts";
+import { accessView, buildAccessMap, serviceOf, type AccessMap } from "./access/map.ts";
 import { EgressGuard } from "./policy/egress.ts";
 import { Pictures } from "./policy/pictures.ts";
 import { brainReviewer } from "./policy/reviewer.ts";
@@ -74,7 +75,7 @@ import { UserPath } from "@piomio/shared/user-path";
 import { SetupGuide } from "./setup.ts";
 import { MediaService } from "./media.ts";
 import { Connections } from "./connections.ts";
-import { entryRef } from "./integrations.ts";
+import { entryRef, listIntegrations } from "./integrations.ts";
 import { cleanTranscription, Transcriber } from "./transcribe.ts";
 import { SpeechEngine } from "./speech/engine.ts";
 import { cleanVoice } from "./speech/settings.ts";
@@ -807,14 +808,38 @@ export class Hub {
    * What auto mode's reviewer reads besides the action: the person's own recent words where the session works, the
    * task's goal, and the agent's earlier calls there (never their results).
    */
-  private autoContext(w: AutoWhere): AutoContext {
+  private async autoContext(w: AutoWhere): Promise<AutoContext> {
     const person = this.gateway.personWords({ conversationId: w.conversationId, taskId: w.taskId }).texts;
     const goal = w.taskId ? this.store.getTask(w.taskId)?.goal : undefined;
     const calls = this.store
       .listMessages(w.conversationId, { limit: 40 })
       .filter((m) => m.role === "assistant" && (!m.agentId || m.agentId === w.agentId))
       .flatMap((m) => m.parts.flatMap((p) => (p.type === "tool_call" ? [{ name: p.name, input: this.vault.redactor.value(p.input) }] : [])));
-    return { person, ...(goal ? { goal } : {}), calls: calls.slice(-20) };
+    // The agent's access: a review never fails for want of it.
+    const access = await this.accessMap(w.agentId, w.sessionId).then(accessView, () => undefined);
+    return { person, ...(goal ? { goal } : {}), calls: calls.slice(-20), ...(access ? { access } : {}) };
+  }
+
+  /**
+   * What an agent can reach (access/map.ts): its computers and folders, the internet through the proxy, the services
+   * the person connected and how each is now. With a session: that session's own folder too.
+   */
+  async accessMap(agentId: string, sessionId?: string): Promise<AccessMap> {
+    const agent = this.agents.get(agentId);
+    const here = this.here();
+    const computers = this.computers().map((c) => ({ ...c, ...(c.id !== here ? { commands: this.machines.get(c.id)?.info?.commands } : {}) }));
+    const session = sessionId ? this.store.getSession(sessionId) : undefined;
+    const servers = this.mcpClients.list();
+    const services = (await listIntegrations(this, "en")).flatMap((v) => serviceOf(v, servers) ?? []);
+    return buildAccessMap({
+      agent: { id: agentId, name: agent ? agentName(agent, "en") : agentId, machines: agent?.machines, folders: agent?.folders },
+      here,
+      computers,
+      ...(session ? { ownFolder: this.runner.workspacePath(session) } : {}),
+      builtInHosts: DEFAULT_BRAIN_EGRESS,
+      addedHosts: this.settings.get().brainEgressAllow,
+      services,
+    });
   }
 
   /** The id an agent's binding (AgentDef.machines) names this hub's computer by: its replica id in a cluster, else "local". */
