@@ -190,6 +190,43 @@ describe("a leader nobody can reach", () => {
   });
 });
 
+// The person keeps the hub on the VPS: the lead moves there and stays, the Mac no longer asks for it back.
+describe("a replica made the primary", () => {
+  const all: Machine[] = [];
+  afterAll(async () => {
+    for (const m of all) await m.hub?.stop().catch(() => {});
+  }, 60_000);
+
+  it("takes the lead and keeps it, and phones try it first", { timeout: 180_000 }, async () => {
+    const mac = await machine("mac");
+    const vps = await machine("vps");
+    all.push(mac, vps);
+    const a = await boot(mac);
+    const { link } = a.cluster.invite();
+    await joinCluster({ dataDir: vps.dir, link, name: "vps", urls: [vps.deviceUrl], nodeUrls: [] });
+    const b = await boot(vps);
+    await until(() => b.cluster.states().find((s) => s.name === "mac")?.role === "leader", "the vps seeing the mac lead");
+    expect(a.cluster.states().find((s) => s.primary)?.name).toBe("mac");
+
+    // "Keep the hub on the VPS": the Mac leads, so the change is made there and reaches the VPS, which asks for the lead.
+    expect(a.cluster.setPrimary("vps")).toMatchObject({ name: "vps", changed: true });
+    await until(() => b.cluster.states().find((s) => s.primary)?.name === "vps", "the vps learning it is the primary");
+    await until(() => b.cluster.leads() && !a.cluster.leads(), "the lead on the vps", 90_000);
+
+    // The Mac stays awake as long as it likes: it never asks for the lead back.
+    a.cluster.awakeBeforeLead = 0;
+    await sleep(6_000);
+    expect(b.cluster.leads()).toBe(true);
+    expect(a.cluster.leads()).toBe(false);
+    expect(a.cluster.hello().wantLead).toBe(false);
+    expect(a.audit.list({ action: "cluster.*" })[0]).toMatchObject({ action: "cluster.standby", data: { why: "handing the lead to a replica ahead of this one" } });
+
+    // Phones, from either replica: the VPS's address first.
+    expect(b.cluster.phoneUrls(b.phoneUrls())[0]).toBe(vps.deviceUrl);
+    expect(a.cluster.phoneUrls(a.phoneUrls())[0]).toBe(vps.deviceUrl);
+  });
+});
+
 /** A hub in a child process (fixtures/replica-process.ts): SIGSTOP makes it sleep as a computer does, SIGCONT wakes it. */
 function processHub(): { child: ChildProcess; ask: <T>(op: string, args?: unknown) => Promise<T>; output: string[] } {
   const child = fork(join(fixtures, "replica-process.ts"), [], { execArgv: ["--disable-warning=ExperimentalWarning"], stdio: ["ignore", "pipe", "pipe", "ipc"] });

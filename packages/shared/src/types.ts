@@ -1266,7 +1266,7 @@ export interface Replica {
   name: string;
   /** Device-app addresses (https, the hub's shared certificate). */
   urls: string[];
-  /** Who leads first: 1, then 2… */
+  /** Who leads first: the lowest number (the primary), then the next… */
   priority: number;
   createdAt: ISODate;
 }
@@ -1278,6 +1278,8 @@ export interface ReplicaState extends Replica {
   role: "leader" | "standby" | "unknown";
   sealed: boolean;
   lastSeenAt?: ISODate;
+  /** First in the order: it leads whenever it is up, and phones try it right after the leader (replica_primary). */
+  primary?: boolean;
 }
 
 // ---------- Devices (phones running the Piomio app) ----------
