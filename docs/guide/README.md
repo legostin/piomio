@@ -11,7 +11,7 @@ agents.
   both languages, in the same commit. Each page on the site says which release it describes: the newest one when the
   site was built.
 - `docs/versions/<major.minor>/` holds an older line, frozen, with the last release it described in `release.json`. A
-  minor or major release copies `docs/guide` there for the line before it, in its own commit
+  minor or major release copies `docs/guide` there for the line before it, in its version PR
   (`.github/workflows/release-on-push.yml`); nobody edits it by hand except to fix a mistake.
 - On the site `/<lang>/docs/<page>/` is always the newest line, `/<lang>/docs/<major.minor>/<page>/` a given line
   (the newest one too, for links that should keep pointing at it).

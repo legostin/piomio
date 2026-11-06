@@ -1,4 +1,5 @@
-// A version-only PR prepares the version as the person, then Actions only creates its tag and dispatches the build.
+// main takes writes only from its owner, so a release's version arrives in a version-only PR (scripts/version-pr.mjs
+// opens it; the owner merges it). Actions then only creates the merge's tag and dispatches the build.
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -18,10 +19,15 @@ export function preparedRelease({ before, sha, cwd = process.cwd() }) {
     if (!parts.every(Number.isSafeInteger)) throw new Error("Invalid version number");
     return parts;
   };
-  const a = parse(old), b = parse(version);
-  if (a[0] !== b[0] || a[1] !== b[1] || b[2] !== a[2] + 1) throw new Error("A prepared release must advance exactly one patch version");
+  const [major, minor, patch] = parse(old);
+  const step = { patch: `${major}.${minor}.${patch + 1}`, minor: `${major}.${minor + 1}.0`, major: `${major + 1}.0.0` };
+  parse(version);
+  const bump = Object.keys(step).find((k) => step[k] === version);
+  if (!bump) throw new Error("A prepared release must advance the version by exactly one patch, minor or major step");
+  // A new minor or major line also freezes the docs of the line before it (docs/guide/README.md).
+  const frozen = bump === "patch" ? undefined : `docs/versions/${major}.${minor}/`;
   const files = git("diff", "--name-only", before, sha).split("\n");
-  if (files.some((f) => !["package.json", "package-lock.json"].includes(f))) throw new Error("A prepared release must change only the version files");
+  if (files.some((f) => !["package.json", "package-lock.json"].includes(f) && !(frozen && f.startsWith(frozen)))) throw new Error("A prepared release must change only the version files");
   const lock = read(sha, "package-lock.json");
   if (lock.version !== version || lock.packages?.[""]?.version !== version) throw new Error("The three root versions must agree");
   const withoutVersions = (v) => {

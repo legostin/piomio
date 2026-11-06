@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { githubApi, preparedRelease, publishPrepared } from "../../../scripts/prepared-release.mjs";
@@ -32,9 +32,24 @@ describe("a version prepared through a PR", () => {
     const r = repo(); r.version("0.2.37"); r.commit(); r.git("commit", "--allow-empty", "-qm", "[skip release]");
     expect(preparedRelease({ ...r, sha: r.git("rev-parse", "HEAD") })).toBeUndefined();
   });
-  for (const v of ["0.2.38", "0.2.35", "0.3.0", "0.2.37-rc.1"]) it(`refuses an unexpected version ${v}`, () => {
+  for (const v of ["0.2.38", "0.2.35", "0.3.1", "1.0.1", "1.1.0", "0.2.37-rc.1"]) it(`refuses an unexpected version ${v}`, () => {
     const r = repo(); r.version(v);
     expect(() => preparedRelease({ ...r, sha: r.commit() })).toThrow();
+  });
+  for (const v of ["0.3.0", "1.0.0"]) it(`accepts a new line ${v} with the frozen docs of the one before it`, () => {
+    const r = repo(); r.version(v);
+    mkdirSync(join(r.cwd, "docs/versions/0.2/en"), { recursive: true });
+    writeFileSync(join(r.cwd, "docs/versions/0.2/en/updates.md"), "frozen");
+    const sha = r.commit();
+    expect(preparedRelease({ ...r, sha })).toEqual({ tag: `v${v}`, sha });
+  });
+  it("refuses frozen docs in a patch release, and another line's docs in a new one", () => {
+    const r = repo(); r.version("0.2.37");
+    mkdirSync(join(r.cwd, "docs/versions/0.2"), { recursive: true }); writeFileSync(join(r.cwd, "docs/versions/0.2/x.md"), "x");
+    expect(() => preparedRelease({ ...r, sha: r.commit() })).toThrow(/only the version files/);
+    const n = repo(); n.version("0.3.0");
+    mkdirSync(join(n.cwd, "docs/versions/0.1"), { recursive: true }); writeFileSync(join(n.cwd, "docs/versions/0.1/x.md"), "x");
+    expect(() => preparedRelease({ ...n, sha: n.commit() })).toThrow(/only the version files/);
   });
   it("refuses mixed code/version pushes and inconsistent lockfiles", () => {
     const r = repo(); r.version("0.2.37", true);

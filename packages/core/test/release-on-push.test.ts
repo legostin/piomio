@@ -42,9 +42,27 @@ describe("release on push", () => {
     const code = r.commit("fix", "packages/core/src/fix.ts");
     expect(releaseDecision({ cwd: r.cwd, before: docs, sha: code }).release).toBe(true);
     expect(ships("scripts/release-on-push.mjs")).toBe(false);
+    expect(ships("scripts/prepared-release.mjs")).toBe(false);
+    expect(ships("scripts/version-pr.mjs")).toBe(false);
+    expect(ships("scripts/new-integration.mjs")).toBe(true);
     expect(ships("packages/core/test/fix.test.ts")).toBe(false);
     expect(ships(".github/workflows/release.yml")).toBe(true);
     expect(ships("packages/web/src/demo/content.md")).toBe(true);
+  });
+
+  it("releases a push after a merged version PR whose tag is still on its way, but not that merge itself", () => {
+    const r = repo();
+    const feature = r.commit("feat", "packages/core/src/feature.ts");
+    writeFileSync(join(r.cwd, "package.json"), JSON.stringify({ version: "0.2.26" }));
+    r.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qam", "Merge pull request #20 from legostin/release/0.2.26");
+    const merge = r.git("rev-parse", "HEAD");
+    expect(releaseDecision({ cwd: r.cwd, before: feature, sha: merge }).release).toBe(false);
+    const docs = r.commit("docs after the version PR");
+    expect(releaseDecision({ cwd: r.cwd, before: merge, sha: docs }).release).toBe(false);
+    const fix = r.commit("fix after the version PR", "packages/core/src/fix.ts");
+    expect(releaseDecision({ cwd: r.cwd, before: docs, sha: fix })).toMatchObject({ release: true, reason: expect.stringMatching(/prepared v0.2.26/) });
+    const skipped = r.commit("fix [skip release]", "packages/core/src/skip.ts");
+    expect(releaseDecision({ cwd: r.cwd, before: fix, sha: skipped }).release).toBe(false);
   });
 
   it("handles new-main pushes, manual version bumps and incomplete history", () => {

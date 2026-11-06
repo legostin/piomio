@@ -15,12 +15,12 @@ Piomio never updates behind your back. When a new release is out, you see an **U
 
 ## How releases work
 
-- **Every change that ships becomes a release by itself.** When a change to the app lands, the patch version goes up (0.2.12, then 0.2.13…) and a release is published, so new versions come often. Changes to the website or these docs release nothing. A new minor or major version (0.3.0, 1.0.0) is made by hand.
+- **Every change that ships brings its release by itself.** When a change to the app lands and passes its checks, a version PR opens on GitHub that raises only the patch version (0.2.12, then 0.2.13…). The maintainer merges it, and the release is published from that commit, so new versions come often. Changes that land while it is open go into the same release. Changes to the website or these docs release nothing. A new minor or major version (0.3.0, 1.0.0) is asked for by hand and comes as a version PR too.
 - **Releases live on GitHub**, at [github.com/legostin/piomio/releases](https://github.com/legostin/piomio/releases): the desktop installers, the files the desktop app updates from, the Linux archives with their checksums and signatures, and `install.sh`.
 - **Updates are signed.** The files the desktop app and a server install update from are signed with Piomio's update key. The public half is built into the app and the hub, so they install only what that key signed.
 - **Your version** shows on the sign-in screen ("version 0.2.13"). On a server, `piomio version` prints it. Hover over **Update** to see the version it updates to.
 
-If branch protection prevents Actions from writing the version commit to main, prepare the next patch in a version-only PR: update the root package version and both root lockfile versions. After its checks pass and the PR is merged, automation creates the tag on that checked commit and explicitly starts the normal release build. It never moves an existing tag; a failed build is retried as the same workflow run.
+Nothing but the maintainer writes to the main branch, automation included. A version PR changes only the root version in `package.json` and both root versions in `package-lock.json` (a new minor or major version also keeps the docs of the line before it in `docs/versions/`). Once it is merged and its checks pass again, automation puts the version tag on that commit and starts the release build. It never moves an existing tag; a failed build is retried as the same workflow run.
 
 ## The desktop app
 

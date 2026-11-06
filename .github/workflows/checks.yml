@@ -1,7 +1,7 @@
 # The checks a change passes before it ships: the types (npm run typecheck) and the tests (npm test).
-# Pull requests and pushes to other branches run them here. On main nothing is released untested:
-# release-on-push.yml runs them before it raises the version, and release.yml runs them on the version tag before it
-# publishes the installers (a push that landed meanwhile goes into that release too).
+# Pull requests and pushes to other branches run them here (a version PR's branch, pushed by Actions, has them
+# dispatched). On main nothing is released untested: release-on-push.yml runs them before it opens the version PR and
+# again on its merge before the tag, and release.yml runs them on the version tag before it publishes the installers.
 name: checks
 
 on:
