@@ -36,19 +36,21 @@ const FIRST_ENDING = "When you are done, briefly describe the result — it will
 describe("waiting for brains to connect (integration)", () => {
   let hub: Hub;
   let c: string;
+  /** The fake brain plugin's process: it also stands for the machine "box". */
+  let fake: any;
 
-  const messages = (): Message[] => hub.store.listMessages(c, { limit: 200 });
-  const errors = () => messages().filter((m) => errorOf(m));
-  const status = () => hub.activity.view().flatMap((m) => m.work.map((w) => ({ ...w, machine: m.id }))).find((w) => w.conversationId === c);
-  const idle = () => until(() => !hub.runner.isRunning(c) && messages().every((m) => m.status !== "streaming"), "the turn to end");
-  const say = (text: string) => hub.runner.userMessage(c, text);
+  const messages = (conversationId = c): Message[] => hub.store.listMessages(conversationId, { limit: 200 });
+  const errors = (conversationId = c) => messages(conversationId).filter((m) => errorOf(m));
+  const answers = (conversationId = c) => messages(conversationId).filter((m) => m.role === "assistant");
+  const status = (conversationId = c) => hub.activity.view().flatMap((m) => m.work.map((w) => ({ ...w, machine: m.id }))).find((w) => w.conversationId === conversationId);
+  const idle = (conversationId = c) => until(() => !hub.runner.isRunning(conversationId) && messages(conversationId).every((m) => m.status !== "streaming"), "the turn to end");
+  const say = (text: string, conversationId = c) => hub.runner.userMessage(conversationId, text);
   const task = (id: string): Task => hub.store.getTask(id)!;
 
   /** The machine "box" comes online: its brain `fake` runs on the fake plugin's process. */
   const connect = () => {
-    const peer = (hub.brains as any).pluginBrains.get("fake").peer;
-    (hub.machines as any).peers.set("mach_box", peer);
-    hub.brains.registerMachine("mach_box", "box", peer, [{ id: "fake", label: "Fake" }]);
+    (hub.machines as any).peers.set("mach_box", fake.peer);
+    hub.brains.registerMachine("mach_box", "box", fake.peer, [{ id: "fake", label: "Fake" }]);
   };
   const disconnect = () => {
     (hub.machines as any).peers.delete("mach_box");
@@ -64,6 +66,7 @@ describe("waiting for brains to connect (integration)", () => {
     hub = new Hub(config);
     await hub.start();
     await until(() => hub.brains.has("fake@local"), "fake brains to register");
+    fake = (hub.brains as any).pluginBrains.get("fake");
     hub.db.prepare("insert into machines(id, name, public_key, created_at) values (?,?,?,?)").run("mach_box", "box", "x", new Date().toISOString());
     connect();
     hub.agents.save({ id: "coder", name: "Coder", description: "Writes code", brains: ["fake@local"], machines: ["mach_box"], prompt: "Code." } as any);
@@ -104,6 +107,50 @@ describe("waiting for brains to connect (integration)", () => {
       expect(status()).toBeUndefined();
       expect(errors()).toEqual([]);
     } finally {
+      connect();
+    }
+  });
+
+  it("ends on a Stop that comes while it looks at a brain just back", async () => {
+    disconnect();
+    const before = answers().length;
+    const probe = hub.brains.probe;
+    try {
+      await say("hold on");
+      await until(() => status(), "the status");
+      // Stop lands while the hub asks the brain that came back whether it is ready.
+      hub.brains.probe = async (ref: string, maxAgeMs?: number) => {
+        if (ref.endsWith("@mach_box")) hub.runner.interrupt(c);
+        return probe.call(hub.brains, ref, maxAgeMs);
+      };
+      connect();
+      await idle();
+      expect(answers().length).toBe(before);
+      expect(status()).toBeUndefined();
+      expect(errors()).toEqual([]);
+    } finally {
+      hub.brains.probe = probe;
+      connect();
+    }
+  });
+
+  it("thinks with the same brain on a computer that came during the wait", async () => {
+    // The agent may think here or on box: the hub's own brain is gone (its plugin restarting), and box is off.
+    hub.agents.save({ id: "pair", name: "Pair", description: "Here or on box", brains: ["fake@local"], machines: ["local", "mach_box"], prompt: "Pair." } as any);
+    const p = hub.store.agentConversation("pair").id;
+    disconnect();
+    (hub.brains as any).pluginBrains.delete("fake");
+    try {
+      await say("anyone?", p);
+      await until(() => status(p), "the status");
+      connect();
+      await idle(p);
+      expect(textOf(answers(p).at(-1)!)).toBe("fake heard: anyone?");
+      expect(hub.store.activeSession(p, "pair")!.brainRef).toBe("fake@mach_box");
+      expect(status(p)).toBeUndefined();
+      expect(errors(p)).toEqual([]);
+    } finally {
+      (hub.brains as any).pluginBrains.set("fake", fake);
       connect();
     }
   });

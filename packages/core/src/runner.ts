@@ -2356,6 +2356,8 @@ export class SessionRunner {
     for (let attempt = 0; attempt < 6; attempt++) {
       const { usable, earliestReset: reset, reasons, hard, busy, offline, setupOnly } = await this.candidates({ ...agent, brains: order }, preferred, pinned, !!task);
       earliestReset = reset ?? earliestReset;
+      // Stop, or the hub stopping, while it looked (a brain that just came back included): the turn ends here.
+      if (wait.interrupted || this.stopped) return { text: "", awaitingApproval: false };
       const ref = usable.find((r) => !tried.has(formatBrainRef(parseBrainRef(r))));
       // A brain to think with: the status line of a wait for one goes (the reply's own line takes over).
       if (ref) this.endBrainWait(wait);
@@ -2386,8 +2388,11 @@ export class SessionRunner {
         const how = opts.quiet ? "ended" : await this.awaitBrains(conv, agent, wait, offline[0]);
         if (how === "ended") return { text: "", awaitingApproval: false };
         if (how === "again") {
-          // What broke off before the wait may work now.
+          // What broke off before the wait may work now, and a computer that came may have the same brain: the
+          // agent's brains as they are now, widened again if none of them is set up.
           tried.clear();
+          order = this.ownBrains(agent, kind, choice);
+          widened = false;
           attempt--;
           continue;
         }
