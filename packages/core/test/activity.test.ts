@@ -1,5 +1,5 @@
 // The machines block: turns in progress by machine, what each is doing, approvals it waits for, and the event.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Approval, Machine, MachineActivity } from "@piomio/shared";
 import { EventBus } from "../src/bus.ts";
 import { detailOfTool, MachineActivityFeed, stepOfTool } from "../src/activity.ts";
@@ -18,6 +18,35 @@ function setup(machines: Array<Pick<Machine, "id" | "name" | "status">> = []) {
 const approval = (conversationId: string, agentId: string) => ({ id: "ap", conversationId, agentId }) as Approval;
 
 describe("machines activity", () => {
+  it("does not query closed storage after shutdown events or late turn updates", () => {
+    vi.useFakeTimers();
+    const { bus, feed, seen } = setup();
+    const list = vi.spyOn(feed.machines, "list");
+    try {
+      feed.start("a", { brainRef: "fake@local", agentId: "assistant", conversationId: "c1" });
+      feed.close();
+      feed.close(); // Shutdown can be requested more than once.
+      list.mockImplementation(() => { throw new Error("database is not open"); });
+      vi.advanceTimersByTime(1000);
+      expect(list).not.toHaveBeenCalled();
+
+      // Other hub services finish stopping after the activity feed has closed.
+      bus.emit("machine.updated", {});
+      bus.emit("updates.changed", {});
+      bus.emit("approval.created", approval("c1", "assistant"));
+      bus.emit("approval.resolved", approval("c1", "assistant"));
+      feed.step("a", "writing");
+      feed.end("a");
+      vi.advanceTimersByTime(1000);
+      expect(list).not.toHaveBeenCalled();
+      expect(seen).toEqual([]);
+    } finally {
+      feed.close();
+      list.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("offers on each online row the update self-update.ts has for it, and tells when that changes", async () => {
     const { bus, feed, seen } = setup([
       { id: "m1", name: "vps", status: "online" },
