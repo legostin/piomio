@@ -3,7 +3,6 @@
 // named; everything else (other words, another action, another site, money) still asks.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AskedSpec, ToolResult } from "@piomio/shared";
@@ -95,12 +94,12 @@ describe("asked: through the gateway", () => {
   const text = (r: ToolResult) => r.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 
   beforeAll(async () => {
-    const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
     const dataDir = mkdtempSync(join(tmpdir(), "owl-asked-"));
     const fixtures = join(import.meta.dirname, "fixtures");
     hub = new Hub(
       loadConfig(
-        { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), TZ: "UTC" },
+        // Calls use the in-process gateway. Let the OS bind unused ports atomically.
+        { PIOMIO_PORT: "0", PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: "0", PIOMIO_EGRESS_PORT: "0", TZ: "UTC" },
         { dataDir, builtinPluginsDirs: [join(fixtures, "plugins")], builtinAgentsDir: join(fixtures, "agents") },
       ),
     );

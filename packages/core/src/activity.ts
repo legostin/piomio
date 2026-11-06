@@ -79,15 +79,19 @@ export class MachineActivityFeed {
   /** By the streaming message's id: one per turn. */
   private turns = new Map<string, Turn>();
   private timer?: NodeJS.Timeout;
+  private closed = false;
+  private unsubscribe: Array<() => void>;
 
   constructor(bus: EventBus, machines: MachineHub) {
     this.bus = bus;
     this.machines = machines;
     // Online and offline, renames and revoked machines.
-    bus.on("machine.updated", () => this.changed());
-    bus.on("updates.changed", () => this.changed());
-    bus.on("approval.created", (a: Approval) => this.hold(a, true));
-    bus.on("approval.resolved", (a: Approval | undefined) => a && this.hold(a, false));
+    this.unsubscribe = [
+      bus.on("machine.updated", () => this.changed()),
+      bus.on("updates.changed", () => this.changed()),
+      bus.on("approval.created", (a: Approval) => this.hold(a, true)),
+      bus.on("approval.resolved", (a: Approval | undefined) => a && this.hold(a, false)),
+    ];
   }
 
   /** A turn started streaming into message `id` on the brain `brainRef`. */
@@ -159,12 +163,15 @@ export class MachineActivityFeed {
   }
 
   close(): void {
+    this.closed = true;
     clearTimeout(this.timer);
     this.timer = undefined;
+    for (const off of this.unsubscribe) off();
+    this.unsubscribe = [];
   }
 
   private changed(): void {
-    if (this.timer) return;
+    if (this.closed || this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       this.bus.emit("machines.activity", this.view());
