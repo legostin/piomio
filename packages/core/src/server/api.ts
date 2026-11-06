@@ -31,6 +31,8 @@ export interface ApiOptions {
   bootstrap(req: FastifyRequest): Record<string, unknown>;
   /** May this request open the realtime socket (the web UI checks Origin). */
   wsAllowed(req: FastifyRequest): boolean;
+  /** The web UI's realtime socket on a standby: true when it went to the leader instead (main-app.ts). */
+  relaySocket?(socket: WebSocket, req: FastifyRequest): boolean;
   /** Every realtime socket as it opens (the device port closes a revoked phone's sockets). */
   onSocket?(socket: WebSocket, req: FastifyRequest): void;
   /** The caller's auth hook: a file upload runs it before its body (up to 25 MB) is read. */
@@ -915,8 +917,9 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       socket.close(4403, "origin");
       return;
     }
-    // A phone on a standby replica: its events come from the leader.
+    // A phone, or the web UI, on a standby replica: its events come from the leader.
     if ((req as any).device && pipeToLeader(hub, socket as unknown as WebSocket, req)) return;
+    if (opts.relaySocket?.(socket as unknown as WebSocket, req)) return;
     const send = (ev: unknown) => {
       if (socket.readyState === 1) socket.send(JSON.stringify(ev));
     };

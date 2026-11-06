@@ -4,6 +4,7 @@
 // behaves as it always did. Replicas talk over the device app: TLS with the hub's one certificate (pinned), every
 // request signed with the replica's own key.
 
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -112,6 +113,8 @@ interface Hello {
   stale?: boolean;
   vectors: Record<DbName, Vector>;
   version: string;
+  /** Its main app takes the web-UI calls a standby checked and sends over the link (replica-link.ts LINK_SESSION). */
+  webUi?: boolean;
 }
 
 interface Peer extends Replica {
@@ -189,6 +192,8 @@ export class Cluster {
   private staleUntil = 0;
   /** How long a replica back from a sleep stays awake before it asks for the lead (tests shorten it). */
   awakeBeforeLead = AWAKE_BEFORE_LEAD_MS;
+  /** Tells this replica's main app that a call came over a link (replica-link.ts LINK_MARK); it never leaves this process. */
+  private readonly mark = randomBytes(32).toString("base64url");
 
   constructor(hub: Hub) {
     this.hub = hub;
@@ -480,6 +485,7 @@ export class Cluster {
       call: (from, c) => this.serveCall(from, c),
       deviceUrl: () => `https://127.0.0.1:${this.hub.config.devicePort}`,
       mainUrl: () => `http://127.0.0.1:${this.hub.config.port}`,
+      mark: () => this.mark,
       fingerprint: () => this.hub.deviceTls().fingerprint,
     });
     const old = this.links.get(peerId);
@@ -487,6 +493,11 @@ export class Cluster {
     rpc.onClose(() => {
       if (this.links.get(peerId) === rpc) this.links.delete(peerId);
     });
+  }
+
+  /** Is this the mark this replica puts on the calls its peers send it over a link. */
+  markOk(v: unknown): boolean {
+    return typeof v === "string" && v.length === this.mark.length && timingSafeEqual(Buffer.from(v), Buffer.from(this.mark));
   }
 
   /** The link to the leader, for forwarding the phones. */
@@ -611,13 +622,13 @@ export class Cluster {
     return this.switching;
   }
 
-  /** The leader to forward clients to, when this replica is standby. */
-  leaderTarget(): { url?: string; name: string; link?: RpcPeer } | undefined {
+  /** The leader to forward clients to, when this replica is standby (`webUi`: it takes this replica's web UI too). */
+  leaderTarget(): { url?: string; name: string; link?: RpcPeer; webUi?: boolean } | undefined {
     if (this.leads()) return undefined;
     const p = [...this.peers.values()].find((x) => x.online && x.hello?.role === "leader");
     if (!p) return undefined;
     const link = this.links.get(p.id);
-    return { name: p.name, ...(p.url ? { url: p.url } : {}), ...(link && !link.closed ? { link } : {}) };
+    return { name: p.name, ...(p.url ? { url: p.url } : {}), ...(link && !link.closed ? { link } : {}), ...(p.hello?.webUi ? { webUi: true } : {}) };
   }
 
   // ---------- the vault on other replicas ----------
@@ -701,6 +712,7 @@ export class Cluster {
       stale: this.leadStale(),
       vectors: { main: this.main!.vector(), vault: this.vaultRepl!.vector() },
       version: this.hub.config.version,
+      webUi: true,
     };
   }
 
