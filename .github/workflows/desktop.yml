@@ -1,16 +1,18 @@
 # Builds the desktop app and its installers, and the Linux server archives, and checks them on clean runners: install,
-# the hub answers, quit or uninstall, the data stays. release.yml calls it on a version tag and publishes what it built.
+# the hub answers, quit or uninstall, the data stays. release-tags.yml calls it on a version tag and publishes what it built.
 name: desktop app
 
 on:
   workflow_dispatch:
-  # release.yml builds the installers it publishes with this workflow.
+  # release-tags.yml builds the installers it publishes with this workflow.
   workflow_call:
-  push:
-    branches: [main]
-    paths: ["packaging/**", "packages/desktop/**", "packages/tailnet/**", "package.json", "package-lock.json", ".github/workflows/desktop.yml"]
-  pull_request:
-    paths: ["packaging/**", "packages/desktop/**", "packages/tailnet/**", "package.json", "package-lock.json", ".github/workflows/desktop.yml"]
+    inputs:
+      release_version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
   windows:
@@ -32,6 +34,11 @@ jobs:
         with:
           workspaces: packages/desktop/src-tauri
       - run: npm ci
+      - name: Stamp the version before compiling or staging the hub
+        if: inputs.release_version != ''
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-version.mjs
       - run: npm run build:ui -w @piomio/desktop
       - run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
       # The update files are signed with the project's key; without the secret (a fork's PR) they are left out.
@@ -103,6 +110,11 @@ jobs:
           go-version-file: packages/tailnet/go.mod
           cache-dependency-path: packages/tailnet/go.sum
       - run: npm ci
+      - name: Stamp the version before compiling or staging the hub
+        if: inputs.release_version != ''
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-version.mjs
       # Signed with the project's update key, which hubs check before they update; a fork's PR builds without the .sig.
       - run: node packaging/linux/build.mjs --arch ${{ matrix.arch }}
         env:
@@ -159,6 +171,11 @@ jobs:
         with:
           workspaces: packages/desktop/src-tauri
       - run: npm ci
+      - name: Stamp the version before compiling or staging the hub
+        if: inputs.release_version != ''
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-version.mjs
       - run: npm run build:ui -w @piomio/desktop
       - run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
       # A keychain of the run's own holds the Developer ID; the build finds it by APPLE_SIGNING_IDENTITY, and the team

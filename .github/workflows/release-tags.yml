@@ -1,0 +1,99 @@
+# A tag is the release version. PRs and manual branch runs build a preview without creating tags or publishing.
+name: tag release
+run-name: "${{ (github.event_name == 'pull_request' || inputs.dry_run) && 'Preview' || 'Publish' }} ${{ github.ref_name }}"
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "packages/desktop/**"
+      - "packages/tailnet/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/release-*.mjs"
+      - ".github/workflows/release*.yml"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and check installers, without publishing (branches must use this)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Preview builds cannot cancel a production run. A release at a newer tag may supersede a queued older release.
+concurrency:
+  group: release-build-${{ github.event_name == 'pull_request' && github.ref || inputs.dry_run && github.ref || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.dry_run == true }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve a tag or a dry-run version
+        id: version
+        env:
+          DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run }}
+        run: node scripts/release-build.mjs
+
+  checks:
+    needs: version
+    uses: ./.github/workflows/checks.yml
+    with:
+      release_version: ${{ needs.version.outputs.version }}
+
+  installers:
+    needs: version
+    uses: ./.github/workflows/desktop.yml
+    with:
+      release_version: ${{ needs.version.outputs.version }}
+    secrets: inherit
+
+  publish:
+    needs: [version, installers, checks]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*-installer*"
+          merge-multiple: true
+      - name: The assets the hubs link to are there
+        run: |
+          v="$RELEASE_VERSION"
+          test -f "dist/piomio-setup-$v-x64.exe"
+          test -f "dist/piomio-$v.dmg"
+          test -f "dist/piomio-$v.pkg"
+          for a in x64 arm64; do for f in "" .sha256 .sig; do test -f "dist/piomio-$v-linux-$a.tar.gz$f"; done; done
+          cp packaging/linux/install.sh dist/install.sh
+          node packaging/desktop/latest-json.mjs dist "$v" "$GITHUB_REPOSITORY"
+      - name: Publish once, without changing an existing release or moving latest backwards
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-publish.mjs

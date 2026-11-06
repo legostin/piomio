@@ -1,7 +1,4 @@
-# The checks a change passes before it ships: the types (npm run typecheck) and the tests (npm test).
-# Pull requests and pushes to other branches run them here. On main nothing is released untested:
-# release-on-push.yml runs them before it raises the version, and release.yml runs them on the version tag before it
-# publishes the installers (a push that landed meanwhile goes into that release too).
+# Required PR checks have stable job names; releases call the same checks on their exact tagged commit.
 name: checks
 
 on:
@@ -9,13 +6,34 @@ on:
   push:
     branches-ignore: [main]
   workflow_dispatch:
-  # release-on-push.yml and release.yml wait for these checks.
+  # release-on-push.yml and release-tags.yml wait for these checks.
   workflow_call:
+    inputs:
+      release_version:
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Use the release version in this disposable checkout
+        if: inputs.release_version != ''
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-version.mjs
+      - run: npm run typecheck
+
   panel-layout:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -28,6 +46,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Use the release version in this disposable checkout
+        if: inputs.release_version != ''
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-version.mjs
       - run: npx playwright install --with-deps chromium webkit
       - name: Capture panels before the change
         env:
@@ -55,7 +78,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
+      - name: Use the release version in this disposable checkout
+        if: inputs.release_version != ''
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-version.mjs
       # The browser plugin's tests drive Playwright's Chromium, with the system libraries it needs.
       - run: npx playwright install --with-deps chromium
       - run: npm test
@@ -72,6 +99,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Use the release version in this disposable checkout
+        if: inputs.release_version != ''
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: node scripts/release-version.mjs
       - run: npx playwright install --with-deps chromium
       - run: npm run build:ui-plugins
       - run: npm run build:site

@@ -55,6 +55,9 @@ test("a tall modal stays below traffic lights and fits a short window", async ({
   await page.setViewportSize({ width: 600, height: 350 });
   await page.goto("/e2e/panels.html?panel=modal");
   const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  // The spring animation can briefly cross the viewport edge; assert the settled layout.
+  await dialog.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))));
   const box = (await dialog.boundingBox())!;
   expect(box.y).toBeGreaterThanOrEqual(52);
   expect(box.y + box.height).toBeLessThanOrEqual(350);
