@@ -22,6 +22,7 @@ import { GroupFloor, GroupHeader } from "./GroupHeader";
 import { ChatMenu } from "./DetailsToggle";
 import { formatDate, formatRelative, t } from "../../i18n";
 import { authorOf, messageShown, MessageView } from "./MessageView";
+import { BrainWaitLine } from "./LiveStep";
 import { pickToolRenderer } from "../../plugins/registry";
 import { usePluginRegistry } from "../../plugins/slots";
 import { LatestDraftCards } from "./AgentDraftCard";
@@ -310,6 +311,7 @@ export function ChatView({
               </Fragment>
             ))}
           </LatestDraftCards.Provider>
+          <BrainWaitLine conversationId={conversationId} />
           {isGroup && <GroupFloor conversationId={conversationId} />}
           {bottom}
         </div>

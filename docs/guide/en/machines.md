@@ -112,11 +112,11 @@ Commands are off on a new computer, so its programs (Blender, a build) don't sta
 
 ## Who works where right now
 
-Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, or "needs you" while it waits for your approval. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.
+Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, "needs you" while it waits for your approval, or "waiting for connection" while its brain is not connected for now. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.
 
 ## Agents bound to computers
 
-By default an agent works on any computer. To keep one to a computer, pick it under **Where it thinks** in the agent's settings, then a brain on it, or say "let Ada work only on my laptop, with Codex"; the assistant asks with buttons which computer and which brain. A bound agent thinks only with those computers' brains and never moves elsewhere: while none of them is online, its chat says so and your message waits for you to send it again. "Let Ada work anywhere again" undoes it.
+By default an agent works on any computer. To keep one to a computer, pick it under **Where it thinks** in the agent's settings, then a brain on it, or say "let Ada work only on my laptop, with Codex"; the assistant asks with buttons which computer and which brain. A bound agent thinks only with those computers' brains and never moves elsewhere: while none of them is online, its chat waits for one with a passing line and answers once it is back (after half an hour it says so, and you send the message again). "Let Ada work anywhere again" undoes it.
 
 When the assistant hands work to a teammate, it also picks the computer, and asks you only when the choice isn't clear. A task placed on a computer runs on that computer's brain.
 

@@ -785,6 +785,8 @@ export interface ProbeResult {
    */
   catalog?: ModelProfile[];
   detail?: string;
+  /** The brain's host did not answer (its connection closed or timed out): not connected for now, not a setup problem. */
+  unreachable?: boolean;
 }
 
 // ---------- Brain sign-in from the chat ----------
@@ -1162,7 +1164,11 @@ export interface Computer {
  * answer, running a command, reading or editing files, on the web, calling another tool, or waiting for the user to
  * approve a call.
  */
-export type WorkStep = "thinking" | "writing" | "command" | "reading" | "editing" | "web" | "tool" | "approval";
+/**
+ * What a turn does now. "approval": it waits for the person's permission; "offline": its brains (or its computers) are
+ * not connected for now (the hub switching machines, a computer asleep, a plugin restarting), and it goes on once they are.
+ */
+export type WorkStep = "thinking" | "writing" | "command" | "reading" | "editing" | "web" | "tool" | "approval" | "offline";
 
 /** One turn in progress on a machine. */
 export interface MachineWork {

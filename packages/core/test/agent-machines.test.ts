@@ -1,6 +1,7 @@
 // Agents bound to computers (docs/superpowers/specs/2026-11-01-agent-machines-design.md): a bound agent thinks only
-// with the brains of its computers, says so in the chat when none of them is online (the person's message stays in the
-// conversation), and refuses work placed elsewhere. A paired machine is simulated by the fake brain plugin's peer.
+// with the brains of its computers, says so in the chat when none of them is online (after waiting for a paired one,
+// brain-wait.test.ts; the person's message stays in the conversation), and refuses work placed elsewhere. A paired
+// machine is simulated by the fake brain plugin's peer.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { freePort } from "@piomio/testkit";
@@ -120,8 +121,9 @@ describe("agents bound to computers (integration)", () => {
     expect(view.brains.map((b) => b.ref)).toEqual(["fake@mach_box"]);
   });
 
-  it("says its computer is off and keeps the message, without moving to another brain", async () => {
+  it("says its computer is off and keeps the message, without moving to another brain (past the wait, brain-wait.test.ts)", async () => {
     disconnect();
+    hub.runner.waits = { ...hub.runner.waits, dialogMs: 0 };
     try {
       const c = await dialogOf("coder");
       const before = (await messages(c)).filter((m) => m.role === "assistant").length;
@@ -133,6 +135,7 @@ describe("agents bound to computers (integration)", () => {
       expect(all.filter((m) => m.role === "assistant").length).toBe(before);
       expect(hub.store.activeSession(c, "coder")!.brainRef).toBe("fake@mach_box");
     } finally {
+      hub.runner.waits = { ...hub.runner.waits, dialogMs: 30 * 60_000 };
       connect();
     }
   });
