@@ -1114,11 +1114,9 @@ export function registerHubTools(hub: Hub): void {
         if (!r.changed) return text(`${r.name} is already the primary replica.`);
         const leader = hub.cluster.states().find((s) => s.role === "leader" && s.online);
         return text(
-          (leader?.id === r.id
+          leader?.id === r.id
             ? `${r.name} is now the primary replica and leads.`
-            : `${r.name} is now the primary replica. ${leader ? `${leader.name} leads for now and hands over` : "It takes the lead"} once ${r.name} is up and caught up.`) +
-            ` While ${r.name} leads, the web UI and the desktop app on the other replicas only show the hub (changes there wait for the leader); ` +
-            `changes go through ${r.name}'s own address or link, or a phone.`,
+            : `${r.name} is now the primary replica. ${leader ? `${leader.name} leads for now and hands over` : "It takes the lead"} once ${r.name} is up and caught up.`,
         );
       } catch (e: any) {
         return text(e?.message ?? String(e), true);
