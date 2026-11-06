@@ -68,7 +68,10 @@ describe("a plugin's local MCP server", () => {
 
   it("shows why a server quit while starting", async () => {
     const reason = "Blender 5.1 or newer was not found on this computer.";
-    expect(hub.mcpClients.list().find((s) => s.name === "nolocal")).toMatchObject({ status: "error", error: reason });
-    expect((await listIntegrations(hub, "en")).find((i) => i.id === "nolocal")).toMatchObject({ status: "broken", detail: reason });
+    // It is started again by itself a few times (a launcher may find Blender later), its reason kept meanwhile.
+    expect(hub.mcpClients.list().find((s) => s.name === "nolocal")).toMatchObject({ status: "reconnecting", error: reason });
+    const card = (await listIntegrations(hub, "en")).find((i) => i.id === "nolocal")!;
+    expect(card.status).toBe("broken");
+    expect(card.detail).toContain(reason);
   });
 });

@@ -319,8 +319,8 @@ export function shownPath(p: string, home = homedir()): string {
   return within(p, home) && p !== home ? `~${sep}${relative(home, p)}` : p;
 }
 
-/** Credentials and private stores in a home folder that no agent's tool reads (relative to the home). */
-const PRIVATE = [
+/** Credentials and private stores in a home folder that no agent's tool reads (relative to the home); machines.ts checks other computers' commands against them too. */
+export const PRIVATE = [
   ".ssh",
   ".gnupg",
   ".aws",

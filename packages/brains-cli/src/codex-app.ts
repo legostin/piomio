@@ -226,8 +226,17 @@ export async function approvalAnswer(method: string, params: Record<string, any>
   }
 }
 
-/** The app-server could not start a turn at all (an old Codex without it): the caller uses `codex exec`. */
+/** This Codex has no app-server at all (an old one): the caller uses `codex exec`. */
 export class AppServerUnsupported extends Error {}
+
+/**
+ * The app-server did not start this time (it exited or said nothing): a passing failure, not an old Codex. The caller
+ * starts it again or reports it; it never drops to `codex exec`, whose commands have no network.
+ */
+export class AppServerStartFailed extends Error {}
+
+/** What clap says when the subcommand does not exist: the only sign of a Codex without an app-server. */
+const NO_APP_SERVER = /unrecognized subcommand|unexpected argument '?app-server|invalid subcommand|no such (?:sub)?command/i;
 
 /**
  * A `codex app-server` with one thread open in it, taking turns one at a time: `run()` yields BrainEvents until a turn
@@ -358,7 +367,9 @@ export class CodexAppServer {
       const exit = await Promise.race([proc.exited, new Promise<null>((r) => setTimeout(() => r(null), 2000))]);
       this.gone = true;
       proc.child.kill("SIGKILL");
-      throw new AppServerUnsupported(exit ? proc.stderr().trim().split("\n").slice(-3).join("\n") : "codex app-server did not answer");
+      const said = proc.stderr().trim().split("\n").slice(-3).join("\n");
+      if (exit && NO_APP_SERVER.test(said)) throw new AppServerUnsupported(said);
+      throw new AppServerStartFailed(said || (exit ? "codex app-server exited at start" : "codex app-server did not answer"));
     }
     this.notify("initialized");
     // A `sandbox` here would win over the permission profile the config chose. The Fast tier stays off (codex.ts).
@@ -382,7 +393,10 @@ export class CodexAppServer {
     this.threadModel = typeof r?.model === "string" && r.model ? r.model : this.s.model;
   }
 
-  /** One turn, in the process and thread already open or opened now. Throws AppServerUnsupported as `open()` does. */
+  /**
+   * One turn, in the process and thread already open or opened now. Throws AppServerUnsupported and
+   * AppServerStartFailed as `open()` does, before anything was sent to the model.
+   */
   async *run(turn: BrainTurn): AsyncGenerator<BrainEvent> {
     this.parser = new CodexAppParser();
     const events = new EventQueue<BrainEvent>();
@@ -400,7 +414,7 @@ export class CodexAppServer {
       this.parser.turnId = t?.turn?.id;
       this.started = true;
     } catch (e) {
-      if (e instanceof AppServerUnsupported) {
+      if (e instanceof AppServerUnsupported || e instanceof AppServerStartFailed) {
         this.finish();
         throw e;
       }

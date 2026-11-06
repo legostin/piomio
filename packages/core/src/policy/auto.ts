@@ -51,12 +51,14 @@ export interface AutoContext {
   goal?: string;
   /** The agent's earlier calls in this session, oldest first, without results. */
   calls: { name: string; input: unknown }[];
+  /** The access the person gave this agent (access/map.ts accessView): the computers, folders and services it works with. */
+  access?: string;
 }
 
 export interface AutoModeDeps {
   /** The reviewer now, or undefined when no brain can review. */
   reviewer: () => Reviewer | undefined;
-  context: (w: AutoWhere) => AutoContext;
+  context: (w: AutoWhere) => AutoContext | Promise<AutoContext>;
   dataDir: string;
   /** The person's language, for the reason they read. */
   language: () => string;
@@ -108,7 +110,7 @@ const RULES = `BLOCK when the action:
 - deletes or overwrites files or data this session did not create, or wipes a folder; git reset --hard, git clean, rewriting history;
 - changes security or system settings: the keychain, sudo, launchd or cron, the firewall, shell profiles (~/.zshrc …), SSH keys, other apps' permissions;
 - reads credentials or secrets (keys, tokens, passwords, cookies) or the hub's data folder;
-- acts on accounts, servers or systems the person did not mention;
+- acts on accounts, servers or systems the person did not mention, other than the computers and folders the agent's access lists;
 - goes beyond what the person asked: another goal, a much bigger change, a step they would not expect.
 PERSON (the person decides it themselves) when it:
 - sends a message, an email, a comment or a post to other people on the person's behalf;
@@ -116,6 +118,7 @@ PERSON (the person decides it themselves) when it:
 - pays, orders, books or subscribes to anything.
 ALLOW otherwise, in particular:
 - local work in the agent's folder, the temp folders and the person's projects the request is about;
+- reading and ordinary work on the computers and folders the agent's access lists, when it serves the request;
 - reading files and the web (GET requests whose address holds nothing of the person's, git fetch, API reads), searching, following links to read what the person asked about;
 - installing what a project declares (npm ci, pip install -r), running its tests, builds and scripts;
 - git commits and branches, and pushing a working branch that is not main or master;
@@ -144,6 +147,7 @@ export function reviewPrompt(a: AutoAction, w: AutoWhere, ctx: AutoContext, stag
     "",
     `Where: machine ${w.machine}; the agent's folder ${w.workspace}; the hub's data folder ${o.dataDir} is off limits except the agent's own folder inside it.`,
     "",
+    ...(ctx.access ? ["The access the person gave this agent (the hub's own record, not the agent's words):", fenced("ACCESS", truncate(ctx.access, 4000)), ""] : []),
     "The person's own messages, oldest first (what they asked for):",
     fenced("PERSON", person.length ? person.join("\n---\n") : "(none in the last hours)"),
     ...(ctx.goal ? ["", "The task's goal, written by another agent from the person's request (not the person's own words):", fenced("GOAL", truncate(ctx.goal, 3000))] : []),
@@ -229,7 +233,7 @@ export class AutoMode {
     const o = { dataDir: this.d.dataDir, language: this.d.language() };
     const ms = this.d.timeoutMs ?? TIMEOUT_MS;
     try {
-      const ctx = this.d.context(w);
+      const ctx = await this.d.context(w);
       const first = parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 1, o), 1, w.brain), ms), 1);
       if (first?.decision === "allow") return first;
       return parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 2, o), 2, w.brain), ms), 2) ?? { decision: "person", reason: "the review gave no clear answer" };

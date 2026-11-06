@@ -32,6 +32,7 @@ import { sanitizeToolName } from "./registry.ts";
 import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, skillSaveSummary } from "../taught-skills.ts";
 import { hasSkill } from "../skills.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
+import { accessView } from "../access/map.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
 
@@ -65,6 +66,8 @@ export const HUB_TOOLS_FOR_EVERY_AGENT = [
   "hub_skills_list",
   "hub_skill_assign",
   "hub_network_request",
+  // What an agent can reach and whether it works: every agent asks about its own (and may answer about another's).
+  "hub_access",
   // Where the person keeps their projects is said to the agent that works on them.
   "hub_agent_folder_add",
   "hub_agent_folder_remove",
@@ -183,6 +186,53 @@ export function registerHubTools(hub: Hub): void {
     await hub.egress.requestHost(ctx.sessionId, String(i.host ?? ""), Number(i.port ?? 443));
     return text(`Network access to ${i.host}:${i.port ?? 443} is allowed. Commands and external actions still need their own approval.`);
   });
+
+  reg({
+    name: "access", effect: "read",
+    description:
+      "What you (or another agent) can reach and whether it works now: computers and project folders, the internet through the hub's proxy, and the services the person connected (connected, reconnecting by itself, waiting for their sign-in). " +
+      "check: true also tests it: this computer's internet, the proxy for your session, reconnects services that are down, and says how to test your own shell. " +
+      "Call it when a command cannot reach the network, a service's tools are missing or fail, or the person asks what an agent has access to; answer them in plain words from it.",
+    inputSchema: obj({ agent: { type: "string", description: "Agent id (default: you)" }, check: { type: "boolean" } }),
+  }, async (i, ctx) => {
+    const agentId = typeof i.agent === "string" && i.agent.trim() ? i.agent.trim() : ctx.agentId;
+    if (!hub.agents.get(agentId)) return text(`No agent "${agentId}". hub_agents_list or task_agents shows the team.`, true);
+    const own = agentId === ctx.agentId;
+    // The check first: what it reconnects shows as connected in the map.
+    const check = i.check ? await accessCheck(ctx, own) : [];
+    const map = accessView(await hub.accessMap(agentId, own ? ctx.sessionId : undefined));
+    return text([`Access of ${agentId}${own ? " (you)" : ""}:`, map, ...(check.length ? ["", "Check now:", ...check] : [])].join("\n"));
+  });
+
+  /** hub_access's live check (English: for the model). */
+  async function accessCheck(ctx: ToolCallContext, own: boolean): Promise<string[]> {
+    const out: string[] = [];
+    try {
+      await hub.egress.resolveTarget("github.com");
+      out.push("- This computer's internet: works (github.com resolves).");
+    } catch (e: any) {
+      out.push(`- This computer's internet: ${e?.message ?? e}. It may be offline or asleep: what needs the network waits until it is back.`);
+    }
+    const down = hub.mcpClients.list().filter((s) => s.status === "reconnecting" || s.status === "error");
+    if (down.length) {
+      await Promise.race([Promise.all(down.map((s) => hub.mcpClients.kick(s.name, { stale: true }).catch(() => {}))), new Promise((r) => setTimeout(r, 10_000))]);
+      for (const s of down) {
+        const now = hub.mcpClients.list().find((x) => x.name === s.name);
+        out.push(`- Service ${s.name}: ${now?.status === "connected" ? "reconnected now" : `still ${now?.status ?? "gone"}${now?.error ? ` (${now.error})` : ""}; the hub keeps trying by itself`}.`);
+      }
+    } else out.push("- Services: none is down.");
+    if (own) {
+      const local = !ctx.machineId || ctx.machineId === "local" || ctx.machineId === hub.here();
+      if (!local) out.push(`- Your shell runs on ${hub.runner.computerName(ctx.machineId ?? "local")}: its own network there, not the hub's proxy.`);
+      else if (hub.egress.hasSession(ctx.sessionId))
+        out.push(
+          "- Your shell: its network goes through the hub's proxy, which holds a live permission for this session.",
+          "- To test your shell itself, run: curl -sS -o /dev/null -w '%{http_code}\\n' https://github.com — 200 or 301 means it works; \"Failed to connect to 127.0.0.1\" means your sandbox has no network in this session: say so in your result, and use the hub's tools (web_fetch, composio_github_*) meanwhile.",
+        );
+      else out.push("- Your shell: this session has no network permission (a dialog only looks; commands that need the network run in a task).");
+    }
+    return out;
+  }
 
   // ---------- settings ----------
 

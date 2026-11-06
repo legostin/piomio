@@ -15,6 +15,71 @@ import { InviteRegistry } from "./invites.ts";
 import type { MachineSetups } from "./machine-setup.ts";
 import type { Cluster } from "./cluster.ts";
 import { compareVersions } from "./updates.ts";
+import { posix } from "node:path";
+import { commandParts, readOnlyCommand } from "./policy/commands.ts";
+import { PRIVATE } from "./native-permissions.ts";
+
+/**
+ * What names credentials or private stores: a command that names one is never "only reads", wherever it runs. The
+ * closed paths of this computer (native-permissions.ts), and what holds the same on a Linux server.
+ */
+const CLOSED = [...PRIVATE, ".piomio-node", ".config/google-chrome", ".config/chromium", ".mozilla", ".bash_history", ".zsh_history", ".python_history", ".psql_history", "/etc/shadow", "/etc/sudoers"];
+const CREDENTIAL = /\.env\b|\bid_(?:rsa|ed25519|ecdsa|dsa)\b|credential|secret|token|passw|keychain|private[_-]?key/i;
+
+function namesClosed(command: string): boolean {
+  const low = command.toLowerCase();
+  return CREDENTIAL.test(command) || CLOSED.some((p) => low.includes(p.toLowerCase()));
+}
+/** An address in a command: what it reads could carry data out to that site. */
+const ADDRESS = /[a-z][a-z0-9+.-]*:\/\/|\b[\w.-]+@[\w.-]+:/i;
+
+/**
+ * What another computer's unreviewed reads may run: commands that look at the computer and the repository, never at a
+ * file's contents (there is no sandbox there, and a path can hide in quotes, a bare `cd` or a recursive read). Reading
+ * files there goes to auto mode's reviewer, which knows the agent's access.
+ */
+const LOOKS = new Set(["pwd", "ls", "whoami", "id", "uname", "uptime", "nproc", "df", "du", "date", "echo", "true", "false", "which"]);
+/**
+ * git's subcommands that show the repository's state and history. Not `diff` (by default it runs the repository's
+ * configured external diff program), nor `remote` (a remote's address may carry a token).
+ */
+const GIT_LOOKS = new Set(["status", "log", "rev-parse", "branch", "describe", "show-ref", "shortlog", "rev-list", "count-objects", "tag", "stash", "worktree", "version", "merge-base", "name-rev"]);
+/** A flag (`-5`, `--oneline`, `--format=%h %s`). */
+const FLAG = /^--?[A-Za-z0-9][A-Za-z0-9-]*(?:=[A-Za-z0-9%._:@^~{}(), -]*)?$/;
+/** A revision or a range of them (origin/main, HEAD~1, @{u}, v1.2, main..HEAD): never an absolute path or a way up. */
+const REVISION = /^[A-Za-z0-9._@^~{}+-][A-Za-z0-9._@^~{}/+-]*$/;
+const revision = (a: string) => REVISION.test(a) && !a.split("/").includes("..");
+
+/** A path an argument names stays in the folders that computer allows (relative: from the command's folder, never up). */
+function pathAllowed(p: string, dirs: string[]): boolean {
+  if (!p.startsWith("/")) return !p.split("/").includes("..");
+  const n = posix.normalize(p);
+  return dirs.some((d) => {
+    const dn = posix.normalize(d).replace(/\/+$/, "");
+    return n === dn || n.startsWith(`${dn}/`);
+  });
+}
+
+/**
+ * A command for another computer that needs no review: it passes this computer's shell reader (policy/commands.ts),
+ * names no closed store or address, runs only LOOKS or git's GIT_LOOKS, and each of its words is a flag or a revision
+ * (`ls`, `git status`, `git log origin/main..HEAD`, `df -h`). Anything else goes to auto mode's reviewer.
+ */
+export function readOnlyRemoteCommand(command: string): boolean {
+  const env = { home: "~", tmp: "/tmp" };
+  if (namesClosed(command) || ADDRESS.test(command) || !readOnlyCommand(command, env)) return false;
+  const parts = commandParts(command, env);
+  if (!parts?.length) return false;
+  for (const [name, ...args] of parts) {
+    if (name === "git") {
+      const [sub, ...rest] = args;
+      if (!sub || !GIT_LOOKS.has(sub) || !rest.every((a) => (a.startsWith("-") ? FLAG.test(a) : revision(a)))) return false;
+      continue;
+    }
+    if (!LOOKS.has(name) || !args.every((a) => /^-[A-Za-z0-9]+$/.test(a) || (name === "echo" && /^[A-Za-z0-9 ._:,-]*$/.test(a)))) return false;
+  }
+  return true;
+}
 
 export const NODE_AUTH_PREFIX = "piomio-node-auth:";
 
@@ -37,6 +102,10 @@ export class MachineHub {
   setups?: MachineSetups;
   /** Only the leading replica sets machines up and shares their workspaces (cluster.ts). */
   cluster?: Cluster;
+  /** The computers an agent is bound to (AgentDef.machines), unset or empty: any (app.ts). */
+  boundTo?: (agentId: string) => string[] | undefined;
+  /** This hub's own computer: its id for agents ("local", or its replica id) and its name (app.ts). */
+  here?: () => { id: string; name: string };
   /** This hub's version: machine_list says which computers run an older Piomio. */
   version?: string;
   private peers = new Map<string, RpcPeer>();
@@ -306,8 +375,42 @@ export class MachineHub {
     this.bus.emit("machine.updated", this.get(id)!);
   }
 
+  /**
+   * machine_exec of a command that only reads is a read there, as it is here: no review. Only on a POSIX computer (a
+   * Windows one runs it in cmd.exe, which reads quotes otherwise) whose commands are on, that the agent may use, in a
+   * session that has not read outside content; and only within that computer's allowed folders.
+   */
+  private remoteReadEffect(i: any, ctx: { agentId: string; tainted: boolean }): "read" | undefined {
+    if (ctx.tainted || typeof i?.command !== "string" || typeof i?.machine !== "string") return undefined;
+    const m = this.find(i.machine);
+    const info = m?.info;
+    if (!m || !info?.commands || /win(?:dows|32|_nt)/i.test(info.os)) return undefined;
+    const bound = this.boundTo?.(ctx.agentId);
+    if (bound?.length && !bound.includes(m.id)) return undefined;
+    if (typeof i.cwd === "string" && i.cwd && !pathAllowed(i.cwd, info.allowedDirs)) return undefined;
+    return readOnlyRemoteCommand(i.command) ? "read" : undefined;
+  }
+
+  /** The words for the hub's own computer named as a machine (English: it is for the model). */
+  private hereText(): string {
+    const h = this.here?.();
+    return (
+      `${h?.name ?? "This computer"} is the hub's own computer, not a paired machine: an agent that runs there uses its own shell ` +
+      `for commands (its network goes through the hub's proxy, and a change is checked by auto mode as everywhere). ` +
+      `From another computer, give the work a task there (task_delegate with machine "${h?.id ?? "local"}").`
+    );
+  }
+
+  /** The hub's own computer under one of its names: "local", "this", its id or its name. */
+  private isHere(name: string): boolean {
+    const h = this.here?.();
+    const n = name.trim().toLowerCase();
+    return ["local", "this", "here", "localhost"].includes(n) || (!!h && (n === h.id.toLowerCase() || n === h.name.toLowerCase()));
+  }
+
   async call<T>(machine: string, method: string, params: unknown, timeoutMs = 120_000): Promise<T> {
     const m = this.find(machine);
+    if (!m && this.isHere(machine)) throw new Error(this.hereText());
     if (!m) throw new Error(`Machine ${machine} not found`);
     const peer = this.peers.get(m.id);
     if (!peer) throw new Error(`Machine ${m.name} is offline`);
@@ -344,11 +447,13 @@ export class MachineHub {
       { name: "machine_list", owner: "core", effect: "read", description: "List the user's connected computers: status, OS, brains (subscriptions) and allowed directories.", inputSchema: { type: "object", properties: {} } },
       wrap(async () => {
         const ms = this.list();
-        if (!ms.length) return text("No machines are paired. The user can connect a computer on the Machines page.");
+        const h = this.here?.();
+        const hereLine = h ? `- ${h.name} (${h.id}) — this hub's own computer: agents running there use their own shell; work goes there with machine "${h.id}"` : "";
+        if (!ms.length) return text([hereLine, "No other machines are paired. The user can connect a computer on the Machines page."].filter(Boolean).join("\n"));
         return text(
-          ms
+          [hereLine, ...ms
             .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}${m.info.gpus?.length ? `, GPU: ${m.info.gpus.join(", ")}` : ""}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}${app(m.info)}` : ""}`)
-            .join("\n"),
+          ].filter(Boolean).join("\n"),
         );
       }),
     );
@@ -369,6 +474,8 @@ export class MachineHub {
         const r = await this.call<{ code: number; stdout: string; stderr: string }>(i.machine, "exec.run", { command: i.command, cwd: i.cwd, timeoutMs: Math.min(Number(i.timeoutSec ?? 120), 1800) * 1000 }, 1900_000);
         return text(`exit ${r.code}\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`, r.code !== 0);
       }),
+      undefined,
+      (i, ctx) => this.remoteReadEffect(i, ctx),
     );
     registry.register(
       {
