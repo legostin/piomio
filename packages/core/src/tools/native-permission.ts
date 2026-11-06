@@ -18,7 +18,7 @@ import type { AutoAction, AutoMode } from "../policy/auto.ts";
 import type { EgressGiven, EgressGuard } from "../policy/egress.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
-import { agentRoot, classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
+import { classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
 import { shownCommand } from "../policy/commands.ts";
 import { foldersOn, localFolderPaths } from "../agent-folders.ts";
 
@@ -42,6 +42,8 @@ export interface NativePermissionDeps {
   here?: () => string;
   /** Auto mode: decides what would ask the person, when the settings say so. */
   auto?: AutoMode;
+  ownedReadRoots?: (ctx: import("@piomio/shared").ToolCallContext) => string[];
+  ownedFiles?: (action: AutoAction, ctx: import("@piomio/shared").ToolCallContext) => Promise<boolean>;
   /** A machine's name for the reviewer ("local" is this hub's). */
   machineName?: (id: string) => string;
   /** What a tainted session may open on the web without a review (policy/egress.ts), and what the person gave it. */
@@ -148,12 +150,15 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       // no-network front desk retains its existing handling.
       const action = classify(tool, input, ctx.workspace, !!ctx.taskId);
       const { denyRead } = confinement(d.dataDir, ctx.workspace);
-      const own = agentRoot(ctx.workspace);
-      const readRoots = [...(own ? [own] : []), ...(opened.get(ctx.sessionId) ?? [])];
+      const readRoots = [...(d.ownedReadRoots?.(ctx) ?? []), ...(opened.get(ctx.sessionId) ?? [])];
       // Its project folders on the hub's computer are its own too (agent-folders.ts); a paired computer's policy decides there.
       const machine = ctx.machineId ?? "local";
       const folders = machine === "local" ? localFolderPaths(foldersOn(d.agents.get(ctx.agentId)?.folders, machine, d.here?.() ?? "local"), { dataDir: d.dataDir }) : [];
       let decided = decideNative(action, { workspace: ctx.workspace, roots: [...d.roots(), ...folders], readRoots, denied: denyRead });
+      if (await d.ownedFiles?.(autoAction(action, input, decided.reason), ctx)) {
+        // Ask mode still asks for a write outside this session; ordinary auto work needs no model vote.
+        decided = { decision: d.settings.get().approvalMode === "ask" && decided.decision !== "allow" ? "ask" : "allow", reason: "ordinary file work in the agent's own dialogs and tasks" };
+      }
       // The CLI's own fetch after outside content: its address may carry data out (policy/egress.ts).
       const urls = action.kind === "fetch" && action.url ? [action.url] : [];
       if (urls.length && d.egress) {
@@ -199,7 +204,7 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       // Auto mode decides instead of a card; what it hands over still gets one.
       if (decided.decision === "ask" && d.auto && d.settings.get().approvalMode !== "ask") {
         const ref = d.store.getSession(ctx.sessionId)?.brainRef;
-        const where = { sessionId: ctx.sessionId, conversationId: ctx.conversationId, taskId: ctx.taskId, agentId: ctx.agentId, workspace: ctx.workspace, machine: d.machineName?.(ctx.machineId ?? "local") ?? ctx.machineId ?? "local", ...(ref ? { brain: parseBrainRef(ref).brainId } : {}) };
+        const where = { sessionId: ctx.sessionId, conversationId: ctx.conversationId, taskId: ctx.taskId, agentId: ctx.agentId, workspace: ctx.workspace, machineId: ctx.machineId, machine: d.machineName?.(ctx.machineId ?? "local") ?? ctx.machineId ?? "local", ...(ref ? { brain: parseBrainRef(ref).brainId } : {}) };
         const verdict = await d.auto.decide(autoAction(action, safe, decided.reason), where);
         if (verdict.decision === "allow") {
           decided = { decision: "allow", reason: `auto mode: allowed at stage ${verdict.stage}` };

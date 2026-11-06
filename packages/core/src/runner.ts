@@ -74,6 +74,7 @@ export interface RunnerDeps {
   machineName: (machineId: string) => string | undefined;
   /** The paired computers (task_delegate's `machine`). */
   machines?: () => Machine[];
+  canonicalMachine?: (id: string) => string;
   /** The id an agent's binding (AgentDef.machines) names the hub's own computer by: its replica id in a cluster, else "local". */
   here?: () => string;
   /** The kinds of brain the brain plugins and the computers offer: one of those not connected now may come back. */
@@ -1022,7 +1023,7 @@ export class SessionRunner {
     const agent = this.d.agents.get(task.agentId);
     const at = task.brainRef ? parseBrainRef(task.brainRef).machineId : "local";
     const placedOn = at !== "local" && at !== this.here() ? this.computerName(at) : undefined;
-    const machines = placedOn ?? (agent && bound(agent.machines) && !onMachine("local", agent.machines, this.here()) ? this.boundNames(agent) : undefined);
+    const machines = placedOn ?? (agent && bound(agent.machines) && !onMachine("local", agent.machines, this.here(), this.d.canonicalMachine) ? this.boundNames(agent) : undefined);
     const window = machines ? this.waits.machineMs : this.waits.brainMs;
     if (w.broken > MAX_BROKEN_RETRIES || Date.now() - w.since >= window) {
       this.waiting.delete(task.id);
@@ -1403,11 +1404,11 @@ export class SessionRunner {
   }
 
   /** The computers a task can run on: the hub's own first, then the paired ones. */
-  computers(): Array<{ id: string; name: string; online: boolean; gpus?: string[]; commands?: boolean }> {
+  computers(): Array<{ id: string; aliases?: string[]; name: string; online: boolean; gpus?: string[]; commands?: boolean }> {
     const gpus = (list: string[] | undefined) => (list?.length ? { gpus: list } : {});
     return [
-      { id: "local", name: hubName(), online: true, ...gpus(this.d.gpus?.()) },
-      ...(this.d.machines?.() ?? []).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", ...gpus(m.info?.gpus), ...(m.info && !m.info.commands ? { commands: false } : {}) })),
+      { id: "local", aliases: (this.d.machines?.() ?? []).filter((m) => m.sameHost).map((m) => m.id), name: hubName(), online: true, ...gpus(this.d.gpus?.()) },
+      ...(this.d.machines?.() ?? []).filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", ...gpus(m.info?.gpus), ...(m.info && !m.info.commands ? { commands: false } : {}) })),
     ];
   }
 
@@ -1428,7 +1429,7 @@ export class SessionRunner {
 
   /** The agent's brains for a kind of work, in order: its own with the pool of machines (expandBrains), on its computers only. */
   private ownBrains(agent: AgentDef, kind: WorkKind, choice: ThinkingChoice): string[] {
-    return onMachines(expandBrains(brainsFor(agent, kind, choice), this.d.brains.list().map((b) => b.ref)), agent.machines, this.here());
+    return onMachines(expandBrains(brainsFor(agent, kind, choice), this.d.brains.list().map((b) => b.ref)), agent.machines, this.here(), this.d.canonicalMachine);
   }
 
   /**
@@ -1438,7 +1439,7 @@ export class SessionRunner {
   private machinesOff(agent: AgentDef): string | undefined {
     if (!bound(agent.machines)) return undefined;
     const online = new Set((this.d.machines?.() ?? []).filter((m) => m.status === "online").map((m) => m.id));
-    if (agent.machines.some((m) => m === "local" || m === this.here() || online.has(m))) return undefined;
+    if (agent.machines.some((m) => m === "local" || m === this.here() || online.has(m) || this.d.canonicalMachine?.(m) === this.here())) return undefined;
     return t("chat.machinesOff", { agent: agentName(agent, hubLocale()), machines: this.boundNames(agent), count: agent.machines.length });
   }
 
@@ -1450,15 +1451,16 @@ export class SessionRunner {
     const agent = this.d.agents.get(agentId);
     if (!agent) return { error: `No agent ${agentId}.` };
     const list = this.computers();
-    const key = machine.trim().toLowerCase();
-    const m = list.find((x) => x.id.toLowerCase() === key || x.name.toLowerCase() === key) ?? list.find((x) => x.name.toLowerCase().includes(key));
+    const alias = this.d.machines?.().find((x) => x.sameHost && (x.id === machine || x.name.toLowerCase() === machine.trim().toLowerCase()));
+    const key = alias ? "local" : machine.trim().toLowerCase();
+    const m = list.find((x) => x.id.toLowerCase() === key || x.aliases?.includes(machine) || x.name.toLowerCase() === key) ?? list.find((x) => x.name.toLowerCase().includes(key));
     if (!m) return { error: `No computer "${machine}". Computers: ${list.map((x) => `${x.name} (${x.id}${x.online ? "" : ", offline"})`).join(", ")}.` };
-    if (!onMachine(m.id, agent.machines, this.here())) {
+    if (!onMachine(m.id, agent.machines, this.here(), this.d.canonicalMachine)) {
       const names = this.boundNames(agent);
       return { error: `${agentName(agent, hubLocale())} works only on ${names}. Place the task there, or ask the user whether to change the agent's computers.` };
     }
     const refs = agent.brains.map(parseBrainRef);
-    const own = refs.find((r) => r.machineId === m.id);
+    const own = refs.find((r) => r.machineId === m.id || (this.d.canonicalMachine && this.d.canonicalMachine(r.machineId) === this.d.canonicalMachine(m.id)));
     // Offline now: the task waits for the agent's brain there (its own entry, or one the computer said it was signed in to).
     if (!m.online) {
       const known = (this.d.machines?.() ?? []).find((x) => x.id === m.id)?.info?.clis.filter((c) => c.available && c.authenticated).map((c) => c.brainId) ?? [];
@@ -1703,7 +1705,7 @@ export class SessionRunner {
   private stayOn(agent: AgentDef, prior: SessionRow | undefined): string | undefined {
     const changedAt = this.d.settings.getKey<Record<string, string>>(BRAINS_CHANGED_KEY, {})[agent.id];
     if (!prior || (changedAt && changedAt > prior.createdAt)) return undefined;
-    return onMachines([prior.brainRef], agent.machines, this.here()).length ? prior.brainRef : undefined;
+    return onMachines([prior.brainRef], agent.machines, this.here(), this.d.canonicalMachine).length ? prior.brainRef : undefined;
   }
 
   /** `queue`: a task's or thread's turn waits for a busy brain; the user's own conversations are never held up by tasks. */
@@ -2238,7 +2240,7 @@ export class SessionRunner {
     let earliestReset: string | undefined;
 
     // A task placed on a computer runs on the brain there or not at all (unless the agent was bound elsewhere since).
-    const pinned = task?.brainRef && onMachines([task.brainRef], agent.machines, this.here()).length ? [task.brainRef] : undefined;
+    const pinned = task?.brainRef && onMachines([task.brainRef], agent.machines, this.here(), this.d.canonicalMachine).length ? [task.brainRef] : undefined;
     // Under the hood: the brains in the order this request should take them, each with its model and effort
     // (model-router.ts). An exact model and effort the person chose take the agent's own order instead.
     const choice = task ? taskThinking(agent, kind, task.thinking) : thinkingFor(agent, kind);
@@ -2276,7 +2278,7 @@ export class SessionRunner {
       }
       // No brain of the agent is set up yet: the setup card instead of an error, and the message waits for a brain.
       // (A group chat's round goes on with the next member instead.)
-      if (!ref && setupOnly && !tried.size && !task && this.d.setup && conv.kind !== "group" && onMachine("local", agent.machines, this.here())) {
+      if (!ref && setupOnly && !tried.size && !task && this.d.setup && conv.kind !== "group" && onMachine("local", agent.machines, this.here(), this.d.canonicalMachine)) {
         this.d.setup.hold(conv.id, agent.id, prompt, { replyChannel: opts.replyChannel, quote: opts.quote, attachments: opts.attachments, speech: opts.speech });
         this.addSetupCard(conv.id);
         return { text: "", error: t("chat.needsBrain"), awaitingApproval: false };

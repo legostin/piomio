@@ -189,7 +189,7 @@ export class ToolGateway {
       if (this.d.approvals.takeAllowance(s.id, name, (stored) => JSON.stringify(stored) === want)) return this.execute(s, tool, input, { ...ctx, approved: true });
       // Auto mode decides instead of a card, except for the tools that always show the person their own.
       if (this.d.auto && settings.approvalMode !== "ask" && !OWN_CARD_TOOLS.has(name)) {
-        const where = { sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, workspace: ctx.workspace, machine: this.d.machineName?.(ctx.machineId) ?? ctx.machineId, brain: parseBrainRef(s.brainRef).brainId };
+        const where = { sessionId: s.id, conversationId: s.conversationId, taskId: s.taskId, agentId: s.agentId, workspace: ctx.workspace, machineId: ctx.machineId, machine: this.d.machineName?.(ctx.machineId) ?? ctx.machineId, brain: parseBrainRef(s.brainRef).brainId };
         const why = policy.egress && egress ? egress.why : policy.reason;
         const verdict = await this.d.auto.decide({ tool: name, input: safe, summary, kind: "tool", effect: tool.effect, why }, where);
         if (verdict.decision === "allow") return this.execute(s, tool, input, { ...ctx, reviewed: true });
