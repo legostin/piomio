@@ -1102,6 +1102,8 @@ export type OutboundMedia =
 // ---------- Machines ----------
 
 export interface MachineInfo {
+  /** Node workspace root, independent of its allowed project folders. */
+  workspacesRoot?: string;
   os: string;
   hostname: string;
   arch: string;
@@ -1124,6 +1126,8 @@ export interface Machine {
   id: string;
   name: string;
   publicKey: string;
+  /** Authenticated as another executor on the hub computer; never supplied by node.hello. */
+  sameHost?: boolean;
   status: "online" | "offline";
   info?: MachineInfo;
   lastSeenAt?: ISODate;
@@ -1151,6 +1155,8 @@ export interface WorkRule {
  * "local"), a paired machine, or another replica of the hub (`standby`: it is not leading, so nothing runs there now).
  */
 export interface Computer {
+  /** Existing executor ids on this computer; refs keep using them. */
+  aliases?: string[];
   id: string;
   name: string;
   online: boolean;

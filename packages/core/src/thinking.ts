@@ -30,16 +30,16 @@ export function limitedBrains(db: Db): Set<string> {
 }
 
 /** `here`: the id the hub's own computer goes by in a binding (AgentDef.machines); a bound agent sees only its computers' brains. */
-export async function thinkingView(brains: BrainRegistry, db: Db, agent: AgentDef, here = "local"): Promise<ThinkingView> {
+export async function thinkingView(brains: BrainRegistry, db: Db, agent: AgentDef, here = "local", canonical?: (id: string) => string): Promise<ThinkingView> {
   const listed = brains.list();
   const refs: string[] = [];
   const add = (r: string) => {
     const k = norm(r);
     if (!refs.includes(k)) refs.push(k);
   };
-  const ordered = (k: WorkKind) => onMachines(expandBrains(brainsFor(agent, k), listed.map((b) => b.ref)), agent.machines, here);
+  const ordered = (k: WorkKind) => onMachines(expandBrains(brainsFor(agent, k), listed.map((b) => b.ref)), agent.machines, here, canonical);
   for (const k of WORK_KINDS) for (const r of ordered(k)) add(r);
-  for (const r of onMachines(listed.map((b) => b.ref), agent.machines, here)) add(r);
+  for (const r of onMachines(listed.map((b) => b.ref), agent.machines, here, canonical)) add(r);
   const limited = limitedBrains(db);
   const probes = new Map<string, ProbeResult | undefined>();
   const options: ThinkingBrain[] = await Promise.all(

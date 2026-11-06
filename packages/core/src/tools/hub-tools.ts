@@ -397,8 +397,8 @@ export function registerHubTools(hub: Hub): void {
       const machines = patch.machines ?? prev?.machines ?? [];
       if (machines.length) {
         const listed = hub.brains.list().map((b) => b.ref);
-        if (!onMachines(expandBrains(patch.brains ?? prev?.brains ?? [], listed), machines, hub.here()).length) {
-          const offer = onMachines(listed, machines, hub.here());
+        if (!onMachines(expandBrains(patch.brains ?? prev?.brains ?? [], listed), machines, hub.here(), (id) => hub.machines.canonical(id)).length) {
+          const offer = onMachines(listed, machines, hub.here(), (id) => hub.machines.canonical(id));
           const names = machines.map((m) => hub.runner.computerName(m)).join(", ");
           return text(`Not saved: none of the agent's brains runs on ${names}. Give brains from there${offer.length ? ` (${offer.join(", ")})` : " (none is connected there yet)"}, or machines: [] to unbind.`, true);
         }

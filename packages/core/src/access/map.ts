@@ -54,10 +54,10 @@ export interface AccessInput {
 /** The map: only the computers the agent is bound to (AgentDef.machines) when it is; replicas on standby are not there. */
 export function buildAccessMap(i: AccessInput): AccessMap {
   const bound = i.agent.machines?.length ? new Set(i.agent.machines) : undefined;
-  const folderOn = (id: string) => (i.agent.folders ?? []).filter((f) => (f.machine ?? i.here) === id || (id === i.here && f.machine === "local"));
+  const folderOn = (id: string, aliases: string[] = []) => (i.agent.folders ?? []).filter((f) => (f.machine ?? i.here) === id || aliases.includes(f.machine ?? i.here) || (id === i.here && f.machine === "local"));
   const computers = i.computers
-    .filter((c) => !c.standby && (!bound || bound.has(c.id) || (c.id === i.here && bound.has("local"))))
-    .map((c) => ({ id: c.id, name: c.name, here: c.id === i.here, online: c.online, ...(c.id !== i.here && c.commands !== undefined ? { commands: c.commands } : {}), folders: folderOn(c.id) }));
+    .filter((c) => !c.standby && (!bound || bound.has(c.id) || c.aliases?.some((id) => bound.has(id)) || (c.id === i.here && bound.has("local"))))
+    .map((c) => ({ id: c.id, name: c.name, here: c.id === i.here, online: c.online, ...(c.id !== i.here && c.commands !== undefined ? { commands: c.commands } : {}), folders: folderOn(c.id, c.aliases) }));
   return {
     agent: { id: i.agent.id, name: i.agent.name },
     ...(i.ownFolder ? { ownFolder: i.ownFolder } : {}),
