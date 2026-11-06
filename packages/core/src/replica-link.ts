@@ -1,7 +1,7 @@
 // One lasting connection between two replicas (cluster.ts), whichever of them could dial it: a machine behind NAT or
 // a link that some networks cannot reach (Funnel) still talks to a replica with a public address, and everything goes
 // both ways over it — the replicas' own calls, and the requests and WebSockets a standby forwards to the leader: the
-// phones', the machines', and its own web UI's.
+// phones', the machines', and its own web UI's and security console's.
 
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
@@ -14,9 +14,10 @@ import type { AuthSession } from "./auth.ts";
 export const LINK_PATH = "/api/replica/link";
 
 /**
- * A standby's web UI works on the leader: the standby checks the session, CSRF token and origin, and sends the call
- * with that session over the link. The leader's main app takes the session only next to its own mark, which never
- * leaves its process (main-app.ts), so a client can't claim one by sending these headers itself.
+ * A standby's web UI and security console work on the leader: the standby checks the session, CSRF token and origin,
+ * and sends the call with that session over the link. The leader's main app or console takes the session only next to
+ * its own mark, which never leaves its process (forward.ts vouchedSession), so a client can't claim one by sending
+ * these headers itself.
  */
 export const LINK_MARK = "x-piomio-link";
 export const LINK_SESSION = "x-piomio-session";
@@ -50,14 +51,19 @@ export interface LinkServer {
   deviceUrl(): string;
   /** The main app (machines' /node/ws and /mcp, a standby's web UI), on loopback. */
   mainUrl(): string;
-  /** What the main app takes as proof that a call came over a link (LINK_MARK). */
+  /** The security console (a standby's console), on loopback. */
+  consoleUrl(): string;
+  /** What the main app and the console take as proof that a call came over a link (LINK_MARK). */
   mark(): string;
   fingerprint(): string;
 }
 
-/** What a standby sends for the main app: a call, or a WebSocket, and the session it checked for it (web UI only). */
+/** Which of the leader's apps a forwarded call is for (the device app when none is named, as older replicas send). */
+export type LinkApp = "main" | "device" | "console";
+
+/** What a standby sends: a call, or a WebSocket, and the session it checked for it (web UI and console only). */
 interface MainCall {
-  app?: "main" | "device";
+  app?: LinkApp;
   headers: Record<string, string>;
   session?: AuthSession;
 }
@@ -67,7 +73,9 @@ const pinOk = (s: unknown, fingerprint: string) => pinMatches(s as TLSSocket, fi
 /** Serves a link: the peer's calls, and its forwarded HTTP requests and WebSockets to this replica's apps. */
 export function serveLink(rpc: RpcPeer, from: string, server: LinkServer): void {
   rpc.handle("replica.call", (c: LinkCall) => server.call(from, c));
-  /** Headers for the main app: never a peer's own x-piomio-*; the mark goes with the session the peer vouches for. */
+  /** The main app or the console on loopback; undefined for the device app (TLS, pinned). */
+  const loopback = (app?: LinkApp): string | undefined => (app === "main" ? server.mainUrl() : app === "console" ? server.consoleUrl() : undefined);
+  /** Headers for the main app or console: never a peer's own x-piomio-*; the mark goes with the session the peer vouches for. */
   const mainHeaders = (r: MainCall): Record<string, string> => {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(r.headers)) if (!k.toLowerCase().startsWith("x-piomio-")) out[k] = v;
@@ -85,10 +93,10 @@ export function serveLink(rpc: RpcPeer, from: string, server: LinkServer): void 
     held.set(id, { body, timer });
   };
   rpc.handle("replica.http", async (r: MainCall & { method: string; path: string; body?: string; pieces?: boolean }) => {
-    const main = r.app === "main";
-    const res = await pinnedRequest(`${main ? server.mainUrl() : server.deviceUrl()}${r.path}`, {
+    const main = loopback(r.app);
+    const res = await pinnedRequest(`${main ?? server.deviceUrl()}${r.path}`, {
       method: r.method,
-      headers: main ? { ...mainHeaders(r), host: new URL(server.mainUrl()).host } : r.headers,
+      headers: main ? { ...mainHeaders(r), host: new URL(main).host } : r.headers,
       body: r.body ? Buffer.from(r.body, "base64") : "",
       ...(main ? {} : { fingerprint: server.fingerprint() }),
       timeoutMs: 6 * 3600_000,
@@ -116,8 +124,8 @@ export function serveLink(rpc: RpcPeer, from: string, server: LinkServer): void 
   });
   const sockets = new Map<string, WebSocket>();
   rpc.handle("replica.ws.open", (r: MainCall & { id: string; path: string }) => {
-    const main = r.app === "main";
-    const base = (main ? server.mainUrl() : server.deviceUrl()).replace(/^http/, "ws");
+    const main = loopback(r.app);
+    const base = (main ?? server.deviceUrl()).replace(/^http/, "ws");
     const ws = new WebSocket(`${base}${r.path}`, { headers: main ? mainHeaders(r) : r.headers, ...(main ? {} : { rejectUnauthorized: false, agent: pinnedAgent }), handshakeTimeout: 10_000 });
     if (!main) ws.on("upgrade", (res) => !pinOk(res.socket, server.fingerprint()) && ws.terminate());
     sockets.set(r.id, ws);
@@ -198,10 +206,10 @@ export function linkPeer(ws: WebSocket, o: { onBytes?: () => void; pingMs?: numb
   return rpc;
 }
 
-/** A forwarded HTTP request over a link: the leader's device app answers it, or its main app (`session`: the web UI's). */
+/** A forwarded HTTP request over a link: the leader's device app answers it, or its main app or console (`session`: checked here). */
 export async function linkHttp(
   rpc: RpcPeer,
-  r: { app?: "main" | "device"; method: string; path: string; headers: Record<string, string>; body: Buffer; session?: AuthSession },
+  r: { app?: LinkApp; method: string; path: string; headers: Record<string, string>; body: Buffer; session?: AuthSession },
 ): Promise<{ status: number; headers: Record<string, string | string[]>; body: Buffer }> {
   const res = await rpc.request<{ status: number; headers: Record<string, string | string[]>; body: string; total?: number; rest?: string }>(
     "replica.http",

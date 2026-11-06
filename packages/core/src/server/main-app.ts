@@ -10,8 +10,7 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyWebsocket from "@fastify/websocket";
 import { LOCALES, localeFromEnv } from "@piomio/shared";
 import { errorText, hubLocale, localizePluginValue, LocalizedError, requestLocale, t, tFor } from "../i18n.ts";
-import { forwardToLeader, pipeToLeader, relayToLeader } from "./forward.ts";
-import { LINK_MARK, LINK_SESSION } from "../replica-link.ts";
+import { forwardToLeader, pipeToLeader, relayToLeader, vouchedSession } from "./forward.ts";
 import type { WebSocket } from "ws";
 import type { RpcPeer } from "@piomio/shared";
 import type { Hub } from "../app.ts";
@@ -60,20 +59,8 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
     return host ? [host.split(":")[0].toLowerCase()] : [];
   };
 
-  /**
-   * A web-UI call a standby sent over the link, with the session it checked there (cookie, CSRF token, origin): the
-   * session counts only next to this replica's own mark, which the link adds and nothing outside this process knows.
-   */
-  const vouched = (req: FastifyRequest): AuthSession | undefined => {
-    if (remote || !hub.cluster.markOk(req.headers[LINK_MARK]) || !/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(req.socket.remoteAddress ?? "")) return undefined;
-    try {
-      const s = JSON.parse(String(req.headers[LINK_SESSION] ?? "")) as Partial<AuthSession>;
-      if (s.kind === "main" && typeof s.id === "string" && typeof s.csrf === "string" && typeof s.expiresAt === "string") return s as AuthSession;
-    } catch {
-      /* not one */
-    }
-    return undefined;
-  };
+  /** A web-UI call a standby checked and sent over the link (never on the link's remote gateway). */
+  const vouched = (req: FastifyRequest): AuthSession | undefined => (remote ? undefined : vouchedSession(hub, req, "main"));
 
   /** The leader, over its link, when this replica is a standby whose web UI it takes (an older leader doesn't). */
   const uiLeader = (): { link: RpcPeer; name: string } | undefined => {

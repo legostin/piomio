@@ -1,7 +1,8 @@
 // A standby replica sends the phones on to the leader (cluster.ts): device-app requests and the app's WebSocket go
 // through as they are (the phone's token is the same on every replica), so a phone may reach the hub at any
-// replica's address. Machines connected here (/node/ws, /mcp) reach the leader the same way over the link, and so does
-// this replica's own web UI once it has checked who asks (relayToLeader). The replicas' own routes stay here.
+// replica's address. Machines connected here (/node/ws, /mcp) reach the leader the same way over the link, and so do
+// this replica's own web UI and security console once it has checked who asks (relayToLeader). The replicas' own routes
+// stay here.
 
 import { randomUUID } from "node:crypto";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
@@ -11,9 +12,9 @@ import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fast
 import WebSocket from "ws";
 import type { RpcPeer } from "@piomio/shared";
 import type { Hub } from "../app.ts";
-import type { AuthSession } from "../auth.ts";
+import type { AuthSession, SessionKind } from "../auth.ts";
 import { requestLocale, tFor } from "../i18n.ts";
-import { linkHttp, MAX_LINK_BODY } from "../replica-link.ts";
+import { LINK_MARK, LINK_SESSION, linkHttp, MAX_LINK_BODY, type LinkApp } from "../replica-link.ts";
 import { pinMatches, pinnedAgent } from "@piomio/replica";
 
 const HERE = /^\/api\/replica\//;
@@ -22,6 +23,23 @@ const HOP = new Set(["connection", "keep-alive", "proxy-connection", "transfer-e
 const OURS = /^x-piomio-/;
 
 const pinOk = (s: TLSSocket, fingerprint: string): boolean => pinMatches(s, fingerprint);
+const LOOPBACK = /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/;
+
+/**
+ * A web-UI or console call a standby sent over the link, with the session of that `kind` it checked there (cookie,
+ * CSRF token, origin): the session counts only next to this replica's own mark, which the link adds on loopback and
+ * nothing outside this process knows.
+ */
+export function vouchedSession(hub: Hub, req: FastifyRequest, kind: SessionKind): AuthSession | undefined {
+  if (!hub.cluster.markOk(req.headers[LINK_MARK]) || !LOOPBACK.test(req.socket.remoteAddress ?? "")) return undefined;
+  try {
+    const s = JSON.parse(String(req.headers[LINK_SESSION] ?? "")) as Partial<AuthSession>;
+    if (s.kind === kind && typeof s.id === "string" && typeof s.csrf === "string" && typeof s.expiresAt === "string") return s as AuthSession;
+  } catch {
+    /* not one */
+  }
+  return undefined;
+}
 
 function headersFor(h: IncomingHttpHeaders, ip: string): Record<string, string | string[]> {
   const out: Record<string, string | string[]> = {};
@@ -35,8 +53,8 @@ const moving = (req: FastifyRequest, leader: string): string => JSON.stringify({
 type Answer = { status: number; headers: Record<string, string | string[]>; body: Buffer };
 
 interface OverLink {
-  app: "device" | "main";
-  /** The web UI's session, checked here (relayToLeader). */
+  app: LinkApp;
+  /** The web UI's or the console's session, checked here (relayToLeader). */
   session?: AuthSession;
   /** Changes the request's headers before they go. */
   headers?(h: Record<string, string>): void;
@@ -114,10 +132,17 @@ export function forwardToLeader(hub: Hub, req: FastifyRequest, reply: FastifyRep
 }
 
 /**
- * The web UI's call on a standby (main app), once this replica has checked its session, CSRF token and origin: the
- * leader's main app answers it over the link and takes that session as checked (replica-link.ts).
+ * The web UI's call on a standby (main app), or its security console's (`app: "console"`), once this replica has
+ * checked its session, CSRF token and origin: the leader's same app answers it over the link and takes that session as
+ * checked (vouchedSession).
  */
-export function relayToLeader(req: FastifyRequest, reply: FastifyReply, leader: { link: RpcPeer; name: string }, session: AuthSession, o: Pick<OverLink, "headers" | "edit"> = {}): void {
+export function relayToLeader(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  leader: { link: RpcPeer; name: string },
+  session: AuthSession,
+  o: Pick<OverLink, "headers" | "edit"> & { app?: "main" | "console" } = {},
+): void {
   overLink(leader.link, leader.name, req, reply, { app: "main", session, ...o });
 }
 
@@ -147,12 +172,13 @@ function pipesOn(link: RpcPeer): Map<string, WebSocket> {
 }
 
 /**
- * The app's WebSocket (or a machine's /node/ws, or the web UI's /api/ws with the `session` checked here: `app: "main"`)
- * on a standby: one to the leader, messages both ways. True when it took the socket.
+ * The app's WebSocket (or a machine's /node/ws, or the web UI's /api/ws with the `session` checked here: `app: "main"`;
+ * the console's with its session: `app: "console"`) on a standby: one to the leader, messages both ways. True when it
+ * took the socket.
  */
-export function pipeToLeader(hub: Hub, socket: WebSocket, req: FastifyRequest, app: "device" | "main" = "device", session?: AuthSession): boolean {
+export function pipeToLeader(hub: Hub, socket: WebSocket, req: FastifyRequest, app: LinkApp = "device", session?: AuthSession): boolean {
   const target = hub.cluster.leaderTarget();
-  if (!target || (app === "main" && !target.link)) return false;
+  if (!target || (app !== "device" && !target.link)) return false;
   const headers0: Record<string, string> = {};
   for (const k of ["authorization", "cookie", "user-agent", "accept-language"]) if (typeof req.headers[k] === "string") headers0[k] = req.headers[k] as string;
   if (target.link) {

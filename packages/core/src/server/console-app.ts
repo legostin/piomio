@@ -1,18 +1,22 @@
 // Security console (port 8081): its own origin, cookie and strict CSP. No plugin code ever runs here.
-// Vault, approvals, rules, audit, passkeys and password live only on this origin.
+// Vault, approvals, rules, audit, passkeys and password live only on this origin. On a standby replica (cluster.ts) the
+// console works on the leader: once it has checked who asks, its calls and its socket go there over the link, so a tap
+// wakes the call waiting on the leader and nothing runs here. Signing in and the account stay on this replica.
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyCookie from "@fastify/cookie";
 import fastifyWebsocket from "@fastify/websocket";
-import { LOCALES, type ApprovalStatus, type Rule, type VaultScope } from "@piomio/shared";
+import type { WebSocket } from "ws";
+import { LOCALES, type ApprovalStatus, type Rule, type RpcPeer, type VaultScope } from "@piomio/shared";
 import type { Hub } from "../app.ts";
 import type { AuthSession } from "../auth.ts";
 import { VaultError } from "../vault/service.ts";
 import { errorText, localizePluginValue, LocalizedError, requestLocale, tFor } from "../i18n.ts";
 import { suggestRule } from "../policy/engine.ts";
 import { clientIp, hostAllowed, HttpError, originAllowed, originsFor, safeFile, securityHeaders, sendFile } from "./http.ts";
+import { pipeToLeader, relayToLeader, vouchedSession } from "./forward.ts";
 
 const COOKIE = "piomio_console";
 
@@ -63,12 +67,29 @@ export async function buildConsoleApp(hub: Hub): Promise<FastifyInstance> {
     if (req.method !== "GET" && !String(req.headers["content-type"] ?? "").startsWith("application/json")) throw new HttpError(415, "JSON required");
   };
 
-  const guard = async (req: FastifyRequest) => {
+  /** A console call a standby checked and sent over the link (forward.ts vouchedSession). */
+  const vouched = (req: FastifyRequest): AuthSession | undefined => vouchedSession(hub, req, "console");
+
+  /** The leader, over its link, when this replica is a standby whose console it takes (an older leader doesn't). */
+  const consoleLeader = (): { link: RpcPeer; name: string } | undefined => {
+    const l = hub.cluster.leaderTarget();
+    return l?.link && l.console ? { link: l.link, name: l.name } : undefined;
+  };
+
+  /** Session from this console's own cookie, CSRF token and same-origin check. */
+  const ownGuard = async (req: FastifyRequest) => {
     sameOrigin(req);
     const s = hub.auth.session(req.cookies[COOKIE], "console");
     if (!s) throw new HttpError(401, "auth.consoleRequired");
     if (req.headers["x-csrf"] !== s.csrf) throw new HttpError(403, "CSRF token mismatch");
     (req as any).consoleSession = s as AuthSession;
+  };
+
+  /** The same, or a standby's checked call over the link. */
+  const guard = async (req: FastifyRequest) => {
+    const v = vouched(req);
+    if (v) (req as any).consoleSession = v;
+    else await ownGuard(req);
   };
 
   const login = (reply: FastifyReply) => {
@@ -113,7 +134,49 @@ export async function buildConsoleApp(hub: Hub): Promise<FastifyInstance> {
     return { ok: true };
   });
 
+  // ---------- account: stays with the sign-in on this replica (a passkey belongs to this computer's address) ----------
+
   await app.register(async (api) => {
+    api.addHook("preHandler", ownGuard);
+    api.get("/console-api/passkeys", async () => hub.auth.listPasskeys());
+    api.post("/console-api/passkeys/options", async () => hub.auth.passkeyRegistrationOptions());
+    api.post("/console-api/passkeys/register", async (req) => {
+      const b = req.body as any;
+      await hub.auth.passkeyRegister(b?.response, String(b?.name ?? "passkey"));
+      return hub.auth.listPasskeys();
+    });
+    api.delete("/console-api/passkeys/:id", async (req) => {
+      hub.auth.removePasskey(decodeURIComponent((req.params as any).id));
+      return hub.auth.listPasskeys();
+    });
+    api.post("/console-api/password", async (req) => {
+      const b = req.body as any;
+      hub.auth.changePassword(String(b?.oldPassword ?? ""), String(b?.newPassword ?? ""), clientIp(req));
+      return { ok: true };
+    });
+  });
+
+  // ---------- the hub's security: on a standby, the leader's ----------
+
+  await app.register(async (api) => {
+    // A standby's console works on the leader: each call, once checked here, goes there over the link, so a tap wakes
+    // the call waiting on the leader, the vault is the one that serves the hub, and nothing runs here. Without a link
+    // to a leader that takes it, this replica shows its own copy, a few seconds behind, and changes wait: acting on the
+    // copy would run the approved action here, beside the leader's work.
+    api.addHook("onRequest", async (req, reply) => {
+      const standby = hub.cluster.leaderTarget();
+      if (!standby || vouched(req)) return;
+      await ownGuard(req);
+      const leader = consoleLeader();
+      if (leader) {
+        relayToLeader(req, reply, leader, (req as any).consoleSession as AuthSession, { app: "console" });
+        return reply;
+      }
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        reply.code(503).send({ error: tFor(requestLocale(req))("cluster.standby", { leader: standby.name }) });
+        return reply;
+      }
+    });
     api.addHook("preHandler", guard);
 
     // ---------- vault ----------
@@ -218,23 +281,6 @@ export async function buildConsoleApp(hub: Hub): Promise<FastifyInstance> {
     });
     api.get("/console-api/audit/verify", async () => hub.audit.verify());
 
-    // ---------- account ----------
-    api.get("/console-api/passkeys", async () => hub.auth.listPasskeys());
-    api.post("/console-api/passkeys/options", async () => hub.auth.passkeyRegistrationOptions());
-    api.post("/console-api/passkeys/register", async (req) => {
-      const b = req.body as any;
-      await hub.auth.passkeyRegister(b?.response, String(b?.name ?? "passkey"));
-      return hub.auth.listPasskeys();
-    });
-    api.delete("/console-api/passkeys/:id", async (req) => {
-      hub.auth.removePasskey(decodeURIComponent((req.params as any).id));
-      return hub.auth.listPasskeys();
-    });
-    api.post("/console-api/password", async (req) => {
-      const b = req.body as any;
-      hub.auth.changePassword(String(b?.oldPassword ?? ""), String(b?.newPassword ?? ""), clientIp(req));
-      return { ok: true };
-    });
     api.get("/console-api/plugins", async (req) =>
       hub.plugins.list().map((r) => ({ id: r.id, name: localizePluginValue(r.layout, r.layout?.manifest.name ?? r.id, requestLocale(req)), source: r.source, enabled: r.enabled, permissions: r.granted, extraVault: r.extraVault, hasUi: !!r.layout?.uiEntry })),
     );
@@ -253,10 +299,14 @@ export async function buildConsoleApp(hub: Hub): Promise<FastifyInstance> {
   });
 
   app.get("/console-api/ws", { websocket: true }, (socket, req) => {
-    if (!originAllowed(req, origins) || !hub.auth.session(req.cookies[COOKIE], "console")) {
+    const v = vouched(req);
+    const s = v ?? (originAllowed(req, origins) ? hub.auth.session(req.cookies[COOKIE], "console") : undefined);
+    if (!s) {
       socket.close(4401, "unauthorized");
       return;
     }
+    // On a standby, the leader's events: its cards and its vault.
+    if (!v && consoleLeader() && pipeToLeader(hub, socket as unknown as WebSocket, req, "console", s)) return;
     const send = (type: string, data: unknown) => socket.readyState === 1 && socket.send(JSON.stringify({ type, data }));
     const offs = [
       hub.bus.on("approval.created", (a) => send("approval.created", a)),
