@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { ToolCallContext } from "@piomio/shared";
 import { freePort } from "@piomio/testkit";
 import { Hub, loadConfig } from "../../src/index.ts";
+import { pluginKv } from "../../src/plugins/kv.ts";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 
@@ -30,7 +31,7 @@ describe("signals from a plugin", () => {
   beforeAll(async () => {
     const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
     const config = loadConfig(
-      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), PIOMIO_PLUGINS: "triggers,pinger", TZ: "UTC" },
+      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), PIOMIO_PLUGINS: "triggers,pinger,quickstub", TZ: "UTC" },
       {
         dataDir: mkdtempSync(join(tmpdir(), "owl-signal-plugins-")),
         builtinPluginsDirs: [join(fixtures, "triggers-card"), join(fixtures, "signal-plugins")],
@@ -39,7 +40,7 @@ describe("signals from a plugin", () => {
     );
     hub = new Hub(config);
     await hub.start();
-    await until(() => hub.triggers.engine && hub.plugins.get("pinger")?.status === "running", "the engine and the pinger");
+    await until(() => hub.triggers.engine && hub.plugins.get("pinger")?.status === "running" && hub.plugins.get("quickstub")?.status === "running", "the engine, the pinger and the stub brain");
   });
 
   afterAll(async () => {
@@ -86,6 +87,32 @@ describe("signals from a plugin", () => {
     // The signal itself, in the journal: what the plugin sent, marked as outside content.
     const signalId = run.signals![0].id;
     expect(hub.triggers.engine!.ctx.store.signal(signalId)).toMatchObject({ type: "pinger.ping", source: "pinger", data: { word: "hello", n: 1 }, external: true });
+  });
+
+  it("ends a plugin's signal, in a second trigger, as a tainted wake task after its script and a quick check on a stub brain", async () => {
+    const out = await invoke("trigger_create", {
+      name: "Pings to wake",
+      prompt: "Look at the ping and tell me.",
+      on: [{ type: "pinger.ping", config: { word: "wake" } }],
+      script: { code: `export default (signal) => ({ triage: { word: signal.data.word } })` },
+      triage: { brief: "Wake me for any ping." },
+    });
+    const id = /trigger (t_[0-9a-f]+)/.exec(out)![1];
+    // subscribe is called with the trigger's config: the pinger's provider sends one ping for it.
+    await until(() => hub.sources.subscriptions().find((s) => s.type === "pinger.ping" && (s.config as { word?: string }).word === "wake" && s.active), "the trigger's subscription");
+    const run = await until(async () => (await hub.triggers.engine!.runs(id)).find((r) => r.outcome === "wake" && r.taskId), "the wake");
+    expect(run).toMatchObject({ reason: "signal", status: "started", external: true, signals: [{ type: "pinger.ping" }] });
+    expect(run.stages?.map((s) => [s.stage, s.verdict])).toEqual(expect.arrayContaining([["script", "triage"], ["triage", "wake"]]));
+    // The quick model was shown the ping as outside content, fenced as data.
+    const questions = (pluginKv(hub.db, "quickstub").get("questions") ?? []) as string[];
+    const question = questions.find((q) => q.includes("Wake me for any ping.")) ?? "";
+    expect(question).toContain("SIGNAL_DATA");
+    const task = hub.store.getTask(run.taskId!)!;
+    expect(task).toMatchObject({ triggerId: id, createdBy: "trigger", tainted: true });
+    expect(task.goal).toContain("A ping came");
+    // stop is called once the trigger goes.
+    await invoke("trigger_delete", { id });
+    await until(() => !hub.sources.subscriptions().some((s) => (s.config as { word?: string }).word === "wake"), "the subscription to stop");
   });
 
   it("routes a broadcast to the triggers on its type, and refuses a type the plugin did not declare", async () => {

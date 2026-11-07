@@ -135,9 +135,9 @@ A trigger waits for something to happen. What it waits for comes from one of thr
 | The hub's own events | Something inside Piomio | a task finished or failed, a computer came online or went offline, a channel got a post, an approval is waiting |
 | A plugin | Whatever the plugin watches | a new item in an RSS or Atom feed (`web.rss_item`), a plugin you installed or an agent built |
 
-Ask in the chat: "when a task of mine fails, tell me on Telegram", "when this blog has a new post, summarize it". The agent can list what is available and sets the trigger up for you. A feed is read every 10 minutes at the most often; the first time it only remembers what is already there, and then each new item starts the trigger once. A feed that can't be read starts nothing and is tried again later.
+Ask in the chat: "when a task of mine fails, tell me on Telegram", "when this blog has a new post, summarize it". The agent can list what is available and sets the trigger up for you. A feed is read at most every 10 minutes. When a trigger starts listening, the first read only remembers what is already there, and then each new item starts the trigger once; items that came out while nothing listened are not sent. A feed that can't be read starts nothing and is tried again later.
 
-Text that comes from the internet or from outside (a page, a webhook, a feed, a plugin you installed) is treated as untrusted: the agent it wakes is told not to follow instructions inside it. The hub's own events are not treated as outside text, except those that carry what a task or channel wrote.
+Text that comes from the internet or from outside (a page, a webhook, a feed, a plugin you installed) is treated as untrusted: the agent it wakes is told not to follow instructions inside it. The hub's own events are not treated as outside text, with two exceptions: a channel's new post always is, and a finished or failed task, or a waiting approval, is when that task or its conversation read something from outside.
 
 ## What a trigger does before it wakes an agent
 
@@ -157,7 +157,7 @@ A trigger without a check wakes its agent every time, as before. A trigger can a
 
 The agent can write a short script for the trigger. The script reads and decides; it changes nothing in the hub. It can use the agent's tools that only read (mail, a calendar, a search), reach the sites listed on the trigger, ask a quick model, and remember a few values between runs. A run that fails or is cut short keeps none of what it meant to remember, so the next one starts from the same place. It has no tools that send, post, buy, delete or change anything: whatever needs doing waits for the agent. It reaches only the sites you approved, and it may send requests there, including POST (searches and API queries often take one). Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
 
-The sites a script may reach are part of the trigger, and the card that asks about a new one says the script may send requests there. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
+The sites a script may reach are part of the trigger, and the card that asks about a new one says the script may send requests there. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)). The same goes for the addresses a trigger listens at, since the address itself is sent to that site: a watched page or a feed on a site the trigger didn't read from before is named on the card.
 
 ### A quick check in your words
 

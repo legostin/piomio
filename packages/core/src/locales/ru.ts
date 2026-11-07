@@ -504,7 +504,7 @@ export default {
   "triggers.source.hub.machine.online": "Когда компьютер выходит на связь",
   "triggers.source.hub.machine.offline": "Когда компьютер пропадает со связи",
   "triggers.source.hub.feed.post": "Когда в канале новая запись",
-  "triggers.source.hub.approval.waiting": "Когда ждёт одобрения",
+  "triggers.source.hub.approval.waiting": "Когда действие ждёт одобрения",
   "triggers.error.required": "Поле {field} обязательно",
   "triggers.error.tooLong": "Поле {field} слишком длинное (максимум {max, plural, one {# символ} few {# символа} many {# символов} other {# символа}})",
   "triggers.error.notString": "Поле {field} должно быть строкой",
