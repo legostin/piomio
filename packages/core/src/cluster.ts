@@ -115,6 +115,8 @@ interface Hello {
   version: string;
   /** Its main app takes the web-UI calls a standby checked and sends over the link (replica-link.ts LINK_SESSION). */
   webUi?: boolean;
+  /** Its security console takes the console calls a standby checked and sends over the link, the same way. */
+  console?: boolean;
 }
 
 interface Peer extends Replica {
@@ -553,6 +555,7 @@ export class Cluster {
       call: (from, c) => this.serveCall(from, c),
       deviceUrl: () => `https://127.0.0.1:${this.hub.config.devicePort}`,
       mainUrl: () => `http://127.0.0.1:${this.hub.config.port}`,
+      consoleUrl: () => `http://127.0.0.1:${this.hub.config.consolePort}`,
       mark: () => this.mark,
       fingerprint: () => this.hub.deviceTls().fingerprint,
     });
@@ -699,13 +702,19 @@ export class Cluster {
     return this.switching;
   }
 
-  /** The leader to forward clients to, when this replica is standby (`webUi`: it takes this replica's web UI too). */
-  leaderTarget(): { url?: string; name: string; link?: RpcPeer; webUi?: boolean } | undefined {
+  /** The leader to forward clients to, when this replica is standby (`webUi`, `console`: it takes this replica's web UI, its console too). */
+  leaderTarget(): { url?: string; name: string; link?: RpcPeer; webUi?: boolean; console?: boolean } | undefined {
     if (this.leads()) return undefined;
     const p = [...this.peers.values()].find((x) => x.online && x.hello?.role === "leader");
     if (!p) return undefined;
     const link = this.links.get(p.id);
-    return { name: p.name, ...(p.url ? { url: p.url } : {}), ...(link && !link.closed ? { link } : {}), ...(p.hello?.webUi ? { webUi: true } : {}) };
+    return {
+      name: p.name,
+      ...(p.url ? { url: p.url } : {}),
+      ...(link && !link.closed ? { link } : {}),
+      ...(p.hello?.webUi ? { webUi: true } : {}),
+      ...(p.hello?.console ? { console: true } : {}),
+    };
   }
 
   // ---------- the vault on other replicas ----------
@@ -790,6 +799,7 @@ export class Cluster {
       vectors: { main: this.main!.vector(), vault: this.vaultRepl!.vector() },
       version: this.hub.config.version,
       webUi: true,
+      console: true,
     };
   }
 
