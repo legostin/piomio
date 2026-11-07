@@ -41,3 +41,44 @@ describe("signal filter", () => {
     expect(matchError(deep)).toMatch(/too deep/);
   });
 });
+
+describe("signal filter limits", () => {
+  const leafN = (n: number) => ({ all: Array.from({ length: n }, () => ({ path: "a", eq: 1 })) });
+  it("ignores prototype paths", () => {
+    expect(pathGet({}, "__proto__")).toBeUndefined();
+    expect(pathGet({}, "constructor")).toBeUndefined();
+    expect(pathGet({ a: 1 }, "a.constructor")).toBeUndefined();
+  });
+  it("bounds size and depth", () => {
+    expect(matchError(leafN(50))).toBeUndefined();
+    expect(matchError(leafN(51))).toMatch(/too many/);
+    expect(matchError({ all: Array.from({ length: 51 }, () => ({ all: [] })) })).toMatch(/too many/);
+    let d: any = { path: "a", eq: 1 };
+    for (let i = 0; i < 7; i++) d = { not: d };
+    expect(matchError(d)).toBeUndefined(); // 8 levels
+    expect(matchError({ not: d })).toMatch(/too deep/);
+  });
+  it("a malformed filter matches nothing", () => {
+    expect(matches({ path: "a" } as any, { a: 1 })).toBe(false);
+    expect(matches({ path: "a", eq: 1, ne: 2 } as any, { a: 1 })).toBe(false);
+    expect(matchError({ path: "a", eq: 1, ne: 2 })).toMatch(/exactly one/);
+  });
+  it("compares objects with eq", () => {
+    expect(matches({ path: "a", eq: { x: [1] } }, { a: { x: [1] } })).toBe(true);
+    expect(matches({ path: "a", eq: { x: [2] } }, { a: { x: [1] } })).toBe(false);
+  });
+  it("refuses regular expressions that can take forever", () => {
+    for (const p of ["(a+)+$", "(a|aa)*", "(\\w+\\s?)*$", "((a+)b)*", "(a)\\1"]) {
+      expect(matchError({ path: "a", matches: p }), p).toMatch(/take forever/);
+    }
+    for (const p of ["^Invoice #\\d+", "[a+]+", "\\(a+\\)+", "(?:ab)c+", "(ab)+"]) {
+      expect(matchError({ path: "a", matches: p }), p).toBeUndefined();
+    }
+  });
+  it("tests a huge value quickly", () => {
+    const big = "x".repeat(1_000_000);
+    const t0 = Date.now();
+    expect(matches({ path: "a", matches: "^x+$" }, { a: big })).toBe(true); // only the first 10k characters are tested
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+});

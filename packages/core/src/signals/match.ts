@@ -9,7 +9,8 @@ export type Leaf =
 export type Match = Leaf | { all: Match[] } | { any: Match[] } | { not: Match };
 
 const MAX_DEPTH = 8;
-const MAX_LEAVES = 50;
+const MAX_NODES = 50; // every node below the root counts, so breadth is bounded too
+const MAX_TEST_CHARS = 10_000; // residual risk: a slow pattern is still slow on 10k characters; the scan above catches the usual causes
 const MAX_PATTERN = 500;
 const OPS = ["eq", "ne", "contains", "matches", "in", "exists", "gt", "lt"] as const;
 const OPS_LIST = OPS.join(", ");
@@ -29,21 +30,73 @@ export function pathGet(value: unknown, path: string): unknown {
   return cur;
 }
 
-function compile(pattern: string, flags: string | undefined): RegExp | string {
-  if (pattern.length > MAX_PATTERN) return `a regular expression is at most ${MAX_PATTERN} characters`;
-  try {
-    return new RegExp(pattern, flags);
-  } catch (e) {
-    return `not a valid regular expression: ${(e as Error).message}`;
+/**
+ * True when a pattern can backtrack catastrophically: a quantified group whose body holds a
+ * quantifier or an alternation, or a backreference. A conservative scan, not a full parser.
+ */
+function riskyPattern(pattern: string): boolean {
+  type Frame = { q: boolean; alt: boolean };
+  const stack: Frame[] = [{ q: false, alt: false }];
+  const top = () => stack[stack.length - 1]!;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === "\\") {
+      const n = pattern[i + 1];
+      if (n !== undefined && (/[1-9]/.test(n) || n === "k")) return true;
+      i++;
+    } else if (c === "[") {
+      for (i++; i < pattern.length && pattern[i] !== "]"; i++) if (pattern[i] === "\\") i++;
+    } else if (c === "(") {
+      stack.push({ q: false, alt: false });
+      if (pattern[i + 1] === "?") i++; // group syntax such as (?: (?= (?<name>
+    } else if (c === ")") {
+      if (stack.length === 1) continue;
+      const g = stack.pop()!;
+      const rest = pattern.slice(i + 1);
+      const quantified = /^(?:[*+?]|\{\d+,\d*\})/.test(rest);
+      if (quantified && (g.q || g.alt)) return true;
+      const parent = top();
+      parent.q = parent.q || g.q || quantified;
+      parent.alt = parent.alt || g.alt;
+    } else if (c === "|") {
+      top().alt = true;
+    } else if (c === "*" || c === "+" || c === "?" || (c === "{" && /^\{\d+(?:,\d*)?\}/.test(pattern.slice(i)))) {
+      top().q = true;
+    }
   }
+  return false;
+}
+
+// Compiled patterns (or the reason one was refused), so a filter is not recompiled per call.
+const compiled = new Map<string, RegExp | string>();
+const CACHE_MAX = 500;
+
+function compile(pattern: string, flags: string | undefined): RegExp | string {
+  const key = `${pattern}/${flags ?? ""}`;
+  const hit = compiled.get(key);
+  if (hit !== undefined) return hit;
+  let out: RegExp | string;
+  if (pattern.length > MAX_PATTERN) out = `a regular expression is at most ${MAX_PATTERN} characters`;
+  else if (riskyPattern(pattern)) out = "a regular expression with nested repetition or a backreference can take forever; simplify it";
+  else {
+    try {
+      out = new RegExp(pattern, flags);
+    } catch (e) {
+      out = `not a valid regular expression: ${(e as Error).message}`;
+    }
+  }
+  if (compiled.size >= CACHE_MAX) compiled.delete(compiled.keys().next().value!);
+  compiled.set(key, out);
+  return out;
 }
 
 /** English reason the filter is malformed, or undefined when it is valid. */
 export function matchError(m: unknown): string | undefined {
-  let leaves = 0;
+  let nodes = -1; // the root is free: one `all` may hold 50 checks
   const walk = (node: unknown, depth: number, where: string): string | undefined => {
     if (depth > MAX_DEPTH) return `filter is too deep (at most ${MAX_DEPTH} levels)`;
     if (!isObject(node)) return `${where} must be an object`;
+    if (++nodes > MAX_NODES) return `filter has too many parts (at most ${MAX_NODES})`;
     if ("all" in node || "any" in node) {
       const key = "all" in node ? "all" : "any";
       const list = node[key];
@@ -55,7 +108,6 @@ export function matchError(m: unknown): string | undefined {
       return undefined;
     }
     if ("not" in node) return walk(node.not, depth + 1, "not");
-    if (++leaves > MAX_LEAVES) return `filter has too many checks (at most ${MAX_LEAVES})`;
     if (typeof node.path !== "string" || node.path === "") return "each check needs a non-empty path";
     const ops = OPS.filter((op) => op in node);
     if (ops.length !== 1) return `check on ${node.path} needs exactly one of ${OPS_LIST}`;
@@ -100,7 +152,9 @@ function leaf(node: Record<string, unknown>, value: unknown): boolean {
   if ("matches" in node) {
     if (typeof got !== "string") return false;
     const re = compile(node.matches as string, node.flags as string | undefined);
-    return typeof re === "string" ? false : re.test(got);
+    if (typeof re === "string") return false;
+    re.lastIndex = 0;
+    return re.test(got.length > MAX_TEST_CHARS ? got.slice(0, MAX_TEST_CHARS) : got);
   }
   if ("in" in node) return (node.in as unknown[]).some((el) => same(got, el));
   if ("exists" in node) return (got !== undefined) === node.exists;
