@@ -104,4 +104,11 @@ describe("signal filter limits", () => {
     expect(matches({ path: "a", matches: "^x+$" }, { a: big })).toBe(true); // only the first 10k characters are tested
     expect(Date.now() - t0).toBeLessThan(500);
   });
+  it("refuses what lowercasing would change under i", () => {
+    expect(matchError({ path: "a", matches: "\\x41", flags: "i" })).toMatch(/write letters as they are/);
+    expect(matchError({ path: "a", matches: "[A-z]", flags: "i" })).toMatch(/write letters as they are/);
+    expect(matchError({ path: "a", matches: "[Z-a]", flags: "i" })).toMatch(/write letters as they are/);
+    expect(matches({ path: "a", matches: "^[a-z]+$", flags: "i" }, { a: "ABC" })).toBe(true);
+    expect(matches({ path: "a", matches: "^[A-Z]+$", flags: "i" }, { a: "abc" })).toBe(true);
+  });
 });

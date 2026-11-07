@@ -14,10 +14,18 @@ export type Match = Leaf | { all: Match[] } | { any: Match[] } | { not: Match };
 // webhook body). V8's experimental linear-time engine (the `l` flag) rules out catastrophic
 // backtracking; it only affects regexes compiled with `l`, the rest of the process is untouched.
 setFlagsFromString("--enable-experimental-regexp-engine");
+// This ties the hub to Node versions that ship V8's experimental engine (Node >= 24 does).
+// Without it regular expressions in filters are switched off rather than run unguarded.
+let linearEngine = true;
+try {
+  new RegExp("a", "l");
+} catch {
+  linearEngine = false;
+}
 
 const MAX_DEPTH = 8;
 const MAX_NODES = 50; // every node below the root counts, so breadth is bounded too
-const MAX_TEST_CHARS = 10_000; // residual risk: a slow pattern is still slow on 10k characters; the scan above catches the usual causes
+const MAX_TEST_CHARS = 10_000; // bounds the work per test even though matching is linear
 const MAX_PATTERN = 500;
 const OPS = ["eq", "ne", "contains", "matches", "in", "exists", "gt", "lt"] as const;
 const OPS_LIST = OPS.join(", ");
@@ -57,6 +65,39 @@ function foldPattern(pattern: string): string {
   return out;
 }
 
+/** Whether lowercasing the pattern (the `i` emulation) would change what it means. */
+function foldChangesMeaning(pattern: string): boolean {
+  const changes = (c: string) => c.toLowerCase() !== c;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === "\\") {
+      const n = pattern[++i];
+      if (n !== undefined && /[xuc0-7]/.test(n)) return true;
+    } else if (c === "[") {
+      for (i++; i < pattern.length && pattern[i] !== "]"; i++) {
+        const a = pattern[i]!;
+        if (a === "\\") {
+          i++;
+        } else if (pattern[i + 1] === "-" && pattern[i + 2] !== undefined && pattern[i + 2] !== "]" && pattern[i + 2] !== "\\") {
+          if (changes(a) !== changes(pattern[i + 2]!)) return true;
+          i += 2;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/** Lowercases per character, keeping the length: a character whose lowercase differs in length stays as it is. */
+function foldValue(text: string): string {
+  let out = "";
+  for (const ch of text) {
+    const low = ch.toLowerCase();
+    out += low.length === ch.length ? low : ch;
+  }
+  return out;
+}
+
 function compile(pattern: string, flags: string | undefined): Compiled {
   const key = `${pattern}/${flags ?? ""}`;
   const hit = compiled.get(key);
@@ -64,7 +105,9 @@ function compile(pattern: string, flags: string | undefined): Compiled {
   let out: Compiled;
   const fl = flags ?? "";
   if (pattern.length > MAX_PATTERN) out = `a regular expression is at most ${MAX_PATTERN} characters`;
+  else if (!linearEngine) out = "this hub's Node.js has no linear-time regexp engine; regular expressions in filters are off";
   else if (!/^[ims]*$/.test(fl) || new Set(fl).size !== fl.length) out = "regular expression flags may only be i, m and s, each once";
+  else if (fl.includes("i") && foldChangesMeaning(pattern)) out = "with the i flag, write letters as they are, not as escapes or mixed-case ranges";
   else {
     const fold = fl.includes("i");
     try {
@@ -145,7 +188,7 @@ function leaf(node: Record<string, unknown>, value: unknown): boolean {
     const re = compile(node.matches as string, node.flags as string | undefined);
     if (typeof re === "string") return false;
     const text = got.length > MAX_TEST_CHARS ? got.slice(0, MAX_TEST_CHARS) : got;
-    return re.re.test(re.fold ? text.toLowerCase() : text);
+    return re.re.test(re.fold ? foldValue(text) : text);
   }
   if ("in" in node) return (node.in as unknown[]).some((el) => same(got, el));
   if ("exists" in node) return (got !== undefined) === node.exists;
