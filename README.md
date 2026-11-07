@@ -120,7 +120,7 @@ flowchart LR
 - **The hub** is one Node.js process (the desktop app brings its own Node). It holds the chats, agents, memory, tasks, plugins, the vault and the security console.
 - **Brains** are what agents think with: the official Claude Code, Codex and Kimi Code CLIs, signed in with your own plan, and plain API keys on a hub that allows them. When one hits its limit, the agent carries on with the next.
 - **Agents** are markdown files with a name, a face, a prompt, and the brains and tools they may use. You make new ones in the chat.
-- **Everything else is a plugin,** the interface included: the browser, memory, triggers, Telegram, integrations. See [docs/plugins.md](docs/plugins.md).
+- **Everything else is a plugin,** the interface included: the browser, memory, Telegram, integrations. See [docs/plugins.md](docs/plugins.md).
 
 ## Security, in short
 

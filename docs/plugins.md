@@ -2,7 +2,7 @@
 
 [Русский](plugins.ru.md)
 
-Almost everything in Piomio is a plugin: brains (Claude Code, Codex, APIs), channels (Telegram), the browser, memory, web search, triggers. The core only wires them together and enforces security. Integrations (services and abilities: the weather, calendars, maps…) are plugins too and live in [`integrations/`](../integrations/README.md), each in its own folder, started from a template with `npm run new:integration -- <id>`.
+Almost everything in Piomio is a plugin: brains (Claude Code, Codex, APIs), channels (Telegram), the browser, memory, web search. The core only wires them together and enforces security; triggers are part of the core too (`packages/core/src/signals/`), and plugins can feed them signals (see [Signals](#signals)). Integrations (services and abilities: the weather, calendars, maps…) are plugins too and live in [`integrations/`](../integrations/README.md), each in its own folder, started from a template with `npm run new:integration -- <id>`.
 
 A plugin can add:
 
