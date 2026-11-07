@@ -144,7 +144,7 @@ export function pioFor(d: PioDeps): PioRun {
       await assertFetchable(u.href, d.allowPrivate);
     } catch (e) {
       if ((e as { code?: string }).code !== "privateHost") throw e;
-      throw new Error(`pio.fetch: ${u.hostname} is on an internal network, which a trigger's script may not reach unless the person allows private addresses (the hub setting triggersAllowPrivateUrls, Settings → General → Triggers)`);
+      throw new Error(`pio.fetch: ${u.hostname} is on an internal network, which a trigger's script may not reach unless the person allows private addresses (the hub setting triggersAllowPrivateUrls, under Settings at the bottom of the Triggers section)`);
     }
   }
 

@@ -15,6 +15,7 @@ import {
   reasonText,
   runBadge,
   runNowText,
+  settingsPatch,
   sourceLabel,
   stageLines,
   statusBadge,
@@ -122,6 +123,15 @@ describe("triggers in the web UI", () => {
     expect(lastErrorLine({ lastErrorText: "Daily run limit (5) reached", state: { lastErrorCode: "dailyLimit" } })).toEqual({ text: "Daily run limit (5) reached", external: false });
     expect(lastErrorLine({ lastErrorText: "script threw", state: {} })).toEqual({ text: "As the check wrote it: script threw", external: false });
     expect(lastErrorLine({ lastErrorText: "script threw: Dear customer", state: { lastErrorExternal: true } })).toEqual({ text: "As the check wrote it: script threw: Dear customer", external: true });
+  });
+
+  it("saves only the trigger settings that changed, and a timeout only as a whole number of seconds in range", () => {
+    const orig = { triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 30 };
+    expect(settingsPatch(orig, false, "30")).toEqual({ patch: {} });
+    expect(settingsPatch(orig, true, "30")).toEqual({ patch: { triggersAllowPrivateUrls: true } });
+    expect(settingsPatch(orig, false, " 45 ")).toEqual({ patch: { triggersWatchTimeoutSec: 45 } });
+    expect(settingsPatch(orig, true, "120")).toEqual({ patch: { triggersAllowPrivateUrls: true, triggersWatchTimeoutSec: 120 } });
+    for (const bad of ["", "0", "121", "2.5", "x"]) expect(settingsPatch(orig, false, bad)).toEqual({ error: "Page load timeout: a whole number from 1 to 120" });
   });
 
   it("says which signature a signed webhook needs, and shows the shared secret only when that is what the hub checks", () => {

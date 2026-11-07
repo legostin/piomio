@@ -543,7 +543,7 @@ export default {
   "triggers.error.jsonPathNothing": "JSON-путь {path} ничего не нашёл",
   "triggers.error.selectorNothing": "CSS-селектор {selector} ничего не нашёл на странице",
   "triggers.error.badAddress": "Неверный адрес: {url}",
-  "triggers.error.privateHost": "Адрес {host} во внутренней сети: следить за ним запрещено (Настройки → Общие → Триггеры → Разрешить слежение за адресами локальной сети)",
+  "triggers.error.privateHost": "Адрес {host} во внутренней сети: следить за ним запрещено (Триггеры → Настройки → Разрешить слежение за адресами локальной сети)",
   "triggers.error.fetchTimeout": "Не удалось загрузить {url}: таймаут",
   "triggers.error.fetchFailed": "Не удалось загрузить {url}: {reason}",
   "triggers.error.httpStatus": "{url} ответил {status}",

@@ -26,7 +26,7 @@ It also connects plugins and services, changes their settings and makes agents. 
 
 | Group | Sections |
 |---|---|
-| **Assistant** | **Agents**, **Skills & commands**, and pages plugins add ([Agents and the team](agents.md)) |
+| **Assistant** | **Agents**, **Skills & commands**, **Triggers** ([below](#triggers)), and pages plugins add ([Agents and the team](agents.md)) |
 | **Activity** | **Tasks**, **Inbox** ([Tasks, schedules and the Inbox](tasks.md)) |
 | **Connections** | **Plugins** ([Plugins and integrations](plugins.md)), **Brains** ([Brains and sign-in](brains.md)), **Machines** ([Machines and other computers](machines.md)), **Devices** ([The iPhone app](phone.md)), **MCP servers** |
 | **General** | **General** (below), **Security console** ([Security model](security.md)), **Sign out** |
@@ -52,13 +52,6 @@ The hub's own settings. Change what you need and press **Save** (at the top and 
 - **Notifications per hour** (4, from 0 to 100): the limit on urgent notifications per trigger.
 
 See [Tasks, schedules and the Inbox](tasks.md).
-
-### Triggers
-
-- **Allow watching local network addresses** (off): watches and triggers' scripts may then reach localhost, your router and devices at home such as a NAS. Off, they reach only the internet, so a page or a message can't point a trigger at what is inside your network.
-- **Page load timeout, sec** (30, from 1 to 120): how long a watch waits for its page before the check ends with an error.
-
-On a hub that had the Triggers plugin, what its settings card said is carried over here once. See [Tasks, schedules and the Inbox](tasks.md).
 
 ### Approvals
 
@@ -113,6 +106,15 @@ Each plugin with settings has a card here: its keys, typed straight into the vau
 ### This app
 
 Only in the desktop app: **Quit Piomio** stops it until you open it again, and **Reset Piomio…** deletes everything it keeps on this computer after asking. See [Install on a Mac or PC](install.md).
+
+## Triggers
+
+The **Triggers** section keeps two hub settings of its own: open **Settings** at the bottom of the list, change what you need and press **Save**.
+
+- **Allow watching local network addresses** (off): watches and triggers' scripts may then reach localhost, your router and devices at home such as a NAS. Off, they reach only the internet, so a page or a message can't point a trigger at what is inside your network.
+- **Page load timeout, sec** (30, from 1 to 120): how long a watch waits for its page before the check ends with an error.
+
+On a hub that had the Triggers plugin, what its settings card said is carried over here once. See [Tasks, schedules and the Inbox](tasks.md).
 
 ## Settings without a field
 

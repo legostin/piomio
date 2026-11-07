@@ -143,6 +143,25 @@ export function loadNote(what: "triggers" | "journal", l: Loaded<unknown>): stri
   return what === "journal" ? t("triggers.journal.loadFailed", { error: l.error }) : t("triggers.loadFailed", { error: l.error });
 }
 
+/** The hub's trigger settings (core settings.ts), which the Triggers section's settings part shows. */
+export interface TriggerSettings {
+  triggersAllowPrivateUrls: boolean;
+  triggersWatchTimeoutSec: number;
+}
+
+/** A watch's page load timeout, whole seconds (core settings.ts TRIGGERS_WATCH_TIMEOUT). */
+export const WATCH_TIMEOUT = { min: 1, max: 120 };
+
+/** What Save sends: the settings that changed; or, for a timeout that is not a whole number in range, why not. */
+export function settingsPatch(orig: TriggerSettings, allowPrivate: boolean, timeout: string): { patch: Partial<TriggerSettings> } | { error: string } {
+  const n = timeout.trim() ? Number(timeout) : NaN;
+  if (!Number.isInteger(n) || n < WATCH_TIMEOUT.min || n > WATCH_TIMEOUT.max) return { error: t("settings.error.integer", { field: t("triggers.settings.timeoutName"), ...WATCH_TIMEOUT }) };
+  const patch: Partial<TriggerSettings> = {};
+  if (allowPrivate !== orig.triggersAllowPrivateUrls) patch.triggersAllowPrivateUrls = allowPrivate;
+  if (n !== orig.triggersWatchTimeoutSec) patch.triggersWatchTimeoutSec = n;
+  return { patch };
+}
+
 /** The kinds the form makes; a signal trigger is made in the chat (it needs `on`). */
 export const FORM_KINDS: TriggerKind[] = ["schedule", "once", "watch", "event", "heartbeat"];
 

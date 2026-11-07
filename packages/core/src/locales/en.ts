@@ -544,7 +544,7 @@ export default {
   "triggers.error.jsonPathNothing": "JSON path {path} found nothing",
   "triggers.error.selectorNothing": "CSS selector {selector} found nothing on the page",
   "triggers.error.badAddress": "Invalid address: {url}",
-  "triggers.error.privateHost": "The address {host} is on the internal network: watching it is not allowed (Settings → General → Triggers → Allow watching local network addresses)",
+  "triggers.error.privateHost": "The address {host} is on the internal network: watching it is not allowed (Triggers → Settings → Allow watching local network addresses)",
   "triggers.error.fetchTimeout": "Could not load {url}: timeout",
   "triggers.error.fetchFailed": "Could not load {url}: {reason}",
   "triggers.error.httpStatus": "{url} responded with {status}",

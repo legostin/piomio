@@ -37,6 +37,7 @@ import { Journal } from "./triggers/Journal";
 import { Pipeline } from "./triggers/Pipeline";
 import { ExternalMark, LoadNote, Section } from "./triggers/parts";
 import { TriggerForm } from "./triggers/TriggerForm";
+import { TriggerSettings } from "./triggers/TriggerSettings";
 
 const KIND_ICON: Record<TriggerKind, LucideIcon> = {
   schedule: CalendarClock,
@@ -133,6 +134,7 @@ function TriggerList({ data, note, load }: ListProps) {
           })}
         </div>
       )}
+      <TriggerSettings />
       {form && data && <TriggerForm initial={null} list={data} onClose={() => setForm(false)} onSaved={load} />}
     </Page>
   );
