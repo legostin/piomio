@@ -10,8 +10,10 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyWebsocket from "@fastify/websocket";
 import { LOCALES, localeFromEnv } from "@piomio/shared";
 import { errorText, hubLocale, localizePluginValue, LocalizedError, requestLocale, t, tFor } from "../i18n.ts";
-import { forwardToLeader, pipeToLeader } from "./forward.ts";
+import { forwardToLeader, pipeToLeader, relayToLeader } from "./forward.ts";
+import { LINK_MARK, LINK_SESSION } from "../replica-link.ts";
 import type { WebSocket } from "ws";
+import type { RpcPeer } from "@piomio/shared";
 import type { Hub } from "../app.ts";
 import { AuthError, type AuthSession } from "../auth.ts";
 import { clientIp, FailureBudget, hostAllowed, HttpError, originAllowed, originsFor, registerCompression, sendFile } from "./http.ts";
@@ -58,6 +60,27 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
     return host ? [host.split(":")[0].toLowerCase()] : [];
   };
 
+  /**
+   * A web-UI call a standby sent over the link, with the session it checked there (cookie, CSRF token, origin): the
+   * session counts only next to this replica's own mark, which the link adds and nothing outside this process knows.
+   */
+  const vouched = (req: FastifyRequest): AuthSession | undefined => {
+    if (remote || !hub.cluster.markOk(req.headers[LINK_MARK]) || !/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(req.socket.remoteAddress ?? "")) return undefined;
+    try {
+      const s = JSON.parse(String(req.headers[LINK_SESSION] ?? "")) as Partial<AuthSession>;
+      if (s.kind === "main" && typeof s.id === "string" && typeof s.csrf === "string" && typeof s.expiresAt === "string") return s as AuthSession;
+    } catch {
+      /* not one */
+    }
+    return undefined;
+  };
+
+  /** The leader, over its link, when this replica is a standby whose web UI it takes (an older leader doesn't). */
+  const uiLeader = (): { link: RpcPeer; name: string } | undefined => {
+    const l = hub.cluster.leaderTarget();
+    return l?.link && l.webUi ? { link: l.link, name: l.name } : undefined;
+  };
+
   // Keep raw text for non-JSON bodies (webhooks).
   app.addContentTypeParser("*", { parseAs: "string" }, (_req, body, done) => done(null, body));
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => done(null, Object.fromEntries(new URLSearchParams(String(body)))));
@@ -72,9 +95,11 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
       forwardToLeader(hub, req, reply, () => {}, "main");
       return reply;
     }
-    // A standby replica shows what it has (it is seconds behind) but takes no changes: they go to the leader.
+    // A standby takes no changes of its own: with a link to the leader the web UI's calls go there (the API's hook
+    // below, once it knows who asks); without one, or for a call that came over a link already, they wait.
     const leader = hub.cluster.leaderTarget();
     if (leader && req.method !== "GET" && req.method !== "HEAD" && req.url.startsWith("/api/") && !req.url.startsWith("/api/auth/")) {
+      if (uiLeader() && !req.url.startsWith("/api/node/") && !vouched(req)) return;
       reply.code(503).send({ error: t("cluster.standby", { leader: leader.name }) });
       return reply;
     }
@@ -95,8 +120,13 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
     return s;
   };
 
-  /** Session + (for state-changing requests) CSRF token and same-origin check. */
+  /** Session + (for state-changing requests) CSRF token and same-origin check; a standby's checked call over the link. */
   const guard = async (req: FastifyRequest) => {
+    const v = vouched(req);
+    if (v) {
+      req.authSession = v;
+      return;
+    }
     const s = authed(req);
     if (req.method !== "GET" && req.method !== "HEAD") {
       if (req.headers["x-csrf"] !== s.csrf) throw new HttpError(403, "CSRF token mismatch");
@@ -298,11 +328,35 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
   // ---------- authenticated API ----------
 
   await app.register(async (api) => {
+    // A standby's web UI works on the leader: each call, once checked here, goes there over the link, so what it shows
+    // and changes is the leader's at once, not a copy seconds behind. A call that came over a link stays (no loops).
+    api.addHook("onRequest", async (req, reply) => {
+      const leader = uiLeader();
+      if (!leader || req.headers.upgrade || vouched(req)) return;
+      await guard(req);
+      const bootstrap = req.url.split("?")[0] === "/api/bootstrap";
+      relayToLeader(req, reply, leader, req.authSession!, {
+        // The hub as the leader has it, at this computer's own addresses (its console is the one here).
+        headers: (h) => {
+          if (bootstrap) delete h["accept-encoding"];
+        },
+        edit: (a) => {
+          if (!bootstrap || a.status !== 200) return a;
+          try {
+            return { ...a, body: Buffer.from(JSON.stringify({ ...JSON.parse(a.body.toString("utf8")), publicUrl: cfg.publicUrl, consoleUrl: cfg.consoleUrl })) };
+          } catch {
+            return a;
+          }
+        },
+      });
+      return reply;
+    });
     api.addHook("preHandler", guard);
     await registerApi(api, hub, {
       kind: "web",
       bootstrap: (req) => ({ csrf: req.authSession!.csrf }),
-      wsAllowed: (req) => originAllowed(req, origins()),
+      wsAllowed: (req) => !!vouched(req) || originAllowed(req, origins()),
+      relaySocket: (socket, req) => !!uiLeader() && !vouched(req) && pipeToLeader(hub, socket, req, "main", req.authSession),
       authenticate: guard,
     });
   });
