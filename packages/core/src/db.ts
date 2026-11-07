@@ -147,13 +147,13 @@ const MIGRATIONS: string[] = [
   `alter table messages add column updated_at text;
   create index messages_conv_changed on messages(conversation_id, coalesce(updated_at, created_at));`,
   `
-  create table trigger_runs(id text primary key, trigger_id text not null, at text not null, data text not null);
-  create index trigger_runs_by_trigger on trigger_runs(trigger_id, at);
-  create table signal_notes(id text primary key, agent_id text not null, trigger_id text not null, at text not null, external integer not null, data text not null);
-  create index signal_notes_by_agent on signal_notes(agent_id, at);
-  create table trigger_state(trigger_id text not null, key text not null, value text not null, primary key(trigger_id, key));
+  create table if not exists trigger_runs(id text primary key, trigger_id text not null, at text not null, data text not null);
+  create index if not exists trigger_runs_by_trigger on trigger_runs(trigger_id, at);
+  create table if not exists signal_notes(id text primary key, agent_id text not null, trigger_id text not null, at text not null, external integer not null, data text not null);
+  create index if not exists signal_notes_by_agent on signal_notes(agent_id, at);
+  create table if not exists trigger_state(trigger_id text not null, key text not null, value text not null, primary key(trigger_id, key));
   `,
-  `create index signal_notes_by_at on signal_notes(at);`,
+  `create index if not exists signal_notes_by_at on signal_notes(at);`,
 ];
 
 /**
