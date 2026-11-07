@@ -40,6 +40,8 @@ import { captureNote, type CaptureResult, type SecretIntake } from "./secrets.ts
 import { imageTypeOf, readWorkspaceImage } from "./media.ts";
 import { BrainImages, saveBrainImage } from "./brain-images.ts";
 import { clockTime, TurnClock } from "./clock.ts";
+import { newestNoteAt, signalsBlock } from "./signals/notes-context.ts";
+import type { NoteQuery, NoteRow } from "./signals/store.ts";
 import { busy, situation, TASK_STATE } from "./situation.ts";
 import type { UserLocations } from "./user-location.ts";
 import { attachmentNote, forSession, isSpeech, SPEECH_NOT_SET_UP, type AttachmentPart, type SessionFile } from "./attachments.ts";
@@ -86,6 +88,8 @@ export interface RunnerDeps {
   activity?: MachineActivityFeed;
   /** Where the user is, when their phone shares it. */
   locations?: UserLocations;
+  /** An agent's trigger notes (signals/store.ts notes), for the `[Signals]` block; none while the engine is off. */
+  signalNotes?: (q: NoteQuery) => NoteRow[];
   secrets: SecretIntake;
   /** First-run setup (set by the hub): keeps messages written while no brain works and adds the prompt section. */
   setup?: {
@@ -277,6 +281,8 @@ export class SessionRunner {
   private clock = new TurnClock();
   /** The `[You now]` block each live session saw last (situation.ts). */
   private seen = new Map<string, string>();
+  /** The `at` of the newest trigger note each live session was shown (`[Signals]`). */
+  private seenSignals = new Map<string, { at: string; ids: string[] }>();
   private timer?: NodeJS.Timeout;
   private kickoff?: NodeJS.Timeout;
   private streamingMessage = new Map<string, string>(); // conversationId -> messageId
@@ -364,6 +370,7 @@ export class SessionRunner {
     this.d.egress.revokeOwner(`brain:${id}`);
     this.clock.forget(id);
     this.seen.delete(id);
+    // seenSignals stays: a resumed session must not be shown the same notes again.
     await l?.handle.close().catch(() => {});
   }
 
@@ -2197,13 +2204,34 @@ export class SessionRunner {
     }
     // Where the agent is and what it and its team are doing, when that changed since this session last heard it.
     const self = this.situationOf(row);
-    if (self && self !== this.seen.get(row.id)) {
-      this.seen.set(row.id, self);
-      text = `${self}\n\n${text}`;
-    }
+    // What the agent's triggers noticed since this session last looked (not in group chats), after `[You now]`.
+    const signals = this.signalsOf(row);
+    const blocks = [self && self !== this.seen.get(row.id) ? self : undefined, signals].filter(Boolean);
+    if (self) this.seen.set(row.id, self);
+    if (blocks.length) text = `${blocks.join("\n\n")}\n\n${text}`;
     const now = this.clock.line(row.id, this.d.settings.get().timezone);
     if (now) text = `${now}\n${text}`;
     return { text, ...(paths.length ? { attachments: paths } : {}), ...(fetch.length ? { files: fetch } : {}) };
+  }
+
+  /** The `[Signals]` block for a session's next turn: its agent's new notes (signals/notes-context.ts). */
+  private signalsOf(row: SessionRow): string | undefined {
+    if (!this.d.signalNotes) return undefined;
+    try {
+      if (this.d.store.getConversation(row.conversationId)?.kind === "group") return undefined;
+      const seen = this.seenSignals.get(row.id);
+      const since = seen?.at ?? row.createdAt;
+      const notes = this.d.signalNotes({ agentId: row.agentId, since, limit: 50 });
+      const block = signalsBlock(notes, since, 10, (iso) => clockTime(iso, this.d.settings.get().timezone), seen ? new Set(seen.ids) : undefined);
+      if (block) {
+        const at = newestNoteAt(notes)!;
+        const ids = notes.filter((n) => n.at === at).map((n) => n.id);
+        this.seenSignals.set(row.id, { at, ids: seen?.at === at ? [...seen.ids, ...ids] : ids });
+      }
+      return block;
+    } catch {
+      return undefined;
+    }
   }
 
   /** The `[You now]` block for a session's next turn (situation.ts). */

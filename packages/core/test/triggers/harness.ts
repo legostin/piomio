@@ -21,6 +21,8 @@ export interface TriggerHarnessOptions {
 
 export interface TriggerHarness {
   engine: TriggerEngine;
+  /** The journal, notes and state the engine writes. */
+  store: ReturnType<typeof memoryStore>;
   storage: Map<string, unknown>;
   /** Tools by short name. */
   tools: Map<string, ToolSpec>;
@@ -42,6 +44,7 @@ const clone = <T>(v: T): T => (v === undefined ? v : structuredClone(v));
 export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promise<TriggerHarness> {
   let locale: Locale = o.locale ?? "en";
   const storage = new Map<string, unknown>();
+  const store = memoryStore();
   const tools = new Map<string, ToolSpec>();
   const handlers = new Map<string, TriggerToolRegistration["handler"]>();
   const listeners = new Map<string, Array<(payload: any) => void>>();
@@ -77,7 +80,7 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
       delete: async (k) => void storage.delete(k),
       list: async (prefix = "") => [...storage.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value: clone(value) })),
     },
-    store: memoryStore(),
+    store,
     core: {
       call: async (method, params) => {
         coreCalls.push({ method, params });
@@ -101,6 +104,7 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
 
   const h: TriggerHarness = {
     engine,
+    store,
     storage,
     tools,
     subscriptions,

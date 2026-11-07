@@ -28,6 +28,8 @@ export interface TriggerHttpResponse {
 export interface TriggerToolRegistration extends ToolSpec {
   /** Short name; the hub exposes it as `trigger_<name>`. */
   name: string;
+  /** The tool's whole name, when it should not carry the `trigger_` prefix (`signals_recent`). */
+  fullName?: string;
   handler: (input: any, ctx: ToolCallContext) => Promise<ToolResult | string> | ToolResult | string;
 }
 
