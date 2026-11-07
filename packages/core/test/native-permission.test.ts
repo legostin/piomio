@@ -330,6 +330,16 @@ describe("native_permission (integration)", () => {
     expect((await Promise.all([ask("Read", { file_path: join(dir, "b.md") }, { session: "s-other" }), no]))[0].behavior).toBe("deny");
   });
 
+  it("opens only the folder a read really was in: a link to the home never opens the whole home", async () => {
+    const link = join(mkdtempSync(join(tmpdir(), "owl-grant-")), "home");
+    symlinkSync(home, link);
+    const card = answer("approve");
+    expect((await Promise.all([ask("Read", { file_path: join(link, "piomio-no-such-file.md") }, { session: "s-link" }), card]))[0].behavior).toBe("allow");
+    // The rest of the home still asks (the person says no); an opened home would allow it at once.
+    void answer("deny");
+    expect((await ask("Read", { file_path: join(home, "Documents", "piomio-no-such-file.md") }, { session: "s-link" })).behavior).toBe("deny");
+  });
+
   it("is on the tool list of CLI brains only", () => {
     const row = (brainRef: string) => ({ id: "s", conversationId: "c1", agentId: "assistant", brainRef, tainted: false, status: "active" as const, background: false, createdAt: "", updatedAt: "" });
     const names = (brainRef: string) => hub.gateway.listFor(row(brainRef)).map((t) => t.name);
