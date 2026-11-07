@@ -31,14 +31,15 @@ export function LoadNote({ text, onRetry }: { text: string; onRetry: () => void 
 
 /**
  * "Outside content": a run read a page, a webhook or a letter, so its words (an error too) may carry that content. `hint`
- * says it in full on hover.
+ * says it in full on hover. `compact` (a journal row): only the icon in a container under 32rem (a phone, the 540px
+ * panel), so the row's reason keeps its room; the words stay for screen readers, in `title` and in the opened run.
  */
-export function ExternalMark({ hint }: { hint: string }) {
+export function ExternalMark({ hint, compact }: { hint: string; compact?: boolean }) {
   return (
     <span title={hint} className="inline-flex shrink-0">
       <Badge tone="warning">
         <ShieldAlert className="size-3" aria-hidden />
-        {t("triggers.run.external")}
+        <span className={compact ? "sr-only @lg:not-sr-only" : undefined}>{t("triggers.run.external")}</span>
       </Badge>
     </span>
   );

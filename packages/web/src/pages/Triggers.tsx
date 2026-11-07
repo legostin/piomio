@@ -203,10 +203,10 @@ function TriggerDetail({ tr, list, reload, note }: { tr: TriggerView; list: Trig
         <KindMark kind={tr.kind} size="lg" />
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 className="font-display text-lg leading-tight font-semibold">{tr.name}</h3>
+            <h3 className="font-display max-w-full min-w-0 text-lg leading-tight font-semibold break-words">{tr.name}</h3>
             <Badge tone={badge.tone}>{badge.label}</Badge>
           </div>
-          <p className="mt-0.5 text-xs text-muted">
+          <p className="mt-0.5 text-xs break-words text-muted">
             {[t(KIND_LABEL[tr.kind]), agentName, tr.machineName && t("triggers.detail.machine", { machine: tr.machineName }), tr.skill && t("triggers.detail.skill", { skill: tr.skill })]
               .filter(Boolean)
               .join(" · ")}

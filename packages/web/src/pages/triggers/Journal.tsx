@@ -24,7 +24,7 @@ import {
 import { hubEvents } from "../../state/app";
 import { t } from "../../i18n";
 import { Badge, Button, cx, Loading } from "../../components/ui";
-import { LoadNote, Muted, Section } from "./parts";
+import { ExternalMark, LoadNote, Muted, Section } from "./parts";
 
 export function Journal({ tr, tz }: { tr: TriggerView; tz: string }) {
   const [loaded, setLoaded] = useState<Loaded<TriggerRun[]>>({ value: null });
@@ -55,7 +55,8 @@ export function Journal({ tr, tz }: { tr: TriggerView; tz: string }) {
       ) : runs.length === 0 ? (
         <Muted>{t("triggers.journal.empty")}</Muted>
       ) : (
-        <div className="-mx-3.5 -mb-3.5 border-t border-border">
+        // A container, so a run's outside-content mark shrinks to its icon where the rows are narrow (ExternalMark).
+        <div className="@container -mx-3.5 -mb-3.5 border-t border-border">
           {runs.map((r) => (
             <RunRow key={r.id} run={r} tz={tz} open={open === r.id} onToggle={() => setOpen(open === r.id ? undefined : r.id)} />
           ))}
@@ -81,14 +82,7 @@ function RunRow({ run, tz, open, onToggle }: { run: TriggerRun; tz: string; open
         <span className="shrink-0 text-xs text-muted tabular-nums">{formatAt(run.at, tz)}</span>
         <span className="min-w-0 flex-1 truncate">{reasonText(run.reason)}</span>
         {(run.count ?? 1) > 1 && <span className="shrink-0 text-xs text-muted tabular-nums">{t("triggers.run.times", { n: run.count! })}</span>}
-        {run.external && (
-          <span title={t("triggers.run.externalHint")} className="shrink-0">
-            <Badge tone="warning">
-              <ShieldAlert className="size-3" />
-              {t("triggers.run.external")}
-            </Badge>
-          </span>
-        )}
+        {run.external && <ExternalMark hint={t("triggers.run.externalHint")} compact />}
         <Badge tone={badge.tone}>{badge.label}</Badge>
       </button>
       {open && <RunDetail run={run} tz={tz} />}
