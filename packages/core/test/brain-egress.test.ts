@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EgressProxy } from "../src/egress.ts";
 import { DEFAULT_BRAIN_EGRESS } from "../src/settings.ts";
-import { pluginEgress } from "../src/plugins/host.ts";
+import type { PiomioManifest } from "@piomio/shared";
+import { ownUrlFor, pluginEgress } from "../src/plugins/host.ts";
 
 describe("brain egress grants", () => {
   it("includes GitHub Git/API/download hosts, refuses unrelated hosts, and loses access when revoked", () => {
@@ -40,5 +41,19 @@ describe("brain plugins' own processes", () => {
     // Nothing for an address that is not https (the hub on localhost), or one that does not parse.
     expect(pluginEgress(["api.example.com"], false, "http://localhost:8080")).toEqual(["api.example.com"]);
     expect(pluginEgress([], false, "not a url")).toEqual([]);
+  });
+
+  it("give the hub's address only to a built-in plugin whose webhooks feed a subscribe-mode signal source", () => {
+    const url = "https://hub.example.com";
+    const manifest = (http: boolean, modes: Array<"broadcast" | "subscribe">) => ({ contributes: { http, signals: modes.map((mode) => ({ type: "event", mode })) } }) as unknown as PiomioManifest;
+    expect(ownUrlFor("builtin", manifest(true, ["subscribe"]), url)).toBe(url);
+    expect(ownUrlFor("builtin", manifest(true, ["broadcast", "subscribe"]), url)).toBe(url);
+    // An http plugin without a subscribe-mode source, one with a source but no http, and an installed one: never.
+    expect(ownUrlFor("builtin", manifest(true, []), url)).toBeUndefined();
+    expect(ownUrlFor("builtin", manifest(true, ["broadcast"]), url)).toBeUndefined();
+    expect(ownUrlFor("builtin", manifest(false, ["subscribe"]), url)).toBeUndefined();
+    expect(ownUrlFor("installed", manifest(true, ["subscribe"]), url)).toBeUndefined();
+    expect(pluginEgress(["api.example.com"], false, ownUrlFor("builtin", manifest(true, []), url))).toEqual(["api.example.com"]);
+    expect(pluginEgress(["api.example.com"], false, ownUrlFor("installed", manifest(true, ["subscribe"]), url))).toEqual(["api.example.com"]);
   });
 });

@@ -1,11 +1,12 @@
 // The trigger and webhook-subscription calls of the Composio API client against a tiny fake Composio: trigger types
-// (paged by next_cursor, limit 50), instance upsert / list / enable / disable / delete, the project webhook
-// subscription (a 409 reuses only the hub's own one and never touches the person's) and the realtime credentials and
-// channel authorisation on the internal v3 path.
+// (paged by next_cursor, limit 50), instance upsert / list / enable / disable, the project webhook subscription (a 409
+// reuses only the hub's own one and never touches the person's; a hub address may have a path before the hook route),
+// its delete, the realtime credentials and channel authorisation on the internal v3 path, and what a malformed answer
+// counts as.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { composioApi, ComposioError, WebhookTaken, type ComposioApi } from "../server/api.ts";
+import { composioApi, ComposioError, isHubHook, WebhookTaken, type ComposioApi } from "../server/api.ts";
 
 type Call = { method: string; path: string; query: URLSearchParams; body: any; raw: string; type: string | undefined; key: string | undefined };
 type Sub = { id: string; webhook_url: string; enabled_events: string[]; secret: string };
@@ -44,8 +45,9 @@ beforeAll(async () => {
           : send(200, { items: [{ id: "ti_1", trigger_name: "GMAIL_T0", trigger_config: { label: "x" }, connected_account_id: "ca_1", disabled_at: null }], next_cursor: "c2" });
       }
       if (req.method === "PATCH" && p === "/api/v3.1/trigger_instances/manage/ti_1") return send(200, { status: "success" });
-      if (req.method === "DELETE" && p === "/api/v3.1/trigger_instances/manage/ti_1") return send(200, { status: "success" });
-      if (req.method === "DELETE" && p === "/api/v3.1/trigger_instances/manage/ti_gone") return send(404, { error: { message: "no such trigger" } });
+      // A sign-in's calls, for an answer without what it should hold.
+      if (req.method === "POST" && p === "/api/v3.1/auth_configs") return send(201, state.malformed ? {} : { auth_config: { id: "ac_1" } });
+      if (req.method === "POST" && p === "/api/v3.1/connected_accounts/link") return send(201, state.malformed ? {} : { redirect_url: "https://connect.example/x", connected_account_id: "ca_1" });
       // One webhook subscription per project, as Composio has it: a second POST is a 409.
       if (req.method === "POST" && p === "/api/v3.1/webhook_subscriptions") {
         if (state.subscriptions.length) return send(409, { error: { message: "already exists" } });
@@ -63,6 +65,10 @@ beforeAll(async () => {
         return send(200, { id: s.id, webhook_url: s.webhook_url, enabled_events: s.enabled_events });
       }
       if (req.method === "GET" && s) return send(200, s);
+      if (req.method === "DELETE" && s) {
+        state.subscriptions = state.subscriptions.filter((x) => x !== s);
+        return send(200, { success: true });
+      }
       if (req.method === "GET" && p === "/api/v3/internal/sdk/realtime/credentials")
         return send(200, state.malformed ? { pusher_key: "k" } : { pusher_key: "k", project_id: "pr_1", pusher_cluster: "mt1" });
       if (req.method === "POST" && p === "/api/v3/internal/sdk/realtime/auth") {
@@ -121,16 +127,12 @@ describe("trigger instances", () => {
     expect(calls[0]!.query.get("limit")).toBe("50");
   });
 
-  it("enables, disables and deletes; one already gone is deleted", async () => {
+  it("enables and disables", async () => {
     await api.setTriggerEnabled("ti_1", false);
     await api.setTriggerEnabled("ti_1", true);
-    await api.deleteTrigger("ti_1");
-    await api.deleteTrigger("ti_gone");
     expect(calls.map((c) => [c.method, c.path, c.body])).toEqual([
       ["PATCH", "/api/v3.1/trigger_instances/manage/ti_1", { status: "disable" }],
       ["PATCH", "/api/v3.1/trigger_instances/manage/ti_1", { status: "enable" }],
-      ["DELETE", "/api/v3.1/trigger_instances/manage/ti_1", undefined],
-      ["DELETE", "/api/v3.1/trigger_instances/manage/ti_gone", undefined],
     ]);
   });
 });
@@ -171,6 +173,23 @@ describe("webhook subscriptions", () => {
     expect(state.subscriptions[0]).toMatchObject({ webhook_url: "https://their.example/composio", enabled_events: ["composio.connected_account.expired"] });
   });
 
+  it("on 409 takes the kept subscription as the hub's own at a hub address with a path before the hook route", async () => {
+    const old = "https://old-hub.example/piomio/hooks/composio/events";
+    state.subscriptions = [{ id: "whs_old", webhook_url: old, enabled_events: ["composio.trigger.message"], secret: "sec_old" }];
+    expect(await api.createWebhookSubscription(HUB_URL, "whs_old")).toMatchObject({ id: "whs_old", url: HUB_URL });
+    expect(isHubHook(old)).toBe(true);
+    for (const url of ["https://their.example/composio", "https://x.example/hooks/composio/events/more", "http://x.example/hooks/composio/events", "https://x.example/hooks/composio/events?to=them", "https:///hooks/composio/events"])
+      expect(isHubHook(url), url).toBe(false);
+  });
+
+  it("deletes one subscription by its id; one already gone counts as deleted", async () => {
+    state.subscriptions = [{ id: "whs_old", webhook_url: HUB_URL, enabled_events: ["composio.trigger.message"], secret: "sec_old" }];
+    await api.deleteWebhookSubscription("whs_old");
+    await api.deleteWebhookSubscription("whs_old");
+    expect(routes()).toEqual(["DELETE /api/v3.1/webhook_subscriptions/whs_old", "DELETE /api/v3.1/webhook_subscriptions/whs_old"]);
+    expect(state.subscriptions).toEqual([]);
+  });
+
   it("reads one subscription with its secret, and lists them without", async () => {
     state.subscriptions = [{ id: "whs_old", webhook_url: "https://old.example/h", enabled_events: ["composio.trigger.message"], secret: "sec_old" }];
     expect(await api.getWebhookSubscription("whs_old")).toEqual({ id: "whs_old", url: "https://old.example/h", secret: "sec_old", events: ["composio.trigger.message"] });
@@ -197,9 +216,15 @@ describe("errors", () => {
     await expect(api.setTriggerEnabled("ti_zzz", true)).rejects.toBeInstanceOf(ComposioError);
   });
 
-  it("a 2xx answer without what it should hold is the request's problem, not an outage", async () => {
+  it("a trigger call's 2xx answer without what it should hold is the request's problem, not an outage", async () => {
     state.malformed = true;
     await expect(api.upsertTriggerInstance("GMAIL_T0", { config: {} })).rejects.toMatchObject({ kind: "other" });
     await expect(api.realtimeCredentials()).rejects.toMatchObject({ kind: "other" });
+  });
+
+  it("a sign-in's 2xx answer without what it should hold is Composio failing, as it always was: try again later", async () => {
+    state.malformed = true;
+    await expect(api.createAuthConfig("gmail")).rejects.toMatchObject({ kind: "down" });
+    await expect(api.link("ac_1", "u")).rejects.toMatchObject({ kind: "down" });
   });
 });
