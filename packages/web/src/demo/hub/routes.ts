@@ -140,6 +140,25 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
   r.route("GET", "/api/commands", () => []);
   r.route("GET", "/api/skills", () => []);
 
+  // ----- triggers: the Triggers section and the Tasks page ask /api/triggers; the old plugin address answers the same -----
+  const triggerList = () => ({
+    triggers: [],
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    publicUrl: location.origin,
+    agents: w().agents.map((a) => ({ id: a.id, name: a.name })),
+    computers: w().machines.map((m) => ({ id: m.id, name: m.name, status: m.online ? "online" : "offline" })),
+  });
+  for (const base of ["/api/triggers", "/api/plugins/triggers/http/triggers"]) {
+    r.route("GET", base, triggerList);
+    r.route("POST", base, refuse);
+    r.route("GET", `${base}/:id`, refuse);
+    r.route("PATCH", `${base}/:id`, refuse);
+    r.route("DELETE", `${base}/:id`, refuse);
+    r.route("GET", `${base}/:id/runs`, () => ({ runs: [] }));
+    r.route("POST", `${base}/:id/run`, refuse);
+    r.route("POST", `${base}/:id/check`, refuse);
+  }
+
   // ----- channels and pages -----
   r.route("GET", "/api/feeds", () => w().feeds);
   r.route("GET", "/api/feeds/:id", ({ params }) => w().feeds.find((f) => f.id === params.id) ?? refuse());

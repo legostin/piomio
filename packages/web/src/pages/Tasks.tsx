@@ -9,6 +9,7 @@ import type { Task, TaskStatus } from "@piomio/shared";
 import { useStore } from "../lib/store";
 import { api, errorText } from "../lib/api";
 import { ACTIVE_STATUSES, formatDateTime, formatTime, relativeTime, taskStatus } from "../lib/format";
+import { TRIGGERS_API } from "../lib/triggers";
 import { agents, ensureAgents, refreshTasks, session, tasks } from "../state/app";
 import { askInChat } from "../state/ask";
 import { toast } from "../state/toast";
@@ -30,7 +31,7 @@ function kindOf(task: Task): Kind {
   return task.createdBy === "trigger" ? "schedules" : "work";
 }
 
-/** A configured trigger as the triggers plugin lists it (only what this page shows). */
+/** A configured trigger as the hub lists it (only what this page shows). */
 interface TriggerSummary {
   id: string;
   kind: string;
@@ -43,7 +44,7 @@ interface TriggerSummary {
   nextRunAt?: string | null;
 }
 
-const TRIGGERS_URL = "/api/plugins/triggers/http/triggers";
+const TRIGGERS_URL = TRIGGERS_API;
 
 const FILTERS: Record<Filter, (s: TaskStatus) => boolean> = {
   all: () => true,
@@ -86,7 +87,7 @@ export function TasksPage() {
   useEffect(() => {
     load();
     ensureAgents();
-    // Without the triggers plugin there is simply nothing configured to list.
+    // A hub that does not run triggers (it does not lead) has nothing configured to list.
     api
       .get<{ triggers: TriggerSummary[] }>(TRIGGERS_URL)
       .then((r) => setTriggers(r.triggers))
