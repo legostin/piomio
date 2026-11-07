@@ -127,7 +127,7 @@ Runs without asking: file edits in the agent's folder and the temp folders; read
 
 Asks (auto mode first, if it is on): **Read a file outside its folder** in your home, **Change a file outside its folder**, **Run a command outside the sandbox**, **Run a command that goes online**, and any tool the hub doesn't know. Once you allow a read, the rest of that repository stays readable for the session.
 
-Closed, whatever you answer: your credentials and private stores (`~/.ssh`, `~/.aws`, the keychains, browser profiles, Mail, Messages and the like) and the hub's own data (conversations, the vault, other agents' folders). Claude Code and Codex can't read or write them, and a command that names them is refused for every brain. Kimi Code asks only about commands and changes, so its own file reads aren't checked.
+Closed, whatever you answer, even through a symbolic link or inside a folder you opened: your credentials and private stores (`~/.ssh`, `~/.aws`, the keychains, browser profiles, Mail, Messages and the like) and the hub's own data (conversations, the vault, other agents' folders). Claude Code and Codex can't read or write them, and a command that names them is refused for every brain. Kimi Code asks only about commands and changes, so its own file reads aren't checked.
 
 > This sandbox is for the Mac only, where it is on unless `PIOMIO_SANDBOX_BRAINS=0`. On Windows and on a Linux server install there is no sandbox around the brains yet: in a task, their commands and file changes run as your user without cards. In a dialog the brains only look; commands and file changes go to tasks. See [Security model](security.md).
 
