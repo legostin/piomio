@@ -4,18 +4,9 @@
 import type { QuickModel } from "../bare-ask.ts";
 import { fenced } from "./prompt.ts";
 
-// TODO(task 2): Signal and Outcome move to ./types.ts; these are minimal local versions until then.
-export interface Signal {
-  id: string;
-  type: string;
-  source: string;
-  at: string;
-  data: unknown;
-  key?: string;
-  subject?: string;
-  external: boolean;
-}
-export type Outcome = "drop" | "note" | "wake";
+import type { Outcome, Signal } from "./types.ts";
+
+export type { Outcome, Signal };
 
 export interface TriageInput {
   trigger: { name: string; brief: string };
