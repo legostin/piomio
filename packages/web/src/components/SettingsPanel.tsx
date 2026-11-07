@@ -14,7 +14,7 @@ import { AVATAR_PALETTE } from "@piomio/shared/avatar";
 import type { AvatarColor } from "@piomio/shared";
 import { Icon } from "./icon";
 import { cx, EmbeddedPage, IconButton } from "./ui";
-import { GROUPS, SECTIONS, sectionDef, type PanelSection } from "./nav";
+import { GROUPS, SECTIONS, sectionDef, takenBySection, type PanelSection } from "./nav";
 import { AgentsPage } from "../pages/Agents";
 import { BrainsPage } from "../pages/Brains";
 import { PluginsPage } from "../pages/Plugins";
@@ -25,6 +25,7 @@ import { InboxPage } from "../pages/Inbox";
 import { SkillsPage } from "../pages/Skills";
 import { SettingsPage } from "../pages/Settings";
 import { TasksPage } from "../pages/Tasks";
+import { TriggersPage } from "../pages/Triggers";
 
 function SectionBody({ section }: { section: PanelSection }) {
   const { routes } = usePluginRegistry();
@@ -45,6 +46,8 @@ function SectionBody({ section }: { section: PanelSection }) {
       return <InboxPage />;
     case "skills":
       return <SkillsPage />;
+    case "triggers":
+      return <TriggersPage />;
     case "settings":
       return <SettingsPage />;
     case "tasks":
@@ -64,6 +67,7 @@ function SectionBody({ section }: { section: PanelSection }) {
 const TILE: Record<string, AvatarColor> = {
   agents: "violet",
   skills: "pink",
+  triggers: "teal",
   tasks: "blue",
   notifications: "red",
   brains: "indigo",
@@ -123,7 +127,8 @@ function Group({ label, children }: { label: string; children: ReactNode }) {
 function Home() {
   const s = useStore(session);
   const { routes } = usePluginRegistry();
-  const pluginPages = routes.filter((r) => r.nav && !r.path.includes(":"));
+  // A plugin page at a section's address (the old Triggers page) is the section's now.
+  const pluginPages = routes.filter((r) => r.nav && !r.path.includes(":") && !takenBySection(r.path));
   return (
     <div className="flex flex-col gap-5 px-4 pt-2 pb-6 sm:px-5">
       <div className="flex items-start gap-2.5 px-1 text-[13px] leading-relaxed text-muted">

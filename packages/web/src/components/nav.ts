@@ -2,10 +2,10 @@
 // Old page URLs (/brains, /plugins, …) still work: they open the matching panel section over the chat.
 
 import type { ComponentType } from "react";
-import { Bot, Brain, Inbox, Laptop, ListChecks, Puzzle, Server, SlidersHorizontal, Smartphone, Sparkles, type LucideProps } from "lucide-react";
+import { AlarmClock, Bot, Brain, Inbox, Laptop, ListChecks, Puzzle, Server, SlidersHorizontal, Smartphone, Sparkles, type LucideProps } from "lucide-react";
 import type { MessageKey } from "../i18n";
 
-export type CoreSection = "settings" | "agents" | "brains" | "plugins" | "machines" | "devices" | "mcp" | "skills" | "tasks" | "notifications";
+export type CoreSection = "settings" | "agents" | "brains" | "plugins" | "machines" | "devices" | "mcp" | "skills" | "triggers" | "tasks" | "notifications";
 /** A core section, or "plugin:<route key>" for a page a UI plugin added to the navigation. */
 export type PanelSection = CoreSection | `plugin:${string}`;
 
@@ -22,6 +22,8 @@ export interface SectionDef {
 export const SECTIONS: SectionDef[] = [
   { id: "agents", path: "/agents", label: "nav.agents", hint: "panel.hint.agents", icon: Bot, group: "assistant" },
   { id: "skills", path: "/skills", label: "nav.skills", hint: "panel.hint.skills", icon: Sparkles, group: "assistant" },
+  // In the place the Triggers plugin's page had, at its address: a plugin page at a section's address gives way to it.
+  { id: "triggers", path: "/triggers", label: "nav.triggers", hint: "panel.hint.triggers", icon: AlarmClock, group: "assistant" },
   { id: "tasks", path: "/tasks", label: "nav.tasks", hint: "panel.hint.tasks", icon: ListChecks, group: "activity" },
   { id: "notifications", path: "/inbox", label: "nav.notifications", hint: "panel.hint.notifications", icon: Inbox, group: "activity" },
   { id: "plugins", path: "/plugins", label: "nav.plugins", hint: "panel.hint.plugins", icon: Puzzle, group: "connections" },
@@ -46,6 +48,14 @@ const MERGED: Record<string, CoreSection> = { "/integrations": "plugins", "/noti
 export function sectionForPath(path: string): CoreSection | undefined {
   const p = path.replace(/\/+$/, "") || "/";
   return SECTIONS.find((s) => s.path === p)?.id ?? MERGED[p];
+}
+
+/**
+ * Whether a plugin's page sits at a core section's address: the section has it (its URL opens the section) and the page
+ * stays out of the navigation. The Triggers plugin's page at /triggers gave way to the core Triggers section this way.
+ */
+export function takenBySection(path: string): boolean {
+  return sectionForPath(path.replace(/\/\*$/, "")) !== undefined;
 }
 
 export function sectionDef(id: PanelSection): SectionDef | undefined {
