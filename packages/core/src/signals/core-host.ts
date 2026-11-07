@@ -1,0 +1,139 @@
+// The trigger engine's host in core (host.ts): plugin_kv under "triggers" for its storage (where the plugin kept it),
+// core's own calls, the hub bus, the tool registry (core tools named trigger_*), the Triggers card's switch and
+// settings, and page loads through the egress proxy. The hub starts it while it leads and stops it when it stands
+// down; it runs only while the Triggers card exists and is on.
+
+import type { CoreMethod, ToolResult } from "@piomio/shared";
+import type { EventBus } from "../bus.ts";
+import type { Db } from "../db.ts";
+import { hubLocale, tFor } from "../i18n.ts";
+import { pluginKv } from "../plugins/kv.ts";
+import type { ToolRegistry } from "../tools/registry.ts";
+import type { TriggerEngine } from "./engine.ts";
+import type { FetchLike, TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
+import { startTriggers } from "./index.ts";
+
+/** The Triggers card's id: its storage, its webhook addresses (/hooks/triggers/…) and its UI events carry it. */
+export const TRIGGERS_ID = "triggers";
+/** Its tools are named trigger_<name>, as the plugin's were (manifest toolPrefix "trigger"). */
+const TOOL_PREFIX = "trigger";
+
+export interface CoreTriggersDeps {
+  db: Db;
+  bus: EventBus;
+  tools: ToolRegistry;
+  /** The Triggers card in Plugins: undefined when the hub has none (or its plugin filter leaves it out). */
+  card: {
+    get(): { enabled: boolean; settings: Record<string, unknown> } | undefined;
+    onSettings(cb: (settings: Record<string, unknown>) => void): () => void;
+  };
+  /** Core calls as a plugin makes them (core-call.ts), on behalf of "triggers". */
+  coreCall: (pluginId: string, method: CoreMethod, params: unknown) => Promise<unknown>;
+  hubUrl: string;
+  /** How the watch loads pages (net.ts proxiedGet); unset: the global fetch. Made once per start. */
+  fetch?: () => FetchLike;
+}
+
+export class CoreTriggers {
+  engine?: TriggerEngine;
+  private d: CoreTriggersDeps;
+  private starting?: Promise<void>;
+  private handler?: (req: TriggerHttpRequest) => Promise<TriggerHttpResponse> | TriggerHttpResponse;
+  private offs: Array<() => void> = [];
+  private toolNames: string[] = [];
+
+  constructor(d: CoreTriggersDeps) {
+    this.d = d;
+  }
+
+  /** The Triggers card exists and is on. */
+  wanted(): boolean {
+    return !!this.d.card.get()?.enabled;
+  }
+
+  /** Start the engine when it should run and does not; a call while it starts waits for that start. */
+  start(): Promise<void> {
+    if (this.engine || !this.wanted()) return this.starting ?? Promise.resolve();
+    this.starting ??= (async () => {
+      try {
+        this.engine = await startTriggers(this.host());
+      } catch (e) {
+        this.release();
+        throw e;
+      } finally {
+        this.starting = undefined;
+      }
+    })();
+    return this.starting;
+  }
+
+  /** Stop it: its timers, its tools, its bus and settings listeners, its HTTP. */
+  stop(): void {
+    this.engine?.stop();
+    this.engine = undefined;
+    this.release();
+  }
+
+  /** Start or stop it to match the card (the person turned Triggers on or off). */
+  async sync(): Promise<void> {
+    if (this.wanted()) await this.start();
+    else this.stop();
+  }
+
+  /** Its HTTP API (/api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
+  async http(req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
+    if (!this.handler) return { status: 404, body: { error: "not found" } };
+    return this.handler(req);
+  }
+
+  private release(): void {
+    for (const off of this.offs.splice(0)) off();
+    for (const name of this.toolNames.splice(0)) this.d.tools.unregister(name, "core");
+    this.handler = undefined;
+  }
+
+  private host(): TriggerHost {
+    const d = this.d;
+    const kv = pluginKv(d.db, TRIGGERS_ID);
+    const log =
+      (level: "info" | "warn" | "error") =>
+      (...a: unknown[]) =>
+        console.log(`[piomio] triggers${level === "info" ? "" : ` ${level}`}: ${a.map(String).join(" ")}`);
+    const fetch = d.fetch?.();
+    return {
+      pluginId: TRIGGERS_ID,
+      hubUrl: d.hubUrl,
+      settings: { ...(d.card.get()?.settings ?? {}) },
+      onSettingsChange: (cb) => void this.offs.push(d.card.onSettings(cb)),
+      i18n: { locale: hubLocale, t: (key, params, locale) => tFor(locale ?? hubLocale())(`triggers.${key}`, params) },
+      log: { debug() {}, info: log("info"), warn: log("warn"), error: log("error") },
+      tools: {
+        register: (r) => {
+          const { handler, name: short, ...spec } = r;
+          const name = `${TOOL_PREFIX}_${short}`;
+          // As the plugin runner did: a string is the text, a throw is an error result.
+          d.tools.register({ ...spec, name, owner: "core" }, async (input, ctx): Promise<ToolResult> => {
+            try {
+              const out = await handler(input ?? {}, ctx);
+              return typeof out === "string" ? { content: [{ type: "text", text: out }] } : out;
+            } catch (e: any) {
+              return { content: [{ type: "text", text: `Error: ${e?.message ?? String(e)}` }], isError: true };
+            }
+          });
+          this.toolNames.push(name);
+        },
+      },
+      events: { on: (name, cb) => void this.offs.push(d.bus.on(name, cb)) },
+      http: { handle: (h) => void (this.handler = h) },
+      ui: { emit: (channel, payload) => void d.coreCall(TRIGGERS_ID, "ui.emit", { channel, payload }).catch(() => {}) },
+      storage: {
+        get: async (key) => (kv.get(key) ?? undefined) as any,
+        set: async (key, value) => kv.set(key, value),
+        delete: async (key) => kv.delete(key),
+        list: async (prefix) => kv.list(prefix),
+      },
+      core: { call: (method, params) => d.coreCall(TRIGGERS_ID, method, params) as Promise<any> },
+      ...(fetch ? { fetch } : {}),
+    };
+  }
+}
