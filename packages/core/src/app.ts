@@ -505,6 +505,7 @@ export class Hub {
       gateway: this.gateway,
       quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
       egress: { proxy: this.egress, port: config.egressPort },
+      vault: this.vault,
     });
     // The person turned the Triggers card on or off.
     this.bus.on("plugins.updated", () => {

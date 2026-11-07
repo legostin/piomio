@@ -1,6 +1,6 @@
 // Trigger engine (in core since the unified triggers, phase 1): persistence, timers, firing tasks, watch polling, webhooks, feedback.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
 import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
@@ -9,6 +9,7 @@ import type { RunReason, Signal, Trigger, TriggerInput, TriggerRun, TriggerState
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
 import { pageReader } from "./extract.ts";
 import { builtinSignal, fitted, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline } from "./pipeline.ts";
+import { verifyWebhook } from "./webhook-verify.ts";
 import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
 export const MAX_RUNS_KEPT = 20;
@@ -77,12 +78,6 @@ function header(headers: Record<string, string> | undefined, name: string): stri
   if (!headers) return undefined;
   for (const [k, v] of Object.entries(headers)) if (k.toLowerCase() === name) return Array.isArray(v) ? v[0] : v;
   return undefined;
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
 }
 
 function defaultTimezone(): string {
@@ -771,10 +766,21 @@ export class TriggerEngine {
   async webhook(req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
     const m = /^\/([A-Za-z0-9_-]{1,64})\/?$/.exec(req.path);
     const t = m ? this.triggers.get(m[1]) : undefined;
-    if (!t || t.kind !== "event" || !t.secret) return { status: 404, body: { error: "not found" } };
+    const signed = t?.verify && t.verify.kind !== "secret" ? t.verify : undefined;
+    if (!t || t.kind !== "event" || (!signed && !t.secret)) return { status: 404, body: { error: "not found" } };
     if (req.method.toUpperCase() !== "POST") return { status: 405, headers: { allow: "POST" }, body: { error: "use POST" } };
-    const given = header(req.headers, "x-piomio-secret") ?? req.query?.secret ?? "";
-    if (!safeEqual(String(given), t.secret)) return { status: 401, body: { error: "invalid secret" } };
+    // Who sent it, before anything is queued. A signed sender's key is in the vault, read only for this check.
+    let key = t.secret ?? "";
+    if (signed) {
+      try {
+        key = (await this.ctx.vault!.get(signed.secretRef, `trigger:${t.id}`)).value ?? "";
+      } catch {
+        key = "";
+      }
+      if (!key) return { status: 503, body: { error: "signing secret unavailable" } };
+    }
+    const verdict = verifyWebhook(t.verify, { headers: req.headers ?? {}, rawBody: req.rawBody ?? "", query: req.query ?? {} }, key, this.now());
+    if (!verdict.ok) return { status: 401, body: { error: signed ? "invalid signature" : "invalid secret" } };
     if (!t.enabled) return { status: 409, body: { error: "trigger is disabled" } };
     const { secret: _secret, ...query } = req.query ?? {};
     const body = req.body;

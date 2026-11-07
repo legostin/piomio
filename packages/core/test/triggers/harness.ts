@@ -17,6 +17,8 @@ export interface TriggerHarnessOptions {
   locale?: Locale;
   /** Answers the engine's core calls; undefined for the rest. */
   core?: (method: string, params: any) => unknown;
+  /** The vault: the fields of an item, or a throw when it is missing. */
+  vault?: (ref: string, actor: string) => Promise<Record<string, string>>;
 }
 
 export interface TriggerHarness {
@@ -30,9 +32,11 @@ export interface TriggerHarness {
   subscriptions: Set<string>;
   /** Core calls and UI events (as method "ui.emit"), in order. */
   coreCalls: Array<{ method: string; params: any }>;
+  /** Vault items the fake vault handed out (tests push to it). */
+  vaultCalls: Array<{ ref: string; actor: string }>;
   invoke(name: string, input?: unknown, ctx?: Partial<ToolCallContext>): Promise<ToolResult>;
   invokeText(name: string, input?: unknown, ctx?: Partial<ToolCallContext>): Promise<string>;
-  http(req: { method?: string; path: string; query?: Record<string, string>; headers?: Record<string, string>; body?: unknown; public?: boolean; locale?: Locale }): Promise<TriggerHttpResponse>;
+  http(req: { method?: string; path: string; query?: Record<string, string>; headers?: Record<string, string>; body?: unknown; rawBody?: string; public?: boolean; locale?: Locale }): Promise<TriggerHttpResponse>;
   emit(event: string, payload: unknown): void;
   /** Change the hub language (and the default language of requests). */
   setLocale(locale: Locale): void;
@@ -81,6 +85,7 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
       list: async (prefix = "") => [...storage.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value: clone(value) })),
     },
     store,
+    ...(o.vault ? { vault: { get: (ref: string, actor: string) => o.vault!(ref, actor) } } : {}),
     core: {
       call: async (method, params) => {
         coreCalls.push({ method, params });
@@ -109,6 +114,7 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
     tools,
     subscriptions,
     coreCalls,
+    vaultCalls: [],
     async invoke(name, input = {}, ctx) {
       const fn = handlers.get(name);
       if (!fn) throw new Error(`unknown tool ${name}`);
