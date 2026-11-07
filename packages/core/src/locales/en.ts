@@ -478,6 +478,7 @@ export default {
   // triggers (signals/): the engine that was the triggers plugin
   "triggers.heartbeat.defaultName": "Daily review",
   "triggers.notify.notRun": "“{name}” did not run",
+  "triggers.notify.failing": "“{name}” keeps failing: its check before waking the agent stopped with an error 5 times in a row",
   "triggers.notify.nowReports.title": "{n, plural, one {This schedule now sends its report as a message} other {These schedules now send their report as a message}}",
   "triggers.notify.nowReports.body": "{names}: {n, plural, one {at its time it now sends} other {at its time each one now sends}} you what it found as a message of its own. {n, plural, one {If you'd rather it stayed} other {If you'd rather one of them stayed}} a quiet check that speaks up only when something needs you, tell me in the chat, for example: “make {example} a quiet check again”.",
   "triggers.notify.nowReports.name": "“{name}”",

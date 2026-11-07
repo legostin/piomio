@@ -91,6 +91,8 @@ import { buildDeviceApp } from "./server/device-app.ts";
 import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
 import { pageReader } from "./signals/extract.ts";
+import { scriptSandbox } from "./signals/sandbox.ts";
+import { quickModel } from "./bare-ask.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
@@ -118,6 +120,7 @@ export class Hub {
   /** Which pictures the hub may fetch when a chat shows them (policy/pictures.ts). */
   pictures: Pictures;
   private reviewToken?: string;
+  private quickToken?: string;
   agents: AgentRegistry;
   /** Pinned, archived and deleted built-in agents (agents-state.ts). */
   agentsState: AgentsStateStore;
@@ -496,6 +499,11 @@ export class Hub {
           },
         };
       },
+      // Triggers' scripts read with their agents' tools; triage and pio.llm.ask ask the quick model; a script's fetches
+      // go through the egress proxy on a token of each run's own.
+      gateway: this.gateway,
+      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
+      egress: { proxy: this.egress, port: config.egressPort },
     });
     // The person turned the Triggers card on or off.
     this.bus.on("plugins.updated", () => {
@@ -865,7 +873,17 @@ export class Hub {
   /** The reviewer's environment: the egress proxy with the brains' hosts, as for a brain session (runner.ts). */
   private reviewerEnv(): Record<string, string> {
     this.reviewToken ??= this.egress.issueToken("brain:auto-review", DEFAULT_BRAIN_EGRESS);
-    const proxy = `http://${this.reviewToken}:x@127.0.0.1:${this.config.egressPort}`;
+    return this.proxyEnv(this.reviewToken);
+  }
+
+  /** The quick model's environment (triggers' triage and pio.llm.ask): the egress proxy with the brains' hosts. */
+  private quickEnv(): Record<string, string> {
+    this.quickToken ??= this.egress.issueToken("brain:quick", DEFAULT_BRAIN_EGRESS);
+    return this.proxyEnv(this.quickToken);
+  }
+
+  private proxyEnv(token: string): Record<string, string> {
+    const proxy = `http://${token}:x@127.0.0.1:${this.config.egressPort}`;
     return { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" };
   }
 
@@ -1376,6 +1394,7 @@ export class Hub {
     this.speech.stop();
     this.media.previews.stop();
     pageReader.stop();
+    scriptSandbox.stop();
     this.machines.closeAll();
     this.activity.close();
     await this.plugins.stopAll();

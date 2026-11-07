@@ -3,6 +3,7 @@
 // unchanged (docs/superpowers/specs/2026-11-07-unified-triggers-design.md, phase 1).
 
 import type { CoreMethod, Locale, Params, ToolCallContext, ToolResult, ToolSpec } from "@piomio/shared";
+import type { QuickModel } from "../bare-ask.ts";
 import type { TriggerStore } from "./store.ts";
 
 export interface TriggerHttpRequest {
@@ -39,6 +40,20 @@ export type FetchLike = (
   init: { method?: string; body?: string; redirect?: "manual"; signal?: AbortSignal; headers?: Record<string, string> },
 ) => Promise<Response>;
 
+/**
+ * What a trigger's pipeline (pipeline.ts) reaches beyond the engine: its agent's tools that only read, a fetch of its
+ * own through the egress proxy for each script run, and the quick model (triage, pio.llm.ask). Core gives the real
+ * ones (core-host.ts); without them the script's calls and the quick check fail, and the pipeline goes on as it does
+ * when they are unavailable.
+ */
+export interface PipelineServices {
+  /** A hub tool called for the trigger's agent (ToolGateway.callRead), its addresses held to `hosts`; `source`: outside content came back. */
+  callRead(as: { agentId: string; triggerId: string; hosts: string[] }, name: string, input: unknown): Promise<{ result: ToolResult; source: boolean }>;
+  /** A fetch for one script run, with an egress token of its own (owner trigger:<id>, allowlist `hosts`); `release` lets it go. */
+  fetchFor(triggerId: string, hosts: string[]): { fetch: FetchLike; release(): void };
+  quick: QuickModel;
+}
+
 export interface TriggerHost {
   /** "triggers": the webhook addresses (/hooks/triggers/<id>) and the UI events carry it. */
   pluginId: string;
@@ -70,4 +85,6 @@ export interface TriggerHost {
   core: { call<T = any>(method: CoreMethod, params?: unknown): Promise<T> };
   /** How the watch loads pages; unset: the global fetch. */
   fetch?: FetchLike;
+  /** What scripts and quick checks reach (pipeline.ts); unset: none of it is available. */
+  pipeline?: PipelineServices;
 }

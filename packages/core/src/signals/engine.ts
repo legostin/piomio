@@ -5,9 +5,10 @@ import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./hos
 import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
 import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
 import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
-import type { RunReason, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
+import type { RunReason, Signal, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
 import { pageReader } from "./extract.ts";
+import { builtinSignal, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline, within, type Delivery } from "./pipeline.ts";
 import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
 export const MAX_RUNS_KEPT = 20;
@@ -35,6 +36,26 @@ export function readEngineSettings(s: Record<string, any> = {}): EngineSettings 
 }
 
 export class NotFoundError extends TriggerError {}
+
+/** How a firing goes: the daily limit, a busy previous run, and what the pipeline adds to it. */
+export interface FireOptions {
+  force?: boolean;
+  skipIfBusy?: boolean;
+  /** The goal carries outside content (the pipeline's run read some): the task is created tainted. */
+  tainted?: boolean;
+  /** The pipeline's part of the run: its signals, stages, outcome and whether it read outside content. */
+  journal?: Pick<TriggerRun, "signals" | "stages" | "outcome" | "external">;
+  /** The run's signals in full, kept with it in the journal. */
+  signalData?: Signal[];
+}
+
+/** A trigger whose firings go through the pipeline (pipeline.ts); any other fires exactly as it always did. */
+export const piped = (t: Trigger): boolean => !!(t.script || t.triage || t.batch);
+
+/** Page values carried in a web.page signal are cut past this each, so the signal stays within its 256 KB. */
+const PAGE_VALUE_BYTES = 64 * 1024;
+/** Headers a sender names a delivery by (redeliveries carry the same one): the signal's dedup key. */
+const DELIVERY_HEADERS = ["x-piomio-delivery", "x-github-delivery", "idempotency-key"];
 
 /** Remember (or clear) the last error of a trigger, with its code for the UI. */
 function setLastError(s: TriggerState, e?: { message?: string; code?: string; params?: ErrorParams }): void {
@@ -69,6 +90,8 @@ export class TriggerEngine {
   publicUrl = "";
   defaultAgent = "assistant";
   now: () => number;
+  /** Script, quick check, batch: what a trigger that has any of them does with its signals. */
+  pipeline: TriggerPipeline;
 
   private timer?: NodeJS.Timeout;
   private settingsTimer?: NodeJS.Timeout;
@@ -88,6 +111,7 @@ export class TriggerEngine {
     this.settings = readEngineSettings(ctx.settings);
     this.now = opts.now ?? Date.now;
     this.clockGap = this.now() - performance.now();
+    this.pipeline = new TriggerPipeline(this, ctx.pipeline ?? NO_SERVICES);
   }
 
   // ---------- lifecycle ----------
@@ -130,7 +154,8 @@ export class TriggerEngine {
         const cur = this.triggers.get(t.id);
         if (!cur) return;
         this.ctx.log.info(`trigger ${cur.id}: catch-up for ${missedAt}`);
-        await this.fire(cur, "catch-up", { missedAt }, { force: cur.kind === "once" });
+        if (piped(cur)) await this.pipeline.deliver(cur, [this.tickSignal(missedAt, "catch-up")], "catch-up", { force: cur.kind === "once", missedAt, immediate: cur.kind === "once" });
+        else await this.fire(cur, "catch-up", { missedAt }, { force: cur.kind === "once" });
         if (cur.kind === "once") {
           cur.state.done = true;
           cur.enabled = false;
@@ -149,6 +174,8 @@ export class TriggerEngine {
     }
     this.booted = true;
     this.arm();
+    // Batches still open when the hub stopped (or another replica led) go on at their time.
+    await this.pipeline.resume();
   }
 
   stop(): void {
@@ -156,6 +183,7 @@ export class TriggerEngine {
     if (this.timer) clearTimeout(this.timer);
     if (this.settingsTimer) clearInterval(this.settingsTimer);
     for (const s of this.settling.values()) if (s.timer) clearTimeout(s.timer);
+    this.pipeline.stop();
   }
 
   updateSettings(raw: Record<string, any>): void {
@@ -204,7 +232,8 @@ export class TriggerEngine {
 
   // ---------- persistence ----------
 
-  private async save(t: Trigger): Promise<void> {
+  /** Also the pipeline's: it saves the trigger's state after a run. */
+  async save(t: Trigger): Promise<void> {
     if (this.triggers.get(t.id) !== t) return; // deleted or replaced meanwhile
     await this.ctx.storage.set(`trigger:${t.id}`, t);
   }
@@ -213,17 +242,18 @@ export class TriggerEngine {
     return this.ctx.store.runs(id, MAX_RUNS_KEPT);
   }
 
-  private async addRun(id: string, run: TriggerRun): Promise<void> {
+  /** A run into the journal, with its signals in full when it had any. */
+  async addRun(id: string, run: TriggerRun, signalData?: Signal[]): Promise<void> {
     if (!this.triggers.has(id)) return;
-    this.ctx.store.addRun(id, run);
+    this.ctx.store.addRun(id, signalData?.length ? { ...run, signalData } : run);
   }
 
-  private emit(id: string): void {
+  emit(id: string): void {
     this.ctx.ui.emit("changed", { id });
   }
 
-  /** Serialize everything that mutates one trigger. */
-  private withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  /** Serialize everything that mutates one trigger (the pipeline's batch timers take it too). */
+  withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(id) ?? Promise.resolve();
     const run = prev.then(fn, fn);
     const tail = run.catch(() => {});
@@ -329,11 +359,15 @@ export class TriggerEngine {
         t.state.nextRunAt = computeNextRun(t, this.tz, now)?.toISOString();
         if (!ran) t.state.lastSlot = slot;
         await this.save(t);
-        if (!ran) await this.fire(t, t.kind, {}, { skipIfBusy: true });
+        if (ran) return;
+        if (piped(t)) await this.pipeline.deliver(t, [this.tickSignal(slot, t.kind)], t.kind, { skipIfBusy: true });
+        else await this.fire(t, t.kind, {}, { skipIfBusy: true });
         return;
       }
       case "once":
-        await this.fire(t, "once", {}, { force: true });
+        // A one-time reminder has nothing to wait for: it goes on now, with whatever a batch gathered.
+        if (piped(t)) await this.pipeline.deliver(t, [this.tickSignal(slot, "once")], "once", { force: true, immediate: true });
+        else await this.fire(t, "once", {}, { force: true });
         t.state.done = true;
         t.enabled = false;
         t.state.nextRunAt = undefined;
@@ -362,11 +396,12 @@ export class TriggerEngine {
     }
   }
 
-  private async fire(t: Trigger, reason: RunReason, extra: Partial<FireContext>, opts: { force?: boolean; skipIfBusy?: boolean } = {}): Promise<TriggerRun> {
+  /** Start the agent's task (the pipeline's wakes come here too, with their journal part and taint). */
+  async fire(t: Trigger, reason: RunReason, extra: Partial<FireContext>, opts: FireOptions = {}): Promise<TriggerRun> {
     const now = new Date(this.now());
     const today = localDate(now, this.tz);
     const rt = t.state.runsToday?.date === today ? { ...t.state.runsToday } : { date: today, count: 0 };
-    const run: TriggerRun = { id: `r_${randomBytes(4).toString("hex")}`, at: now.toISOString(), reason, status: "started" };
+    const run: TriggerRun = { id: `r_${randomBytes(4).toString("hex")}`, at: now.toISOString(), reason, status: "started", ...opts.journal };
     if (!opts.force && rt.count >= t.maxRunsPerDay) {
       run.status = "skipped";
       run.detail = `Daily run limit (${t.maxRunsPerDay}) reached`;
@@ -393,6 +428,7 @@ export class TriggerEngine {
             ...(t.report ? { report: true } : {}),
             ...(t.machine ? { machine: t.machine } : {}),
             ...(t.skill ? { skill: t.skill } : {}),
+            ...(opts.tainted ? { tainted: true } : {}),
           });
           if (task?.skipped) {
             // The agent sleeps in the archive: nothing ran, and nothing counts against the day's runs.
@@ -415,7 +451,7 @@ export class TriggerEngine {
     t.state.lastStatus = run.status === "started" ? "ok" : run.status;
     setLastError(t.state, run.status === "started" ? undefined : { message: run.detail, code: run.code, params: run.params });
     await this.save(t);
-    await this.addRun(t.id, run);
+    await this.addRun(t.id, run, opts.signalData);
     this.emit(t.id);
     if (run.status !== "started") this.ctx.log.info(`trigger ${t.id} ${run.status}: ${run.detail}`);
     return run;
@@ -514,7 +550,8 @@ export class TriggerEngine {
     t.state.lastHash = hash;
     t.state.lastValue = stored;
     t.state.lastChangeAt = now.toISOString();
-    const run = await this.fire(t, "change", { change: { previous, current: value, diff: previous !== undefined ? lineDiff(previous, value) : undefined } });
+    const change = { previous, current: value, diff: previous !== undefined ? lineDiff(previous, value) : undefined };
+    const run = piped(t) ? await this.pipeline.deliver(t, [this.pageSignal(t, change)], "change") : await this.fire(t, "change", { change });
     return { changed: true, baseline: false, run };
   }
 
@@ -623,6 +660,7 @@ export class TriggerEngine {
       await this.ctx.storage.delete(`trigger:${id}`);
       this.ctx.store.dropRuns(id);
       this.ctx.store.dropState(id);
+      this.pipeline.forget(id);
       this.emit(id);
       this.arm();
       return t;
@@ -641,6 +679,12 @@ export class TriggerEngine {
     this.require(id);
     return this.withLock(id, async () => {
       const t = this.require(id);
+      if (piped(t)) {
+        // Now, whatever the batch: a run now always leaves a run.
+        const run = await this.pipeline.deliver(t, [builtinSignal("manual", {}, { at: new Date(this.now()), external: false })], "manual", { force: opts.force, immediate: true });
+        if (!run) throw new Error(`trigger ${id}: the run left no journal line`);
+        return run;
+      }
       return this.fire(t, "manual", t.kind === "watch" && t.state.lastValue !== undefined ? { currentValue: t.state.lastValue } : {}, { force: opts.force });
     });
   }
@@ -709,15 +753,45 @@ export class TriggerEngine {
     if (!t.enabled) return { status: 409, body: { error: "trigger is disabled" } };
     const { secret: _secret, ...query } = req.query ?? {};
     const body = req.body;
-    const payload = typeof body === "string" ? body : body === null || body === undefined ? "" : JSON.stringify(body, null, 2);
-    const run = await this.withLock(t.id, async () => {
+    const contentType = header(req.headers, "content-type");
+    const d = await this.withLock(t.id, async (): Promise<Delivery> => {
       const cur = this.triggers.get(t.id);
       if (!cur) throw new NotFoundError("notFound", "not found", { id: t.id });
-      return this.fire(cur, "webhook", { payload, query, contentType: header(req.headers, "content-type") });
+      if (piped(cur)) return this.pipeline.take(cur, [this.hookSignal(req, body, query, contentType)], "webhook");
+      const payload = typeof body === "string" ? body : body === null || body === undefined ? "" : JSON.stringify(body, null, 2);
+      return { run: await this.fire(cur, "webhook", { payload, query, contentType }) };
     });
+    if (d.held === "batch") return { status: 202, body: { ok: true, queued: true } };
+    if (d.held === "duplicate") return { status: 202, body: { ok: true, duplicate: true } };
+    if (d.held === "filtered") return { status: 202, body: { ok: true, filtered: true } };
+    if (d.held === "flood") return { status: 429, body: { error: "too many signals: dropped" } };
+    const run = d.run!;
     if (run.status === "skipped") return { status: 429, body: { error: run.detail } };
-    if (run.status === "error") return { status: 502, body: { error: "could not start the task" } };
-    return { status: 202, body: { ok: true, runId: run.id, taskId: run.taskId } };
+    // A pipeline run that failed before any outcome: the trigger's script did.
+    if (run.status === "error") return { status: 502, body: { error: run.stages && !run.outcome ? "the trigger's script failed" : "could not start the task" } };
+    return { status: 202, body: { ok: true, runId: run.id, taskId: run.taskId, ...(run.outcome ? { outcome: run.outcome } : {}) } };
+  }
+
+  // ---------- signals from the built-in sources ----------
+
+  /** time.tick: a schedule's, a heartbeat's or a reminder's slot (not outside content). */
+  private tickSignal(slot: string, reason: RunReason): Signal {
+    return builtinSignal("time.tick", { slot, reason }, { at: new Date(this.now()), external: false });
+  }
+
+  /** web.page: the watched value changed (outside content). */
+  private pageSignal(t: Trigger, c: { previous?: string; current: string; diff?: string }): Signal {
+    const cut = (v: string | undefined) => (v === undefined ? undefined : within(v, PAGE_VALUE_BYTES).value);
+    return builtinSignal("web.page", { url: t.url, previous: cut(c.previous), current: cut(c.current), diff: cut(c.diff) }, { at: new Date(this.now()), external: true, subject: t.url });
+  }
+
+  /** web.webhook: what the sender posted (outside content), named by its delivery id when it gives one. */
+  private hookSignal(req: TriggerHttpRequest, body: unknown, query: Record<string, string>, contentType: string | undefined): Signal {
+    const key = DELIVERY_HEADERS.map((h) => header(req.headers, h)).find((v) => typeof v === "string" && v.trim());
+    // Room is left for the query and the content type beside it.
+    const payload = within(body === undefined ? null : body, SIGNAL_DATA_MAX - 8 * 1024);
+    const data = { payload: payload.value, query, ...(contentType ? { contentType } : {}), ...(payload.truncated ? { truncated: true } : {}) };
+    return builtinSignal("web.webhook", data, { at: new Date(this.now()), external: true, ...(key ? { key: key.trim() } : {}) });
   }
 }
 

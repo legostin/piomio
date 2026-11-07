@@ -67,6 +67,8 @@ export interface TriggerState {
   lastFeedback?: { value: "useful" | "less" | "off"; at: string };
   /** Signals: consecutive failed pipeline runs, the quick-model checks used today, recently seen dedup keys (key -> ms). */
   errorsInRow?: number;
+  /** Signals a subscription's filter (where) left out, in all. */
+  filtered?: number;
   triageToday?: { date: string; count: number };
   seenKeys?: Record<string, number>;
 }

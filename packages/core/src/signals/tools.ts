@@ -175,6 +175,9 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     handler: (input) =>
       guarded(async () => {
         const run = await e.runNow(String(input?.id ?? ""));
+        // Its script or quick check may keep a note or drop it instead of waking the agent.
+        if (run.status === "started" && run.outcome === "note") return text(`Trigger ${input.id} ran its checks and kept a note (${run.noteId}); no task was started.`);
+        if (run.status === "started" && run.outcome === "drop") return text(`Trigger ${input.id} ran its checks and dropped it; no task was started.`);
         if (run.status === "started") return text(`Started background task ${run.taskId ?? "(unknown id)"} for trigger ${input.id}.`);
         return error(`Trigger ${input.id} was not run: ${run.detail}`);
       }),
