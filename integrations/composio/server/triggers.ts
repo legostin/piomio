@@ -15,7 +15,8 @@
 //      (its address, secret and events); on a problem the realtime channel opens again and the subscription is set
 //      right. When the address goes or stops reaching this hub, the hub's own subscription (its kept id, still at a
 //      hub's hook route) is deleted from the person's project: every event would still go there, whole, to whoever
-//      has that address next. It is made again once an address works. A well-formed webhook whose signature fails
+//      has that address next (settings that cannot be read say nothing about the address: then nothing changes until
+//      the next check). It is made again once an address works. A well-formed webhook whose signature fails
 //      makes the hub read the secret again (Composio may have rotated it), at most every 5 minutes.
 //   2. otherwise Composio's realtime channel (realtime.ts), which Composio calls internal. It is also kept open in
 //      webhook mode until the first signed webhook arrives, in case the public address is not reachable from outside.
@@ -155,20 +156,35 @@ interface Incoming {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** The hub's settings could not be read: whether it has a public address is not known now. */
+class SettingsUnread extends Error {
+  constructor(why: string) {
+    super(`the hub's settings could not be read (${why})`);
+  }
+}
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
 const pairKey = (trigger: string, account: string) => `${trigger}\u0000${account}`;
 
-/** What an event looks like without what it says, for the log: its kind, or an object's first keys (and its metadata's). */
+/** The fields of Composio's envelopes (incoming() reads them), at the top and in metadata: the only key names logged. */
+const ENVELOPE_KEYS = new Set(["id", "type", "metadata", "data", "timestamp", "log_id", "trigger_name", "trigger_id", "connection_id", "payload", "appName"]);
+const METADATA_KEYS = new Set(["log_id", "trigger_slug", "trigger_id", "connected_account_id", "auth_config_id", "user_id", "id", "nanoId", "triggerName", "connection"]);
+
+/**
+ * What an event looks like without what it says, for the log: its kind, or which of Composio's envelope fields it has
+ * (at the top and in its metadata). Any other key is only counted: its name may be anything (an address, an id).
+ */
 function shapeOf(raw: unknown): string {
   if (!isObject(raw)) return Array.isArray(raw) ? "a list" : raw === null ? "null" : `a ${typeof raw}`;
-  const keys = (o: Record<string, unknown>) =>
-    Object.keys(o)
-      .slice(0, 8)
-      .map((k) => k.replace(/[^A-Za-z0-9_.-]/g, "?").slice(0, 32))
-      .join(", ");
+  const keys = (o: Record<string, unknown>, known: Set<string>) => {
+    const all = Object.keys(o);
+    const mine = all.filter((k) => known.has(k));
+    const others = all.length - mine.length;
+    return `${mine.join(", ") || "none of Composio's"}${others ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}`;
+  };
   if (!Object.keys(raw).length) return "an empty object";
-  return `keys: ${keys(raw)}${isObject(raw.metadata) ? `; metadata keys: ${keys(raw.metadata)}` : ""}`;
+  return `keys: ${keys(raw, ENVELOPE_KEYS)}${isObject(raw.metadata) ? `; metadata keys: ${keys(raw.metadata, METADATA_KEYS)}` : ""}`;
 }
 
 /**
@@ -430,14 +446,19 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
 
   // ---------- delivery ----------
 
-  /** The hub's public address when it is a public https one (read each time: it may change), else undefined. */
+  /**
+   * The hub's public address when it is a public https one (read each time: it may change), else undefined. Throws
+   * SettingsUnread when the settings cannot be read (a hiccup of the core, the hub shutting down): that says nothing
+   * about the address, so nothing is decided on it.
+   */
   async function hubBase(): Promise<string | undefined> {
+    let s: { publicUrl?: string } | undefined;
     try {
-      const s = await ctx.core.call<{ publicUrl?: string }>("settings.get");
-      return isPublicHttps(s?.publicUrl) ? String(s.publicUrl).replace(/\/+$/, "") : undefined;
-    } catch {
-      return undefined;
+      s = await ctx.core.call<{ publicUrl?: string }>("settings.get");
+    } catch (e) {
+      throw new SettingsUnread(message(e));
     }
+    return isPublicHttps(s?.publicUrl) ? String(s!.publicUrl).replace(/\/+$/, "") : undefined;
   }
   const hookUrl = (base: string) => `${base}/hooks/${ctx.pluginId}${WEBHOOK_PATH}`;
 
@@ -582,7 +603,18 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
 
   async function decide(): Promise<"webhook" | "realtime"> {
     const was = current;
-    const base = await hubBase();
+    let base: string | undefined;
+    try {
+      base = await hubBase();
+    } catch (e) {
+      if (!(e instanceof SettingsUnread)) throw e;
+      // Not known now: the webhook and the way events come stay as they are (the realtime channel when nothing was
+      // decided yet), and the next check decides.
+      sayOnce("settings", `composio: ${e.message}; how the apps' events come is left as it is and checked again in 15 minutes`);
+      if (current) return current;
+      realtimeWhy = "address";
+      return (current = "realtime");
+    }
     if (!base) return overTheChannel();
     const url = hookUrl(base);
     // Never a webhook that cannot arrive: the address must reach this hub's webhooks before one is made or pointed there.
@@ -648,15 +680,24 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
   async function recheck(): Promise<void> {
     if (closed || noKey || !holders() || deciding) return;
     if (current === "webhook") {
-      const problem = await webhookProblem();
-      if (!problem) return;
+      let problem: string | undefined;
+      try {
+        problem = await webhookProblem();
+      } catch (e) {
+        // The settings could not be read: nothing is known about the address, so the webhook stays as it is.
+        if (!(e instanceof SettingsUnread)) throw e;
+        sayOnce("settings", `composio: ${e.message}; how the apps' events come is left as it is and checked again in 15 minutes`);
+        return;
+      }
+      // The key went, the plugin stopped, or the last trigger did while the check asked: nothing to open the channel for.
+      if (!problem || closed || noKey || !holders()) return;
       webhookVerified = false;
       ctx.log.warn(`composio: the apps' webhook stopped working as the hub set it up (${problem}); Composio's realtime channel listens again until it works`);
       realtime.start();
     } else if (current === "realtime" && realtimeWhy === "address") probes.clear();
     else return;
     await redecide();
-    if (holders() && wantChannel()) realtime.start();
+    if (!closed && holders() && wantChannel()) realtime.start();
   }
 
   function startCheck(): void {
@@ -698,7 +739,13 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
 
   async function deliveryNote(): Promise<string> {
     const channel = "Composio's realtime channel, which Composio calls internal (it may change without notice)";
-    const base = await hubBase();
+    let base: string | undefined;
+    try {
+      base = await hubBase();
+    } catch (e) {
+      if (!(e instanceof SettingsUnread)) throw e;
+      return "How the apps' events come could not be told just now: the hub's settings did not answer.";
+    }
     if (!base) return `The hub has no public https address, so the apps' events come over ${channel}.`;
     const url = hookUrl(base);
     // Checking the address is a read (and done once per address): it may run here.

@@ -27,7 +27,7 @@ function fakeComposio() {
   const calls: string[] = [];
   const subs: WebhookSubscription[] = [];
   const instances = new Map<string, string>();
-  const state = { n: 0, hold: undefined as Promise<void> | undefined };
+  const state = { n: 0, hold: undefined as Promise<void> | undefined, holdGet: undefined as Promise<void> | undefined };
   const api = {
     async upsertTriggerInstance(slug: string, o: { connectedAccountId?: string }) {
       calls.push(`upsert ${slug} ${o.connectedAccountId}`);
@@ -58,6 +58,7 @@ function fakeComposio() {
     },
     async getWebhookSubscription(id: string) {
       calls.push(`get webhook ${id}`);
+      if (state.holdGet) await state.holdGet;
       const s = subs.find((x) => x.id === id);
       if (!s) throw new ComposioError(404, "no such subscription");
       return { ...s, events: [...s.events] };
@@ -104,7 +105,8 @@ function setup(o: { publicUrl?: string; storage?: Array<[string, unknown]> } = {
   const fake = fakeComposio();
   const storage = new Map<string, unknown>(o.storage ?? []);
   const logs: string[] = [];
-  const hub = { publicUrl: o.publicUrl };
+  /** settingsDown: the hub's settings.get fails (a hiccup of the core, the hub shutting down). */
+  const hub = { publicUrl: o.publicUrl, settingsDown: false };
   const say = (level: string) => (...a: unknown[]) => void logs.push(`[${level}] ${a.join(" ")}`);
   const ctx = {
     pluginId: "composio",
@@ -115,7 +117,13 @@ function setup(o: { publicUrl?: string; storage?: Array<[string, unknown]> } = {
       delete: async (k: string) => void storage.delete(k),
       list: async (prefix = "") => [...storage].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value })),
     },
-    core: { call: async (m: string) => (m === "settings.get" ? { publicUrl: hub.publicUrl } : {}) },
+    core: {
+      call: async (m: string) => {
+        if (m !== "settings.get") return {};
+        if (hub.settingsDown) throw new Error("the hub is stopping");
+        return { publicUrl: hub.publicUrl };
+      },
+    },
   } as unknown as PluginContext;
   const door = { mode: "hub" as "hub" | "gone" | "proxy" | "proxy-tunnel", hits: 0 };
   const channel = { running: false, starts: 0, deps: undefined as RealtimeDeps | undefined };
@@ -266,6 +274,62 @@ describe("composio.event's delivery (a fake clock)", () => {
       expect(s.channel.running).toBe(true);
       expect(s.logs.some((l) => /does not reach its webhooks: it answers HTTP 404/.test(l))).toBe(true);
     });
+
+    it("opens no channel when the key went, or the last trigger stopped, while the check was asking", async () => {
+      for (const meanwhile of ["the key removed", "the last trigger stopped"] as const) {
+        const sub = await verified();
+        // A problem the check will find, and its read at Composio held until something else happened.
+        s.fake.subs[0]!.secret = "rotated";
+        let release!: () => void;
+        s.fake.state.holdGet = new Promise<void>((r) => (release = r));
+        await advance(15 * MIN);
+        expect(s.fake.calls.at(-1), meanwhile).toBe("get webhook whs_1");
+        if (meanwhile === "the key removed") {
+          s.key.present = false;
+          s.t.keyChanged(false);
+        } else sub.stop();
+        s.fake.state.holdGet = undefined;
+        release();
+        await flush();
+        expect(s.channel.running, meanwhile).toBe(false);
+        expect(lines(s.logs, "stopped working"), meanwhile).toEqual([]);
+        await s.t.close();
+      }
+    });
+
+    it("keeps the webhook and the way events come when the hub's settings cannot be read, and checks again next time", async () => {
+      await verified();
+      s.hub.settingsDown = true;
+      await advance(15 * MIN);
+      expect(s.fake.calls.filter((c) => c.startsWith("delete"))).toEqual([]);
+      expect(s.storage.get("webhook")).toEqual({ id: "whs_1", url: HOOK, secret: "secret-1" });
+      expect(s.channel.running).toBe(false);
+      expect(lines(s.logs, "settings could not be read")).toHaveLength(1);
+      expect((await s.webhook("secret-1", event("ti_1", "m1", { subject: "Still by webhook" }))).status).toBe(200);
+      expect(s.emitted.at(-1)).toMatchObject({ key: "log_m1" });
+      s.hub.settingsDown = false;
+      const asked = s.fake.calls.length;
+      await advance(15 * MIN);
+      expect(s.fake.calls.slice(asked)).toEqual(["get webhook whs_1"]);
+      expect(lines(s.logs, "stopped working")).toEqual([]);
+    });
+
+    it("keeps a webhook from before when the first subscription cannot read the settings, and decides at the next check", async () => {
+      const stale = "https://old.example.com/hooks/composio/events";
+      s = setup({ storage: [["webhook", { id: "whs_old", url: stale, secret: "old" }]] });
+      s.fake.subs.push({ id: "whs_old", url: stale, secret: "old", events: [TRIGGER_MESSAGE] });
+      s.hub.settingsDown = true;
+      await s.subscribe({ trigger: GMAIL });
+      // Over the channel for now, nothing deleted.
+      expect(s.channel.running).toBe(true);
+      expect(s.fake.calls.filter((c) => c.includes("webhook"))).toEqual([]);
+      expect(s.storage.has("webhook")).toBe(true);
+      // The settings answer, with no public address: now the hub's webhook goes.
+      s.hub.settingsDown = false;
+      await advance(15 * MIN);
+      expect(s.fake.calls).toContain("delete webhook whs_old");
+      expect(s.storage.has("webhook")).toBe(false);
+    });
   });
 
   describe("the hub's webhook from before", () => {
@@ -333,13 +397,16 @@ describe("composio.event's delivery (a fake clock)", () => {
       s = setup();
       await s.subscribe({ trigger: GMAIL });
       const on = s.channel.deps!.onEvent;
-      on({ weird: "Dear Aigerim, the bank code is 4417" });
-      on({ weird: "Dear Aigerim, the bank code is 4417" });
+      // Keys that are no field of Composio's can be anything (an address, an id): only counted.
+      const strange = { "aigerim@example.com": "Dear Aigerim, the bank code is 4417", type: "x", metadata: { trigger_slug: GMAIL, ca_private_42: 1 } };
+      on(strange);
+      on(strange);
       on(event("ti_somebody", "x1", { subject: "Someone else's letter" }));
       on(event("ti_somebody", "x2", { subject: "Someone else's letter" }));
       const odd = lines(s.logs, "in no form the hub knows");
       expect(odd).toHaveLength(1);
-      expect(odd[0]).toContain("weird");
+      expect(odd[0]).toContain("(keys: type, metadata and 1 other; metadata keys: trigger_slug and 1 other)");
+      expect(odd[0]).not.toMatch(/aigerim|ca_private_42/);
       const unrouted = lines(s.logs, "no subscription here");
       expect(unrouted).toHaveLength(1);
       expect(unrouted[0]).toContain("ti_somebody");
@@ -348,10 +415,12 @@ describe("composio.event's delivery (a fake clock)", () => {
       s.channel.deps!.log("warn", "composio: Composio refused the realtime channel's authorisation (HTTP 403)", "realtime-auth");
       expect(lines(s.logs, "refused the realtime channel's authorisation")).toHaveLength(1);
       await advance(10 * MIN);
-      on({ weird: "again" });
+      on({ weird: "again", other: 1 });
       s.channel.deps!.log("warn", "composio: Composio refused the realtime channel's authorisation (HTTP 403)", "realtime-auth");
       expect(lines(s.logs, "in no form the hub knows")).toHaveLength(2);
+      expect(lines(s.logs, "in no form the hub knows")[1]).toContain("(keys: none of Composio's and 2 others)");
       expect(lines(s.logs, "in no form the hub knows")[1]).toContain("1 more like it");
+      expect(s.logs.join("\n")).not.toContain("weird");
       expect(lines(s.logs, "refused the realtime channel's authorisation")).toHaveLength(2);
       expect(s.logs.join("\n")).not.toMatch(/4417|Someone else/);
     });
