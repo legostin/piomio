@@ -125,10 +125,11 @@ export class CoreTriggers {
   private host(s: Session): TriggerHost {
     const d = this.d;
     const kv = pluginKv(d.db, TRIGGERS_ID);
-    const log =
-      (level: "info" | "warn" | "error") =>
+    // As the plugin's logs were: debug and info stay quiet, what went wrong reaches the hub's console.
+    const say =
+      (level: "warn" | "error") =>
       (...a: unknown[]) =>
-        console.log(`[piomio] triggers${level === "info" ? "" : ` ${level}`}: ${a.map(String).join(" ")}`);
+        console[level](`[piomio] triggers ${level}: ${a.map(String).join(" ")}`);
     const fetch = d.fetch?.();
     return {
       pluginId: TRIGGERS_ID,
@@ -136,7 +137,7 @@ export class CoreTriggers {
       settings: { ...(d.card.get()?.settings ?? {}) },
       onSettingsChange: (cb) => void s.offs.push(d.card.onSettings(cb)),
       i18n: { locale: hubLocale, t: (key, params, locale) => tFor(locale ?? hubLocale())(`triggers.${key}`, params) },
-      log: { debug() {}, info: log("info"), warn: log("warn"), error: log("error") },
+      log: { debug() {}, info() {}, warn: say("warn"), error: say("error") },
       tools: {
         register: (r) => {
           const { handler, name: short, ...spec } = r;

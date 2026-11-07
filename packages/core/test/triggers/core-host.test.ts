@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PiomioManifestSchema, toolPrefixOf, type ToolCallContext } from "@piomio/shared";
@@ -109,6 +109,26 @@ describe("the trigger engine's host in core", () => {
     const file = join(import.meta.dirname, "..", "..", "..", "..", "plugins", "triggers", ".piomio-plugin", "plugin.json");
     const manifest = PiomioManifestSchema.parse(JSON.parse(readFileSync(file, "utf8")));
     expect(toolPrefixOf(manifest)).toBe("trigger");
+  });
+
+  it("keeps debug and info quiet and sends warnings and errors to the hub's console", async () => {
+    const s = setup();
+    await s.ct.start();
+    const out = { log: vi.spyOn(console, "log"), info: vi.spyOn(console, "info"), warn: vi.spyOn(console, "warn"), error: vi.spyOn(console, "error") };
+    try {
+      const log = s.ct.engine!.ctx.log;
+      log.debug("a debug line");
+      log.info("trigger t_1: catch-up");
+      expect([out.log, out.info, out.warn, out.error].map((m) => m.mock.calls.length)).toEqual([0, 0, 0, 0]);
+      log.warn("settings.get failed:", "boom");
+      log.error("trigger t_1 failed: oops");
+      expect(out.warn.mock.calls).toEqual([["[piomio] triggers warn: settings.get failed: boom"]]);
+      expect(out.error.mock.calls).toEqual([["[piomio] triggers error: trigger t_1 failed: oops"]]);
+      expect(out.log).not.toHaveBeenCalled();
+    } finally {
+      for (const m of Object.values(out)) m.mockRestore();
+      s.ct.stop();
+    }
   });
 
   it("does not run without the Triggers card", async () => {
