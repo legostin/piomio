@@ -179,8 +179,6 @@ export class PluginHost {
   private staging = new Map<string, { dir: string; commitHash?: string; layout: PluginLayout; source: string }>();
   /** What each running plugin last reported about its catalog entries. */
   private catalogs = new Map<string, CatalogEntryState[]>();
-  /** Core work that belongs to a plugin's card hears its settings change (signals/core-host.ts). */
-  private settingsListeners = new Map<string, Set<(settings: Record<string, unknown>) => void>>();
 
   constructor(deps: HostDeps) {
     this.d = deps;
@@ -763,14 +761,6 @@ export class PluginHost {
 
   // ---------- settings ----------
 
-  /** Hear a plugin's settings change; returns the way to stop hearing it. */
-  onSettings(id: string, cb: (settings: Record<string, unknown>) => void): () => void {
-    let set = this.settingsListeners.get(id);
-    if (!set) this.settingsListeners.set(id, (set = new Set()));
-    set.add(cb);
-    return () => void set.delete(cb);
-  }
-
   setSettings(id: string, settings: Record<string, unknown>): void {
     const rec = this.records.get(id);
     if (!rec) throw new Error(`unknown plugin ${id}`);
@@ -778,14 +768,6 @@ export class PluginHost {
     this.d.db.prepare("update plugins set settings = ? where id = ?").run(JSON.stringify(settings), id);
     const r = this.running.get(id);
     if (r && !r.peer.closed) r.peer.notify("settings.changed", { settings });
-    // Core work that hears them (signals/core-host.ts): one that throws stops neither the others nor the audit line.
-    for (const cb of this.settingsListeners.get(id) ?? []) {
-      try {
-        cb(settings);
-      } catch (e) {
-        this.log(rec, "error", `a settings listener failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
     this.d.audit.append("user", "plugin.settings", id);
   }
 

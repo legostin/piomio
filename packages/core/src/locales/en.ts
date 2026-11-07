@@ -251,6 +251,8 @@ export default {
   "settings.badLanguage": "Unsupported language: {value}",
   "settings.badTranscription": "Speech-to-text settings are wrong: {reason}",
   "settings.badVoice": "Voice settings are wrong: {reason}",
+  "settings.badTriggersAllowPrivate": "Watching local network addresses can only be on or off",
+  "settings.badTriggersWatchTimeout": "The page load timeout must be a whole number of seconds from {min} to {max}",
 
   // the local speech engine (speech/)
   "speech.voice.piper-ru-dmitri": "Dmitri",
@@ -339,6 +341,7 @@ export default {
   "media.badType": "That address does not answer with data a page can use",
   "media.hostNotAllowed": "Pages cannot fetch from {detail}",
   "settings.autoModeCard": "Turn on auto mode: a reviewer model decides what used to be an approval card; money, messages to people and publishing still ask you",
+  "settings.triggersPrivateCard": "Let triggers watch and fetch addresses on your local network: localhost, your router, devices at home",
   "native.command": "Run a command outside the sandbox: {command}",
   "native.commandNetwork": "Run a command that reaches {host}: {command}",
   "native.read": "Read {path}",
@@ -541,7 +544,7 @@ export default {
   "triggers.error.jsonPathNothing": "JSON path {path} found nothing",
   "triggers.error.selectorNothing": "CSS selector {selector} found nothing on the page",
   "triggers.error.badAddress": "Invalid address: {url}",
-  "triggers.error.privateHost": "The address {host} is on the internal network: watching it is not allowed (allowPrivateUrls setting)",
+  "triggers.error.privateHost": "The address {host} is on the internal network: watching it is not allowed (Settings → General → Triggers → Allow watching local network addresses)",
   "triggers.error.fetchTimeout": "Could not load {url}: timeout",
   "triggers.error.fetchFailed": "Could not load {url}: {reason}",
   "triggers.error.httpStatus": "{url} responded with {status}",

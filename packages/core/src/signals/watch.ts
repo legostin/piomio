@@ -135,7 +135,7 @@ export async function assertFetchable(url: string, allowPrivate: boolean): Promi
   if (allowPrivate) return u;
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   const blocked = () =>
-    new WatchError("privateHost", `${u.hostname} is on an internal network: watching it is not allowed (setting allowPrivateUrls)`, { host: u.hostname });
+    new WatchError("privateHost", `${u.hostname} is on an internal network: watching it is not allowed unless the person allows private addresses (the hub setting triggersAllowPrivateUrls)`, { host: u.hostname });
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) throw blocked();
   if (isIP(host)) {
     if (isPrivateAddress(host)) throw blocked();

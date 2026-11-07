@@ -5,13 +5,14 @@ import { PiomioManifestSchema, toolPrefixOf, type ToolCallContext } from "@piomi
 import { EventBus } from "../../src/bus.ts";
 import { openDb } from "../../src/db.ts";
 import { pluginKv } from "../../src/plugins/kv.ts";
-import { CoreTriggers, type CoreTriggersDeps } from "../../src/signals/core-host.ts";
+import { CoreTriggers, TRIGGERS_CARRIED, type CoreTriggersDeps, type TriggerSettings } from "../../src/signals/core-host.ts";
 import type { TriggerHttpRequest } from "../../src/signals/host.ts";
 import { scriptSandbox } from "../../src/signals/sandbox.ts";
 import { sqlStore } from "../../src/signals/store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 
-type Card = { enabled: boolean; settings: Record<string, unknown> } | undefined;
+/** The hub around the engine: whether it wants it running (it leads, PIOMIO_PLUGINS is not "none") and its two settings. */
+type HubSide = { wanted?: boolean; settings?: Partial<TriggerSettings> };
 
 /** A promise that waits until it is let go. */
 function latch() {
@@ -22,17 +23,25 @@ function latch() {
 
 /** `before`: awaited before a core call is answered (a latch holds it). */
 function setup(
-  card: Card | null = { enabled: true, settings: {} },
+  hub: HubSide = {},
   fetch?: () => any,
   before?: (method: string) => Promise<void> | undefined,
   pipeline: Pick<CoreTriggersDeps, "gateway" | "quick" | "egress"> = {},
+  db = openDb(":memory:"),
 ) {
-  const db = openDb(":memory:");
   const bus = new EventBus();
   const tools = new ToolRegistry();
-  const settingsListeners = new Set<(s: Record<string, unknown>) => void>();
+  const settingsListeners = new Set<() => void>();
   const calls: Array<{ pluginId: string; method: string; params: any }> = [];
-  let current: Card = card ?? undefined;
+  let wanted = hub.wanted ?? true;
+  let current: TriggerSettings = { triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 30, ...hub.settings };
+  /** What the engine's host wrote into the hub settings (the card's carry-over). */
+  const updates: Array<Partial<TriggerSettings>> = [];
+  /** The hub settings change (Settings, an agent): its listeners hear it, as updateSettings's bus event reaches them. */
+  const setSettings = (patch: Partial<TriggerSettings>) => {
+    current = { ...current, ...patch };
+    for (const cb of [...settingsListeners]) cb();
+  };
   const ct = new CoreTriggers({
     db,
     bus,
@@ -40,9 +49,14 @@ function setup(
     hubUrl: "http://127.0.0.1:8080",
     ...(fetch ? { fetch } : {}),
     ...pipeline,
-    card: {
+    wanted: () => wanted,
+    settings: {
       get: () => current,
-      onSettings: (cb) => {
+      update: (patch) => {
+        updates.push(patch);
+        setSettings(patch);
+      },
+      onChange: (cb) => {
         settingsListeners.add(cb);
         return () => void settingsListeners.delete(cb);
       },
@@ -56,7 +70,22 @@ function setup(
       return [];
     },
   });
-  return { db, bus, tools, ct, calls, settingsListeners, setCard: (c: Card) => void (current = c) };
+  return { db, bus, tools, ct, calls, settingsListeners, updates, setSettings, setWanted: (w: boolean) => void (wanted = w) };
+}
+
+/** A database with the Triggers card's plugins row, its saved settings as the plugin host kept them. */
+function cardRow(settings: unknown) {
+  const db = openDb(":memory:");
+  db.prepare("insert into plugins(id, dir, source, enabled, granted, installed_at, settings) values (?, ?, ?, ?, ?, ?, ?)").run(
+    "triggers",
+    "/gone/plugins/triggers",
+    "builtin",
+    1,
+    "{}",
+    "2026-10-01T00:00:00Z",
+    typeof settings === "string" ? settings : JSON.stringify(settings),
+  );
+  return db;
 }
 
 const call: ToolCallContext = { sessionId: "s", conversationId: "c", agentId: "assistant", callId: "x", tainted: false, background: false, workspace: "/tmp", machineId: "local" };
@@ -71,7 +100,7 @@ const until = async (fn: () => unknown, what: string, timeoutMs = 5000) => {
 };
 
 describe("the trigger engine's host in core", () => {
-  it("runs on the plugin's storage, with its tools named trigger_* and owned by the Triggers card", async () => {
+  it("runs on the plugin's storage, with its tools named trigger_* and owned by \"triggers\" as the plugin's were", async () => {
     const s = setup();
     await s.ct.start();
     // Owned by "triggers", as the plugin's were: "always allow", the catalog's uses and the card's tool list go by it.
@@ -122,17 +151,16 @@ describe("the trigger engine's host in core", () => {
     s.ct.stop();
   });
 
-  it("stops when the card is switched off, takes its tools back, and starts again", async () => {
+  it("stops, takes its tools and listeners back, and starts again", async () => {
     const s = setup();
     await s.ct.start();
-    s.setCard({ enabled: false, settings: {} });
-    await s.ct.sync();
+    expect(s.settingsListeners.size).toBe(1);
+    s.ct.stop();
     expect(s.ct.engine).toBeUndefined();
     expect(triggerTools(s.tools)).toEqual([]);
     expect(s.settingsListeners.size).toBe(0);
     expect((await s.ct.http(req({}))).status).toBe(404);
-    s.setCard({ enabled: true, settings: {} });
-    await s.ct.sync();
+    await s.ct.start();
     expect(s.ct.engine).toBeDefined();
     expect(triggerTools(s.tools)).toHaveLength(8);
     s.ct.stop();
@@ -164,20 +192,81 @@ describe("the trigger engine's host in core", () => {
     }
   });
 
-  it("does not run without the Triggers card", async () => {
-    const s = setup(null);
+  it("does not run while the hub does not want it (a standby, or PIOMIO_PLUGINS=none), and needs no Triggers card otherwise", async () => {
+    const s = setup({ wanted: false });
+    expect(s.ct.wanted()).toBe(false);
     await s.ct.start();
     expect(s.ct.engine).toBeUndefined();
     expect(triggerTools(s.tools)).toEqual([]);
+    expect(s.settingsListeners.size).toBe(0);
+    s.setWanted(true);
+    await s.ct.start();
+    expect(s.ct.engine).toBeDefined();
+    s.ct.stop();
   });
 
-  it("hands the card's settings to the engine, now and when they change", async () => {
-    const s = setup({ enabled: true, settings: { allowPrivateUrls: true } });
+  it("hands the hub's trigger settings to the engine, now and when they change", async () => {
+    const s = setup({ settings: { triggersAllowPrivateUrls: true } });
     await s.ct.start();
-    expect(s.ct.engine!.settings.allowPrivateUrls).toBe(true);
-    for (const cb of s.settingsListeners) cb({ allowPrivateUrls: false, watchTimeoutSec: 10 });
+    expect(s.ct.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 30 });
+    s.setSettings({ triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 10 });
     expect(s.ct.engine!.settings).toEqual({ allowPrivateUrls: false, watchTimeoutSec: 10 });
     s.ct.stop();
+    // Stopped, it hears nothing more.
+    expect(s.settingsListeners.size).toBe(0);
+  });
+
+  it("carries the Triggers card's saved settings over into the hub settings once, recorded in meta", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({ allowPrivateUrls: true, watchTimeoutSec: 500 }));
+    await s.ct.start();
+    // Out of range, as the engine read it: at most 120 seconds.
+    expect(s.updates).toEqual([{ triggersAllowPrivateUrls: true, triggersWatchTimeoutSec: 120 }]);
+    expect(s.ct.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 120 });
+    expect(s.db.prepare("select value from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+    // The card's row is left as it was.
+    const row = s.db.prepare("select settings from plugins where id = 'triggers'").get() as { settings: string };
+    expect(JSON.parse(row.settings)).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 500 });
+    s.ct.stop();
+    // Changed in the hub settings since: a later start carries nothing over again.
+    s.setSettings({ triggersAllowPrivateUrls: false });
+    await s.ct.start();
+    expect(s.updates).toHaveLength(1);
+    expect(s.ct.engine!.settings.allowPrivateUrls).toBe(false);
+    s.ct.stop();
+  });
+
+  it("carries over only what the card saved and the hub can use, and records it even when that is nothing", async () => {
+    const junk = setup({}, undefined, undefined, {}, cardRow({ allowPrivateUrls: "yes", watchTimeoutSec: 0 }));
+    await junk.ct.start();
+    expect(junk.updates).toEqual([]);
+    expect(junk.ct.engine!.settings).toEqual({ allowPrivateUrls: false, watchTimeoutSec: 30 });
+    expect(junk.db.prepare("select 1 from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+    junk.ct.stop();
+    // The same as the hub has: nothing to write.
+    const same = setup({}, undefined, undefined, {}, cardRow({ allowPrivateUrls: false, watchTimeoutSec: 30 }));
+    await same.ct.start();
+    expect(same.updates).toEqual([]);
+    same.ct.stop();
+    // A number as text, as the engine read it, and the other key left alone.
+    const text = setup({}, undefined, undefined, {}, cardRow({ watchTimeoutSec: "45" }));
+    await text.ct.start();
+    expect(text.updates).toEqual([{ triggersWatchTimeoutSec: 45 }]);
+    text.ct.stop();
+    // A row that is not JSON, and no card at all: nothing carried, the start goes on.
+    for (const s of [setup({}, undefined, undefined, {}, cardRow("not json")), setup()]) {
+      await s.ct.start();
+      expect(s.updates).toEqual([]);
+      expect(s.ct.engine).toBeDefined();
+      expect(s.db.prepare("select 1 from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+      s.ct.stop();
+    }
+  });
+
+  it("carries over even while it does not run, so the Settings page shows the card's values", async () => {
+    const s = setup({ wanted: false }, undefined, undefined, {}, cardRow({ allowPrivateUrls: true }));
+    await s.ct.start();
+    expect(s.ct.engine).toBeUndefined();
+    expect(s.updates).toEqual([{ triggersAllowPrivateUrls: true }]);
   });
 
   it("hears the bus: an agent deleted for good takes its triggers along", async () => {
@@ -207,7 +296,7 @@ describe("the trigger engine's host in core", () => {
 
   it("a stop while it starts cuts off what the start still does: no engine, no tools, no listeners, no writes", async () => {
     const held = latch();
-    const s = setup(undefined, undefined, (m) => (m === "settings.get" ? held.wait : undefined));
+    const s = setup({}, undefined, (m) => (m === "settings.get" ? held.wait : undefined));
     const started = s.ct.start();
     await until(() => s.calls.some((c) => c.method === "settings.get"), "the start to ask for the hub settings");
     s.ct.stop();
@@ -242,7 +331,7 @@ describe("the trigger engine's host in core", () => {
   it("a stop during a watch's page load: the check that finishes later starts no task and writes nothing", async () => {
     const held = latch();
     let loading = false;
-    const s = setup({ enabled: true, settings: { allowPrivateUrls: true } }, () => ({
+    const s = setup({ settings: { triggersAllowPrivateUrls: true } }, () => ({
       fetch: async () => {
         loading = true;
         await held.wait;
@@ -270,7 +359,7 @@ describe("the trigger engine's host in core", () => {
 
   it("a start that throws is not stuck: the next start runs", async () => {
     let n = 0;
-    const s = setup(undefined, () => {
+    const s = setup({}, () => {
       if (n++ === 0) throw new Error("no fetch yet");
       return { fetch: async () => new Response("") };
     });
@@ -283,7 +372,7 @@ describe("the trigger engine's host in core", () => {
 
   it("makes its page loads afresh on every start and lets them go when it stops (the egress token, the sockets)", async () => {
     const made: Array<{ released: number }> = [];
-    const s = setup(undefined, () => {
+    const s = setup({}, () => {
       const m = { released: 0 };
       made.push(m);
       return { fetch: async () => new Response(""), release: () => void m.released++ };
@@ -318,7 +407,7 @@ describe("the trigger engine's host in core", () => {
   it("gives a trigger's script its agent's read tools, the quick model and an egress token of each run's own", async () => {
     const reads: unknown[] = [];
     const tokens: Array<{ owner: string; allow: string[]; context: unknown; revoked: boolean }> = [];
-    const s = setup(undefined, undefined, undefined, {
+    const s = setup({}, undefined, undefined, {
       gateway: {
         callRead: async (as, name, input) => {
           reads.push({ as, name, input });

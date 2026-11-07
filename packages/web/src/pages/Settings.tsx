@@ -35,6 +35,10 @@ interface CoreSettings {
   transcription: Transcription;
   /** The local engine's voice for reading aloud, and its speed. */
   voice: { voice?: string; speed?: number };
+  /** Watch triggers and triggers' scripts may reach addresses on the local network. */
+  triggersAllowPrivateUrls: boolean;
+  /** How long a watch trigger waits for its page, in seconds. */
+  triggersWatchTimeoutSec: number;
 }
 
 interface Transcription {
@@ -53,7 +57,7 @@ const VOICE_PROVIDERS: Array<{ id: Transcription["provider"]; label: MessageKey 
   { id: "off", label: "settings.voice.off" },
 ];
 
-type NumKey = "notifyRatePerHour" | "brainConcurrency" | "approvalInlineWaitSec" | "approvalExpireHours";
+type NumKey = "notifyRatePerHour" | "brainConcurrency" | "approvalInlineWaitSec" | "approvalExpireHours" | "triggersWatchTimeoutSec";
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -68,7 +72,7 @@ export function SettingsPage() {
   const { settings: sections } = usePluginRegistry();
   const [orig, setOrig] = useState<CoreSettings | null>(null);
   const [form, setForm] = useState<CoreSettings | null>(null);
-  const [nums, setNums] = useState<Record<NumKey, string>>({ notifyRatePerHour: "", brainConcurrency: "", approvalInlineWaitSec: "", approvalExpireHours: "" });
+  const [nums, setNums] = useState<Record<NumKey, string>>({ notifyRatePerHour: "", brainConcurrency: "", approvalInlineWaitSec: "", approvalExpireHours: "", triggersWatchTimeoutSec: "" });
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [voiceEngine, setVoiceEngine] = useState<{ label: string; model: string } | null>();
@@ -97,6 +101,7 @@ export function SettingsPage() {
         brainConcurrency: String(r.brainConcurrency),
         approvalInlineWaitSec: String(r.approvalInlineWaitSec),
         approvalExpireHours: String(r.approvalExpireHours),
+        triggersWatchTimeoutSec: String(r.triggersWatchTimeoutSec),
       });
     } catch (e) {
       setError(errorText(e));
@@ -152,6 +157,7 @@ export function SettingsPage() {
       brainConcurrency: [1, 16, "settings.brainConcurrencyName"],
       approvalInlineWaitSec: [0, 600, "settings.approvalWaitName"],
       approvalExpireHours: [1, 24 * 30, "settings.approvalExpireName"],
+      triggersWatchTimeoutSec: [1, 120, "settings.triggersTimeoutName"],
     };
     for (const k of Object.keys(limits) as NumKey[]) {
       const n = Number(nums[k]);
@@ -267,6 +273,18 @@ export function SettingsPage() {
                 <Input type="number" min={0} value={nums.notifyRatePerHour} onChange={(e) => setNums((n) => ({ ...n, notifyRatePerHour: e.target.value }))} />
               </Field>
             </div>
+          </div>
+        </Card>
+
+        <Card title={t("settings.triggers")}>
+          <div className="flex flex-col gap-4">
+            <div>
+              <Toggle checked={form.triggersAllowPrivateUrls} onChange={(v) => set("triggersAllowPrivateUrls", v)} label={<span className="font-medium">{t("settings.triggersPrivate")}</span>} />
+              <div className="mt-1 pl-12 text-xs text-muted">{t("settings.triggersPrivateHint")}</div>
+            </div>
+            <Field label={t("settings.triggersTimeout")} hint={t("settings.triggersTimeoutHint")} className="sm:max-w-xs">
+              <Input type="number" min={1} max={120} value={nums.triggersWatchTimeoutSec} onChange={(e) => setNums((n) => ({ ...n, triggersWatchTimeoutSec: e.target.value }))} />
+            </Field>
           </div>
         </Card>
 

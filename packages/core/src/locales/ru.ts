@@ -250,6 +250,8 @@ export default {
   "settings.badLanguage": "Неподдерживаемый язык: {value}",
   "settings.badTranscription": "Неверные настройки расшифровки речи: {reason}",
   "settings.badVoice": "Неверные настройки голоса: {reason}",
+  "settings.badTriggersAllowPrivate": "Слежение за адресами локальной сети можно только включить или выключить",
+  "settings.badTriggersWatchTimeout": "Таймаут загрузки страницы — целое число секунд от {min} до {max}",
 
   // локальный движок речи (speech/)
   "speech.voice.piper-ru-dmitri": "Дмитрий",
@@ -338,6 +340,7 @@ export default {
   "media.badType": "По этому адресу нет данных, которые может использовать страница",
   "media.hostNotAllowed": "Страницы не могут загружать данные с {detail}",
   "settings.autoModeCard": "Включить автомод: решения вместо карточек принимает проверяющая модель; деньги, сообщения людям и публикацию по-прежнему решаете вы",
+  "settings.triggersPrivateCard": "Разрешить триггерам следить за адресами вашей локальной сети и загружать их: localhost, роутер, домашние устройства",
   "native.command": "Выполнить команду вне песочницы: {command}",
   "native.commandNetwork": "Выполнить команду с выходом в {host}: {command}",
   "native.read": "Прочитать {path}",
@@ -540,7 +543,7 @@ export default {
   "triggers.error.jsonPathNothing": "JSON-путь {path} ничего не нашёл",
   "triggers.error.selectorNothing": "CSS-селектор {selector} ничего не нашёл на странице",
   "triggers.error.badAddress": "Неверный адрес: {url}",
-  "triggers.error.privateHost": "Адрес {host} во внутренней сети: следить за ним запрещено (настройка allowPrivateUrls)",
+  "triggers.error.privateHost": "Адрес {host} во внутренней сети: следить за ним запрещено (Настройки → Общие → Триггеры → Разрешить слежение за адресами локальной сети)",
   "triggers.error.fetchTimeout": "Не удалось загрузить {url}: таймаут",
   "triggers.error.fetchFailed": "Не удалось загрузить {url}: {reason}",
   "triggers.error.httpStatus": "{url} ответил {status}",

@@ -3,6 +3,7 @@
 
 import { pluginHttp } from "./plugin-http.ts";
 import { DEFAULT_BRAIN_EGRESS } from "../settings.ts";
+import { TRIGGERS_ID } from "../signals/core-host.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -509,11 +510,11 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     await hub.plugins.uninstall((req.params as any).id);
     return { ok: true };
   });
-  api.all("/api/plugins/:id/http/*", async (req, reply) => {
-    const id = (req.params as any).id as string;
+  /** A plugin's (or the trigger engine's) answer to the UI's call at `path`, with only the headers a page may get. */
+  const pluginCall = async (req: FastifyRequest, reply: FastifyReply, id: string, path: string) => {
     const r = await pluginHttp(hub, id, {
       method: req.method,
-      path: "/" + ((req.params as any)["*"] as string),
+      path,
       query: req.query as Record<string, string>,
       headers: { "content-type": String(req.headers["content-type"] ?? "") },
       body: req.body ?? null,
@@ -523,7 +524,12 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     reply.code(r.status ?? 200);
     for (const [k, v] of Object.entries(r.headers ?? {})) if (/^(content-type|cache-control|content-disposition)$/i.test(k)) reply.header(k, v);
     return reply.send(r.body ?? "");
-  });
+  };
+  // The Triggers card's old address keeps answering (the iOS app, the plugin's page): plugin-http.ts sends it to core.
+  api.all("/api/plugins/:id/http/*", async (req, reply) => pluginCall(req, reply, (req.params as any).id as string, "/" + ((req.params as any)["*"] as string)));
+  // Triggers are part of the hub: their API (signals/http.ts) at /api/triggers, which is the engine's /triggers.
+  api.all("/api/triggers", async (req, reply) => pluginCall(req, reply, TRIGGERS_ID, "/triggers"));
+  api.all("/api/triggers/*", async (req, reply) => pluginCall(req, reply, TRIGGERS_ID, "/triggers/" + ((req.params as any)["*"] as string)));
   api.post("/api/plugins/:id/message", async (req) => {
     hub.plugins.uiMessage((req.params as any).id, req.body);
     return { ok: true };

@@ -81,17 +81,15 @@ describe("signalsBlock against forged lines", () => {
 describe("CoreTriggers.notes", () => {
   it("is empty while the engine is off and once its session is closed", async () => {
     const db = openDb(":memory:");
-    let card: { enabled: boolean; settings: Record<string, unknown> } | undefined = { enabled: false, settings: {} };
     const ct = new CoreTriggers({
       db,
       bus: new EventBus(),
       tools: new ToolRegistry(),
       hubUrl: "http://127.0.0.1:8080",
-      card: { get: () => card, onSettings: () => () => {} },
+      settings: { get: () => ({ triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 30 }), update() {}, onChange: () => () => {} },
       coreCall: async (_p, method) => (method === "settings.get" ? { timezone: "UTC", defaultAgent: "assistant" } : method === "agents.list" ? [{ id: "assistant", name: "A" }] : []),
     });
     expect(ct.notes({ agentId: "assistant" })).toEqual([]);
-    card = { enabled: true, settings: {} };
     await ct.start();
     sqlStore(db).addNote({ agentId: "assistant", triggerId: "t", triggerName: "T", text: "hi", signalIds: [], external: false });
     expect(ct.notes({ agentId: "assistant" }).map((n) => n.text)).toEqual(["hi"]);
