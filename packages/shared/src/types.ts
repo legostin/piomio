@@ -1159,10 +1159,12 @@ export interface WorkRule {
 
 /**
  * A computer an agent may be bound to (AgentDef.machines): the hub's own (`id` its replica id in a cluster, else
- * "local"), a paired machine, or another replica of the hub (`standby`: it is not leading, so nothing runs there now).
+ * "local"), a paired machine, or another replica of the hub, by its replica id whoever leads. Such a replica's
+ * computer thinks through the machine that serves it while another one leads (its alias); with none it is `standby`:
+ * nothing runs there now.
  */
 export interface Computer {
-  /** Existing executor ids on this computer; refs keep using them. */
+  /** Existing executor ids on this computer (machines that serve it); refs keep using them. */
   aliases?: string[];
   id: string;
   name: string;

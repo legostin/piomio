@@ -122,6 +122,11 @@ export interface BrainHostOptions {
   filesWaitMs?: number;
   /** A file of the hub's `workspaces` (path under it, sha256), read from the hub now (BrainTurn.files). */
   fetchFile?: (path: string, sha: string) => Promise<Uint8Array | undefined>;
+  /**
+   * Keeps each session's own tools in the computer's sandbox, as the hub confines its own brains there (a hub
+   * replica's own daemon: core own-node.ts); undefined leaves the session to this computer's policy alone.
+   */
+  confine?: (workspace: string) => BrainSessionOptions["confine"];
 }
 
 /** The person's files reach this machine with the hub's file sync, every few seconds: wait for them a little. */
@@ -340,6 +345,8 @@ export class BrainHost {
       skillsDir: undefined,
       claudePluginDirs: [],
       env,
+      // This computer's own sandbox for the session, when the daemon keeps one (a hub replica's own daemon).
+      ...(this.o.confine ? { confine: this.o.confine(workspace) } : {}),
     };
     const old = this.sessions.get(opts.sessionId);
     if (old) await Promise.resolve(old.session.close()).catch(() => {});

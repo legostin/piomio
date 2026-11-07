@@ -116,8 +116,17 @@ export class MachineHub {
   /** Resolve a verified executor alias without changing any stored task or brain reference. */
   canonical(id: string): string {
     const here = this.here?.().id ?? "local";
-    return id === "local" || id === here || this.sameHost.has(id) ? here : id;
+    if (id === "local" || id === here || this.sameHost.has(id)) return here;
+    // A machine that serves a hub replica's computer is that computer, named by the replica whoever leads (own-node.ts).
+    return this.replicaOf(id) ?? id;
   }
+  /** The hub replica whose computer this machine serves while that replica does not lead (replicas.machine_id). */
+  replicaOf(machineId: string): string | undefined {
+    if (!machineId.startsWith("mach_")) return undefined;
+    this.replicaByMachine ??= this.db.prepare("select id from replicas where machine_id = ? and revoked = 0");
+    return (this.replicaByMachine.get(machineId) as { id: string } | undefined)?.id;
+  }
+  private replicaByMachine?: ReturnType<Db["prepare"]>;
   aliases(): string[] { return [...this.sameHost]; }
   /** This hub's own computer for people: the name of a machine paired from it, else the hostname (pairing.ts). */
   localName(): string { return localComputerName(this.list()); }

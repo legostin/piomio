@@ -6,9 +6,9 @@ import { Hub, loadConfig } from "../../src/index.ts";
 let hub: Hub | undefined;
 
 const ops: Record<string, (a: any) => unknown> = {
-  async start(a: { env: NodeJS.ProcessEnv; dataDir: string; cluster?: Record<string, unknown> }) {
+  async start(a: { env: NodeJS.ProcessEnv; dataDir: string; cluster?: Record<string, unknown>; ownNode?: boolean }) {
     const fixtures = import.meta.dirname;
-    hub = new Hub(loadConfig(a.env, { dataDir: a.dataDir, builtinPluginsDir: join(fixtures, "plugins"), builtinAgentsDir: join(fixtures, "agents") }));
+    hub = new Hub(loadConfig(a.env, { dataDir: a.dataDir, builtinPluginsDir: join(fixtures, "plugins"), builtinAgentsDir: join(fixtures, "agents"), ownNode: a.ownNode ?? false }));
     await hub.start();
     Object.assign(hub.cluster, a.cluster ?? {});
     return {};

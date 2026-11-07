@@ -1484,12 +1484,15 @@ export class SessionRunner {
 
   /**
    * What the chat says when none of a bound agent's computers can think now: the hub's own always can, a paired machine
-   * while it is connected, another replica of the hub never (nothing runs there while this one leads). Undefined when it can.
+   * while it is connected, another replica of the hub while the machine that serves its computer is (own-node.ts; with
+   * none, nothing runs there while this one leads). Undefined when it can.
    */
   private machinesOff(agent: AgentDef): string | undefined {
     if (!bound(agent.machines)) return undefined;
-    const online = new Set((this.d.machines?.() ?? []).filter((m) => m.status === "online").map((m) => m.id));
-    if (agent.machines.some((m) => m === "local" || m === this.here() || online.has(m) || this.d.canonicalMachine?.(m) === this.here())) return undefined;
+    // By the computer each names: another replica's computer is online while the machine that serves it is.
+    const canonical = (id: string) => this.d.canonicalMachine?.(id) ?? id;
+    const online = new Set((this.d.machines?.() ?? []).filter((m) => m.status === "online").map((m) => canonical(m.id)));
+    if (agent.machines.some((m) => m === "local" || m === this.here() || online.has(canonical(m)) || canonical(m) === this.here())) return undefined;
     return t("chat.machinesOff", { agent: agentName(agent, hubLocale()), machines: this.boundNames(agent), count: agent.machines.length });
   }
 
