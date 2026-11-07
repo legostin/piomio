@@ -357,7 +357,8 @@ export function Page({ title, subtitle, actions, children, className }: { title:
       <div className={cx("px-4 py-4 sm:px-5", className)}>
         {(subtitle || actions) && (
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            {subtitle ? <p className="min-w-0 flex-1 text-sm text-muted">{subtitle}</p> : <span />}
+            {/* At least 10rem wide: where the actions leave less (a phone), they wrap below instead of covering it. */}
+            {subtitle ? <p className="min-w-0 flex-1 basis-40 text-sm text-muted">{subtitle}</p> : <span />}
             {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
           </div>
         )}
