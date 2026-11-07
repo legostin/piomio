@@ -62,7 +62,8 @@ const NOT_KEPT = "(not kept: this run's signals were too large to keep in full)"
 const SKIPPED_WAKES = new Set(["dailyLimit", "previousRunning"]);
 const STOPPED = "the trigger engine was stopped";
 
-const newRunId = () => `r_${randomBytes(4).toString("hex")}`;
+/** A journal line's id: the journal's primary key across all triggers, written with insert or replace. */
+export const newRunId = () => `r_${randomBytes(8).toString("hex")}`;
 export const newSignalId = () => `sig_${randomBytes(8).toString("hex")}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
@@ -256,6 +257,16 @@ export const NO_SERVICES: PipelineServices = {
 
 const briefOf = (s: Signal) => ({ id: s.id, type: s.type, ...(s.subject ? { subject: s.subject } : {}) });
 
+const RUN_REASONS = ["schedule", "catch-up", "once", "change", "webhook", "heartbeat", "manual"] as const satisfies readonly RunReason[];
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+/** A queued run the pipeline can carry out: a run id, a reason, and signals that are signals. */
+const wellFormed = (w: unknown): w is Work =>
+  isObject(w) &&
+  typeof w.runId === "string" &&
+  typeof w.reason === "string" &&
+  Array.isArray(w.signals) &&
+  w.signals.every((s) => isObject(s) && typeof s.id === "string" && typeof s.type === "string");
+
 /** The signals the journal keeps with a run: in full up to 1 MB of data, the rest without it. */
 function keptData(signals: Signal[]): Signal[] {
   let left = RUN_DATA_KEPT;
@@ -355,14 +366,21 @@ function stateOverlay(store: TriggerStore, dry = false): StateOverlay {
 export class TriggerPipeline {
   /** One question to the quick model, at most (ms); tests shorten it. */
   quickMs = QUICK_TIMEOUT_MS;
+  /** How long runs queued before this start wait once for what another leader wrote (ms); tests shorten it. */
+  settleMs = SETTLE_MS;
   private e: TriggerEngine;
   private s: PipelineServices;
   /** Open batches' timers, by trigger. */
   private timers = new Map<string, NodeJS.Timeout>();
   /** When signals came in the last minute, by trigger (at most FLOOD_DROP + 1 of them). */
   private arrivals = new Map<string, number[]>();
-  /** When the last flood line went into the journal, by trigger. */
+  /** When the last flood line (or the last full queue's line) went into the journal, by trigger. */
   private floodLine = new Map<string, number>();
+  private fullLine = new Map<string, number>();
+  /** Queues waiting once, at start, for what another leader wrote (resume): trigger → the wait's timer and its end. */
+  private queueSettling = new Map<string, { timer: NodeJS.Timeout; done: () => void }>();
+  /** The queued runs this pipeline queued itself (the rest were queued before it started), until they leave the queue. */
+  private mine = new Set<string>();
   /** Who waits for a queued run's outcome, by its run id. */
   private waiters = new Map<string, { triggerId: string; resolve: (run: TriggerRun | undefined) => void }>();
   /** Steps and runs being carried out, for idle(). */
@@ -405,9 +423,10 @@ export class TriggerPipeline {
     }
     const none: Promise<TriggerRun | undefined> = Promise.resolve(undefined);
     if (!passed.length) return { signals: [], held, done: none };
-    // Refused (429): their keys go, so the sender's retry is taken in.
+    // Refused (429): their keys go, so the sender's retry is taken in. A full queue leaves a journal line.
     const refused = (why: "full" | "flood", done = none): Intake => {
       this.unsee(t.id, passed);
+      if (why === "full") this.full(t, passed, reason, now, !!o.immediate);
       return { signals: passed, held: why, done };
     };
     const work = (signals: Signal[], extra: Partial<Work> = {}): Work => ({
@@ -492,14 +511,35 @@ export class TriggerPipeline {
     return { ...j, read: !!pass.read, stages: [...stages, ...trimLine(kept), ...j.stages] };
   }
 
-  /** At start: queued runs are carried out (again: one cut short by a stop is retried), open batches get their timers back. */
+  /**
+   * At start: queued runs are carried out (again: one cut short by a stop is retried), open batches get their timers
+   * back. Runs queued before this start wait once (settleMs, as a batch due while the hub was away does): the hub has
+   * just taken the lead, and a run the old leader carried out may not have reached it yet; when its journal line
+   * arrives meanwhile, it is not carried out again. Meanwhile a run carried out under the lock (a timer's, a run now)
+   * goes on at once; the others wait their turn behind the old ones.
+   */
   async resume(): Promise<void> {
     for (const t of this.e.list()) {
       if (this.stopped) return;
-      this.kick(t.id);
+      if (this.queue(t.id).some((w) => !this.mine.has(w.runId))) this.settleQueue(t.id);
+      else this.kick(t.id);
       const b = this.open(t.id);
       if (b) this.arm(t.id, b);
     }
+  }
+
+  /** The queue of a trigger waits settleMs, then goes on (resume). */
+  private settleQueue(id: string): void {
+    let done!: () => void;
+    const wait = new Promise<void>((r) => (done = r));
+    const timer = setTimeout(() => {
+      this.queueSettling.delete(id);
+      done();
+      this.kick(id);
+    }, this.settleMs);
+    timer.unref?.();
+    this.queueSettling.set(id, { timer, done });
+    this.track(wait);
   }
 
   /** Every open batch whose window has closed goes on now (the timers do this; tests call it with their own clock). */
@@ -522,6 +562,11 @@ export class TriggerPipeline {
     this.stopped = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    for (const s of this.queueSettling.values()) {
+      clearTimeout(s.timer);
+      s.done();
+    }
+    this.queueSettling.clear();
     for (const w of this.waiters.values()) w.resolve(undefined);
     this.waiters.clear();
   }
@@ -531,8 +576,15 @@ export class TriggerPipeline {
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
     this.settling.delete(id);
+    const q = this.queueSettling.get(id);
+    if (q) {
+      clearTimeout(q.timer);
+      q.done();
+      this.queueSettling.delete(id);
+    }
     this.arrivals.delete(id);
     this.floodLine.delete(id);
+    this.fullLine.delete(id);
     for (const [runId, w] of this.waiters) {
       if (w.triggerId !== id) continue;
       w.resolve(undefined);
@@ -617,6 +669,29 @@ export class TriggerPipeline {
     this.e.emit(t.id);
     this.e.ctx.log.warn(`trigger ${t.id}: over ${FLOOD_DROP} signals a minute, dropping them`);
     return run;
+  }
+
+  /**
+   * Signals refused because the trigger's queue is full: one journal line a minute, or every time for a run taken now
+   * (a run now, a one-time reminder), so a refusal is never without a trace.
+   */
+  private full(t: Trigger, signals: Signal[], reason: RunReason, now: number, always: boolean): void {
+    if (!always && now - (this.fullLine.get(t.id) ?? -Infinity) < FLOOD_MS) return;
+    this.fullLine.set(t.id, now);
+    const run: TriggerRun = {
+      id: newRunId(),
+      at: new Date(now).toISOString(),
+      reason,
+      status: "skipped",
+      code: "queueFull",
+      detail: "Too many runs are waiting for this trigger: these signals were refused until fewer wait",
+      signals: signals.map(briefOf),
+      stages: [{ stage: "outcome", verdict: "drop", why: "the queue is full" }],
+      outcome: "drop",
+      external: signals.some((s) => s.external),
+    };
+    this.journal(t.id, run, []);
+    this.e.emit(t.id);
   }
 
   // ---------- the open batch ----------
@@ -706,15 +781,40 @@ export class TriggerPipeline {
 
   // ---------- the queue ----------
 
+  /**
+   * The trigger's queued runs. One that cannot be read (no run id, signals that are not signals: a hand edit, another
+   * version's shape) leaves the queue at once with a journal line, instead of failing every step after it.
+   */
   private queue(id: string): Work[] {
     const q = this.store.stateGet(id, QUEUE_KEY);
-    return Array.isArray(q) ? (q as Work[]).filter((w) => w && typeof w.runId === "string" && Array.isArray(w.signals)) : [];
+    if (q === undefined) return [];
+    const list: unknown[] = Array.isArray(q) ? q : [q];
+    const ok = list.filter(wellFormed);
+    if (ok.length < list.length) this.dropMalformed(id, list.filter((w) => !wellFormed(w)), ok);
+    return ok;
+  }
+
+  private dropMalformed(id: string, bad: unknown[], ok: Work[]): void {
+    if (ok.length) this.store.stateSet(id, QUEUE_KEY, ok);
+    else this.store.stateDelete(id, QUEUE_KEY);
+    const reason = (bad[0] as { reason?: unknown } | null)?.reason;
+    const run: TriggerRun = {
+      id: newRunId(),
+      at: new Date(this.e.now()).toISOString(),
+      reason: typeof reason === "string" && (RUN_REASONS as readonly string[]).includes(reason) ? (reason as RunReason) : "manual",
+      status: "error",
+      detail: `${bad.length} queued run(s) could not be read and were dropped`,
+    };
+    this.journal(id, run, []);
+    this.e.emit(id);
+    this.e.ctx.log.warn(`trigger ${id}: ${run.detail}`);
   }
 
   /** Adds runs to the trigger's queue; false when they do not fit beside its state (then nothing was added). */
   private enqueue(id: string, ws: Work[]): boolean {
     try {
       this.store.stateSet(id, QUEUE_KEY, [...this.queue(id), ...ws]);
+      for (const w of ws) this.mine.add(w.runId);
       return true;
     } catch (e) {
       if (!(e instanceof RangeError)) throw e;
@@ -724,6 +824,7 @@ export class TriggerPipeline {
   }
 
   private unqueue(id: string, runId: string): void {
+    this.mine.delete(runId);
     const q = this.queue(id).filter((w) => w.runId !== runId);
     if (q.length) this.store.stateSet(id, QUEUE_KEY, q);
     else this.store.stateDelete(id, QUEUE_KEY);
@@ -772,7 +873,7 @@ export class TriggerPipeline {
    * queue, however much keeps coming in. At most one step per trigger waits for the lock at a time.
    */
   private kick(id: string): void {
-    if (this.stopped || this.stepping.has(id)) return;
+    if (this.stopped || this.stepping.has(id) || this.queueSettling.has(id)) return;
     let left = false;
     try {
       left = this.queue(id).length > 0;
@@ -860,7 +961,10 @@ export class TriggerPipeline {
     const left = all.filter((w) => w.now);
     if (left.length) this.store.stateSet(t.id, QUEUE_KEY, left);
     else this.store.stateDelete(t.id, QUEUE_KEY);
-    for (const w of off) this.settle(w.runId, run);
+    for (const w of off) {
+      this.mine.delete(w.runId);
+      this.settle(w.runId, run);
+    }
     this.e.emit(t.id);
     return run;
   }

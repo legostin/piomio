@@ -540,6 +540,7 @@ export default {
   "triggers.error.extractTimeout": "Reading the page took longer than {seconds, plural, one {# second} other {# seconds}}: it is too large or too deeply nested",
   "triggers.error.dailyLimit": "Daily run limit ({max}) reached",
   "triggers.error.previousRunning": "The previous run has not finished yet",
+  "triggers.error.queueFull": "Too many runs are waiting for this trigger: try again once they are done",
   "triggers.error.agentArchived": "The agent is in the archive",
   "triggers.error.notFound": "Trigger {id} not found",
   "triggers.error.unknownAgent": "Unknown agent \"{id}\". Available: {available}",

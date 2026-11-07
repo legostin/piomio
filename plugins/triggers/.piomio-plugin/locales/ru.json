@@ -50,6 +50,7 @@
   "error.extractTimeout": "Страница разбиралась дольше {seconds, plural, one {# секунды} few {# секунд} many {# секунд} other {# секунды}}: она слишком большая или слишком глубоко вложенная",
   "error.dailyLimit": "Дневной лимит запусков ({max}) исчерпан",
   "error.previousRunning": "Предыдущий запуск ещё не завершён",
+  "error.queueFull": "У этого триггера ждёт слишком много запусков: попробуйте, когда они пройдут",
   "error.agentArchived": "Агент в архиве",
   "error.notFound": "Триггер {id} не найден",
   "error.unknownAgent": "Неизвестный агент \"{id}\". Доступны: {available}",

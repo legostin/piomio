@@ -6,7 +6,7 @@
 import type { TriggerHost } from "./host.ts";
 import { hostMatches, type JsonSchema, type ToolEffect, type ToolResult } from "@piomio/shared";
 import { BUILTIN_SOURCES_INFO } from "./builtin-sources.ts";
-import { NotFoundError, type TriggerEngine } from "./engine.ts";
+import { NotFoundError, QueueFullError, type TriggerEngine } from "./engine.ts";
 import { describeSchedule, formatLocal } from "./schedule.ts";
 import type { TestReport } from "./test-run.ts";
 import { TRIGGER_KINDS, type StageRecord, type Trigger, type TriggerInput, type TriggerRun } from "./types.ts";
@@ -232,7 +232,7 @@ async function guarded(fn: () => Promise<ToolResult>): Promise<ToolResult> {
   try {
     return await fn();
   } catch (e: any) {
-    if (e instanceof ValidationError || e instanceof NotFoundError) return error(e.message);
+    if (e instanceof ValidationError || e instanceof NotFoundError || e instanceof QueueFullError) return error(e.message);
     throw e;
   }
 }

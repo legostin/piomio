@@ -539,6 +539,7 @@ export default {
   "triggers.error.extractTimeout": "Страница разбиралась дольше {seconds, plural, one {# секунды} few {# секунд} many {# секунд} other {# секунды}}: она слишком большая или слишком глубоко вложенная",
   "triggers.error.dailyLimit": "Дневной лимит запусков ({max}) исчерпан",
   "triggers.error.previousRunning": "Предыдущий запуск ещё не завершён",
+  "triggers.error.queueFull": "У этого триггера ждёт слишком много запусков: попробуйте, когда они пройдут",
   "triggers.error.agentArchived": "Агент в архиве",
   "triggers.error.notFound": "Триггер {id} не найден",
   "triggers.error.unknownAgent": "Неизвестный агент \"{id}\". Доступны: {available}",

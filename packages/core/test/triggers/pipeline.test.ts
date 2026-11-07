@@ -119,6 +119,8 @@ function setup(
   } as unknown as TriggerHost;
   const start = async () => {
     const e = new TriggerEngine(ctx, { now: () => clock.now });
+    // Runs queued before a start wait for what another leader wrote (pipeline settleMs); these tests have none, so they go on at once.
+    e.pipeline.settleMs = 0;
     await e.start();
     return e;
   };
@@ -650,6 +652,88 @@ describe("the trigger pipeline", () => {
     expect((await e2.runs("t_hook"))[0]).toMatchObject({ outcome: "drop" });
     expect(again.created()).toHaveLength(1);
     e2.stop();
+  });
+
+  it("names runs with 8 random bytes, the pipeline's and the engine's alike", async () => {
+    const f = setup({ triggers: [hook({ script: script(`export default () => ({ note: "n" })`) }), base({ id: "t_s", cron: "0 10 * * *" })] });
+    const e = await f.start();
+    await send(e, { n: 1 });
+    expect((await e.runs("t_hook"))[0].id).toMatch(/^r_[0-9a-f]{16}$/);
+    expect((await e.runNow("t_s")).id).toMatch(/^r_[0-9a-f]{16}$/);
+    e.stop();
+  });
+
+  it("leaves a trace when its queue is full: a journal line, a 429, a reminder kept for later and a clear error for run now", async () => {
+    const f = setup({ triggers: [hook({ script: script(`export default () => ({ note: "n" })`) }), base({ id: "t_once", kind: "once", cron: undefined, at: new Date(START + 60_000).toISOString(), script: script(`export default () => ({ wake: "now" })`) })] });
+    const e = await f.start();
+    await e.boot();
+    // The engine's own state is all but full: no run fits in the queue.
+    for (const id of ["t_hook", "t_once"]) f.store.stateSet(id, "__pad", "x".repeat(4 * 1024 * 1024 - 60));
+    expect((await post(e, { n: 1 })).status).toBe(429);
+    expect((await post(e, { n: 2 })).status).toBe(429);
+    const [line] = await e.runs("t_hook");
+    expect(line).toMatchObject({ status: "skipped", code: "queueFull", outcome: "drop", external: true, signals: [{ type: "web.webhook" }] });
+    // One line a minute, not one per refused signal.
+    expect(await e.runs("t_hook")).toHaveLength(1);
+    await expect(e.runNow("t_hook")).rejects.toMatchObject({ code: "queueFull", message: expect.stringMatching(/too many runs are waiting/) });
+    // A reminder due now is kept for a minute later, not marked done.
+    f.clock.now = START + 61_000;
+    await (e as any).runDue("t_once");
+    const once = e.get("t_once")!;
+    expect(once.enabled).toBe(true);
+    expect(once.state.done).toBeFalsy();
+    expect(Date.parse(once.state.nextRunAt!)).toBe(f.clock.now + 60_000);
+    expect((await e.runs("t_once"))[0]).toMatchObject({ status: "skipped", code: "queueFull", reason: "once" });
+    expect(f.created()).toEqual([]);
+    // Room again: it goes on at its new time.
+    f.store.stateDelete("t_once", "__pad");
+    f.clock.now += 60_000;
+    await (e as any).runDue("t_once");
+    expect(f.created()).toHaveLength(1);
+    expect(e.get("t_once")).toMatchObject({ enabled: false, state: { done: true } });
+    e.stop();
+  });
+
+  it("waits once on taking the lead before carrying out runs queued under another leader", async () => {
+    const note = { decision: "note", why: "ok", summary: "Seen" };
+    const queued = (runId: string) => [{ runId, reason: "webhook", signals: [sig(1, { type: "web.webhook" })] }];
+    const f = setup({ triggers: [hook({ triage: { brief: "x" }, triagePerDay: 10 })], answer: note });
+    f.store.stateSet("t_hook", "__queue", queued("r_old"));
+    const e = await f.start();
+    e.pipeline.settleMs = 150;
+    await e.boot();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(f.quick.ask).not.toHaveBeenCalled();
+    // What the old leader wrote arrives meanwhile: the run was carried out there.
+    f.store.addRun("t_hook", { id: "r_old", at: new Date(START).toISOString(), reason: "webhook", status: "started", outcome: "note" });
+    await e.pipeline.idle();
+    expect(f.quick.ask).not.toHaveBeenCalled();
+    expect(await e.runs("t_hook")).toHaveLength(1);
+    expect(f.store.stateGet("t_hook", "__queue")).toBeUndefined();
+    e.stop();
+    // Nobody carried it out: after the wait it runs, once.
+    f.store.stateSet("t_hook", "__queue", queued("r_new"));
+    const e2 = await f.start();
+    e2.pipeline.settleMs = 50;
+    await e2.boot();
+    await e2.pipeline.idle();
+    expect(f.quick.ask).toHaveBeenCalledTimes(1);
+    expect((await e2.runs("t_hook")).map((r) => r.id)).toEqual(["r_new", "r_old"]);
+    e2.stop();
+  });
+
+  it("drops a malformed queued run with a journal line, and carries out the rest", async () => {
+    const f = setup({ triggers: [hook({ triage: { brief: "x" }, triagePerDay: 10 })], answer: { decision: "note", why: "ok", summary: "Seen" } });
+    f.store.stateSet("t_hook", "__queue", [{ runId: "r_bad", reason: "webhook", signals: [1, null] }, { nope: true }, { runId: "r_ok", reason: "webhook", signals: [sig(1, { type: "web.webhook" })] }]);
+    const e = await f.start();
+    e.pipeline.settleMs = 0;
+    await e.boot();
+    await e.pipeline.idle();
+    const runs = await e.runs("t_hook");
+    expect(runs.find((r) => r.id === "r_ok")).toMatchObject({ outcome: "note" });
+    expect(runs.find((r) => r.id !== "r_ok")).toMatchObject({ status: "error", detail: expect.stringContaining("2 queued run(s) could not be read") });
+    expect(f.store.stateGet("t_hook", "__queue")).toBeUndefined();
+    e.stop();
   });
 
   it("drops a failed run's state writes, so the next run starts from the same state", async () => {
