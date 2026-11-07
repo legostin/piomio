@@ -71,14 +71,14 @@ function setup(
   return { db, bus, tools, ct, calls, settingsListeners, updates, setSettings, setWanted: (w: boolean) => void (wanted = w) };
 }
 
-/** A database with the Triggers card's plugins row, its saved settings as the plugin host kept them. */
-function cardRow(settings: unknown) {
+/** A database with the Triggers card's plugins row, its saved settings as the plugin host kept them; `enabled` 0: the person had turned it off. */
+function cardRow(settings: unknown, enabled = 1) {
   const db = openDb(":memory:");
   db.prepare("insert into plugins(id, dir, source, enabled, granted, installed_at, settings) values (?, ?, ?, ?, ?, ?, ?)").run(
     "triggers",
     "/gone/plugins/triggers",
     "builtin",
-    1,
+    enabled,
     "{}",
     "2026-10-01T00:00:00Z",
     typeof settings === "string" ? settings : JSON.stringify(settings),
@@ -268,6 +268,103 @@ describe("the trigger engine's host in core", () => {
     await s.ct.start();
     expect(s.ct.engine).toBeUndefined();
     expect(s.updates).toEqual([{ triggersAllowPrivateUrls: true }]);
+  });
+
+  /** What an older hub's paused Triggers card left: a schedule and a reminder whose time passed meanwhile, a webhook, one already off. */
+  const pausedKv = (db: ReturnType<typeof openDb>) => {
+    const kv = pluginKv(db, "triggers");
+    const base = { agentId: "assistant", maxRunsPerDay: 24, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true };
+    kv.set("initialized", true);
+    kv.set("trigger:t_brief", { ...base, id: "t_brief", kind: "schedule", name: "Morning brief", prompt: "Brief me.", enabled: true, cron: "0 9 * * *", state: { nextRunAt: "2026-10-02T09:00:00.000Z" } });
+    kv.set("trigger:t_call", { ...base, id: "t_call", kind: "once", name: "Call mom", prompt: "Remind me to call mom.", enabled: true, at: "2026-10-03T10:00:00.000Z", state: { nextRunAt: "2026-10-03T10:00:00.000Z" } });
+    kv.set("trigger:t_hook", { ...base, id: "t_hook", kind: "event", name: "Deploys", prompt: "Look at the deploy.", enabled: true, secret: "s3cret", report: false, state: {} });
+    kv.set("trigger:t_old", { ...base, id: "t_old", kind: "schedule", name: "Old", prompt: "Old.", enabled: false, cron: "0 8 * * *", state: {} });
+    return kv;
+  };
+  const booted = (s: ReturnType<typeof setup>) => until(() => (s.ct.engine as any)?.booted, "the engine's boot");
+
+  it("a Triggers card the person had turned off: every trigger is off before the engine reads them, nothing catches up, the person is told once", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    const kv = pausedKv(s.db);
+    await s.ct.start();
+    await booted(s);
+    await new Promise((r) => setTimeout(r, 50));
+    // No catch-up for the schedule or the reminder whose time passed while the card was off.
+    expect(s.calls.filter((c) => c.method === "tasks.create")).toEqual([]);
+    for (const id of ["t_brief", "t_call", "t_hook", "t_old"]) {
+      expect(s.ct.engine!.get(id)?.enabled, id).toBe(false);
+      expect((kv.get(`trigger:${id}`) as any).enabled, id).toBe(false);
+    }
+    // The reminder is not spent: turned on again, it still has its time.
+    expect((kv.get("trigger:t_call") as any).state.done).toBeUndefined();
+    // A webhook answers as an off trigger's does.
+    expect((await s.ct.http(req({ method: "POST", path: "/t_hook", headers: { "x-piomio-secret": "s3cret" }, body: { a: 1 }, public: true }))).status).toBe(409);
+    // Told once, in the hub language, how to turn on the ones wanted.
+    const told = s.calls.filter((c) => c.method === "notify");
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ pluginId: "triggers", params: { level: "notify" } });
+    expect(told[0].params.title).toBe("Your triggers stay off");
+    expect(told[0].params.body).toContain("each of your 4 triggers is off now");
+    expect(told[0].params.body).toContain("Settings → Assistant → Triggers");
+    // The card's row is left as it was; a later start (leading again, a restart) neither turns them off again nor tells again.
+    expect((s.db.prepare("select enabled from plugins where id = 'triggers'").get() as { enabled: number }).enabled).toBe(0);
+    await s.ct.engine!.update("t_brief", { enabled: true });
+    s.ct.stop();
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.get("t_brief")?.enabled).toBe(true);
+    expect(s.calls.filter((c) => c.method === "notify")).toHaveLength(1);
+    s.ct.stop();
+  });
+
+  it("a card that was off before the engine ever ran: its default review is made off too", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    await s.ct.start();
+    await booted(s);
+    const all = s.ct.engine!.list();
+    expect(all.map((t) => [t.kind, t.enabled])).toEqual([["heartbeat", false]]);
+    expect(all[0].state.nextRunAt).toBeUndefined();
+    const told = s.calls.filter((c) => c.method === "notify");
+    expect(told).toHaveLength(1);
+    expect(told[0].params.body).toContain("your trigger is off now");
+    expect(told[0].params.body).toContain("“turn on Daily review”");
+    // The marker is spent: the engine's later starts go as on any hub.
+    expect(pluginKv(s.db, "triggers").get("initialOff")).toBeNull();
+    s.ct.stop();
+  });
+
+  it("a card that was on changes nothing: the schedule whose time passed catches up, nobody is told", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 1));
+    pausedKv(s.db);
+    await s.ct.start();
+    await until(() => s.calls.some((c) => c.method === "tasks.create"), "the schedule's catch-up");
+    expect(s.ct.engine!.get("t_brief")?.enabled).toBe(true);
+    expect(s.ct.engine!.get("t_hook")?.enabled).toBe(true);
+    expect(s.calls.some((c) => c.method === "notify" && c.params.title === "Your triggers stay off")).toBe(false);
+    s.ct.stop();
+  });
+
+  it("does not start the engine when a paused card could not be carried over, and does on the next start", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    pausedKv(s.db);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The meta table refuses the record once (a full disk, say).
+    s.db.exec("create trigger meta_full before insert on meta begin select raise(abort, 'disk full'); end");
+    try {
+      await expect(s.ct.start()).rejects.toThrow();
+      expect(s.ct.engine).toBeUndefined();
+      // Nothing half done: the triggers are as the card left them, to be turned off on the next try.
+      expect((pluginKv(s.db, "triggers").get("trigger:t_brief") as any).enabled).toBe(true);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("disk full"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+    s.db.exec("drop trigger meta_full");
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.get("t_brief")?.enabled).toBe(false);
+    expect(s.calls.filter((c) => c.method === "tasks.create")).toEqual([]);
+    s.ct.stop();
   });
 
   it("hears the bus: an agent deleted for good takes its triggers along", async () => {

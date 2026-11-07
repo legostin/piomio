@@ -114,7 +114,7 @@ The **Triggers** section keeps two hub settings of its own: open **Settings** at
 - **Allow watching local network addresses** (off): watches and triggers' scripts may then reach localhost, your router and devices at home such as a NAS. Off, they reach only the internet, so a page or a message can't point a trigger at what is inside your network.
 - **Page load timeout, sec** (30, from 1 to 120): how long a watch waits for its page before the check ends with an error.
 
-On a hub that had the Triggers plugin, what its settings card said is carried over here once. See [Tasks, schedules and the Inbox](tasks.md).
+On a hub that had the Triggers plugin, what its settings card said is carried over here once. If you had turned that plugin off, each of your triggers is turned off instead and you get a note about it once in the Inbox: turn on the ones you want. See [Tasks, schedules and the Inbox](tasks.md).
 
 ## Settings without a field
 

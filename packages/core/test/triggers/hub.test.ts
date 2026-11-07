@@ -25,21 +25,30 @@ const until = async <T>(fn: () => T | Promise<T>, what: string, timeoutMs = 8000
   }
 };
 
-/** A hub on a fresh data folder; `card`: the Triggers card's saved settings in its plugins row, as an older hub left them. */
-async function startHub(o: { card?: Record<string, unknown>; env?: Record<string, string> } = {}): Promise<Hub> {
+/**
+ * A hub on a fresh data folder (or `dataDir`, to start one again on it); `card`: the Triggers card's saved settings in
+ * its plugins row, as an older hub left them, `cardOff` that the person had turned the card off, `kv` what the plugin
+ * kept in its storage.
+ */
+async function startHub(
+  o: { card?: Record<string, unknown>; cardOff?: boolean; kv?: Record<string, unknown>; env?: Record<string, string>; dataDir?: string } = {},
+): Promise<Hub> {
   const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
-  const dataDir = mkdtempSync(join(tmpdir(), "owl-triggers-hub-"));
-  if (o.card) {
+  const dataDir = o.dataDir ?? mkdtempSync(join(tmpdir(), "owl-triggers-hub-"));
+  if (o.card || o.kv) {
     const db = openDb(hubDbFile(dataDir));
-    db.prepare("insert into plugins(id, dir, source, enabled, granted, installed_at, settings) values (?, ?, ?, ?, ?, ?, ?)").run(
-      "triggers",
-      "/gone/plugins/triggers",
-      "builtin",
-      1,
-      "{}",
-      "2026-10-01T00:00:00Z",
-      JSON.stringify(o.card),
-    );
+    if (o.card)
+      db.prepare("insert into plugins(id, dir, source, enabled, granted, installed_at, settings) values (?, ?, ?, ?, ?, ?, ?)").run(
+        "triggers",
+        "/gone/plugins/triggers",
+        "builtin",
+        o.cardOff ? 0 : 1,
+        "{}",
+        "2026-10-01T00:00:00Z",
+        JSON.stringify(o.card),
+      );
+    for (const [key, value] of Object.entries(o.kv ?? {}))
+      db.prepare("insert into plugin_kv(plugin_id, key, value) values ('triggers', ?, ?)").run(key, JSON.stringify(value));
     db.close();
   }
   const config = loadConfig(
@@ -331,6 +340,60 @@ describe("the trigger engine and PIOMIO_PLUGINS", () => {
       expect(hub.triggers.engine).toBeUndefined();
       expect(hub.tools.get("trigger_create")).toBeUndefined();
       expect(hub.settings.get().triggersWatchTimeoutSec).toBe(60);
+    } finally {
+      await hub.stop();
+    }
+  });
+});
+
+describe("a hub whose Triggers card the person had turned off", () => {
+  const base = { agentId: "assistant", maxRunsPerDay: 24, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true };
+  const kv = {
+    initialized: true,
+    // Due while the card was off: a hub that ran it would catch it up at once.
+    "trigger:t_brief": { ...base, id: "t_brief", kind: "schedule", name: "Morning brief", prompt: "Brief me.", enabled: true, cron: "0 9 * * *", state: { nextRunAt: "2026-10-02T09:00:00.000Z" } },
+    "trigger:t_hook": { ...base, id: "t_hook", kind: "event", name: "Deploys", prompt: "Look at the deploy.", enabled: true, secret: "s3cret", report: false, state: {} },
+  };
+  const paused = (hub: Hub) => hub.notifier.list().filter((n) => n.title === "Your triggers stay off");
+  const triggerTasks = (hub: Hub) => hub.store.listTasks({ limit: 50 }).filter((t) => t.triggerId);
+
+  it("keeps them off after the upgrade: no catch-up, the webhook refused, the person told once", async () => {
+    let hub = await startHub({ card: {}, cardOff: true, kv });
+    const dataDir = hub.config.dataDir;
+    try {
+      const engine = await until(() => hub.triggers.engine, "the trigger engine to start");
+      await until(() => (engine as any).booted, "the engine's boot");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(triggerTasks(hub)).toEqual([]);
+      expect(engine.list().map((t) => [t.id, t.enabled])).toEqual([
+        ["t_brief", false],
+        ["t_hook", false],
+      ]);
+      const r = await fetch(`${hub.config.publicUrl}/hooks/triggers/t_hook`, { method: "POST", headers: { "x-piomio-secret": "s3cret", "content-type": "application/json" }, body: "{}" });
+      expect(r.status).toBe(409);
+      expect(paused(hub)).toHaveLength(1);
+      expect(paused(hub)[0].body).toContain("each of your 2 triggers is off now");
+    } finally {
+      await hub.stop();
+    }
+    // Started again on the same data: told nothing more, nothing runs.
+    hub = await startHub({ dataDir });
+    try {
+      const engine = await until(() => hub.triggers.engine, "the trigger engine to start again");
+      await until(() => (engine as any).booted, "the engine's boot");
+      expect(paused(hub)).toHaveLength(1);
+      expect(triggerTasks(hub)).toEqual([]);
+    } finally {
+      await hub.stop();
+    }
+  });
+
+  it("a card that was on changes nothing: the schedule due meanwhile catches up", async () => {
+    const hub = await startHub({ card: {}, kv });
+    try {
+      await until(() => triggerTasks(hub).find((t) => t.triggerId === "t_brief"), "the schedule's catch-up");
+      expect(hub.triggers.engine!.get("t_hook")?.enabled).toBe(true);
+      expect(paused(hub)).toEqual([]);
     } finally {
       await hub.stop();
     }

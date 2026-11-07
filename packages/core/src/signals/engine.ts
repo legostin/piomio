@@ -13,6 +13,8 @@ import { RECENT_RUNS_KEPT } from "./store.ts";
 import { verifyWebhook } from "./webhook-verify.ts";
 import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
+/** The storage key that makes the engine's first start create its default review off (core-host.ts carryOver sets it). */
+export const INITIAL_OFF = "initialOff";
 /** The runs the page and the tools show by default; the journal keeps at least these whatever their age (store.ts). */
 export const MAX_RUNS_KEPT = RECENT_RUNS_KEPT;
 const MAX_TIMER_MS = 60_000;
@@ -158,8 +160,11 @@ export class TriggerEngine {
     }
     if (nowReports.length) await this.tellNowReports(nowReports);
     if (!(await this.ctx.storage.get("initialized"))) {
-      if (![...this.triggers.values()].some((t) => t.kind === "heartbeat")) await this.createDefaultHeartbeat();
+      // The person had paused triggers before the engine ever ran (core-host.ts carryOver): the default review starts off too.
+      const off = (await this.ctx.storage.get(INITIAL_OFF)) === true;
+      if (![...this.triggers.values()].some((t) => t.kind === "heartbeat")) await this.createDefaultHeartbeat(off);
       await this.ctx.storage.set("initialized", true);
+      if (off) await this.ctx.storage.delete(INITIAL_OFF);
     }
     this.settingsTimer = setInterval(() => void this.refreshCoreSettings(), 5 * 60_000);
     this.settingsTimer.unref?.();
@@ -277,9 +282,17 @@ export class TriggerEngine {
     return undefined;
   }
 
-  private async createDefaultHeartbeat(): Promise<void> {
+  private async createDefaultHeartbeat(off = false): Promise<void> {
     const t = buildTrigger(
-      { kind: "heartbeat", name: this.ctx.i18n.t("heartbeat.defaultName"), prompt: DEFAULT_HEARTBEAT_PROMPT, agent: "assistant", times: DEFAULT_HEARTBEAT_TIMES, weekdays: DEFAULT_WEEKDAYS },
+      {
+        kind: "heartbeat",
+        name: this.ctx.i18n.t("heartbeat.defaultName"),
+        prompt: DEFAULT_HEARTBEAT_PROMPT,
+        agent: "assistant",
+        times: DEFAULT_HEARTBEAT_TIMES,
+        weekdays: DEFAULT_WEEKDAYS,
+        ...(off ? { enabled: false } : {}),
+      },
       { now: new Date(this.now()), tz: this.tz, defaultAgent: "assistant", createdBy: "system" },
     );
     t.state.nextRunAt = computeNextRun(t, this.tz, new Date(this.now()))?.toISOString();

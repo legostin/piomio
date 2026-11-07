@@ -125,6 +125,8 @@ Limits: each schedule runs at most 24 times a day unless you raise it; a run is 
 
 To change or stop one, say so: "pause the weather schedule", "delete the price watch". The same is on the **Triggers** page (**Settings** → **Assistant** → **Triggers**): **New trigger**, and on each card the **On** switch, **Run now**, **Check** (for a watch), **Change in the chat**, **Edit in a form**, the **Journal** and **Delete**.
 
+If you had turned the old Triggers plugin off, the update to the version where triggers are part of Piomio turns each of your triggers off instead, so nothing that was paused starts or catches up by itself, and tells you so once in the Inbox. Turn on the ones you want in the chat ("turn on the morning brief") or with their **On** switch.
+
 ## What can start a trigger
 
 A trigger waits for something to happen. What it waits for comes from one of three places, and one trigger can listen to several:

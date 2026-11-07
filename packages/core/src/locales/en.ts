@@ -487,6 +487,8 @@ export default {
   "triggers.notify.nowReports.title": "{n, plural, one {This schedule now sends its report as a message} other {These schedules now send their report as a message}}",
   "triggers.notify.nowReports.body": "{names}: {n, plural, one {at its time it now sends} other {at its time each one now sends}} you what it found as a message of its own. {n, plural, one {If you'd rather it stayed} other {If you'd rather one of them stayed}} a quiet check that speaks up only when something needs you, tell me in the chat, for example: “make {example} a quiet check again”.",
   "triggers.notify.nowReports.name": "“{name}”",
+  "triggers.notify.paused.title": "{n, plural, one {Your trigger stays off} other {Your triggers stay off}}",
+  "triggers.notify.paused.body": "You had paused triggers with the Triggers card. Triggers are part of Piomio now and that card is gone, so instead {n, plural, one {your trigger is off now} other {each of your # triggers is off now}} and nothing starts by itself. Turn on the ones you want: tell me in the chat, for example “turn on {example}”, or use Settings → Assistant → Triggers.",
   "triggers.when.everyMinutes": "every {n, plural, one {minute} other {# minutes}}",
   "triggers.when.hourly": "every hour",
   "triggers.when.hourlyAt": "every hour at :{minute}",
