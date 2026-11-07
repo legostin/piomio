@@ -439,6 +439,29 @@ describe("a replica asked by the leader to update", () => {
     expect(u.selfState()).toEqual({ failed: { version: "0.3.0", why: "no network" } });
     u.stop();
   });
+
+  it("in the desktop app, looks again rather than install an older release, and refuses one short of the leader's", async () => {
+    const latest = (version: string) => jsonFetch({ version, platforms: { "darwin-aarch64": { url: "https://example.test/app", signature: "sig" } } });
+    const launched: string[][] = [];
+    const { u } = updates(root(), {
+      config: { desktopApp: "/Applications/Piomio.app/Contents/MacOS/piomio", version: "0.2.4", releasesRepo: "o/r", dataDir: tmp(), appRoot: tmp() },
+      platform: "darwin",
+      arch: "arm64",
+      fetch: latest("0.3.0"),
+      launch: (file, args) => void launched.push([file, ...args]),
+    });
+    // The hourly check found 0.3.0; the leader runs 0.3.1, and latest.json still lists 0.3.0: refused, nothing launched.
+    await u.check();
+    await expect(u.updateTo("0.3.1")).rejects.toMatchObject({ reason: "noRelease", version: "0.3.1" });
+    expect(launched).toEqual([]);
+    expect(u.selfState()).toEqual({});
+    // Once 0.3.1 is out, the fresh look finds it (not the 0.3.0 from the hourly check).
+    (u as any).d.fetch = latest("0.3.1");
+    expect(await u.updateTo("0.3.1")).toEqual({ version: "0.3.1" });
+    expect(launched).toHaveLength(1);
+    expect(u.selfState()).toEqual({ installing: "0.3.1" });
+    u.stop();
+  });
 });
 
 describe("the leader and its replicas", () => {
@@ -504,6 +527,19 @@ describe("the leader and its replicas", () => {
     expect(told).toEqual([expect.stringContaining("The hub replica vps could not update to Piomio 0.2.4 (GitHub answered 502); it stays on 0.2.3")]);
     u.replicasChanged();
     expect(told).toHaveLength(1);
+    u.stop();
+  });
+
+  it("shows Update again at once when the replica comes back on a newer version that is still behind", async () => {
+    const { u, replicas, told, at } = leader();
+    replicas[0] = peer({ version: "0.2.2", updates: "desktop" });
+    await u.update("rep_vps");
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4", updating: true });
+    // An update it had downloaded before: 0.2.3, not this hub's 0.2.4.
+    replicas[0] = peer({ version: "0.2.3", updates: "desktop", heardAt: at() + 1 });
+    u.replicasChanged();
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4" });
+    expect(told).toEqual([expect.stringContaining("The hub replica vps updated to Piomio 0.2.3, not yet this hub's 0.2.4")]);
     u.stop();
   });
 

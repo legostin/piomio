@@ -358,8 +358,11 @@ export class HubUpdates {
   private failure?: { version: string; why: string };
   private desktopTimer?: NodeJS.Timeout;
   private machines = new Map<string, NodeJS.Timeout>();
-  /** Replicas the leader asked to update: until they run `version`, say they failed, or REPLICA_UPDATE_MS. */
-  private replicaJobs = new Map<string, { version: string; answeredAt: number; timer: NodeJS.Timeout }>();
+  /**
+   * Replicas the leader asked to update (from `from`): until they run `version`, come back on another version, say
+   * they failed, or REPLICA_UPDATE_MS.
+   */
+  private replicaJobs = new Map<string, { version: string; from: string; answeredAt: number; timer: NodeJS.Timeout }>();
   /** Since when each replica has been behind this hub (the chat offer waits BEHIND_MS). */
   private behind = new Map<string, number>();
   private replicaKey = "";
@@ -511,6 +514,15 @@ export class HubUpdates {
         this.replicaDone(id);
         continue;
       }
+      // It restarted on a newer version that is still behind (an older update it had downloaded): Update again.
+      if (r.version && compareVersions(r.version, job.from) > 0) {
+        this.replicaDone(id);
+        this.d.tell(
+          `[System] The hub replica ${r.name} updated to Piomio ${r.version}, not yet this hub's ${job.version}. Tell the person in one short message; ` +
+            "Update once more (the machines block, or ask you) brings it the rest of the way.",
+        );
+        continue;
+      }
       const failed = r.update?.failed;
       if (job.answeredAt && r.heardAt > job.answeredAt && failed && !r.update?.installing) {
         this.replicaDone(id);
@@ -589,7 +601,7 @@ export class HubUpdates {
     if (this.replicaJobs.has(r.id) || r.update?.installing) return started;
     const timer = setTimeout(() => this.replicaDone(r.id), REPLICA_UPDATE_MS);
     timer.unref?.();
-    const job = { version: v, answeredAt: 0, timer };
+    const job = { version: v, from: r.version, answeredAt: 0, timer };
     this.replicaJobs.set(r.id, job);
     this.d.bus.emit("updates.changed", {});
     try {
@@ -615,8 +627,10 @@ export class HubUpdates {
     if (compareVersions(version, this.d.config.version) <= 0) throw new UpdateError("upToDate", this.d.config.version);
     if (this.installing) return { version: this.installingTo ?? version };
     if (kind === "desktop") {
-      const offer = this.offer ?? (await this.check());
-      if (!offer) throw new UpdateError("noRelease", version);
+      // A fresh look, not the offer from the last hourly check: the app installs the latest release (one it downloaded
+      // earlier gives way to a newer one, update.rs install_now), and that has to reach the leader's version.
+      const offer = await this.check();
+      if (!offer || compareVersions(offer.version, version) < 0) throw new UpdateError("noRelease", version);
       this.installDesktop(offer.version);
       return { version: offer.version };
     }
