@@ -6,8 +6,6 @@ import browserEn from "../../../../../plugins/browser/.piomio-plugin/locales/en.
 import browserRu from "../../../../../plugins/browser/.piomio-plugin/locales/ru.json";
 import memoryEn from "../../../../../plugins/memory/.piomio-plugin/locales/en.json";
 import memoryRu from "../../../../../plugins/memory/.piomio-plugin/locales/ru.json";
-import triggersEn from "../../../../../plugins/triggers/.piomio-plugin/locales/en.json";
-import triggersRu from "../../../../../plugins/triggers/.piomio-plugin/locales/ru.json";
 import { iso } from "../world";
 import type { DemoHub } from "./hub";
 import { DemoError } from "./router";
@@ -15,7 +13,6 @@ import { DemoError } from "./router";
 const UI_PLUGINS: Array<{ id: string; messages: { en: Record<string, string>; ru: Record<string, string> } }> = [
   { id: "browser", messages: { en: browserEn, ru: browserRu } },
   { id: "memory", messages: { en: memoryEn, ru: memoryRu } },
-  { id: "triggers", messages: { en: triggersEn, ru: triggersRu } },
 ];
 
 /** Where the demo's copies of the UI plugins are, next to demo.html. */
@@ -139,6 +136,11 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
   r.route("GET", "/api/notifications", () => []);
   r.route("GET", "/api/commands", () => []);
   r.route("GET", "/api/skills", () => []);
+
+  // ----- hub settings: the Triggers section's Settings part (the demo keeps them for the visit only) -----
+  const settings: Record<string, unknown> = { triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 30 };
+  r.route("GET", "/api/settings", () => settings);
+  r.route("PATCH", "/api/settings", ({ body }) => Object.assign(settings, body ?? {}));
 
   // ----- triggers: the Triggers section and the Tasks page ask /api/triggers; the old plugin address answers the same -----
   const triggerList = () => ({

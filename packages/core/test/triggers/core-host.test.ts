@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { PiomioManifestSchema, toolPrefixOf, type ToolCallContext } from "@piomio/shared";
+import type { ToolCallContext } from "@piomio/shared";
 import { EventBus } from "../../src/bus.ts";
 import { openDb } from "../../src/db.ts";
 import { pluginKv } from "../../src/plugins/kv.ts";
@@ -166,10 +164,13 @@ describe("the trigger engine's host in core", () => {
     s.ct.stop();
   });
 
-  it("names its tools with the card's own tool prefix, which counts a turned-off card's earlier uses", () => {
-    const file = join(import.meta.dirname, "..", "..", "..", "..", "plugins", "triggers", ".piomio-plugin", "plugin.json");
-    const manifest = PiomioManifestSchema.parse(JSON.parse(readFileSync(file, "utf8")));
-    expect(toolPrefixOf(manifest)).toBe("trigger");
+  it("names its tools with the prefix the plugin's card used, which counts the earlier uses", async () => {
+    const s = setup();
+    await s.ct.start();
+    const names = triggerTools(s.tools).map((t) => t.name);
+    expect(names).toHaveLength(8);
+    for (const n of names) expect(n).toMatch(/^trigger_[a-z_]+$/);
+    s.ct.stop();
   });
 
   it("keeps debug and info quiet and sends warnings and errors to the hub's console", async () => {

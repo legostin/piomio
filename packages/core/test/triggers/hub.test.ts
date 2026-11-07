@@ -96,6 +96,8 @@ describe("the hub's trigger engine", () => {
 
   it("has the trigger tools with no Triggers card, owned by \"triggers\" as the plugin's were", async () => {
     expect(hub.plugins.get("triggers")).toBeUndefined();
+    // The old card's leftover row (its settings are migrated from it) is no plugin: not listed, no error.
+    expect(hub.plugins.list().map((p) => p.id)).not.toContain("triggers");
     expect(hub.tools.get("trigger_create")?.descriptor.owner).toBe("triggers");
     expect(hub.tools.get("trigger_run_now")?.descriptor.effect).toBe("local-write");
     // The person can still "always allow" them (the hub's own tools cannot be).
