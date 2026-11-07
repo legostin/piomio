@@ -2,8 +2,8 @@
 // filters, a batch window), its script and quick check, then what the agent does.
 
 import { useState, type ReactNode } from "react";
-import { Bot, ChevronRight, Code, Radio, Sparkles, type LucideIcon } from "lucide-react";
-import { builtinSource, configLines, describeMatch, formatAt, sourceLabel, type TriggerView } from "../../lib/triggers";
+import { Bot, ChevronRight, Code, Radio, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { builtinSource, configLines, describeMatch, formatAt, sourceLabel, webhookCheck, type TriggerView } from "../../lib/triggers";
 import { t } from "../../i18n";
 import { CopyButton, cx } from "../../components/ui";
 import { Mono, Muted, Section } from "./parts";
@@ -23,25 +23,35 @@ function Step({ icon: I, title, children, last }: { icon: LucideIcon; title: str
   );
 }
 
-/** The webhook's address and secret: the address to copy, the secret hidden until asked. */
+/**
+ * The webhook's address and what a delivery must carry: the address to copy, then the shared secret hidden until asked,
+ * or, for a signed webhook, the signature the hub checks (its key stays in the vault).
+ */
 function WebhookLine({ tr }: { tr: TriggerView }) {
   const [shown, setShown] = useState(false);
   if (!tr.webhookUrl) return null;
+  const check = webhookCheck(tr);
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <Mono>{tr.webhookUrl}</Mono>
         <CopyButton text={tr.webhookUrl} />
       </div>
-      {tr.secret && (
+      {check?.kind === "secret" && (
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
           <span>{t("triggers.detail.secret")}</span>
-          <Mono>{shown ? tr.secret : "••••••••"}</Mono>
+          <Mono>{shown ? check.secret : "••••••••"}</Mono>
           <button type="button" className="rounded-lg px-2 py-1 hover:bg-surface-2 hover:text-fg" onClick={() => setShown(!shown)}>
             {shown ? t("triggers.detail.hide") : t("triggers.detail.show")}
           </button>
-          <CopyButton text={tr.secret} />
+          <CopyButton text={check.secret} />
         </div>
+      )}
+      {check?.kind === "signed" && (
+        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-muted">
+          <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">{check.text}</span>
+        </p>
       )}
     </div>
   );

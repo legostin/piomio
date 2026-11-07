@@ -277,6 +277,11 @@ describe("the hub's trigger engine", () => {
     hub.vault.upsert({ id: "gh-hook", type: "secret", name: "Hook key", fields: { value: "hookkey" } });
     const made = await hub.triggers.http({ method: "POST", path: "/triggers", query: {}, headers: {}, public: false, locale: "en", body: { kind: "event", name: "GH", prompt: "Look.", verify: { kind: "github", secretRef: "vault://gh-hook" } } });
     const id = ((made.body as any).trigger?.id ?? (made.body as any).id) as string;
+    // The Triggers page learns from the view how the sender is checked: the kind and the vault reference, never the key.
+    expect((made.body as any).verify).toEqual({ kind: "github", secretRef: "vault://gh-hook" });
+    const listed = await hub.triggers.http({ method: "GET", path: "/triggers", query: {}, headers: {}, public: false, locale: "en" });
+    expect((listed.body as any).triggers.find((x: { id: string }) => x.id === id).verify).toEqual({ kind: "github", secretRef: "vault://gh-hook" });
+    expect(JSON.stringify(listed.body)).not.toContain("hookkey");
     // Spacing the parsed JSON would lose: only the raw bytes carry it.
     const raw = '{ "action":  "opened",\n "n": 1 }';
     const sig = (k: string) => "sha256=" + createHmac("sha256", k).update(raw).digest("hex");

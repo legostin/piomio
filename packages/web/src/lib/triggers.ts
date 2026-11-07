@@ -31,6 +31,8 @@ export interface Subscription {
   where?: unknown;
 }
 
+export type WebhookVerify = { kind: "secret" } | { kind: "github" | "stripe" | "hmac-sha256"; secretRef: string; header?: string };
+
 /** A trigger as the hub shows it (core signals/http.ts `view`). */
 export interface TriggerView {
   id: string;
@@ -50,7 +52,13 @@ export interface TriggerView {
   selector?: string;
   jsonPath?: string;
   intervalMinutes?: number;
+  /** event: the shared secret the hub checks when there is no signature to check (`verify`). */
   secret?: string;
+  /**
+   * event: how the hub checks the sender (core signals/types.ts). The signing kinds name the key's vault reference, never
+   * the key; without `verify` (or with "secret") it is the shared secret.
+   */
+  verify?: WebhookVerify;
   times?: string[];
   weekdays?: number[];
   on: Subscription[];
@@ -205,6 +213,26 @@ export function builtinSource(kind: TriggerKind): string | undefined {
     default:
       return undefined;
   }
+}
+
+/** The signing kinds by their senders' names and the header each signature comes in (core signals/webhook-verify.ts). */
+const SIGNATURE: Record<"github" | "stripe" | "hmac-sha256", { name: string; header: string }> = {
+  github: { name: "GitHub", header: "x-hub-signature-256" },
+  stripe: { name: "Stripe", header: "stripe-signature" },
+  "hmac-sha256": { name: "HMAC-SHA256", header: "x-signature" },
+};
+
+/**
+ * What a webhook delivery must carry for the hub to take it: the shared secret (shown hidden, to copy), or a signature
+ * made with a key kept in the vault, in words; undefined when the trigger has neither.
+ */
+export function webhookCheck(tr: Pick<TriggerView, "secret" | "verify">): { kind: "secret"; secret: string } | { kind: "signed"; text: string } | undefined {
+  const v = tr.verify;
+  if (v && v.kind !== "secret") {
+    const s = SIGNATURE[v.kind];
+    return s ? { kind: "signed", text: t("triggers.detail.signature", { name: s.name, header: (v.kind === "hmac-sha256" && v.header) || s.header }) } : undefined;
+  }
+  return tr.secret ? { kind: "secret", secret: tr.secret } : undefined;
 }
 
 /** A source's name in the person's words ("When a task finishes"); undefined for a type the catalog does not know. */

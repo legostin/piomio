@@ -18,6 +18,7 @@ import {
   toLocalInput,
   triggerUrl,
   TRIGGERS_API,
+  webhookCheck,
   weekdayName,
 } from "./triggers";
 
@@ -95,6 +96,17 @@ describe("triggers in the web UI", () => {
     expect(builtinSource("signal")).toBeUndefined();
     expect(sourceLabel("hub.task.finished")).toBe("When a task finishes");
     expect(sourceLabel("composio.gmail_new_message")).toBeUndefined();
+  });
+
+  it("says which signature a signed webhook needs, and shows the shared secret only when that is what the hub checks", () => {
+    expect(webhookCheck({ secret: "s3cr3t" })).toEqual({ kind: "secret", secret: "s3cr3t" });
+    expect(webhookCheck({ secret: "s3cr3t", verify: { kind: "secret" } })).toEqual({ kind: "secret", secret: "s3cr3t" });
+    // Signed: the hub refuses a delivery without the signature, so the stored shared secret would not let one in.
+    expect(webhookCheck({ secret: "s3cr3t", verify: { kind: "github", secretRef: "vault://gh" } })).toEqual({ kind: "signed", text: "Checks the GitHub signature (x-hub-signature-256 header)" });
+    expect(webhookCheck({ verify: { kind: "stripe", secretRef: "vault://st" } })).toEqual({ kind: "signed", text: "Checks the Stripe signature (stripe-signature header)" });
+    expect(webhookCheck({ verify: { kind: "hmac-sha256", secretRef: "vault://h" } })).toEqual({ kind: "signed", text: "Checks the HMAC-SHA256 signature (x-signature header)" });
+    expect(webhookCheck({ verify: { kind: "hmac-sha256", secretRef: "vault://h", header: "X-Hook-Signature" } })).toEqual({ kind: "signed", text: "Checks the HMAC-SHA256 signature (X-Hook-Signature header)" });
+    expect(webhookCheck({})).toBeUndefined();
   });
 
   it("writes a source's settings one per line", () => {

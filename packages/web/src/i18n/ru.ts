@@ -1313,6 +1313,7 @@ export default {
   "triggers.detail.machine": "На {machine}",
   "triggers.detail.skill": "Скилл «{skill}»",
   "triggers.detail.secret": "Секрет (заголовок x-piomio-secret)",
+  "triggers.detail.signature": "Проверяет подпись {name} (заголовок {header})",
   "triggers.detail.show": "Показать",
   "triggers.detail.hide": "Скрыть",
   "triggers.detail.on": "Включён",

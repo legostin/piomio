@@ -1313,6 +1313,7 @@ export default {
   "triggers.detail.machine": "On {machine}",
   "triggers.detail.skill": "Skill “{skill}”",
   "triggers.detail.secret": "Secret (x-piomio-secret header)",
+  "triggers.detail.signature": "Checks the {name} signature ({header} header)",
   "triggers.detail.show": "Show",
   "triggers.detail.hide": "Hide",
   "triggers.detail.on": "On",
