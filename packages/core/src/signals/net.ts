@@ -1,6 +1,7 @@
 // The watch's page loads from core go through the hub's egress proxy, as the triggers plugin's process did
 // (HTTP(S)_PROXY with its token, NO_PROXY for loopback): every connection is checked and audited there. Node's own
-// proxy support in http.Agent (proxyEnv) does the proxying. Compressed pages are unpacked, as fetch did.
+// proxy support in http.Agent (proxyEnv) does the proxying. Compressed pages are unpacked, as fetch did. A trigger's
+// script fetches the same way (pio.ts), with a token of its own whose allowlist is the trigger's hosts.
 
 import http from "node:http";
 import https from "node:https";
@@ -52,7 +53,7 @@ function decodersFor(encoding: string | undefined): Transform[] | undefined {
 /** What the plugin process had in NO_PROXY: the hub's own machine is reached directly. */
 export const LOOPBACK_NO_PROXY = "127.0.0.1,localhost,::1";
 
-/** A GET through the proxy, and `close()`: its kept-alive connections go (the engine stopped). */
+/** A GET (or a script's POST, with its body) through the proxy, and `close()`: its kept-alive connections go (the engine stopped). */
 export type ProxiedGet = FetchLike & { close(): void };
 
 export function proxiedGet(proxyUrl: string, noProxy = LOOPBACK_NO_PROXY): ProxiedGet {
@@ -63,7 +64,7 @@ export function proxiedGet(proxyUrl: string, noProxy = LOOPBACK_NO_PROXY): Proxi
       const u = new URL(url);
       const secure = u.protocol === "https:";
       const asked = { "accept-encoding": ACCEPT_ENCODING, ...init.headers };
-      const req = (secure ? https : http).request(u, { method: "GET", headers: asked, agent: secure ? agents.https : agents.http, signal: init.signal }, (res) => {
+      const req = (secure ? https : http).request(u, { method: init.method ?? "GET", headers: asked, agent: secure ? agents.https : agents.http, signal: init.signal }, (res) => {
         const status = res.statusCode ?? 502;
         // A Response only takes 200-599; a server answering otherwise must not crash the hub.
         if (status < 200 || status > 599) {
@@ -93,7 +94,7 @@ export function proxiedGet(proxyUrl: string, noProxy = LOOPBACK_NO_PROXY): Proxi
         }
       });
       req.on("error", reject);
-      req.end();
+      req.end(init.body);
     });
   return Object.assign(get, {
     close() {

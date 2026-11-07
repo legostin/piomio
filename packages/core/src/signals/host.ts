@@ -30,8 +30,14 @@ export interface TriggerToolRegistration extends ToolSpec {
   handler: (input: any, ctx: ToolCallContext) => Promise<ToolResult | string> | ToolResult | string;
 }
 
-/** A GET the watch makes (watch.ts fetchPage): the global fetch, or core's through the egress proxy (net.ts). */
-export type FetchLike = (url: string, init: { redirect?: "manual"; signal?: AbortSignal; headers?: Record<string, string> }) => Promise<Response>;
+/**
+ * A request the watch (watch.ts fetchPage) or a trigger's script (pio.ts) makes: the global fetch, or core's through the
+ * egress proxy (net.ts). GET unless `method` says otherwise (a script's POST to a read API).
+ */
+export type FetchLike = (
+  url: string,
+  init: { method?: string; body?: string; redirect?: "manual"; signal?: AbortSignal; headers?: Record<string, string> },
+) => Promise<Response>;
 
 export interface TriggerHost {
   /** "triggers": the webhook addresses (/hooks/triggers/<id>) and the UI events carry it. */

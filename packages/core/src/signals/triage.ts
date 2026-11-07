@@ -119,8 +119,8 @@ function balancedEnd(text: string, start: number): number {
   return -1;
 }
 
-/** The first {...} JSON object in the text that carries a valid decision. */
-export function parseTriage(text: string): TriageAnswer | undefined {
+/** The first {...} JSON object in a quick model's answer that `accept` takes (read up to 16 KB, 20 tries). */
+export function firstJsonObject(text: string, accept: (o: Record<string, unknown>) => boolean = () => true): Record<string, unknown> | undefined {
   const t = text.slice(0, PARSE_MAX);
   let pos = 0;
   for (let tries = 0; tries < PARSE_ATTEMPTS; tries++) {
@@ -137,15 +137,20 @@ export function parseTriage(text: string): TriageAnswer | undefined {
       continue;
     }
     if (!v || typeof v !== "object" || Array.isArray(v)) continue;
-    const o = v as Record<string, unknown>;
-    if (typeof o.decision !== "string" || !OUTCOMES.includes(o.decision)) continue;
-    return {
-      decision: o.decision as Outcome,
-      why: typeof o.why === "string" ? o.why : "",
-      summary: typeof o.summary === "string" ? o.summary : "",
-    };
+    if (accept(v as Record<string, unknown>)) return v as Record<string, unknown>;
   }
   return undefined;
+}
+
+/** The first {...} JSON object in the text that carries a valid decision. */
+export function parseTriage(text: string): TriageAnswer | undefined {
+  const o = firstJsonObject(text, (x) => typeof x.decision === "string" && OUTCOMES.includes(x.decision));
+  if (!o) return undefined;
+  return {
+    decision: o.decision as Outcome,
+    why: typeof o.why === "string" ? o.why : "",
+    summary: typeof o.summary === "string" ? o.summary : "",
+  };
 }
 
 /** Ask the quick model; one retry on an unparseable answer, then throws "unparseable". */

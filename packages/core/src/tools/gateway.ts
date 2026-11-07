@@ -1,7 +1,9 @@
 // The single path every tool call takes: agent allowlist → hooks → policy → approval → invoke → redact → taint → audit.
+// A trigger's script takes a narrower one (callRead): its agent's list → reads only → hooks → its hosts → policy, no
+// approval → invoke → redact → audit.
 
 import type { AgentDef, Approval, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
-import { matchesAny, newId, parseBrainRef, renderTemplate, truncate } from "@piomio/shared";
+import { hostMatches, hostOf, matchesAny, newId, parseBrainRef, renderTemplate, truncate } from "@piomio/shared";
 import type { Store, SessionRow } from "../store.ts";
 import type { ToolRegistry } from "./registry.ts";
 import type { HookRegistry } from "../hooks.ts";
@@ -64,6 +66,16 @@ function textOf(r: ToolResult): string {
   return r.content.map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join("\n");
 }
 
+/** Saving what the person taught is for whichever agent they showed it to (it always asks on its own card). */
+const forEveryAgent = (t: ToolDescriptor) => t.owner === "core" && HUB_TOOLS_FOR_EVERY_AGENT.includes(t.name);
+
+/** Who a trigger's script calls a tool as (ToolGateway.callRead); `hosts`: the trigger's own, the addresses a source tool may open. */
+export interface TriggerCaller {
+  agentId: string;
+  triggerId: string;
+  hosts?: string[];
+}
+
 export class ToolGateway {
   d: GatewayDeps;
   constructor(deps: GatewayDeps) {
@@ -95,21 +107,29 @@ export class ToolGateway {
     return !!skill && !!this.d.skills.get(skill)?.taught;
   }
 
-  private visible(t: ToolDescriptor, agent: AgentDef, s: SessionRow, skillRun = false): boolean {
+  /** `trigger`: a trigger's script calls it (callRead), with only its agent's list to go by. */
+  private visible(t: ToolDescriptor, agent: AgentDef, s: SessionRow, skillRun = false, trigger = false): boolean {
     // The CLIs' permission prompt (native-permission.ts): theirs only, never on the model's list of an API brain.
     if (t.name === NATIVE_PERMISSION_TOOL) return /^(claude-code|codex)\b/.test(s.brainRef ?? "");
     if (this.d.hubOnly?.(t.owner) && parseBrainRef(s.brainRef).machineId !== "local") return false;
-    const job = this.d.jobTools?.(s) ?? [];
-    // Saving what the person taught is for whichever agent they showed it to (it always asks on its own card).
-    const everyAgent = t.owner === "core" && HUB_TOOLS_FOR_EVERY_AGENT.includes(t.name);
-    if (!matchesAny(t.name, agent.tools.length ? agent.tools : ["*"]) && !SHOW_TOOLS.includes(t.name) && !job.includes(t.name) && !everyAgent) return false;
+    if (!this.listed(t, agent, s, trigger)) return false;
     // Hub administration belongs to the default agent alone (see tools/hub-tools.ts).
-    if (t.owner === "core" && t.name.startsWith(HUB_TOOL_PREFIX) && !everyAgent && agent.id !== this.d.settings.get().defaultAgent) return false;
+    if (t.owner === "core" && t.name.startsWith(HUB_TOOL_PREFIX) && !forEveryAgent(t) && agent.id !== this.d.settings.get().defaultAgent) return false;
     if (t.availability === "background" && !s.background) return false;
     if (t.availability === "interactive" && s.background) return false;
     if (t.agents?.length && !t.agents.includes(agent.id)) return false;
     if (s.background && agent.initiative < 2 && !(skillRun && SKILL_RUN_TOOLS.test(t.name)) && t.effect !== "read" && !BACKGROUND_ALWAYS_ALLOWED.includes(t.name)) return false;
     return true;
+  }
+
+  /**
+   * On the agent's tool list. A session also has what draws in the person's chat, its job's tools and saving what the
+   * person taught; a trigger's script has its agent's list alone, and never what draws in a chat: it has no chat.
+   */
+  private listed(t: ToolDescriptor, agent: AgentDef, s: SessionRow, trigger: boolean): boolean {
+    const onList = matchesAny(t.name, agent.tools.length ? agent.tools : ["*"]);
+    if (trigger) return onList && !SHOW_TOOLS.includes(t.name);
+    return onList || SHOW_TOOLS.includes(t.name) || (this.d.jobTools?.(s) ?? []).includes(t.name) || forEveryAgent(t);
   }
 
   contextFor(s: SessionRow, callId: string): ToolCallContext {
@@ -271,6 +291,58 @@ export class ToolGateway {
     return this.execute(s, tool, input, policy.ruleId ? { ...ctx, approved: true } : ctx);
   }
 
+  /**
+   * A trigger's script calls a hub tool on behalf of its agent (signals/pio.ts). Only a tool on the agent's own list
+   * whose effect is read, through the same hooks and policy as an agent's call; the addresses a source tool opens must
+   * be on the trigger's hosts, as pio.fetch's are. Nobody is there to approve anything, so whatever policy does not
+   * allow outright is refused: no card, no wait, no auto mode. There is no session: the call is audited as
+   * trigger:<id>, and what came back from outside (a source tool, or a result that says so) carries _meta.taint for
+   * the run to be marked external. Every refusal is an error with _meta.status "denied".
+   */
+  async callRead(as: TriggerCaller, name: string, rawInput: unknown): Promise<ToolResult> {
+    const actor = `trigger:${as.triggerId}`;
+    const refuse = (text: string, action: string, reason: string): ToolResult => {
+      this.d.audit.append(actor, action, name, { agentId: as.agentId, reason });
+      return { content: [{ type: "text", text }], isError: true, _meta: { status: "denied" } };
+    };
+    const unavailable = `Tool ${name} is not available to this trigger's agent`;
+    const agent = this.d.agents.get(as.agentId);
+    const entry = this.d.registry.get(name);
+    const s = triggerSession(as);
+    if (!agent || !entry || !this.listed(entry.descriptor, agent, s, true)) return refuse(unavailable, "tool.denied", agent ? "not available" : "unknown agent");
+    const tool = entry.descriptor;
+    if (tool.effect !== "read") return refuse(`Triggers only read: ${name} changes things (effect ${tool.effect}), so a trigger's script cannot call it`, "tool.denied", `effect ${tool.effect}`);
+    if (!this.visible(tool, agent, s, false, true)) return refuse(unavailable, "tool.denied", "not available");
+    const ctx = this.contextFor(s, newId("call_"));
+
+    const hooked = await this.d.hooks.run("tool.before", { tool: name, input: rawInput ?? {}, context: ctx }, (p, r) =>
+      r.block ? { blocked: r.block } : r.input !== undefined ? { ...p, input: r.input } : p,
+    );
+    if (hooked.blocked) return refuse(`Blocked: ${hooked.blocked}`, "tool.blocked", hooked.blocked);
+    const input = hooked.payload.input;
+    // A read that reaches the web may carry data out in its address: only to the hosts the person sees on the card.
+    const hosts = as.hosts ?? [];
+    const off = tool.source ? urlsIn(input).find((u) => !hosts.some((p) => hostMatches(hostOf(u), p))) : undefined;
+    if (off !== undefined) {
+      const host = hostOf(off) || off;
+      return refuse(`Triggers reach only their listed hosts: ${host} is not on this trigger's list, so ${name} cannot open it`, "tool.denied", `host ${host}`);
+    }
+    const policy = decide(
+      { tool, input, agentId: as.agentId, tainted: false, background: true, initiative: agent.initiative, profile: agent.policyProfile },
+      this.d.rules.list(),
+      (t) => this.d.rules.isKnownTarget(t),
+    );
+    this.d.audit.append(actor, "policy.decision", name, { agentId: as.agentId, decision: policy.decision, reason: policy.reason, ruleId: policy.ruleId });
+    if (policy.decision !== "allow") {
+      return { content: [{ type: "text", text: `Not allowed for a trigger's script: ${policy.reason}. A trigger's script cannot be asked about: only what policy allows outright runs.` }], isError: true, _meta: { status: "denied" } };
+    }
+
+    const started = Date.now();
+    const result = await this.invoke(tool, input, ctx);
+    this.d.audit.append(actor, "tool.call", name, { triggerId: as.triggerId, agentId: as.agentId, ...callRecord(input, result, started) });
+    return tool.source || result._meta?.taint ? { ...result, _meta: { ...result._meta, taint: true } } : result;
+  }
+
   /** Did the person ask for this call in their own words? Only for a tool that says how to tell (ToolSpec.asked) and a call that quotes them. */
   private asked(s: SessionRow, tool: ToolDescriptor, input: unknown): AskedCheck | undefined {
     if (!tool.asked || tool.effect !== "external" || !input || typeof input !== "object" || typeof (input as { asked?: unknown }).asked !== "string") return undefined;
@@ -332,10 +404,22 @@ export class ToolGateway {
   }
 
   private async execute(s: SessionRow, tool: ToolDescriptor, input: unknown, ctx: ToolCallContext): Promise<ToolResult> {
-    const entry = this.d.registry.get(tool.name)!;
-    let result: ToolResult;
     const started = Date.now();
     if (tool.source) this.d.egress?.passed(s.id, urlsIn(input));
+    const result = await this.invoke(tool, input, ctx);
+    if ((tool.source || result._meta?.taint) && !s.tainted) {
+      this.d.store.updateSession(s.id, { tainted: true });
+    }
+    // Links in what came from outside may be followed without a review (policy/egress.ts).
+    if (tool.source || result._meta?.taint) this.d.egress?.read(s.id, textOf(result));
+    this.d.audit.append(`agent:${s.agentId}`, "tool.call", tool.name, { sessionId: s.id, taskId: s.taskId, ...callRecord(input, result, started) });
+    return result;
+  }
+
+  /** Run the tool and its tool.after hooks; a throw is an error result, and vault values never reach the model. */
+  private async invoke(tool: ToolDescriptor, input: unknown, ctx: ToolCallContext): Promise<ToolResult> {
+    const entry = this.d.registry.get(tool.name)!;
+    let result: ToolResult;
     try {
       result = await entry.invoke(input, ctx);
     } catch (e: any) {
@@ -343,27 +427,10 @@ export class ToolGateway {
     }
     const after = await this.d.hooks.run("tool.after", { tool: tool.name, input, result, context: ctx }, (p, r) => (r.result ? { ...p, result: r.result } : p));
     result = after.payload.result;
-
-    // Never let vault values reach the model.
-    result = {
+    return {
       ...result,
       content: result.content.map((c) => (c.type === "text" ? { ...c, text: this.d.redactor.text(c.text) } : c)),
     };
-
-    if ((tool.source || result._meta?.taint) && !s.tainted) {
-      this.d.store.updateSession(s.id, { tainted: true });
-    }
-    // Links in what came from outside may be followed without a review (policy/egress.ts).
-    if (tool.source || result._meta?.taint) this.d.egress?.read(s.id, textOf(result));
-    this.d.audit.append(`agent:${s.agentId}`, "tool.call", tool.name, {
-      sessionId: s.id,
-      taskId: s.taskId,
-      input: truncateDeep(input),
-      isError: !!result.isError,
-      ms: Date.now() - started,
-      output: truncate(textOf(result), 300),
-    });
-    return result;
   }
 
   summarize(tool: ToolDescriptor, input: unknown): string {
@@ -382,6 +449,20 @@ export class ToolGateway {
     }
     return truncate(`${tool.name} ${JSON.stringify(safe)}`, 300);
   }
+}
+
+/** What the security log keeps of a call that ran. */
+function callRecord(input: unknown, result: ToolResult, started: number): Record<string, unknown> {
+  return { input: truncateDeep(input), isError: !!result.isError, ms: Date.now() - started, output: truncate(textOf(result), 300) };
+}
+
+/**
+ * A trigger's call as the gateway's rules see it: a background call on the hub's own computer that has read nothing
+ * from outside. It is no session in the store: nothing reads it there or marks it tainted. With no conversation, its
+ * workspace is the agent's own folder (workspaceFor of no conversation).
+ */
+function triggerSession(as: TriggerCaller): SessionRow {
+  return { id: `trigger:${as.triggerId}`, conversationId: "", agentId: as.agentId, brainRef: "", tainted: false, status: "active", background: true, createdAt: "", updatedAt: "" };
 }
 
 function truncateDeep(v: unknown, depth = 0): unknown {
