@@ -90,8 +90,11 @@ describe("the hub's trigger engine", () => {
     const send = (signature: string) => fetch(`${base}/hooks/triggers/${id}`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": signature }, body: raw });
     expect((await send(sig("wrong"))).status).toBe(401);
     expect((await send(sig("hookkey"))).status).toBe(202);
-    hub.vault.remove("gh-hook");
-    expect((await send(sig("hookkey"))).status).toBe(503);
+    // A trigger whose vault item is gone answers 503 (a key already read is kept for 30 s).
+    const gone = await hub.triggers.http({ method: "POST", path: "/triggers", query: {}, headers: {}, public: false, locale: "en", body: { kind: "event", name: "GH2", prompt: "Look.", verify: { kind: "github", secretRef: "vault://no-such" } } });
+    const goneId = ((gone.body as any).trigger?.id ?? (gone.body as any).id) as string;
+    const r2 = await fetch(`${base}/hooks/triggers/${goneId}`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": sig("hookkey") }, body: raw });
+    expect(r2.status).toBe(503);
     hub.vault.seal();
   });
 

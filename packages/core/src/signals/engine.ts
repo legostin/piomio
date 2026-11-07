@@ -94,6 +94,8 @@ export class TriggerEngine {
   publicUrl = "";
   defaultAgent = "assistant";
   now: () => number;
+  /** Signing keys read from the vault, held 30 s per trigger (the host has no vault event to drop them on). */
+  private keyCache = new Map<string, { ref: string; key: string; until: number }>();
   /** Script, quick check, batch: what a trigger that has any of them does with its signals. */
   pipeline: TriggerPipeline;
 
@@ -772,12 +774,23 @@ export class TriggerEngine {
     // Who sent it, before anything is queued. A signed sender's key is in the vault, read only for this check.
     let key = t.secret ?? "";
     if (signed) {
-      try {
-        key = (await this.ctx.vault!.get(signed.secretRef, `trigger:${t.id}`)).value ?? "";
-      } catch {
-        key = "";
+      // An unsigned request costs no vault read, decrypt or audit record.
+      const name = signed.kind === "github" ? "x-hub-signature-256" : signed.kind === "stripe" ? "stripe-signature" : (signed.header ?? "x-signature").toLowerCase();
+      if (!header(req.headers, name)?.trim()) return { status: 401, body: { error: "invalid signature" } };
+      const hit = this.keyCache.get(t.id);
+      if (hit && hit.ref === signed.secretRef && hit.until > this.now()) key = hit.key;
+      else {
+        try {
+          key = (await this.ctx.vault!.get(signed.secretRef, `trigger:${t.id}`)).value ?? "";
+        } catch {
+          key = "";
+        }
+        if (!key) {
+          this.keyCache.delete(t.id);
+          return { status: 503, body: { error: "signing secret unavailable" } };
+        }
+        this.keyCache.set(t.id, { ref: signed.secretRef, key, until: this.now() + 30_000 });
       }
-      if (!key) return { status: 503, body: { error: "signing secret unavailable" } };
     }
     const verdict = verifyWebhook(t.verify, { headers: req.headers ?? {}, rawBody: req.rawBody ?? "", query: req.query ?? {} }, key, this.now());
     if (!verdict.ok) return { status: 401, body: { error: signed ? "invalid signature" : "invalid secret" } };

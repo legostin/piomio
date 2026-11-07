@@ -86,6 +86,33 @@ describe("webhook signatures in the engine", () => {
     expect((await h.http({ method: "POST", path: `/${id}`, public: true, query: { secret: "x" }, body: {}, rawBody: "{}" })).status).toBe(401);
   });
 
+  it("refuses unsigned requests before the vault is read, and reads a key once", async () => {
+    await start({ "vault://gh": "ghsecret", "vault://st": "k", "vault://h": "k" });
+    const gh = await create({ kind: "github", secretRef: "vault://gh" });
+    const st = await create({ kind: "stripe", secretRef: "vault://st" });
+    const hm = await create({ kind: "hmac-sha256", secretRef: "vault://h", header: "X-Sig" });
+    for (const id of [gh, st, hm]) {
+      expect((await post(id, {}, "{}")).status).toBe(401);
+      expect((await post(id, { "x-hub-signature-256": " ", "stripe-signature": "", "x-signature": "ab" }, "{}")).status).toBe(401);
+    }
+    expect(h.vaultCalls).toHaveLength(0);
+    const raw = '{"a":1}';
+    const sig = { "x-hub-signature-256": "sha256=" + hmac("ghsecret", raw) };
+    expect((await post(gh, sig, raw)).status).toBe(202);
+    expect((await post(gh, sig, raw)).status).toBe(202);
+    expect(h.vaultCalls).toHaveLength(1);
+  });
+
+  it("verifies a body with a BOM and CRLF line ends as it arrived", async () => {
+    const raw = '﻿{"a":\r\n 1}\r\n';
+    const sig = "sha256=" + hmac("k", raw);
+    expect(verifyWebhook({ kind: "github", secretRef: "vault://gh" }, req({ "x-hub-signature-256": sig }, raw), "k")).toEqual({ ok: true });
+    await start({ "vault://gh": "k" });
+    const id = await create({ kind: "github", secretRef: "vault://gh" });
+    const r = await h.http({ method: "POST", path: `/${id}`, public: true, headers: { "x-hub-signature-256": sig }, body: { a: 1 }, rawBody: raw });
+    expect(r.status).toBe(202);
+  });
+
   it("answers 503 when the signing secret is missing from the vault", async () => {
     await start({});
     const id = await create({ kind: "hmac-sha256", secretRef: "vault://gone" });
