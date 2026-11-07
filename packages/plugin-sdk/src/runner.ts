@@ -190,6 +190,14 @@ peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pl
         void peer.request("register.http", {});
       },
     },
+    signals: {
+      emit() {
+        throw new Error("signals arrive in the next task");
+      },
+      provide() {
+        throw new Error("signals arrive in the next task");
+      },
+    },
     widgets: {
       show(call, kind, data) {
         const list = call?.callId ? callWidgets.get(call.callId) : undefined;
