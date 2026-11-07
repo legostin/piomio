@@ -9,6 +9,7 @@ import { tFor } from "../../src/i18n.ts";
 import type { TriggerEngine } from "../../src/signals/engine.ts";
 import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse, TriggerToolRegistration } from "../../src/signals/host.ts";
 import { startTriggers } from "../../src/signals/index.ts";
+import { memoryStore } from "../../src/signals/store.ts";
 
 export interface TriggerHarnessOptions {
   settings?: Record<string, unknown>;
@@ -76,6 +77,7 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
       delete: async (k) => void storage.delete(k),
       list: async (prefix = "") => [...storage.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value: clone(value) })),
     },
+    store: memoryStore(),
     core: {
       call: async (method, params) => {
         coreCalls.push({ method, params });

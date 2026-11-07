@@ -3,9 +3,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TriggerHost } from "../../src/signals/host.ts";
 import { TriggerEngine } from "../../src/signals/engine.ts";
+import { memoryStore, type TriggerStore } from "../../src/signals/store.ts";
 import type { Trigger } from "../../src/signals/types.ts";
 
+// The journal lives beside the storage: a context made on the same storage map (a restart, a second replica on the
+// shared database) sees the same runs.
+const stores = new WeakMap<Map<string, unknown>, TriggerStore>();
+
 function fakeCtx(kv = new Map<string, unknown>(), tz = "Europe/Moscow") {
+  const store = stores.get(kv) ?? memoryStore();
+  stores.set(kv, store);
   const calls: Array<{ method: string; params: any }> = [];
   let n = 0;
   const ctx = {
@@ -21,6 +28,7 @@ function fakeCtx(kv = new Map<string, unknown>(), tz = "Europe/Moscow") {
       delete: async (k: string) => void kv.delete(k),
       list: async (prefix = "") => [...kv.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value: structuredClone(value) })),
     },
+    store,
     core: {
       call: async (method: string, params: any) => {
         calls.push({ method, params });

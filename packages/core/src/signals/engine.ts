@@ -210,14 +210,12 @@ export class TriggerEngine {
   }
 
   async runs(id: string): Promise<TriggerRun[]> {
-    return ((await this.ctx.storage.get<TriggerRun[]>(`runs:${id}`)) ?? []).slice(0, MAX_RUNS_KEPT);
+    return this.ctx.store.runs(id, MAX_RUNS_KEPT);
   }
 
   private async addRun(id: string, run: TriggerRun): Promise<void> {
     if (!this.triggers.has(id)) return;
-    const list = await this.runs(id);
-    list.unshift(run);
-    await this.ctx.storage.set(`runs:${id}`, list.slice(0, MAX_RUNS_KEPT));
+    this.ctx.store.addRun(id, run);
   }
 
   private emit(id: string): void {
@@ -623,7 +621,8 @@ export class TriggerEngine {
       const t = this.require(id);
       this.triggers.delete(id);
       await this.ctx.storage.delete(`trigger:${id}`);
-      await this.ctx.storage.delete(`runs:${id}`);
+      this.ctx.store.dropRuns(id);
+      this.ctx.store.dropState(id);
       this.emit(id);
       this.arm();
       return t;

@@ -3,6 +3,7 @@
 // unchanged (docs/superpowers/specs/2026-11-07-unified-triggers-design.md, phase 1).
 
 import type { CoreMethod, Locale, Params, ToolCallContext, ToolResult, ToolSpec } from "@piomio/shared";
+import type { TriggerStore } from "./store.ts";
 
 export interface TriggerHttpRequest {
   method: string;
@@ -58,6 +59,8 @@ export interface TriggerHost {
     delete(key: string): Promise<void>;
     list(prefix?: string): Promise<Array<{ key: string; value: unknown }>>;
   };
+  /** The journal of runs, the agents' notes and the scripts' state (store.ts). */
+  store: TriggerStore;
   core: { call<T = any>(method: CoreMethod, params?: unknown): Promise<T> };
   /** How the watch loads pages; unset: the global fetch. */
   fetch?: FetchLike;

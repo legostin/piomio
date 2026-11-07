@@ -12,6 +12,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import type { TriggerEngine } from "./engine.ts";
 import type { FetchLike, TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { startTriggers } from "./index.ts";
+import { migrateRunLists, sqlStore, type TriggerStore } from "./store.ts";
 
 /** The Triggers card's id: its storage, its webhook addresses (/hooks/triggers/…) and its UI events carry it. */
 export const TRIGGERS_ID = "triggers";
@@ -83,7 +84,10 @@ export class CoreTriggers {
       if (this.gen !== gen) return;
       this.session = s;
       try {
-        const engine = await startTriggers(this.host(s));
+        const store = this.store(s);
+        // The run lists the plugin kept in storage move into the journal, once, before the engine reads them.
+        migrateRunLists(pluginKv(this.d.db, TRIGGERS_ID), store);
+        const engine = await startTriggers(this.host(s, store));
         if (this.gen !== gen) {
           engine.stop();
           this.release(s);
@@ -136,7 +140,31 @@ export class CoreTriggers {
     s.handler = undefined;
   }
 
-  private host(s: Session): TriggerHost {
+  /** The journal, notes and script state on the hub's database; refused once the session is closed, as `storage` is. */
+  private store(s: Session): TriggerStore {
+    const inner = sqlStore(this.d.db);
+    const guard =
+      <A extends unknown[], R>(fn: (...a: A) => R) =>
+      (...a: A): R => {
+        if (s.closed) throw new Error(STOPPED);
+        return fn(...a);
+      };
+    return {
+      runs: guard(inner.runs),
+      addRun: guard(inner.addRun),
+      signal: guard(inner.signal),
+      recentSignals: guard(inner.recentSignals),
+      dropRuns: guard(inner.dropRuns),
+      addNote: guard(inner.addNote),
+      notes: guard(inner.notes),
+      stateGet: guard(inner.stateGet),
+      stateSet: guard(inner.stateSet),
+      stateDelete: guard(inner.stateDelete),
+      dropState: guard(inner.dropState),
+    };
+  }
+
+  private host(s: Session, store: TriggerStore): TriggerHost {
     const d = this.d;
     const kv = pluginKv(d.db, TRIGGERS_ID);
     // As the plugin's logs were: debug and info stay quiet, what went wrong reaches the hub's console.
@@ -190,6 +218,7 @@ export class CoreTriggers {
         delete: (key) => open(() => kv.delete(key)),
         list: (prefix) => open(() => kv.list(prefix)),
       },
+      store,
       core: { call: (method, params) => open(() => d.coreCall(TRIGGERS_ID, method, params) as Promise<any>, true) },
       ...(fetch ? { fetch: (url, init) => open(() => fetch(url, init)) } : {}),
     };
