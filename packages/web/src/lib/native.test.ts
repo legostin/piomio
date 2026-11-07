@@ -32,7 +32,7 @@ describe("native bridge", () => {
     await native.dictation.start();
     await native.call("custom", { a: 1, type: "spoofed" });
     expect(postMessage.mock.calls.map((c) => c[0])).toEqual([
-      { type: "ready", conversationId: "c1" },
+      { type: "ready", conversationId: "c1", show: true },
       { type: "approve", approvalId: "a1" },
       { type: "deny", approvalId: "a2" },
       { type: "openURL", url: "https://example.com/x" },

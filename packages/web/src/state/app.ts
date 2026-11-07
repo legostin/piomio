@@ -6,7 +6,7 @@ import type { AgentDef, Catalog, Conversation, GroupChat, Locale, MachineActivit
 import { api, ApiError, onUnauthorized, request, setCsrf } from "../lib/api";
 import { createStore, Emitter, type Store } from "../lib/store";
 import { HubSocket, type ConnectionState } from "../lib/socket";
-import { applyDelta, mergeFetched, prependOlder, removeMessage, upsertMessage } from "../lib/messages";
+import { applyDelta, askSince, joinLatest, mergeChanges, newestChange, prependOlder, removeMessage, upsertMessage } from "../lib/messages";
 import { desktopTicketFrom } from "../lib/desktop";
 import { mobileMode } from "../lib/mobile";
 import { toastWorthy } from "../lib/notifications";
@@ -88,9 +88,16 @@ export interface ConvMessages {
   error?: string;
   /** The connection dropped while it was off screen: the hub is asked again when it opens. */
   stale?: boolean;
+  /**
+   * The newest change the hub has sent in a fetch (Message.updatedAt): the next time only what changed after it is
+   * asked for (kept on the device with the messages).
+   */
+  synced?: string;
 }
 
 const PAGE = 60;
+/** At most this many changes since the mark; more, and the latest page comes instead. */
+const CHANGES = 200;
 const EMPTY_CONV: ConvMessages = { messages: [], loaded: false, loading: false, loadingOlder: false, hasMore: false };
 
 export const phase = createStore<Phase>({ kind: "loading" });
@@ -262,7 +269,10 @@ messages.subscribe(() => {
     const c = all[id];
     if (c === lastMessages[id] || !c.loaded || c.error || !c.messages.length) continue;
     if (!saveTimers.has(`messages:${id}`)) keepDialog(id);
-    saveSoon(`messages:${id}`, () => messages.get()[id]?.messages.slice(-PAGE));
+    saveSoon(`messages:${id}`, () => {
+      const now = messages.get()[id];
+      return now && ({ messages: now.messages.slice(-PAGE), synced: now.synced } satisfies KeptDialog);
+    });
   }
   lastMessages = all;
 });
@@ -382,6 +392,8 @@ function startSocket(): void {
   socket = new HubSocket({
     onEvent: handleEvent,
     onState: (s) => connection.set(s),
+    // What the page loaded before the socket opened (the device's copy, then the hub's answer) may have missed events.
+    onFirstOpen: () => refreshDialogs(),
     onReconnect: () => {
       void refreshBootstrap();
       void refreshConversations();
@@ -563,12 +575,13 @@ export function showingDialog(id: string): () => void {
 
 /**
  * Back online: the dialogs on screen ask the hub what they missed, the others when they open. A shaky connection
- * reconnects often, and every dialog visited since the page loaded would otherwise fetch its messages each time.
+ * reconnects often, and every dialog visited since the page loaded would otherwise fetch its messages each time. A
+ * dialog still loading asks once more when its answer lands.
  */
 export function refreshDialogs(): void {
   for (const [id, c] of Object.entries(messages.get())) {
-    if (!c.loaded) continue;
-    if (onScreen.has(id)) void loadMessages(id, true);
+    if (!c.loaded && !c.loading) continue;
+    if (onScreen.has(id) && !c.loading) void loadMessages(id, true);
     else patchConv(id, (x) => ({ ...x, stale: true }));
   }
 }
@@ -577,28 +590,54 @@ export async function loadMessages(id: string, refresh = false): Promise<void> {
   const cur = messages.get()[id];
   const again = refresh || !!cur?.stale;
   if (cur && (cur.loading || (cur.loaded && !again))) return;
-  messages.set((all) => ({ ...all, [id]: { ...(all[id] ?? EMPTY_CONV), loading: true, error: undefined } }));
-  // The device's copy first, while the hub answers.
-  if (!cur) void fromDevice(id);
+  messages.set((all) => ({ ...all, [id]: { ...(all[id] ?? EMPTY_CONV), loading: true, stale: false, error: undefined } }));
+  // The device's copy first, while the hub answers; its mark says what to ask for.
+  if (!cur) await fromDevice(id);
+  const path = `/api/conversations/${encodeURIComponent(id)}/messages`;
   try {
-    const list = await api.get<Message[]>(`/api/conversations/${encodeURIComponent(id)}/messages?limit=${PAGE}`);
-    messages.set((all) => {
-      const prev = all[id] ?? EMPTY_CONV;
-      return {
-        ...all,
-        [id]: { ...prev, messages: mergeFetched(prev.messages, list), loaded: true, loading: false, stale: false, hasMore: again && prev.loaded ? prev.hasMore : list.length >= PAGE },
-      };
+    const mark = messages.get()[id]?.synced;
+    const changed = mark ? await api.get<Message[]>(`${path}?since=${encodeURIComponent(askSince(mark))}&limit=${CHANGES}`) : undefined;
+    if (changed && changed.length < CHANGES) {
+      settle(id, (prev) => ({ messages: mergeChanges(prev.messages, changed), synced: newestChange(changed, mark), hasMore: prev.hasMore }));
+      return;
+    }
+    // No mark (first time here, or kept by an older page), or too much changed: the latest page.
+    const list = await api.get<Message[]>(`${path}?limit=${PAGE}`);
+    settle(id, (prev) => {
+      const { messages: joined, gap } = joinLatest(prev.messages, list, PAGE);
+      return { messages: joined, synced: newestChange(list), hasMore: gap || !(again && prev.loaded) ? list.length >= PAGE : prev.hasMore };
     });
   } catch (e) {
     messages.set((all) => ({ ...all, [id]: { ...(all[id] ?? EMPTY_CONV), loading: false, loaded: true, error: e instanceof Error ? e.message : String(e) } }));
   }
 }
 
+/** The hub's answer is in; a refresh asked for meanwhile (refreshDialogs) runs now. */
+function settle(id: string, fn: (prev: ConvMessages) => Pick<ConvMessages, "messages" | "synced" | "hasMore">): void {
+  let asked = false;
+  messages.set((all) => {
+    const prev = all[id] ?? EMPTY_CONV;
+    asked = !!prev.stale;
+    return { ...all, [id]: { ...prev, ...fn(prev), loaded: true, loading: false } };
+  });
+  if (asked && onScreen.has(id)) void loadMessages(id, true);
+}
+
+/** A dialog as this device kept it: its latest messages and the mark of the hub's last answer. */
+interface KeptDialog {
+  messages: Message[];
+  synced?: string;
+}
+
 /** A dialog's latest messages as this device kept them, shown until the hub's arrive (they merge with those). */
 async function fromDevice(id: string): Promise<void> {
-  const kept = await cacheGet<Message[]>(`messages:${id}`);
-  if (!Array.isArray(kept) || !kept.length) return;
-  patchConv(id, (c) => (c.loaded ? c : { ...c, messages: prependOlder(kept, c.messages), loaded: true, hasMore: kept.length >= PAGE }));
+  const kept = await cacheGet<KeptDialog | Message[]>(`messages:${id}`);
+  // An older page kept the messages alone, without a mark.
+  const copy: KeptDialog | undefined = Array.isArray(kept) ? { messages: kept } : kept && Array.isArray(kept.messages) ? kept : undefined;
+  if (!copy?.messages.length) return;
+  patchConv(id, (c) =>
+    c.loaded ? c : { ...c, messages: prependOlder(copy.messages, c.messages), loaded: true, hasMore: copy.messages.length >= PAGE, synced: typeof copy.synced === "string" ? copy.synced : undefined },
+  );
 }
 
 export async function loadOlder(id: string): Promise<void> {

@@ -142,6 +142,10 @@ const MIGRATIONS: string[] = [
   // Verified same-user host identity: executor ids remain stable, including tasks and workspace routes.
   `create table machine_hosts(machine_id text primary key, host_id text not null);`,
   `alter table tasks add column machine_id text;`,
+  // When a message last changed (Message.updatedAt): a device that kept a dialog asks only for what changed since.
+  // Older rows (and rows an older replica writes) have none and count from created_at.
+  `alter table messages add column updated_at text;
+  create index messages_conv_changed on messages(conversation_id, coalesce(updated_at, created_at));`,
 ];
 
 /**

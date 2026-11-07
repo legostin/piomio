@@ -122,7 +122,7 @@ a Promise of the reply object (rejected with a message string on failure).
 
 | type | payload | reply |
 |---|---|---|
-| `ready` | `{ conversationId }` | `{ ok }`: the page has rendered (the app hides its spinner) |
+| `ready` | `{ conversationId, show }` | `{ ok }`: the page has rendered (the app hides its spinner). `show: true`: the page switches chats on the app's `show` event; at `/m/` (no chat) `conversationId` is empty |
 | `approve` | `{ approvalId }` | `{ ok: true }` or `{ ok: false, cancelled: true }`: the app loads the approval from the hub (never trusts the page's text), asks for Face ID with its summary, signs with the device key |
 | `deny` | `{ approvalId }` | `{ ok: true }` |
 | `dictation.start` | `{}` | `{ ok: true }` (rejects with a reason when the mic or speech recognition is not allowed) |
@@ -141,6 +141,10 @@ App → page: `window.dispatchEvent(new CustomEvent("piomio-native", { detail })
 | `{ type: "dictation", text }` | live words while the mic is held |
 | `{ type: "details", on }` | after `ready`, and when the header's "Show steps" switch changes: the page's detailed mode (tool calls, notes for the model, the brain of each reply) |
 | `{ type: "online" }` | the app reaches the hub again after it was away: the page reconnects now and re-reads `/api/bootstrap` (a restarted hub forgot the page's session; the 401 leads to `reauth`) |
+| `{ type: "show", conversationId }` | the person opened a chat and the app hands it a warm page: one it loaded at `/m/` (signed in, scripts and lists loaded, no chat) and kept off screen. The page switches to `/m/chat/:conversationId` in place and says `ready` with that id |
+
+The app keeps one such warm page per hub address, made after it is online and only from a page that said `show: true`
+in its `ready`; a page that was shown is never handed out again, and a warm page goes on a memory warning.
 
 The composer keeps unsent text in `sessionStorage`, so a `reauth` reload does not lose it. On the phone Return inserts a
 new line; the send button sends.
