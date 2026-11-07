@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { createServer as createTcp, type AddressInfo } from "node:net";
-import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
+import { brotliCompressSync, deflateRawSync, deflateSync, gzipSync } from "node:zlib";
 import { proxiedGet } from "../../src/signals/net.ts";
 import { fetchPage } from "../../src/signals/watch.ts";
 
@@ -75,14 +75,14 @@ describe("watch page loads", () => {
 
   it("asks for compressed pages and unpacks them, as fetch did", async () => {
     const page = "<p>Цена: 1 200 ₽</p>".repeat(200);
-    const packers: Record<string, (b: Buffer) => Buffer> = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync };
+    const packers: Record<string, (b: Buffer) => Buffer> = { gzip: gzipSync, deflate: deflateSync, "deflate-raw": deflateRawSync, br: brotliCompressSync };
     let asked = "";
     // A server that compresses whether asked or not.
     const packed = createServer((req, res) => {
       asked = String(req.headers["accept-encoding"] ?? "");
       const enc = new URL(req.url ?? "/", "http://x").searchParams.get("enc")!;
       const body = enc === "bad" ? Buffer.from("not gzip at all") : packers[enc](Buffer.from(page));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-encoding": enc === "bad" ? "gzip" : enc, "content-length": String(body.length) });
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-encoding": enc === "bad" ? "gzip" : enc === "deflate-raw" ? "deflate" : enc, "content-length": String(body.length) });
       res.end(body);
     });
     await new Promise<void>((r) => packed.listen(0, "127.0.0.1", r));

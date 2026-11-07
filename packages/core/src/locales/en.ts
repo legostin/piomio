@@ -532,6 +532,7 @@ export default {
   "triggers.error.fetchFailed": "Could not load {url}: {reason}",
   "triggers.error.httpStatus": "{url} responded with {status}",
   "triggers.error.tooManyRedirects": "Too many redirects: {url}",
+  "triggers.error.extractFailed": "Could not read the page: {reason}",
   "triggers.error.extractTimeout": "Reading the page took longer than {seconds, plural, one {# second} other {# seconds}}: it is too large or too deeply nested",
   "triggers.error.dailyLimit": "Daily run limit ({max}) reached",
   "triggers.error.previousRunning": "The previous run has not finished yet",

@@ -90,6 +90,7 @@ import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
 import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
+import { pageReader } from "./signals/extract.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
@@ -1374,6 +1375,7 @@ export class Hub {
     await this.runner.stop();
     this.speech.stop();
     this.media.previews.stop();
+    pageReader.stop();
     this.machines.closeAll();
     this.activity.close();
     await this.plugins.stopAll();

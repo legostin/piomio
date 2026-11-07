@@ -4,7 +4,7 @@
 
 import http from "node:http";
 import https from "node:https";
-import { pipeline, Readable, type Transform } from "node:stream";
+import { pipeline, Readable, Transform } from "node:stream";
 import zlib from "node:zlib";
 import type { FetchLike } from "./host.ts";
 
@@ -12,10 +12,30 @@ import type { FetchLike } from "./host.ts";
 const ACCEPT_ENCODING = "gzip, deflate, br";
 // As fetch (undici) does: a stream cut short still gives what arrived.
 const zflush = { flush: zlib.constants.Z_SYNC_FLUSH, finishFlush: zlib.constants.Z_SYNC_FLUSH };
+/** "deflate" is a zlib stream by the standard, but some servers send it raw: the first byte tells (0x78 opens a zlib header). */
+function inflateEither(): Transform {
+  let inner: Transform | undefined;
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      if (!inner) {
+        const i = (inner = chunk[0] === 0x78 ? zlib.createInflate(zflush) : zlib.createInflateRaw(zflush));
+        i.on("data", (d) => this.push(d));
+        i.on("error", (e) => this.destroy(e));
+      }
+      inner.write(chunk, cb);
+    },
+    flush(cb) {
+      if (!inner) return cb();
+      inner.once("end", () => cb());
+      inner.end();
+    },
+  });
+}
+
 const DECODERS: Record<string, () => Transform> = {
   gzip: () => zlib.createGunzip(zflush),
   "x-gzip": () => zlib.createGunzip(zflush),
-  deflate: () => zlib.createInflate(zflush),
+  deflate: inflateEither,
   br: () => zlib.createBrotliDecompress({ flush: zlib.constants.BROTLI_OPERATION_FLUSH, finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH }),
 };
 

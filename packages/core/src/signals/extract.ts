@@ -60,7 +60,7 @@ export class PageReader {
 
   private start(): Worker {
     if (this.worker) return this.worker;
-    const w = new Worker(this.script);
+    const w = new Worker(this.script, { resourceLimits: { maxOldGenerationSizeMb: 256 } });
     w.unref();
     w.on("message", (r: ExtractReply) => {
       const p = this.pending.get(r.id);
@@ -76,7 +76,7 @@ export class PageReader {
         if (p.worker !== w) continue;
         this.pending.delete(id);
         clearTimeout(p.timer);
-        p.resolve({ id, error: { message: `Could not read the page: ${reason}` } });
+        p.resolve({ id, error: { message: `Could not read the page: ${reason}`, code: "extractFailed", params: { reason } } });
       }
     };
     w.on("error", (e) => failed(e.message || "the page reader failed"));

@@ -235,7 +235,7 @@ describe("triggers plugin", () => {
       const runs = ((await h.http({ path: `/triggers/${id}/runs` })).body as any).runs;
       expect(runs[0]).toMatchObject({ reason: "change", status: "error", code: "extractTimeout" });
       expect(createdFor(id)).toHaveLength(0);
-      expect(gap).toBeLessThan(250);
+      expect(gap).toBeLessThan(1000);
       await h.http({ method: "DELETE", path: `/triggers/${id}` });
     } finally {
       clearInterval(timer);

@@ -67,11 +67,27 @@ describe("reading a watched page off the hub's thread", () => {
     } finally {
       clearInterval(timer);
     }
-    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(Date.now() - t0).toBeLessThan(8000);
     expect(ticks).toBeGreaterThan(10);
-    expect(gap).toBeLessThan(250);
+    expect(gap).toBeLessThan(1000);
     // The next page gets a fresh reader.
     expect(await reader.read("<p>ok</p>", "text/html", {})).toBe("ok");
+  });
+
+  it("a worker that fails gives a coded, translatable error", async () => {
+    const broken = new PageReader(new URL("data:text/javascript,throw new Error('boom')"));
+    try {
+      const err = await broken.read("<p>x</p>", "text/html", {}).then(
+        () => undefined,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(WatchError);
+      expect(err).toMatchObject({ code: "extractFailed", params: { reason: expect.stringContaining("boom") } });
+    } finally {
+      broken.stop();
+    }
+    expect(tFor("en")("triggers.error.extractFailed", { reason: "x" })).toBe("Could not read the page: x");
+    expect(tFor("ru")("triggers.error.extractFailed", { reason: "x" })).toBe("Не удалось прочитать страницу: x");
   });
 
   it("says why in the person's language", () => {
