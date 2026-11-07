@@ -299,12 +299,13 @@ describe("the trigger engine's host in core", () => {
     expect((kv.get("trigger:t_call") as any).state.done).toBeUndefined();
     // A webhook answers as an off trigger's does.
     expect((await s.ct.http(req({ method: "POST", path: "/t_hook", headers: { "x-piomio-secret": "s3cret" }, body: { a: 1 }, public: true }))).status).toBe(409);
-    // Told once, in the hub language, how to turn on the ones wanted.
+    // Told once, in the hub language, of the three it turned off (not the one already off) and how to turn them on.
     const told = s.calls.filter((c) => c.method === "notify");
     expect(told).toHaveLength(1);
     expect(told[0]).toMatchObject({ pluginId: "triggers", params: { level: "notify" } });
     expect(told[0].params.title).toBe("Your triggers stay off");
-    expect(told[0].params.body).toContain("each of your 4 triggers is off now");
+    expect(told[0].params.body).toContain("each of your 3 triggers is off now");
+    expect(told[0].params.body).toContain("“turn on Morning brief”");
     expect(told[0].params.body).toContain("Settings → Assistant → Triggers");
     // The card's row is left as it was; a later start (leading again, a restart) neither turns them off again nor tells again.
     expect((s.db.prepare("select enabled from plugins where id = 'triggers'").get() as { enabled: number }).enabled).toBe(0);
@@ -317,17 +318,54 @@ describe("the trigger engine's host in core", () => {
     s.ct.stop();
   });
 
-  it("a card that was off before the engine ever ran: its default review is made off too", async () => {
+  it("tells only of the triggers it turned off: not one the person had turned off, nor a reminder that already fired", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    const kv = pluginKv(s.db, "triggers");
+    const base = { agentId: "assistant", maxRunsPerDay: 24, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true };
+    kv.set("initialized", true);
+    // First in key order, so an example taken from every trigger would name it.
+    kv.set("trigger:t_a", { ...base, id: "t_a", kind: "once", name: "Dentist", prompt: "Remind me.", enabled: false, at: "2026-10-03T10:00:00.000Z", state: { done: true } });
+    kv.set("trigger:t_b", { ...base, id: "t_b", kind: "schedule", name: "Weather", prompt: "Weather.", enabled: true, cron: "0 7 * * *", state: { nextRunAt: "2026-10-02T07:00:00.000Z" } });
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.list().map((t) => [t.id, t.enabled])).toEqual([
+      ["t_a", false],
+      ["t_b", false],
+    ]);
+    const told = s.calls.filter((c) => c.method === "notify");
+    expect(told).toHaveLength(1);
+    expect(told[0].params.title).toBe("Your trigger stays off");
+    expect(told[0].params.body).toContain("your trigger is off now");
+    expect(told[0].params.body).toContain("“turn on Weather”");
+    expect(told[0].params.body).not.toContain("Dentist");
+    s.ct.stop();
+  });
+
+  it("tells nothing when every trigger was already off", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    const kv = pluginKv(s.db, "triggers");
+    kv.set("initialized", true);
+    kv.set("trigger:t_old", {
+      id: "t_old", kind: "schedule", name: "Old", prompt: "Old.", agentId: "assistant", enabled: false, maxRunsPerDay: 24, cron: "0 8 * * *",
+      createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true, state: {},
+    });
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.get("t_old")?.enabled).toBe(false);
+    expect(s.calls.some((c) => c.method === "notify")).toBe(false);
+    expect(s.db.prepare("select 1 from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+    s.ct.stop();
+  });
+
+  it("a card that was off before the engine ever ran: its default review is made off too, and nothing is told", async () => {
     const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
     await s.ct.start();
     await booted(s);
     const all = s.ct.engine!.list();
     expect(all.map((t) => [t.kind, t.enabled])).toEqual([["heartbeat", false]]);
     expect(all[0].state.nextRunAt).toBeUndefined();
-    const told = s.calls.filter((c) => c.method === "notify");
-    expect(told).toHaveLength(1);
-    expect(told[0].params.body).toContain("your trigger is off now");
-    expect(told[0].params.body).toContain("“turn on Daily review”");
+    // It was never on: nothing was turned off.
+    expect(s.calls.some((c) => c.method === "notify")).toBe(false);
     // The marker is spent: the engine's later starts go as on any hub.
     expect(pluginKv(s.db, "triggers").get("initialOff")).toBeNull();
     s.ct.stop();

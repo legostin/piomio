@@ -178,7 +178,7 @@ export class CoreTriggers {
    * leads later does not do it again. Its saved settings go into the hub settings; what it did not save, or saved in a
    * form the engine would not have used, stays as the hub has it. A card the person had turned off kept every trigger
    * from running: each one is turned off instead, in the same step as the record and before the engine reads them, and
-   * the person is told once. A failure is retried next start; false when the card's pause may not have been carried
+   * the person is told once of those this turned off (none: nothing to tell). A failure is retried next start; false when the card's pause may not have been carried
    * over, and the engine must not start (it would run what the person had paused).
    */
   private carryOver(): boolean {
@@ -207,15 +207,14 @@ export class CoreTriggers {
     }
   }
 
-  /** The person hears once, in the hub language, that their paused triggers are each off now and how to turn them on. */
+  /** The person hears once, in the hub language, that the triggers the pause held are each off now and how to turn them on. */
   private tellPaused(off: { count: number; example: string | undefined }): void {
     const t = tFor(hubLocale());
-    const example = off.example ?? t("triggers.heartbeat.defaultName");
     void this.d
       .coreCall(TRIGGERS_ID, "notify", {
         level: "notify",
         title: t("triggers.notify.paused.title", { n: off.count }),
-        body: t("triggers.notify.paused.body", { n: off.count, example }),
+        body: t("triggers.notify.paused.body", { n: off.count, example: off.example ?? "" }),
       })
       .catch((e: any) => console.warn(`[piomio] triggers warn: notify failed: ${e?.message ?? e}`));
   }
@@ -403,26 +402,21 @@ export class CoreTriggers {
  * A paused card's triggers, each turned off where the engine keeps them (it only reads them later): nothing of theirs
  * runs, catches up, answers a webhook or listens to a source until the person turns it on, and a reminder whose time
  * passed is not spent. An engine that never ran (no "initialized") makes its default review off too (engine.ts
- * INITIAL_OFF). Returns how many triggers are off now, and a name to give as an example.
+ * INITIAL_OFF). Returns how many this step turned off (on before, off now) and the first one's name, for the note:
+ * one the person had turned off, or a reminder that already fired, is not theirs to turn on again.
  */
 function pauseAll(kv: PluginKv): { count: number; example: string | undefined } {
   let count = 0;
   let example: string | undefined;
-  let review = false;
   for (const { key, value } of kv.list("trigger:")) {
-    // What the engine would not load (engine.ts start) is no trigger.
+    // What the engine would not load (engine.ts start) is no trigger; what it would not run (enabled unset) stays.
     const t = value as Partial<Trigger> | null;
-    if (!t || typeof t !== "object" || !t.id || !t.kind) continue;
+    if (!t || typeof t !== "object" || !t.id || !t.kind || t.enabled !== true) continue;
+    kv.set(key, { ...t, enabled: false });
     count++;
-    review ||= t.kind === "heartbeat";
-    example ??= typeof t.name === "string" && t.name ? t.name : undefined;
-    if (t.enabled !== false) kv.set(key, { ...t, enabled: false });
+    example ??= typeof t.name === "string" && t.name ? t.name : t.id;
   }
-  if (!kv.get("initialized")) {
-    kv.set(INITIAL_OFF, true);
-    // The default review it will make, off (none when there is one already, engine.ts start).
-    if (!review) count++;
-  }
+  if (!kv.get("initialized")) kv.set(INITIAL_OFF, true);
   return { count, example };
 }
 
