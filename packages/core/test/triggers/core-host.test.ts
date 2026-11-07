@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ToolCallContext } from "@piomio/shared";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { PiomioManifestSchema, toolPrefixOf, type ToolCallContext } from "@piomio/shared";
 import { EventBus } from "../../src/bus.ts";
 import { openDb } from "../../src/db.ts";
 import { pluginKv } from "../../src/plugins/kv.ts";
@@ -45,15 +47,16 @@ const req = (over: Partial<TriggerHttpRequest>): TriggerHttpRequest => ({ method
 const triggerTools = (tools: ToolRegistry) => tools.list().filter((t) => t.name.startsWith("trigger_"));
 
 describe("the trigger engine's host in core", () => {
-  it("runs on the plugin's storage, with its tools as core tools named trigger_*", async () => {
+  it("runs on the plugin's storage, with its tools named trigger_* and owned by the Triggers card", async () => {
     const s = setup();
     await s.ct.start();
+    // Owned by "triggers", as the plugin's were: "always allow", the catalog's uses and the card's tool list go by it.
     expect(triggerTools(s.tools).map((t) => [t.name, t.owner]).sort()).toEqual([
-      ["trigger_create", "core"],
-      ["trigger_delete", "core"],
-      ["trigger_list", "core"],
-      ["trigger_run_now", "core"],
-      ["trigger_update", "core"],
+      ["trigger_create", "triggers"],
+      ["trigger_delete", "triggers"],
+      ["trigger_list", "triggers"],
+      ["trigger_run_now", "triggers"],
+      ["trigger_update", "triggers"],
     ]);
     // A new hub's default heartbeat is written where the plugin kept its triggers.
     const stored = pluginKv(s.db, "triggers").list("trigger:");
@@ -100,6 +103,12 @@ describe("the trigger engine's host in core", () => {
     expect(s.ct.engine).toBeDefined();
     expect(triggerTools(s.tools)).toHaveLength(5);
     s.ct.stop();
+  });
+
+  it("names its tools with the card's own tool prefix, which counts a turned-off card's earlier uses", () => {
+    const file = join(import.meta.dirname, "..", "..", "..", "..", "plugins", "triggers", ".piomio-plugin", "plugin.json");
+    const manifest = PiomioManifestSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+    expect(toolPrefixOf(manifest)).toBe("trigger");
   });
 
   it("does not run without the Triggers card", async () => {

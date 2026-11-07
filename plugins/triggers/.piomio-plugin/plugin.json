@@ -5,6 +5,7 @@
   "description": "%description%",
   "builtin": true,
   "ui": "./ui/dist/index.js",
+  "toolPrefix": "trigger",
   "contributes": {
     "settings": {
       "type": "object",

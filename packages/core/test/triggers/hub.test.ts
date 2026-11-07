@@ -1,12 +1,14 @@
-// The hub runs the trigger engine itself: core tools, the old webhook address, the card's switch and settings.
+// The hub runs the trigger engine itself: the tools under the card's name, the old webhook address, the card's switch
+// and settings, standing down and leading again.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolCallContext } from "@piomio/shared";
 import { freePort } from "@piomio/testkit";
 import { Hub, loadConfig } from "../../src/index.ts";
+import { listIntegrations, popularIds } from "../../src/integrations.ts";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 
@@ -41,9 +43,23 @@ describe("the hub's trigger engine", () => {
     await hub?.stop();
   });
 
-  it("has the trigger tools as core tools", () => {
-    expect(hub.tools.get("trigger_create")?.descriptor.owner).toBe("core");
+  it("has the trigger tools, owned by the Triggers card as the plugin's were", async () => {
+    expect(hub.tools.get("trigger_create")?.descriptor.owner).toBe("triggers");
     expect(hub.tools.get("trigger_run_now")?.descriptor.effect).toBe("local-write");
+    // The person can still "always allow" them (the hub's own tools cannot be).
+    const always = await hub.tools.get("hub_permission_always")!.invoke({ tool: "trigger_update" }, { ...call, approved: true });
+    expect((always.content[0] as { text: string }).text).toContain("Allowed: trigger_update runs without approval");
+  });
+
+  it("credits the card with its tools' uses in the catalog, on or off", async () => {
+    for (let i = 0; i < 3; i++) hub.audit.append("agent:assistant", "policy.decision", "trigger_list", { decision: "allow" });
+    expect(popularIds(hub, await listIntegrations(hub, "en"))).toContain("triggers");
+    // Off, its tools are gone: their earlier uses are matched by the card's tool prefix.
+    await hub.plugins.setEnabled("triggers", false);
+    await until(() => !hub.tools.get("trigger_list"), "the tools to go");
+    expect(popularIds(hub, await listIntegrations(hub, "en"))).toContain("triggers");
+    await hub.plugins.setEnabled("triggers", true);
+    await until(() => hub.triggers.engine && hub.tools.get("trigger_list"), "the engine to start again");
   });
 
   it("answers a webhook at its old address and starts the agent's task", async () => {
@@ -57,6 +73,34 @@ describe("the hub's trigger engine", () => {
     const task = await until(() => hub.store.listTasks({ limit: 50 }).find((t) => t.triggerId === id), "the webhook's task");
     expect(task).toMatchObject({ agentId: "assistant", background: true, createdBy: "trigger" });
     expect(task.goal).toContain("42");
+  });
+
+  it("turned on from its card in a chat, tells the agent its tool names", async () => {
+    await hub.plugins.setEnabled("triggers", false);
+    await until(() => !hub.triggers.engine, "the engine to stop");
+    // Signed in as the person, the way the web UI is.
+    let cookie = "";
+    const api = async (method: string, path: string, body?: unknown, csrf = "") => {
+      const r = await fetch(base + path, {
+        method,
+        headers: { origin: base, ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : {}), ...(csrf ? { "x-csrf": csrf } : {}) },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      cookie = r.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+      expect(r.status).toBeLessThan(400);
+      return r.json();
+    };
+    await api("POST", "/api/auth/setup", { token: hub.auth.setupToken, password: "triggers-pass-1" });
+    const { csrf } = await api("GET", "/api/bootstrap");
+    const conv = hub.store.agentConversation("assistant");
+    const told = vi.spyOn(hub.runner, "tellAgent").mockImplementation(() => {});
+    try {
+      await api("POST", "/api/integrations/triggers/enabled", { enabled: true, conversationId: conv.id }, csrf);
+      expect(told).toHaveBeenCalledWith(conv.id, expect.stringMatching(/its tools are available now: .*trigger_create/));
+    } finally {
+      told.mockRestore();
+    }
+    await until(() => hub.triggers.engine, "the engine to start again");
   });
 
   it("follows the card: settings reach the engine, off stops it, on starts it again", async () => {

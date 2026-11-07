@@ -1,7 +1,7 @@
 // The trigger engine's host in core (host.ts): plugin_kv under "triggers" for its storage (where the plugin kept it),
-// core's own calls, the hub bus, the tool registry (core tools named trigger_*), the Triggers card's switch and
-// settings, and page loads through the egress proxy. The hub starts it while it leads and stops it when it stands
-// down; it runs only while the Triggers card exists and is on.
+// core's own calls, the hub bus, the tool registry (tools named trigger_*, owned by "triggers" as the plugin's were),
+// the Triggers card's switch and settings, and page loads through the egress proxy. The hub starts it while it leads
+// and stops it when it stands down; it runs only while the Triggers card exists and is on.
 
 import type { CoreMethod, ToolResult } from "@piomio/shared";
 import type { EventBus } from "../bus.ts";
@@ -118,7 +118,7 @@ export class CoreTriggers {
 
   private release(s: Session): void {
     for (const off of s.offs.splice(0)) off();
-    for (const name of s.toolNames.splice(0)) this.d.tools.unregister(name, "core");
+    for (const name of s.toolNames.splice(0)) this.d.tools.unregister(name, TRIGGERS_ID);
     s.handler = undefined;
   }
 
@@ -142,7 +142,8 @@ export class CoreTriggers {
           const { handler, name: short, ...spec } = r;
           const name = `${TOOL_PREFIX}_${short}`;
           // As the plugin runner did: a string is the text, a throw is an error result.
-          d.tools.register({ ...spec, name, owner: "core" }, async (input, ctx): Promise<ToolResult> => {
+          // Owned by the card, as the plugin's were: "always allow", the catalog's uses and its tool list go by the owner.
+          d.tools.register({ ...spec, name, owner: TRIGGERS_ID }, async (input, ctx): Promise<ToolResult> => {
             try {
               const out = await handler(input ?? {}, ctx);
               return typeof out === "string" ? { content: [{ type: "text", text: out }] } : out;

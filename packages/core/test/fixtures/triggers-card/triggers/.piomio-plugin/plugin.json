@@ -3,6 +3,7 @@
   "name": "Triggers",
   "version": "0.2.0",
   "builtin": true,
+  "toolPrefix": "trigger",
   "contributes": {
     "settings": {
       "type": "object",
@@ -12,5 +13,6 @@
       }
     }
   },
+  "integration": { "category": "assistant", "icon": "alarm-clock", "connect": "none" },
   "permissions": {}
 }
