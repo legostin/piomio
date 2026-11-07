@@ -58,7 +58,7 @@ describe("the hub's own sources", () => {
     for (const type of types) {
       const info = list.find((x) => x.type === type);
       expect(info, type).toBeDefined();
-      expect(info).toMatchObject({ source: "hub", mode: "broadcast", external: false, online: true, title: en(`triggers.source.${type}`) });
+      expect(info).toMatchObject({ source: "hub", mode: "broadcast", external: type === "hub.feed.post", online: true, title: en(`triggers.source.${type}`) });
       expect(info!.title).not.toBe(`triggers.source.${type}`);
       expect(info!.description.length).toBeGreaterThan(20);
       expect(info!.data).toBeTruthy();
@@ -131,6 +131,20 @@ describe("the hub's own sources", () => {
     f.bus.emit("feed.post", { id: "p2", feedId: "f1", title: "No link", text: "b", createdAt: "2026-11-08T10:00:00Z" });
     expect(f.deliveries[0].signal).toMatchObject({ type: "hub.feed.post", key: "p1", data: { feedId: "f1", title: "News", url: "https://example.com/a" } });
     expect(f.deliveries[1].signal.data).toEqual({ feedId: "f1", title: "No link" });
+  });
+
+  it("a channel post is always external, and the listing says so", () => {
+    const f = setup([trigger("t1", ["hub.feed.post"])]);
+    f.bus.emit("feed.post", { id: "p1", feedId: "f1", title: "News", text: "b", createdAt: "x" });
+    expect(f.deliveries[0].signal.external).toBe(true);
+    expect(f.s.list("en").find((x) => x.type === "hub.feed.post")!.external).toBe(true);
+  });
+
+  it("an approval's signal is external when the approval is tainted", () => {
+    const f = setup([trigger("t1", ["hub.approval.waiting"])]);
+    f.bus.emit("approval.created", { id: "a_1", agentId: "a1", summary: "Open a link", tainted: true });
+    f.bus.emit("approval.created", { id: "a_2", agentId: "a1", summary: "Open a link", tainted: false });
+    expect(f.deliveries.map((d) => d.signal.external)).toEqual([true, false]);
   });
 
   it("approval.created brings hub.approval.waiting with the summary and no tool input", () => {

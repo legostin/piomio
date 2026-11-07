@@ -316,7 +316,7 @@ export class SignalSources {
       online: true,
     }));
     for (const h of HUB_SOURCES) {
-      out.push({ type: h.type, source: "hub", mode: "broadcast", title: t(`triggers.source.${h.type}`), description: h.description, data: h.data, sample: h.sample, external: false, online: true });
+      out.push({ type: h.type, source: "hub", mode: "broadcast", title: t(`triggers.source.${h.type}`), description: h.description, data: h.data, sample: h.sample, external: h.external, online: true });
     }
     for (const [type, s] of this.sources()) {
       const { decl } = s;

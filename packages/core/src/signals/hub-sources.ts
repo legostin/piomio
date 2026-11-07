@@ -20,6 +20,8 @@ export interface HubSource {
   description: string;
   data: unknown;
   sample: unknown;
+  /** Always outside content. The others are marked so per signal, when the task or approval read outside content. */
+  external: boolean;
 }
 
 const str = { type: "string" };
@@ -27,39 +29,46 @@ const str = { type: "string" };
 export const HUB_SOURCES: HubSource[] = [
   {
     type: "hub.task.finished",
+    external: false,
     description:
-      "A task finished successfully (status done). Data: the task, the agent that ran it, its title and its result (cut to 2 KB). One per task. A task a trigger started itself never brings a signal to that same trigger.",
+      "A task finished successfully (status done). Data: the task, the agent that ran it, its title and its result (cut to 2 KB). One per task. A task a trigger started itself never brings a signal to that same trigger. Outside content when the task read outside content (tainted): then the signal is external.",
     data: { type: "object", properties: { taskId: str, agentId: str, title: str, result: str }, required: ["taskId", "agentId", "title"] },
     sample: { taskId: "task_ab12", agentId: "assistant", title: "Weekly report", result: "The report is in the library." },
   },
   {
     type: "hub.task.failed",
+    external: false,
     description:
-      "A task failed (status failed). Data: the task, the agent, its title and the error (cut to 2 KB). One per task. A task a trigger started itself never brings a signal to that same trigger.",
+      "A task failed (status failed). Data: the task, the agent, its title and the error (cut to 2 KB). One per task. A task a trigger started itself never brings a signal to that same trigger. Outside content when the task read outside content (tainted): then the signal is external.",
     data: { type: "object", properties: { taskId: str, agentId: str, title: str, error: str }, required: ["taskId", "agentId", "title"] },
     sample: { taskId: "task_ab12", agentId: "assistant", title: "Weekly report", error: "The brain was not signed in." },
   },
   {
     type: "hub.machine.online",
+    external: false,
     description: "A computer connected to the hub (it was offline or new). Data: the machine's id and name. At most one per machine and minute.",
     data: { type: "object", properties: { machineId: str, name: str }, required: ["machineId", "name"] },
     sample: { machineId: "mach_ab12", name: "Studio Mac" },
   },
   {
     type: "hub.machine.offline",
+    external: false,
     description: "A computer disconnected from the hub (or was removed). Data: the machine's id and name. At most one per machine and minute.",
     data: { type: "object", properties: { machineId: str, name: str }, required: ["machineId", "name"] },
     sample: { machineId: "mach_ab12", name: "Studio Mac" },
   },
   {
     type: "hub.feed.post",
-    description: "A channel (news feed) got a new post. Data: the channel's id, the post's title and its address when it has one. Not the post's text.",
+    external: true,
+    description: "A channel (news feed) got a new post. Data: the channel's id, the post's title and its address when it has one. Not the post's text. Always outside content: channel posts are gathered from the web.",
     data: { type: "object", properties: { feedId: str, title: str, url: str }, required: ["feedId", "title"] },
     sample: { feedId: "feed_ab12", title: "A new release", url: "https://example.com/release" },
   },
   {
     type: "hub.approval.waiting",
-    description: "An agent asked the person to approve an action and it waits. Data: the approval's id, the agent and the one-line summary the person sees; not the tool's input.",
+    external: false,
+    description:
+      "An agent asked the person to approve an action and it waits. Data: the approval's id, the agent and the one-line summary the person sees; not the tool's input. Outside content when the approval is tainted (its summary is built from tool input that came from outside content): then the signal is external.",
     data: { type: "object", properties: { approvalId: str, agentId: str, summary: str }, required: ["approvalId", "agentId", "summary"] },
     sample: { approvalId: "a_ab12", agentId: "assistant", summary: "Send a message to Ana" },
   },
@@ -124,11 +133,11 @@ export function listenToHub(bus: { on<K extends keyof BusEvents>(name: K, cb: (p
     }),
     bus.on("feed.post", (p) => {
       if (!p || typeof p.id !== "string") return;
-      emit("hub.feed.post", { key: p.id, external: false, data: { feedId: p.feedId, title: text(p.title, TITLE_MAX), ...(p.url ? { url: p.url } : {}) } });
+      emit("hub.feed.post", { key: p.id, external: true, data: { feedId: p.feedId, title: text(p.title, TITLE_MAX), ...(p.url ? { url: p.url } : {}) } });
     }),
     bus.on("approval.created", (a) => {
       if (!a || typeof a.id !== "string") return;
-      emit("hub.approval.waiting", { key: a.id, external: false, data: { approvalId: a.id, agentId: String(a.agentId ?? ""), summary: text(a.summary, SUMMARY_MAX) } });
+      emit("hub.approval.waiting", { key: a.id, external: a.tainted === true, data: { approvalId: a.id, agentId: String(a.agentId ?? ""), summary: text(a.summary, SUMMARY_MAX) } });
     }),
   ];
   return () => {
