@@ -90,8 +90,16 @@ const TRIGGER_INPUT_DEPTH = 8;
 const AUTHORITY = /[/\\]{2}([^\s/\\?#"'<>`]+)/g;
 /** A special scheme and the authority after it: the URL parser takes it with any slashes or backslashes, or none ("https:evil.example"). */
 const SCHEME_AUTHORITY = /\b(?:https?|wss?|ftp):[/\\]*([^\s/\\?#"'<>`]+)/gi;
-/** Keys whose value is an address for a trigger's tool: a bare host there ("evil.example/x", "10.0.0.5") counts too. */
-const ADDRESS_KEYS = /^(?:href|links?|address(?:es)?|endpoints?|src|hosts?|hostnames?|domains?|servers?|sites?|origins?)$|(?:url|uri)s?$/i;
+/**
+ * Keys whose value is an address for a trigger's tool, and everything nested under them: the first word of a string
+ * there is a bare host ("evil.example/x", "10.0.0.5"), and a number is an IPv4 address (167772165 is 10.0.0.5).
+ */
+const ADDRESS_KEYS =
+  /^(?:href|links?|address(?:es)?|endpoints?|src|hosts?|hostnames?|domains?|servers?|sites?|websites?|origins?|ips?|locations?|targets?|destinations?|pages?|resources?)$|(?:url|uri)s?$/i;
+/** Address keys whose number is a page number, an id or a count far more often than an IPv4 address. */
+const COUNT_KEYS = /^(?:pages?|resources?|targets?)$/i;
+/** For a source tool, naming a host anywhere in its input: a host name's shape (Unicode labels too), a dotted IPv4, a bracketed IPv6. */
+const HOST_SHAPES = [/(?:[\p{L}\p{N}-]+\.)+\p{L}[\p{L}\p{N}-]+/gu, /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, /\[[0-9a-f.]*:[0-9a-f:.]*\]/gi];
 /** What clings to an address in prose ("(see https://x.example).") */
 const TRAILING = /[.,;:!?)\]}*_]+$/;
 
@@ -350,20 +358,22 @@ export class ToolGateway {
     const input = hooked.payload.input;
     // An address in what a tool is given may carry data out: only the hosts the person sees on the card, wherever the
     // address is and however it is written. What nests too deep to read through is refused.
-    const named = addressHosts(input);
+    const named = addressHosts(input, !!tool.source);
     if (!named) return refuse(`Triggers pass a tool only input they can read through: ${name}'s input is nested deeper than ${TRIGGER_INPUT_DEPTH} levels`, "tool.denied", "too deep");
-    // A tool that reads outside content and is given an address is a web reader of its own (an MCP or Composio
-    // scraper), which may follow redirects anywhere: a script's web is pio.fetch, which checks every hop.
+    // A tool that reads outside content and is given a host is a web reader of its own (an MCP or Composio scraper),
+    // which may follow redirects anywhere: a script's web is pio.fetch, which checks every hop. Listed or not.
     if (tool.source && named.length) {
       return refuse(
-        `Tool ${name} reads outside content, and a trigger's script reaches the web with pio.fetch, not with ${name}: give it no address (pio.fetch checks every hop against the trigger's hosts)`,
+        `Tool ${name} reads outside content and its input names a host (${named[0]}): a trigger's script reaches the web with pio.fetch, not with ${name}, so remove host names from the input (a plain query works) and fetch addresses with pio.fetch, which checks every hop against the trigger's hosts`,
         "tool.denied",
-        "address to a source tool",
+        `host ${named[0]} to a source tool`,
       );
     }
     const hosts = as.hosts ?? [];
     const off = named.find((h) => !hosts.some((p) => hostMatches(h, p)));
-    if (off !== undefined) return refuse(`Triggers reach only their listed hosts: ${off} is not on this trigger's list, so ${name} cannot be given it`, "tool.denied", `host ${off}`);
+    if (off !== undefined) {
+      return refuse(`Triggers reach only their listed hosts: ${off} is not on this trigger's list, so ${name} cannot be given it: remove it from the input, or add the host to the trigger's list`, "tool.denied", `host ${off}`);
+    }
     const policy = decide(
       { tool, input, agentId: as.agentId, tainted: false, background: true, initiative: agent.initiative, profile: agent.policyProfile },
       this.d.rules.list(),
@@ -489,49 +499,61 @@ export class ToolGateway {
 }
 
 /**
- * The hosts every address in a trigger's tool input names, as the WHATWG URL parser would read them: in any string or
- * key, "//host" and a special scheme's "https:host" with any slashes or backslashes (tabs and newlines dropped, as the
- * parser drops them; percent-decoded too), and in address fields (ADDRESS_KEYS, at any depth) a bare host.
- * Undefined when the input nests deeper than TRIGGER_INPUT_DEPTH.
+ * The hosts every address in a trigger's tool input names, as the WHATWG URL parser would read them. In any string or
+ * key: "//host" and a special scheme's "https:host" with any slashes or backslashes. In an address field (ADDRESS_KEYS)
+ * and all under it: the first word as a bare host, a number as an IPv4 address. For a source tool (`source`), any word
+ * shaped like a host name or an IP address, anywhere. Every string is read as the parser and a decoder would: tabs and
+ * newlines dropped, percent-decoded, ideographic full stops as dots. Undefined when the input nests deeper than
+ * TRIGGER_INPUT_DEPTH.
  */
-function addressHosts(input: unknown): string[] | undefined {
+function addressHosts(input: unknown, source: boolean): string[] | undefined {
   const hosts = new Set<string>();
   const add = (h: string) => void (h && hosts.add(h));
   const scan = (text: string) => {
-    let s = text.replace(/[\t\n\r]/g, "");
-    for (let i = 0; i < 3; i++) {
+    for (const s of readings(text)) {
       for (const m of s.matchAll(AUTHORITY)) add(authorityHost(m[1]));
       for (const m of s.matchAll(SCHEME_AUTHORITY)) add(authorityHost(m[1]));
-      // Byte by byte, so a stray "%" elsewhere does not stop the decoding.
-      const next = s.replace(/%([0-9a-f]{2})/gi, (_, h: string) => String.fromCharCode(parseInt(h, 16))).replace(/[\t\n\r]/g, "");
-      if (next === s) break;
-      s = next;
+      if (source) for (const shape of HOST_SHAPES) for (const m of s.matchAll(shape)) add(authorityHost(m[0]));
     }
   };
-  const walk = (v: unknown, depth: number, address: boolean): boolean => {
+  const walk = (v: unknown, depth: number, address: boolean, key: string): boolean => {
     if (typeof v === "string") {
       scan(v);
-      if (address) add(bareHost(v));
+      if (address) for (const s of readings(v)) add(bareHost(s));
+    } else if (typeof v === "number") {
+      if (address && !COUNT_KEYS.test(key)) add(authorityHost(String(v)));
     } else if (Array.isArray(v)) {
       if (depth >= TRIGGER_INPUT_DEPTH) return false;
-      for (const x of v) if (!walk(x, depth + 1, address)) return false;
+      for (const x of v) if (!walk(x, depth + 1, address, key)) return false;
     } else if (v && typeof v === "object") {
       if (depth >= TRIGGER_INPUT_DEPTH) return false;
       for (const [k, x] of Object.entries(v)) {
         scan(k);
-        if (!walk(x, depth + 1, ADDRESS_KEYS.test(k))) return false;
+        if (!walk(x, depth + 1, address || ADDRESS_KEYS.test(k), k)) return false;
       }
     }
     return true;
   };
-  return walk(input, 0, false) ? [...hosts] : undefined;
+  return walk(input, 0, false, "") ? [...hosts] : undefined;
 }
 
-/** The host of an address field's value written without a scheme ("evil.example/x", "10.0.0.5:8080"); "" for text with spaces. */
+/** A string as the URL parser and a decoder would read it: tabs and newlines dropped, ideographic full stops as dots, then percent-decoded (byte by byte, so a stray "%" does not stop it), up to three times. */
+function readings(text: string): string[] {
+  const clean = (x: string) => x.replace(/[\t\n\r]/g, "").replace(/[\u3002\uff0e\uff61]/g, ".");
+  const out = [clean(text)];
+  for (let i = 0; i < 3; i++) {
+    const next = clean(out[out.length - 1].replace(/%([0-9a-f]{2})/gi, (_, h: string) => String.fromCharCode(parseInt(h, 16))));
+    if (next === out[out.length - 1]) break;
+    out.push(next);
+  }
+  return out;
+}
+
+/** The host of an address field's value written without a scheme: its first word ("evil.example/x (mirror)", "10.0.0.5:8080"). */
 function bareHost(value: string): string {
-  const t = value.replace(/[\t\n\r]/g, "").trim().replace(/^[/\\]+/, "");
-  if (!t || /\s/.test(t) || /^(?:https?|wss?|ftp):/i.test(t)) return "";
-  return authorityHost(t.split(/[/\\?#]/)[0]);
+  const first = value.trim().split(/\s+/)[0].replace(/^[/\\]+/, "");
+  if (!first || /^(?:https?|wss?|ftp):/i.test(first)) return "";
+  return authorityHost(first.split(/[/\\?#]/)[0]);
 }
 
 /** The host of an address's authority ("user@host:port" and what clings to it in prose dropped); "" when there is none. */

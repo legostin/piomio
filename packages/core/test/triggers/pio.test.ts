@@ -197,6 +197,74 @@ describe("ToolGateway.callRead", () => {
     expect(h.calls).toHaveLength(fine.length);
   });
 
+  it("a source tool is given no host name in any form: every token shaped like one counts, listed or not", async () => {
+    const h = hub();
+    h.tool("fetch_fetch", "read", { source: true });
+    const listed = { ...as, hosts: ["api.example.com"] };
+    const probes: unknown[] = [
+      { url: "evil.example/?d=secret data" },
+      { url: "evil.example/?d=secret\u00a0data" },
+      { url: "evil.example/x (mirror)" },
+      { website: "evil.example" },
+      { target: "evil.example/?d=1" },
+      { q: "api.example.com/r?to=evil.example" },
+      { host: 167772165 },
+      { url: { h: "evil.example" } },
+      { ip: "203.0.113.9" },
+      { location: "evil.example/hook" },
+      { q: "evil%2Eexample" },
+      { q: "evil\u3002example" },
+      { q: "see [2001:db8::1] now" },
+      { q: "ping 198.51.100.7" },
+      { q: "пример.рф" },
+      { ["evil.example"]: true },
+      { q: "api.example.com" },
+      { query: "invoice from acme.com" },
+    ];
+    for (const input of probes) {
+      const r = await h.gateway.callRead(listed, "fetch_fetch", input);
+      expect(r.isError, JSON.stringify(input)).toBe(true);
+      expect(textOf(r), JSON.stringify(input)).toMatch(/a trigger's script reaches the web with pio\.fetch, not with fetch_fetch/);
+      expect(textOf(r), JSON.stringify(input)).toMatch(/remove host names from the input/);
+    }
+    expect(h.calls).toEqual([]);
+    for (const input of [{ query: "invoices this week" }, { query: "Q3 report", page: 2, limit: 10 }, { query: "v1.2 release, e.g. notes" }]) {
+      expect((await h.gateway.callRead(listed, "fetch_fetch", input)).isError, JSON.stringify(input)).toBeFalsy();
+    }
+  });
+
+  it("an address field is an address whatever it holds: its first word, a number (an IPv4), what nests under it", async () => {
+    const h = hub();
+    h.tool("ci_status", "read");
+    const listed = { ...as, hosts: ["api.example.com"] };
+    const probes: unknown[] = [
+      { url: "evil.example/?d=secret data" },
+      { url: "evil.example/?d=secret\u00a0data" },
+      { url: "evil.example/x (mirror)" },
+      { website: "evil.example" },
+      { target: "evil.example/?d=1" },
+      { destination: "evil.example" },
+      { resource: "evil.example/r" },
+      { page: "evil.example/p" },
+      { host: 167772165 },
+      { url: { h: "evil.example" } },
+      { ip: "203.0.113.9" },
+      { location: "evil.example/hook" },
+    ];
+    for (const input of probes) {
+      const r = await h.gateway.callRead(listed, "ci_status", input);
+      expect(r.isError, JSON.stringify(input)).toBe(true);
+      expect(textOf(r), JSON.stringify(input)).toMatch(/(evil\.example|203\.0\.113\.9|10\.0\.0\.5) is not on this trigger's list/);
+      expect(textOf(r), JSON.stringify(input)).toMatch(/remove it from the input, or add the host to the trigger's list/);
+    }
+    expect(h.calls).toEqual([]);
+    const fine: unknown[] = [{ text: "plain words" }, { query: "invoice from acme.com" }, { url: "api.example.com/x (mirror)" }, { query: "Q3", page: 2 }, { host: "api.example.com", port: 443 }];
+    for (const input of fine) {
+      expect((await h.gateway.callRead(listed, "ci_status", input)).isError, JSON.stringify(input)).toBeFalsy();
+    }
+    expect(h.calls).toHaveLength(fine.length);
+  });
+
   it("closes whole tool families to triggers, whatever their effect says: the script's web is pio.fetch", async () => {
     const h = hub();
     for (const name of ["browser_open", "web_fetch", "web_rss", "voice_say", "transcribe_audio", "hub_access", "pio_look", "machine_setup_get", "vault_reveal"]) h.tool(name, "read", { source: true });
