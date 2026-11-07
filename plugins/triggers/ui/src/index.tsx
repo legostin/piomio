@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Card, EmptyState, Spinner, definePluginUI } from "@piomio/ui";
 import type { PiomioUI } from "@piomio/ui";
 
-type Kind = "schedule" | "once" | "watch" | "event" | "heartbeat";
+/** "signal": a trigger that listens only to other sources' signals (`on`), made in the chat. */
+type Kind = "schedule" | "once" | "watch" | "event" | "heartbeat" | "signal";
 type ErrorParams = Record<string, string | number>;
 
 interface Trigger {
@@ -50,6 +51,8 @@ interface Run {
   at: string;
   reason: string;
   status: "started" | "skipped" | "error";
+  /** What a trigger's check decided: a note or a drop started nothing (pipeline runs only). */
+  outcome?: "note" | "wake" | "drop";
   taskId?: string;
   taskStatus?: string;
   detail?: string;
@@ -69,6 +72,7 @@ interface ListResponse {
 let i18n: PiomioUI["i18n"];
 const tr = (key: string, params?: ErrorParams) => i18n.t(key, params);
 
+/** The kinds the form makes; a signal trigger is made in the chat (it needs `on`). */
 const KINDS: Kind[] = ["schedule", "once", "watch", "event", "heartbeat"];
 /** Form order of weekdays: Monday first, Sunday last (0 = Sunday). */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
@@ -80,14 +84,28 @@ function weekdayName(d: number): string {
 
 const capitalize = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
 
-/** An error from the backend in the interface language: the catalog message for its code, else the text as is. */
+/**
+ * An error from the backend in the interface language: the catalog message for its code, else the text as is, labelled:
+ * the trigger's check (its script, the engine) writes its own words in English, and they are shown as written.
+ */
 function errorText(code: string | undefined, params: ErrorParams | undefined, fallback: string | undefined): string {
   if (code) {
     const key = `error.${code}`;
     const text = tr(key, params);
     if (text !== key) return text;
   }
-  return fallback ?? "";
+  return fallback ? tr("ui.run.asWritten", { text: fallback }) : "";
+}
+
+/** A run's badge: what came of it when it started nothing (a note, a drop; the next column says why), else how it went. */
+function runBadge(r: Pick<Run, "status" | "outcome">) {
+  if (r.status !== "error" && r.outcome === "note") return <Badge tone="info">{tr("ui.run.note")}</Badge>;
+  if (r.status !== "error" && r.outcome === "drop") return <Badge tone="neutral">{tr("ui.run.drop")}</Badge>;
+  return (
+    <Badge tone={r.status === "started" ? "success" : r.status === "skipped" ? "warning" : "danger"}>
+      {r.status === "started" ? tr("ui.run.started") : r.status === "skipped" ? tr("ui.run.skipped") : tr("ui.run.error")}
+    </Badge>
+  );
 }
 
 const s = {
@@ -210,7 +228,7 @@ function TriggerForm({ ui, initial, agents, computers, tz, onDone }: FormProps) 
       {field(
         tr("ui.form.kind"),
         <select style={s.input} value={kind} disabled={editing} onChange={(e: any) => setKind(e.target.value)}>
-          {KINDS.map((k) => (
+          {(KINDS.includes(kind) ? KINDS : [...KINDS, kind]).map((k) => (
             <option key={k} value={k}>
               {tr(`ui.kind.${k}`)}
             </option>
@@ -350,11 +368,7 @@ function History({ ui, trigger, tz, onClose }: { ui: PiomioUI; trigger: Trigger;
                 <tr key={r.id}>
                   <td style={{ padding: "4px 8px 4px 0", whiteSpace: "nowrap" }}>{fmt(r.at, tz)}</td>
                   <td style={{ padding: "4px 8px" }}>{reason === reasonKey ? r.reason : reason}</td>
-                  <td style={{ padding: "4px 8px" }}>
-                    <Badge tone={r.status === "started" ? "success" : r.status === "skipped" ? "warning" : "danger"}>
-                      {r.status === "started" ? tr("ui.run.started") : r.status === "skipped" ? tr("ui.run.skipped") : tr("ui.run.error")}
-                    </Badge>
-                  </td>
+                  <td style={{ padding: "4px 8px" }}>{runBadge(r)}</td>
                   <td style={{ padding: "4px 0 4px 8px" }}>
                     {r.taskId ? (
                       <a
@@ -403,7 +417,8 @@ function TriggerCard({ ui, t, tz, onEdit, onHistory }: { ui: PiomioUI; t: Trigge
     void navigator.clipboard?.writeText(text).then(() => ui.toast(tr("ui.card.copied"), "success"));
   };
 
-  const lastError = t.lastErrorText ?? "";
+  // The check's and the engine's own words (an error with no code) are shown as written, labelled.
+  const lastError = t.lastErrorText ? (t.state.lastErrorCode ? t.lastErrorText : tr("ui.run.asWritten", { text: t.lastErrorText })) : "";
 
   return (
     <Card
@@ -466,7 +481,13 @@ function TriggerCard({ ui, t, tz, onEdit, onHistory }: { ui: PiomioUI; t: Trigge
           onClick={() =>
             call("POST", `/triggers/${t.id}/run`, undefined, (r) =>
               ui.toast(
-                r?.status === "started" ? tr("ui.card.started") : tr("ui.card.notStarted", { reason: errorText(r?.code, r?.params, r?.detail) }),
+                r?.status === "started" && r?.outcome === "note"
+                  ? tr("ui.card.noted")
+                  : r?.status === "started" && r?.outcome === "drop"
+                    ? tr("ui.card.dropped")
+                    : r?.status === "started"
+                      ? tr("ui.card.started")
+                      : tr("ui.card.notStarted", { reason: errorText(r?.code, r?.params, r?.detail) }),
                 r?.status === "started" ? "success" : "error",
               ),
             )
