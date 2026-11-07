@@ -65,12 +65,12 @@ export interface TriggerState {
   lastHash?: string;
   lastChangeAt?: string;
   lastFeedback?: { value: "useful" | "less" | "off"; at: string };
-  /** Signals: consecutive failed pipeline runs, the quick-model checks used today, recently seen dedup keys (key -> ms). */
+  /**
+   * Signals: consecutive failed pipeline runs, and the quick-model checks used today. What changes with every signal
+   * (seen delivery keys, the filter's count, the open batch, the queue) is in trigger_state instead (pipeline.ts).
+   */
   errorsInRow?: number;
-  /** Signals a subscription's filter (where) left out, in all. */
-  filtered?: number;
   triageToday?: { date: string; count: number };
-  seenKeys?: Record<string, number>;
 }
 
 export interface Trigger {

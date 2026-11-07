@@ -8,7 +8,7 @@ import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } f
 import type { RunReason, Signal, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
 import { pageReader } from "./extract.ts";
-import { builtinSignal, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline, within, type Delivery } from "./pipeline.ts";
+import { builtinSignal, fitted, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline } from "./pipeline.ts";
 import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
 export const MAX_RUNS_KEPT = 20;
@@ -39,6 +39,8 @@ export class NotFoundError extends TriggerError {}
 
 /** How a firing goes: the daily limit, a busy previous run, and what the pipeline adds to it. */
 export interface FireOptions {
+  /** The journal line's id (a queued pipeline run keeps its own, so a retry after a stop replaces its line). */
+  runId?: string;
   force?: boolean;
   skipIfBusy?: boolean;
   /** The goal carries outside content (the pipeline's run read some): the task is created tainted. */
@@ -52,10 +54,17 @@ export interface FireOptions {
 /** A trigger whose firings go through the pipeline (pipeline.ts); any other fires exactly as it always did. */
 export const piped = (t: Trigger): boolean => !!(t.script || t.triage || t.batch);
 
-/** Page values carried in a web.page signal are cut past this each, so the signal stays within its 256 KB. */
-const PAGE_VALUE_BYTES = 64 * 1024;
 /** Headers a sender names a delivery by (redeliveries carry the same one): the signal's dedup key. */
 const DELIVERY_HEADERS = ["x-piomio-delivery", "x-github-delivery", "idempotency-key"];
+
+/** A value's JSON, or its text when it has none (a payload too deeply nested to write). */
+function jsonText(v: unknown): string {
+  try {
+    return JSON.stringify(v) ?? "null";
+  } catch {
+    return String(v);
+  }
+}
 
 /** Remember (or clear) the last error of a trigger, with its code for the UI. */
 function setLastError(s: TriggerState, e?: { message?: string; code?: string; params?: ErrorParams }): void {
@@ -141,11 +150,16 @@ export class TriggerEngine {
     this.settingsTimer.unref?.();
   }
 
-  /** Run at most one catch-up per trigger for runs missed while the hub was down, then arm the timer. */
+  /**
+   * Run at most one catch-up per trigger for runs missed while the hub was down, then arm the timer. A catch-up that
+   * goes through the pipeline (a script, a quick check, a batch) has its slot spent first and runs in the background
+   * after the timers are armed: a hung quick model cannot keep the hub from booting, or the other triggers from firing.
+   */
   async boot(): Promise<void> {
     // Stopped before its turn came (the hub stood down right after starting it): nothing to run or plan.
     if (this.stopped) return;
     const now = new Date(this.now());
+    const pipedCatchUps: Array<{ id: string; missedAt: string; once: boolean }> = [];
     for (const t of [...this.triggers.values()]) {
       if (!t.enabled || this.stopped) continue;
       const missedAt = this.missedRun(t, now);
@@ -154,7 +168,7 @@ export class TriggerEngine {
         const cur = this.triggers.get(t.id);
         if (!cur) return;
         this.ctx.log.info(`trigger ${cur.id}: catch-up for ${missedAt}`);
-        if (piped(cur)) await this.pipeline.deliver(cur, [this.tickSignal(missedAt, "catch-up")], "catch-up", { force: cur.kind === "once", missedAt, immediate: cur.kind === "once" });
+        if (piped(cur)) pipedCatchUps.push({ id: cur.id, missedAt, once: cur.kind === "once" });
         else await this.fire(cur, "catch-up", { missedAt }, { force: cur.kind === "once" });
         if (cur.kind === "once") {
           cur.state.done = true;
@@ -174,8 +188,13 @@ export class TriggerEngine {
     }
     this.booted = true;
     this.arm();
-    // Batches still open when the hub stopped (or another replica led) go on at their time.
+    // Runs queued and batches still open when the hub stopped (or another replica led) go on.
     await this.pipeline.resume();
+    for (const c of pipedCatchUps) {
+      const cur = this.triggers.get(c.id);
+      if (!cur || this.stopped) continue;
+      this.pipeline.accept(cur, [this.tickSignal(c.missedAt, "catch-up")], "catch-up", { force: c.once, immediate: c.once });
+    }
   }
 
   stop(): void {
@@ -252,7 +271,11 @@ export class TriggerEngine {
     this.ctx.ui.emit("changed", { id });
   }
 
-  /** Serialize everything that mutates one trigger (the pipeline's batch timers take it too). */
+  /**
+   * Serialize everything that mutates one trigger (the pipeline's queued runs take it too). A pipeline run holds it at
+   * most about a minute: the script's 30 s wall (its pio calls cut off with it), then a quick check bounded at 25 s
+   * (QUICK_TIMEOUT_MS), plus any wait for a free sandbox slot. An update, a delete or feedback "off" waits no longer.
+   */
   withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(id) ?? Promise.resolve();
     const run = prev.then(fn, fn);
@@ -360,13 +383,13 @@ export class TriggerEngine {
         if (!ran) t.state.lastSlot = slot;
         await this.save(t);
         if (ran) return;
-        if (piped(t)) await this.pipeline.deliver(t, [this.tickSignal(slot, t.kind)], t.kind, { skipIfBusy: true });
+        if (piped(t)) await this.pipeline.deliver(t, [this.tickSignal(slot, t.kind)], t.kind, { skipIfBusy: true, locked: true });
         else await this.fire(t, t.kind, {}, { skipIfBusy: true });
         return;
       }
       case "once":
         // A one-time reminder has nothing to wait for: it goes on now, with whatever a batch gathered.
-        if (piped(t)) await this.pipeline.deliver(t, [this.tickSignal(slot, "once")], "once", { force: true, immediate: true });
+        if (piped(t)) await this.pipeline.deliver(t, [this.tickSignal(slot, "once")], "once", { force: true, immediate: true, locked: true });
         else await this.fire(t, "once", {}, { force: true });
         t.state.done = true;
         t.enabled = false;
@@ -401,7 +424,7 @@ export class TriggerEngine {
     const now = new Date(this.now());
     const today = localDate(now, this.tz);
     const rt = t.state.runsToday?.date === today ? { ...t.state.runsToday } : { date: today, count: 0 };
-    const run: TriggerRun = { id: `r_${randomBytes(4).toString("hex")}`, at: now.toISOString(), reason, status: "started", ...opts.journal };
+    const run: TriggerRun = { id: opts.runId ?? `r_${randomBytes(4).toString("hex")}`, at: now.toISOString(), reason, status: "started", ...opts.journal };
     if (!opts.force && rt.count >= t.maxRunsPerDay) {
       run.status = "skipped";
       run.detail = `Daily run limit (${t.maxRunsPerDay}) reached`;
@@ -551,7 +574,7 @@ export class TriggerEngine {
     t.state.lastValue = stored;
     t.state.lastChangeAt = now.toISOString();
     const change = { previous, current: value, diff: previous !== undefined ? lineDiff(previous, value) : undefined };
-    const run = piped(t) ? await this.pipeline.deliver(t, [this.pageSignal(t, change)], "change") : await this.fire(t, "change", { change });
+    const run = piped(t) ? await this.pipeline.deliver(t, [this.pageSignal(t, change)], "change", { locked: true }) : await this.fire(t, "change", { change });
     return { changed: true, baseline: false, run };
   }
 
@@ -679,13 +702,15 @@ export class TriggerEngine {
     this.require(id);
     return this.withLock(id, async () => {
       const t = this.require(id);
+      const currentValue = t.kind === "watch" ? t.state.lastValue : undefined;
       if (piped(t)) {
-        // Now, whatever the batch: a run now always leaves a run.
-        const run = await this.pipeline.deliver(t, [builtinSignal("manual", {}, { at: new Date(this.now()), external: false })], "manual", { force: opts.force, immediate: true });
+        // Now, whatever the batch: a run now always leaves a run (a watch's last known value goes into its goal).
+        const manual = builtinSignal("manual", {}, { at: new Date(this.now()), external: false });
+        const run = await this.pipeline.deliver(t, [manual], "manual", { force: opts.force, immediate: true, locked: true, ...(currentValue !== undefined ? { currentValue } : {}) });
         if (!run) throw new Error(`trigger ${id}: the run left no journal line`);
         return run;
       }
-      return this.fire(t, "manual", t.kind === "watch" && t.state.lastValue !== undefined ? { currentValue: t.state.lastValue } : {}, { force: opts.force });
+      return this.fire(t, "manual", currentValue !== undefined ? { currentValue } : {}, { force: opts.force });
     });
   }
 
@@ -754,43 +779,53 @@ export class TriggerEngine {
     const { secret: _secret, ...query } = req.query ?? {};
     const body = req.body;
     const contentType = header(req.headers, "content-type");
-    const d = await this.withLock(t.id, async (): Promise<Delivery> => {
+    if (piped(t)) {
+      // Taken in now and answered at once: the script, the quick check and the outcome follow under the trigger's
+      // lock, in the background (a sender like GitHub gives up after 10 s). The run is in the journal by the signal's id.
+      const intake = this.pipeline.accept(t, [this.hookSignal(req, body, query, contentType)], "webhook");
+      const signalId = intake.signals[0]?.id;
+      if (intake.held === "flood") return { status: 429, body: { error: "too many signals: dropped" } };
+      if (intake.held === "full") return { status: 429, body: { error: "too many signals waiting: try again later" } };
+      if (intake.held === "duplicate") return { status: 202, body: { ok: true, duplicate: true } };
+      if (intake.held === "filtered") return { status: 202, body: { ok: true, filtered: true } };
+      return { status: 202, body: { ok: true, ...(intake.held === "batch" ? { queued: true } : {}), signalId } };
+    }
+    const run = await this.withLock(t.id, async () => {
       const cur = this.triggers.get(t.id);
       if (!cur) throw new NotFoundError("notFound", "not found", { id: t.id });
-      if (piped(cur)) return this.pipeline.take(cur, [this.hookSignal(req, body, query, contentType)], "webhook");
       const payload = typeof body === "string" ? body : body === null || body === undefined ? "" : JSON.stringify(body, null, 2);
-      return { run: await this.fire(cur, "webhook", { payload, query, contentType }) };
+      return this.fire(cur, "webhook", { payload, query, contentType });
     });
-    if (d.held === "batch") return { status: 202, body: { ok: true, queued: true } };
-    if (d.held === "duplicate") return { status: 202, body: { ok: true, duplicate: true } };
-    if (d.held === "filtered") return { status: 202, body: { ok: true, filtered: true } };
-    if (d.held === "flood") return { status: 429, body: { error: "too many signals: dropped" } };
-    const run = d.run!;
     if (run.status === "skipped") return { status: 429, body: { error: run.detail } };
-    // A pipeline run that failed before any outcome: the trigger's script did.
-    if (run.status === "error") return { status: 502, body: { error: run.stages && !run.outcome ? "the trigger's script failed" : "could not start the task" } };
-    return { status: 202, body: { ok: true, runId: run.id, taskId: run.taskId, ...(run.outcome ? { outcome: run.outcome } : {}) } };
+    if (run.status === "error") return { status: 502, body: { error: "could not start the task" } };
+    return { status: 202, body: { ok: true, runId: run.id, taskId: run.taskId } };
   }
 
   // ---------- signals from the built-in sources ----------
 
-  /** time.tick: a schedule's, a heartbeat's or a reminder's slot (not outside content). */
+  /** time.tick: a schedule's, a heartbeat's or a reminder's slot (not outside content); a catch-up names the slot it missed. */
   private tickSignal(slot: string, reason: RunReason): Signal {
-    return builtinSignal("time.tick", { slot, reason }, { at: new Date(this.now()), external: false });
+    return builtinSignal("time.tick", { slot, reason, ...(reason === "catch-up" ? { missedAt: slot } : {}) }, { at: new Date(this.now()), external: false });
   }
 
-  /** web.page: the watched value changed (outside content). */
+  /** web.page: the watched value changed (outside content); the longest values are cut until it fits its 256 KB. */
   private pageSignal(t: Trigger, c: { previous?: string; current: string; diff?: string }): Signal {
-    const cut = (v: string | undefined) => (v === undefined ? undefined : within(v, PAGE_VALUE_BYTES).value);
-    return builtinSignal("web.page", { url: t.url, previous: cut(c.previous), current: cut(c.current), diff: cut(c.diff) }, { at: new Date(this.now()), external: true, subject: t.url });
+    const raw = { url: t.url, previous: c.previous, current: c.current, diff: c.diff };
+    const { data, truncated } = fitted(raw, ["current", "previous", "diff"]);
+    return builtinSignal("web.page", truncated ? { ...data, truncated: true } : data, { at: new Date(this.now()), external: true, subject: t.url });
   }
 
-  /** web.webhook: what the sender posted (outside content), named by its delivery id when it gives one. */
+  /**
+   * web.webhook: what the sender posted (outside content), named by its delivery id when it gives one. A payload too
+   * big for the signal's 256 KB goes on as its text, cut (as kept, escapes and all) until it fits, with truncated: true.
+   */
   private hookSignal(req: TriggerHttpRequest, body: unknown, query: Record<string, string>, contentType: string | undefined): Signal {
     const key = DELIVERY_HEADERS.map((h) => header(req.headers, h)).find((v) => typeof v === "string" && v.trim());
-    // Room is left for the query and the content type beside it.
-    const payload = within(body === undefined ? null : body, SIGNAL_DATA_MAX - 8 * 1024);
-    const data = { payload: payload.value, query, ...(contentType ? { contentType } : {}), ...(payload.truncated ? { truncated: true } : {}) };
+    const payload = body === undefined ? null : body;
+    let data: Record<string, unknown> = { payload, query, ...(contentType ? { contentType } : {}) };
+    if (Buffer.byteLength(jsonText(data)) > SIGNAL_DATA_MAX) {
+      data = fitted({ ...data, payload: typeof payload === "string" ? payload : jsonText(payload), truncated: true }, ["payload"]).data;
+    }
     return builtinSignal("web.webhook", data, { at: new Date(this.now()), external: true, ...(key ? { key: key.trim() } : {}) });
   }
 }

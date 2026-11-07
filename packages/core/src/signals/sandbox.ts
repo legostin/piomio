@@ -37,6 +37,8 @@ export interface ScriptResult {
   calls: number;
   /** pio calls still running when the run ended at its wall time (or the sandbox stopped): their answers were dropped. */
   droppedCalls?: number;
+  /** The sandbox could not take the run (too many waiting, it could not start, or it stopped): not the script's fault. */
+  unavailable?: true;
 }
 
 /** Runs holding a slot at once (each on its own worker while it runs). */
@@ -61,7 +63,7 @@ interface Job {
   resolve: (r: ScriptResult) => void;
 }
 
-type Outcome = { verdict?: Verdict; error?: string };
+type Outcome = { verdict?: Verdict; error?: string; unavailable?: true };
 
 interface Running {
   id: number;
@@ -95,9 +97,9 @@ export class ScriptSandbox {
   }
 
   run(code: string, input: unknown, host: HostCall, limits: SandboxLimits = SCRIPT_LIMITS): Promise<ScriptResult> {
-    const refused = (error: string) => Promise.resolve({ error, logs: [], ms: 0, calls: 0 });
+    const refused = (error: string, unavailable = false) => Promise.resolve({ error, logs: [], ms: 0, calls: 0, ...(unavailable ? { unavailable: true as const } : {}) });
     if (Buffer.byteLength(code) > MAX_SCRIPT_BYTES) return refused(`the script is longer than ${MAX_SCRIPT_BYTES / 1024} KB`);
-    if (this.waiting.length >= MAX_WAITING) return refused(`too many scripts waiting (${MAX_WAITING})`);
+    if (this.waiting.length >= MAX_WAITING) return refused(`too many scripts waiting (${MAX_WAITING})`, true);
     return new Promise<ScriptResult>((resolve) => {
       this.waiting.push({ code, input, host, limits, resolve });
       this.next();
@@ -115,7 +117,7 @@ export class ScriptSandbox {
     try {
       worker = this.idle.pop() ?? this.spawn();
     } catch (e) {
-      job.resolve({ error: clip(`the script sandbox could not start: ${message(e)}`), logs: [], ms: 0, calls: 0 });
+      job.resolve({ error: clip(`the script sandbox could not start: ${message(e)}`), logs: [], ms: 0, calls: 0, unavailable: true });
       return;
     }
     if (!this.idle.length) clearTimeout(this.idleTimer);
@@ -244,10 +246,10 @@ export class ScriptSandbox {
     clearTimeout(this.idleTimer);
     for (const w of this.idle.splice(0)) void w.terminate();
     const stopped = "the script sandbox stopped";
-    for (const job of this.waiting.splice(0)) job.resolve({ error: stopped, logs: [], ms: 0, calls: 0 });
+    for (const job of this.waiting.splice(0)) job.resolve({ error: stopped, logs: [], ms: 0, calls: 0, unavailable: true });
     for (const run of [...this.running.values()]) {
       if (!run.ended) {
-        run.ended = { error: stopped };
+        run.ended = { error: stopped, unavailable: true };
         void run.worker.terminate();
       }
       this.finish(run);

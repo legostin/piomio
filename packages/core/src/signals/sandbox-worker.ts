@@ -161,7 +161,11 @@ const PRELUDE = String.raw`(() => {
       },
       now: () => (now && typeof now === "object" ? { ...now } : { iso: new Date().toISOString(), local: new Date().toISOString(), timezone: "UTC" }),
     });
-    const verdict = await main(isArray(input.signals) ? input.signals : input.signal, pio);
+    // The trigger's own shape first (a batch's list, else its one signal: the first when a flood gathered several);
+    // every signal of the run, always, as the third argument.
+    const list = isArray(input.signals) ? input.signals : [input.signal];
+    const first = input.signal !== undefined && input.batch !== true ? input.signal : isArray(input.signals) ? input.signals : input.signal;
+    const verdict = await main(first, pio, list);
     if (verdict === undefined) return undefined;
     // Wrapped, so a verdict JSON cannot carry (a function, a toJSON giving nothing) shows as such, not as no verdict.
     const json = stringify({ v: verdict });

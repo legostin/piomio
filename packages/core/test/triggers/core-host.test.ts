@@ -339,7 +339,9 @@ describe("the trigger engine's host in core", () => {
     await s.ct.start();
     try {
       const hook = await s.ct.http(req({ method: "POST", path: "/t_hook", headers: { "x-piomio-secret": "s3cret" }, body: { a: 1 }, public: true }));
-      expect(hook).toMatchObject({ status: 202, body: { ok: true, outcome: "note" } });
+      // Answered at once; the script, the quick check and the note follow.
+      expect(hook).toMatchObject({ status: 202, body: { ok: true, signalId: expect.any(String) } });
+      await s.ct.engine!.pipeline.idle();
       expect(reads).toEqual([{ as: { agentId: "assistant", triggerId: "t_hook", hosts: ["api.example.com"] }, name: "issues_count", input: {} }]);
       // The run's own token: owned by the trigger, its hosts only, no session context (nothing may raise a network card), gone after the run.
       expect(tokens).toEqual([{ owner: "trigger:t_hook", allow: ["api.example.com"], context: undefined, revoked: true }]);
