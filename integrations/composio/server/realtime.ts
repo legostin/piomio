@@ -5,7 +5,9 @@
 // connect to ws-<cluster>.pusher.com, read the socket id from pusher:connection_established, have Composio authorise
 // the private channel for that socket, subscribe, answer pings (and ping a quiet connection), and connect again with a
 // growing pause when the socket drops. Large events come in chunks (chunked-trigger_to_client) and are put back
-// together here; every complete event goes to `onEvent` as parsed JSON.
+// together here; every complete event goes to `onEvent` as parsed JSON. A problem that may repeat (a refused
+// authorisation, a reconnect, a frame left out) is logged with a reason, so the plugin says it at most once in a while,
+// and never with an event's content: a refusal says only the status Composio or Pusher answered.
 
 import type { RealtimeCredentials } from "./api.ts";
 
@@ -35,7 +37,8 @@ export interface RealtimeDeps {
   auth(socketId: string, channel: string): Promise<string>;
   /** A complete event from the channel. */
   onEvent(event: unknown): void;
-  log(level: "info" | "warn", msg: string): void;
+  /** `reason`: the line names a problem that may repeat (every reconnect), logged at most once in a while per reason. */
+  log(level: "info" | "warn", msg: string, reason?: string): void;
   /** Where the socket goes instead of wss://ws-<cluster>.pusher.com (tests only). */
   base?: string;
   /** The first reconnect pause (tests). */
@@ -53,6 +56,11 @@ interface Chunked {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** The HTTP status a refusal came with (a ComposioError's, Pusher's), when it has one. */
+const statusOf = (v: unknown): number | undefined => {
+  const n = Number((v as { status?: unknown } | null)?.status);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
 
 /** JSON text parsed, anything else as it is (Pusher sends `data` as a JSON string). */
 function parsed(v: unknown): unknown {
@@ -109,7 +117,7 @@ export class RealtimeChannel {
       if (!CLUSTER_RE.test(creds.cluster) || !KEY_RE.test(creds.pusherKey)) throw new Error("Composio gave realtime credentials of an unexpected form");
     } catch (e) {
       if (gen !== this.gen || !this.running) return;
-      this.d.log("warn", `composio: the realtime channel's credentials could not be read: ${message(e)}`);
+      this.d.log("warn", `composio: the realtime channel's credentials could not be read: ${message(e)}`, "realtime-credentials");
       return this.later();
     }
     if (gen !== this.gen || !this.running) return;
@@ -119,7 +127,7 @@ export class RealtimeChannel {
     try {
       ws = new WebSocket(`${base}/app/${creds.pusherKey}?protocol=7&client=js&version=8.4.0&flash=false`);
     } catch (e) {
-      this.d.log("warn", `composio: the realtime channel could not connect: ${message(e)}`);
+      this.d.log("warn", `composio: the realtime channel could not connect: ${message(e)}`, "realtime-connect");
       return this.later();
     }
     this.ws = ws;
@@ -128,7 +136,7 @@ export class RealtimeChannel {
     // A connection that never says it is established is given up and made again.
     this.handshake = setTimeout(() => {
       if (!mine()) return;
-      this.d.log("warn", "composio: the realtime channel did not answer in time; connecting again");
+      this.d.log("warn", "composio: the realtime channel did not answer in time; connecting again", "realtime-silent");
       this.drop();
       this.later();
     }, this.d.handshakeMs ?? HANDSHAKE_MS);
@@ -145,7 +153,7 @@ export class RealtimeChannel {
       // Pusher's 4000-4099: do not come back unchanged (the credentials are read again, after the longest pause).
       if (ev.code >= 4000 && ev.code < 4100) this.attempt = Math.max(this.attempt, 16);
       else if (ev.code >= 4200 && ev.code < 4300) this.attempt = 0;
-      this.d.log("warn", `composio: the realtime channel closed (${ev.code}${ev.reason ? ` ${ev.reason}` : ""}); connecting again`);
+      this.d.log("warn", `composio: the realtime channel closed (${ev.code}${ev.reason ? ` ${ev.reason.slice(0, 120)}` : ""}); connecting again`, "realtime-closed");
       this.later();
     };
     ws.onerror = () => {
@@ -199,7 +207,7 @@ export class RealtimeChannel {
       this.send(ws, "pusher:ping", {});
       this.pong = setTimeout(() => {
         if (this.ws !== ws) return;
-        this.d.log("warn", "composio: the realtime channel stopped answering; connecting again");
+        this.d.log("warn", "composio: the realtime channel stopped answering; connecting again", "realtime-silent");
         this.drop();
         this.later();
       }, PONG_MS);
@@ -219,13 +227,14 @@ export class RealtimeChannel {
   private frame(ws: WebSocket, channel: string, text: string): void {
     if (text.length > FRAME_MAX) {
       this.alive(ws);
-      this.d.log("warn", `composio: a frame over ${FRAME_MAX / 1024} KB from the realtime channel was left out`);
+      this.d.log("warn", `composio: a frame over ${FRAME_MAX / 1024} KB from the realtime channel was left out`, "channel-frame-size");
       return;
     }
     let f: { event?: unknown; data?: unknown; channel?: unknown };
     try {
       f = JSON.parse(text);
     } catch {
+      this.d.log("warn", "composio: a frame from the realtime channel is not JSON; left out", "channel-frame");
       return;
     }
     this.alive(ws);
@@ -246,7 +255,13 @@ export class RealtimeChannel {
           },
           (e) => {
             if (this.ws !== ws) return;
-            this.d.log("warn", `composio: the realtime channel was not authorised: ${message(e)}`);
+            // The status only: what Composio says with it is not needed to tell why, and is not kept.
+            const status = statusOf(e);
+            this.d.log(
+              "warn",
+              status ? `composio: Composio refused the realtime channel's authorisation (HTTP ${status})` : "composio: the realtime channel's authorisation could not be asked for (no answer from Composio)",
+              "realtime-auth",
+            );
             ws.close();
           },
         );
@@ -258,13 +273,19 @@ export class RealtimeChannel {
         this.subscribed = true;
         this.attempt = 0;
         return;
-      case "pusher:subscription_error":
-        this.d.log("warn", `composio: the realtime channel refused the subscription: ${JSON.stringify(data).slice(0, 300)}`);
+      case "pusher:subscription_error": {
+        const status = statusOf(data);
+        this.d.log("warn", `composio: Pusher refused the realtime channel's subscription (${status ? `HTTP ${status}` : "no status"})`, "realtime-auth");
         ws.close();
         return;
+      }
       case "pusher:error": {
         const code = Number((data as { code?: unknown } | null)?.code);
-        this.d.log("warn", `composio: the realtime channel reported an error${Number.isFinite(code) ? ` ${code}` : ""}: ${String((data as { message?: unknown } | null)?.message ?? "").slice(0, 300)}`);
+        this.d.log(
+          "warn",
+          `composio: the realtime channel reported an error${Number.isFinite(code) ? ` ${code}` : ""}: ${String((data as { message?: unknown } | null)?.message ?? "").slice(0, 300)}`,
+          "realtime-error",
+        );
         if (code >= 4000 && code < 4100) this.attempt = Math.max(this.attempt, 16);
         return;
       }
@@ -286,7 +307,7 @@ export class RealtimeChannel {
     const id = c?.id;
     const index = c?.index;
     if (typeof id !== "string" || !id || typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= CHUNKS_MAX || typeof c!.chunk !== "string") {
-      this.d.log("warn", "composio: an invalid chunked trigger event from the realtime channel was left out");
+      this.d.log("warn", "composio: an invalid chunked trigger event from the realtime channel was left out", "channel-chunk-invalid");
       return;
     }
     const now = Date.now();
@@ -303,7 +324,7 @@ export class RealtimeChannel {
     }
     if (p.size > CHUNKED_TEXT_MAX) {
       this.chunks.delete(id);
-      this.d.log("warn", `composio: a chunked trigger event over ${CHUNKED_TEXT_MAX / 1024} KB from the realtime channel was left out`);
+      this.d.log("warn", `composio: a chunked trigger event over ${CHUNKED_TEXT_MAX / 1024} KB from the realtime channel was left out`, "channel-chunk-size");
       return;
     }
     if (c!.final === true) p.total = index + 1;
@@ -313,7 +334,7 @@ export class RealtimeChannel {
     try {
       this.d.onEvent(JSON.parse(p.parts.slice(0, p.total).join("")));
     } catch {
-      this.d.log("warn", "composio: a chunked trigger event from the realtime channel is not JSON; left out");
+      this.d.log("warn", "composio: a chunked trigger event from the realtime channel is not JSON; left out", "channel-chunk-json");
     }
   }
 }

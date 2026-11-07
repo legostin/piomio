@@ -311,8 +311,7 @@ export class PluginHost {
     // Builtin brain plugins run harness CLIs (claude, codex) with a persistent home where the CLI logins live
     // (config.brainHome: the user's own home in the desktop app); everything else gets its data dir as its home.
     const isBrainHost = rec.source === "builtin" && rec.layout.manifest.contributes.brains.length > 0;
-    const ownUrl = rec.layout.manifest.contributes.http ? cfg.publicUrl : undefined;
-    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, pluginEgress(rec.granted.network, isBrainHost, ownUrl));
+    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, pluginEgress(rec.granted.network, isBrainHost, ownUrlFor(rec.source, rec.layout.manifest, cfg.publicUrl)));
     const proxyUrl = `http://${proxyToken}:x@127.0.0.1:${cfg.egressPort}`;
     const home = isBrainHost ? cfg.brainHome : dataDir;
     mkdirSync(dataDir, { recursive: true });
@@ -916,10 +915,20 @@ export class PluginHost {
 }
 
 /**
+ * The hub's public address for a plugin that may check it reaches the hub before it gives it to an outside service: a
+ * built-in one whose webhooks (contributes.http) feed a subscribe-mode signal source (Composio's). Undefined for any
+ * other, which then cannot reach the hub's own public host through the egress proxy.
+ */
+export function ownUrlFor(source: PluginRecord["source"], manifest: PiomioManifest, publicUrl: string | undefined): string | undefined {
+  const c = manifest.contributes;
+  return source === "builtin" && c.http && (c.signals ?? []).some((s) => s.mode === "subscribe") ? publicUrl : undefined;
+}
+
+/**
  * The hosts a plugin's process reaches: what it was granted; for a built-in brain plugin its CLIs' own model APIs
  * too (listing models, signing in: a Codex there was refused chatgpt.com hundreds of times a day); and for a plugin
- * that serves webhooks (`ownUrl`: the hub's public address), that address's host when it is https, so the plugin can
- * check the address really reaches the hub before it gives it to an outside service.
+ * ownUrlFor gives the hub's public address (`ownUrl`), that address's host when it is https, so the plugin can check
+ * the address really reaches the hub before it gives it to an outside service.
  */
 export function pluginEgress(granted: string[], brainHost: boolean, ownUrl?: string): string[] {
   let own: string | undefined;

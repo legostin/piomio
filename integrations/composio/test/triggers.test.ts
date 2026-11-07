@@ -7,8 +7,9 @@
 // registers (never the person's own), checked by its signature, with the channel as a safety net until the first
 // signed webhook. While the plugin warms up, a webhook for one of the hub's instances not held yet is answered 503. An
 // event goes to the subscription whose instance it names, once, keyed by its log id. Subscriptions follow their
-// app's account: moved on a new sign-in, failed on a sign-out. composio_triggers lists the types and says how events
-// come.
+// app's account: moved on a new sign-in, failed on a sign-out. A key removed from the vault closes the channel until
+// one is stored again. composio_triggers lists the types and says how events come. (What only a clock shows, the
+// 15-minute check, the secret read again, the logs said once, is in triggers-delivery.test.ts.)
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
 import { createServer, type Server } from "node:http";
@@ -18,6 +19,8 @@ import { join } from "node:path";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
 import { startPlugin, type PluginHarness } from "@piomio/testkit";
 import { checkedConfig } from "../../../packages/core/src/signals/sources.ts";
+import { checkSignalEmit, signalDataProblem } from "../../../packages/core/src/signals/decl-check.ts";
+import { keyGone } from "../server/index.ts";
 import { canonical, incoming, isPublicHttps, signatureProblem, subjectOf } from "../server/triggers.ts";
 
 const dir = join(import.meta.dirname, "..");
@@ -263,15 +266,26 @@ describe("the declaration", () => {
   it("is one subscribe-mode source of outside content, with the webhook route and the channel's hosts", () => {
     expect(decl).toMatchObject({ type: "event", mode: "subscribe", external: true, title: "%signal.event.title%" });
     expect(decl.description).toMatch(/2 minutes/);
+    // The model hears the limit Composio sets, and the way around it.
+    expect(decl.description).toMatch(/one listener per trigger type per app account/);
+    expect(decl.description).toMatch(/filter or script/);
     expect(manifest.contributes.http).toBe(true);
     expect(manifest.permissions.network).toEqual(expect.arrayContaining(["backend.composio.dev", "*.pusher.com"]));
     expect(manifest.permissions.core).toContain("settings.get");
     for (const locale of ["en", "ru"]) {
       const m = JSON.parse(readFileSync(join(dir, ".piomio-plugin", "locales", `${locale}.json`), "utf8"));
       expect(m["signal.event.title"]).toBeTruthy();
-      // The card says the hub registers a webhook in the person's project, and what the other way is.
-      expect(m["via.about"]).toMatch(locale === "en" ? /registers a webhook in your Composio project/ : /регистрирует вебхук в вашем проекте Composio/);
+      // Every Composio card shows it: how triggers' events come is in the docs and the tools, not there.
+      expect(m["via.about"]).not.toMatch(/webhook|вебхук|realtime|реального времени/i);
     }
+  });
+
+  it("takes an app's payload whose own trigger, app or account field is not a string", () => {
+    const decls = manifest.contributes.signals ?? [];
+    const shape = checkSignalEmit("composio", decls, { type: "event", data: {}, subscription: "s1" }, { subscribed: () => true });
+    if (!shape.ok) throw new Error(shape.error);
+    expect(signalDataProblem("composio", "event", shape.checked, { subject: "Hi", trigger: GMAIL, app: "gmail", account: "ca_1" })).toBeUndefined();
+    expect(signalDataProblem("composio", "event", shape.checked, { subject: "Hi", app: { id: 7 }, trigger: 5, account: "ca_1" })).toBeUndefined();
   });
 
   it("has schemas the hub accepts (linear-time, no references) that take a trigger and refuse anything else", () => {
@@ -459,7 +473,9 @@ describe("composio.event over Composio's realtime channel (no public address)", 
   });
 
   it("refuses a second subscription to the same trigger and account with another config (Composio keeps one)", async () => {
-    await expect(h.subscribeSignal("event", { trigger: GMAIL, config: { labelIds: "SPAM" } })).rejects.toThrow(/another config/);
+    await expect(h.subscribeSignal("event", { trigger: GMAIL, config: { labelIds: "SPAM" } })).rejects.toThrow(
+      /one listener per trigger type per app account, and GMAIL_NEW_GMAIL_MESSAGE on Gmail's account already listens with another config.*a filter or script that tells their events apart/,
+    );
     // The same one again shares the instance without asking Composio.
     const upserts = fake.upserts.length;
     const twin = await h.subscribeSignal("event", { trigger: GMAIL, app: "gmail", config: { labelIds: "INBOX" } });
@@ -507,6 +523,48 @@ describe("composio.event over Composio's realtime channel (no public address)", 
     expect(only).not.toContain(GMAIL);
     expect(h.tools.get("triggers")).toMatchObject({ effect: "read", source: true });
     expect(h.tools.get("triggers")!.description).toMatch(/2 minutes/);
+    expect(h.tools.get("triggers")!.description).toMatch(/one listener per trigger type per app account/);
+  });
+});
+
+describe("the key removed from the vault", () => {
+  let fake: ReturnType<typeof fakeComposio>;
+  let pusher: ReturnType<typeof fakePusher>;
+  let h: PluginHarness;
+
+  beforeAll(async () => {
+    fake = fakeComposio();
+    pusher = fakePusher();
+    const api = await fake.listen();
+    await pusher.ready;
+    h = await start(api, { pusher: pusher.url() });
+  });
+
+  afterAll(async () => {
+    await h?.stop();
+    pusher?.close();
+    fake?.server.close();
+  });
+
+  it("closes the realtime channel until a key is stored again (said once), then events come again", async () => {
+    const id = await h.subscribeSignal("event", { trigger: GMAIL });
+    await until(() => pusher.live().length === 1, "the realtime channel");
+    h.setVault("composio");
+    await until(() => !pusher.open().length, "the channel closed");
+    await settle(300);
+    expect(h.logs.filter((l) => l.includes("has no key now"))).toHaveLength(1);
+    // No channel means no reconnects, and no warning about each.
+    expect(h.logs.filter((l) => l.includes("credentials could not be read"))).toEqual([]);
+    h.setVault("composio", { value: "good" });
+    await until(() => pusher.live().length === 1, "the channel open again");
+    pusher.push("trigger_to_client", message(fake.instanceOf(GMAIL, "ca_gmail")!, "msg_key_back", { subject: "With the key" }));
+    await until(() => h.signals.find((s) => s.subscription === id && s.key === "log_msg_key_back"), "the event with the key back");
+  });
+
+  it("tells a removed key from a locked vault: only the first stops the events", () => {
+    expect(keyGone(Object.assign(new Error("No vault item vault://composio"), { data: { key: "vault.notFound" } }))).toBe(true);
+    expect(keyGone(Object.assign(new Error("The vault is locked"), { data: { key: "vault.sealed" } }))).toBe(false);
+    expect(keyGone(new Error("something else"))).toBe(false);
   });
 });
 

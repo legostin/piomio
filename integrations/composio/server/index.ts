@@ -79,6 +79,14 @@ function triggerLine(t: TriggerType, app: string): string {
   return `${t.slug} — ${t.name} (${app}; ${how})${about ? `: ${about}` : ""}${setup}\n  config: ${JSON.stringify(t.config).slice(0, TRIGGER_CONFIG_MAX)}`;
 }
 
+/**
+ * Whether the vault's answer says the key is not there (removed, never stored) rather than that it cannot be read now
+ * (the vault is locked): only the first stops the apps' events.
+ */
+export function keyGone(e: unknown): boolean {
+  return (e as { data?: { key?: unknown } } | null)?.data?.key === "vault.notFound";
+}
+
 let triggers: ComposioTriggers | undefined;
 
 const plugin: PluginModule & { stop?: () => void } = {
@@ -108,6 +116,8 @@ const plugin: PluginModule & { stop?: () => void } = {
       return cachedKey;
     };
     const hasKey = () => key().then((k) => !!k, () => false);
+    /** ok; gone: no key in the vault (or an empty one); unknown: it cannot be read now (a locked vault). */
+    const keyPresence = () => key().then((k): "ok" | "gone" | "unknown" => (k ? "ok" : "gone"), (e): "gone" | "unknown" => (keyGone(e) ? "gone" : "unknown"));
     const api = () => composioApi(API, key);
     const save = () => ctx.storage.set("apps", apps);
     const isKnown = (app: string) => known.some((e) => e.id === app);
@@ -282,11 +292,15 @@ const plugin: PluginModule & { stop?: () => void } = {
 
     /** Where every known account and sign-in in progress is at Composio, and their apps' tools. */
     async function sync() {
-      if (!(await hasKey())) {
+      const presence = await keyPresence();
+      if (presence !== "ok") {
         keyState = "missing";
         report();
+        // A removed key stops the apps' events until one is stored again; a locked vault leaves them as they are.
+        if (presence === "gone") triggers?.keyChanged(false);
         return;
       }
+      triggers?.keyChanged(true);
       keyState = "ok";
       report();
       for (const app of Object.keys(apps)) {
@@ -523,7 +537,10 @@ const plugin: PluginModule & { stop?: () => void } = {
       description:
         "The events of the user's apps connected through Composio that a trigger can start on (Composio trigger types: a new Gmail message, a Slack message, a GitHub push…), each with its config schema. " +
         'To listen to one, trigger_create with on: [{ type: "composio.event", config: { trigger: "<SLUG>", config: { …that type\'s config… } } }] (config.app only when the slug does not start with the app). ' +
-        "Instant ones arrive within seconds; polled ones (Gmail, Google Calendar…) take up to their polling interval, 2 minutes at the shortest.",
+        "Instant ones arrive within seconds; polled ones (Gmail, Google Calendar…) take up to their polling interval, 2 minutes at the shortest. " +
+        "Composio keeps one listener per trigger type per app account: for two repositories or channels of one type, use one trigger whose config covers both, if the type's config allows it, with a filter or script that tells their events apart. " +
+        "An instance of that type the user already had on that account is taken over. " +
+        "Events come by a webhook the hub registers in the user's Composio project when its public https address reaches it (a webhook the user set up there is never changed, and the hub's goes when its address does), else over Composio's realtime channel, where events while the hub is off are missed.",
       inputSchema: { type: "object", properties: { app: { type: "string", description: "Only this connected app, e.g. gmail (as in composio:gmail)" } } },
       handler: async (input) => {
         if (!(await hasKey())) return needKey();
@@ -547,7 +564,9 @@ const plugin: PluginModule & { stop?: () => void } = {
           }
           const more = shown < types.length ? `\n…and ${types.length - shown} more: ask for one app (app: …) to see them.` : "";
           const how = await triggers!.deliveryNote();
-          return text(`${out}${more}\nListen with on: [{ type: "composio.event", config: { trigger, config } }]; a signal's data is the event's payload plus trigger, app and account.\n${how}`);
+          return text(
+            `${out}${more}\nListen with on: [{ type: "composio.event", config: { trigger, config } }]; a signal's data is the event's payload plus trigger, app and account (a payload field of the same name stays the app's).\n${how}`,
+          );
         } catch (e) {
           return failure(e);
         }
