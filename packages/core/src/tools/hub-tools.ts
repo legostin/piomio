@@ -1043,7 +1043,7 @@ export function registerHubTools(hub: Hub): void {
     },
     async (i) => {
       const asked = String(i.machine ?? "").trim() || "local";
-      const local = asked === "local" || asked.toLowerCase() === hubName().toLowerCase();
+      const local = asked === "local" || [hubName(), hub.machines.localName()].some((n) => n.toLowerCase() === asked.toLowerCase());
       const m = local ? undefined : hub.machines.find(asked);
       if (!local && !m) return text(`No machine ${asked}. See machine_list.`, true);
       const name = m?.name ?? "This hub";

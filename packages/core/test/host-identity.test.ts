@@ -11,6 +11,8 @@ import { EventBus } from "../src/bus.ts";
 import { AuditLog } from "../src/audit.ts";
 import { BrainRegistry } from "../src/brains.ts";
 import { MachineHub, NODE_AUTH_PREFIX } from "../src/machines.ts";
+import { MachineActivityFeed } from "../src/activity.ts";
+import { hubName, localComputerName } from "../src/pairing.ts";
 
 class Socket extends EventEmitter {
   sent: any[] = [];
@@ -39,21 +41,7 @@ describe("shared host proof", () => {
     expect(() => hostIdentity(alias)).toThrow("Unsafe");
   });
   it("unifies only authenticated same-host executors and retains executor ids after restart", () => {
-    const db = openDb(":memory:"); const bus = new EventBus(); const audit = new AuditLog(db);
-    const brains = new BrainRegistry();
-    const machines = new MachineHub({ db, bus, audit, brains });
-    machines.here = () => ({ id: "rep_hub", name: "hub" });
-    const secret = new Uint8Array(32).fill(7);
-    const key = Buffer.from(ed25519.getPublicKey(secret)).toString("base64url");
-    const connect = (name: string, proof: (nonce: string) => string | undefined) => {
-      const id = machines.pair({ code: machines.createPairingCode().code, publicKey: key, name, info: { hostname: "same-name", os: "Linux", arch: "x64", clis: [], allowedDirs: [], nodeVersion: "24" } }).id;
-      const socket = new Socket(); machines.attach(socket, "127.0.0.1");
-      const nonce = socket.sent[0].nonce;
-      const signature = Buffer.from(ed25519.sign(new TextEncoder().encode(NODE_AUTH_PREFIX + nonce), secret)).toString("base64url");
-      socket.emit("message", JSON.stringify({ machineId: id, signature, hostProof: proof(nonce) }));
-      expect(socket.sent.some((s) => s.type === "ok")).toBe(true);
-      socket.close(); return id;
-    };
+    const { db, bus, audit, brains, machines, connect } = harness();
     const local = connect("node", (nonce) => hostIdentity().proof(nonce));
     const old = connect("old", () => undefined);
     const forged = connect("forged", () => "bad-proof");
@@ -68,4 +56,42 @@ describe("shared host proof", () => {
     expect(restored.list().find((m) => m.id === local)?.sameHost).toBe(true);
     db.close();
   });
+  it("names the hub's own computer after the machine the person paired from it", () => {
+    // A server running the hub and piomio-node side by side: the node's row is folded into the hub's own computer, so
+    // that computer must carry the name the person gave it ("vps"), not the server's hostname.
+    const { db, bus, audit, brains, machines, connect } = harness();
+    expect(machines.localName()).toBe(hubName());
+    connect("pc", () => undefined);
+    expect(machines.localName()).toBe(hubName());
+    connect("vps", (nonce) => hostIdentity().proof(nonce));
+    expect(machines.localName()).toBe("vps");
+    const feed = new MachineActivityFeed(bus, machines);
+    expect(feed.view().map((m) => [m.id, m.name])).toEqual([["local", "vps"], [expect.stringMatching(/^mach_/), "pc"]]);
+    feed.close();
+    const restored = new MachineHub({ db, bus, audit, brains });
+    expect(restored.localName()).toBe("vps");
+    expect(localComputerName(restored.list())).toBe("vps");
+    expect(localComputerName([{ name: "pc" }])).toBe(hubName());
+    expect(localComputerName(undefined)).toBe(hubName());
+    db.close();
+  });
 });
+
+function harness() {
+  const db = openDb(":memory:"); const bus = new EventBus(); const audit = new AuditLog(db);
+  const brains = new BrainRegistry();
+  const machines = new MachineHub({ db, bus, audit, brains });
+  machines.here = () => ({ id: "rep_hub", name: "hub" });
+  const secret = new Uint8Array(32).fill(7);
+  const key = Buffer.from(ed25519.getPublicKey(secret)).toString("base64url");
+  const connect = (name: string, proof: (nonce: string) => string | undefined) => {
+    const id = machines.pair({ code: machines.createPairingCode().code, publicKey: key, name, info: { hostname: "same-name", os: "Linux", arch: "x64", clis: [], allowedDirs: [], nodeVersion: "24" } }).id;
+    const socket = new Socket(); machines.attach(socket, "127.0.0.1");
+    const nonce = socket.sent[0].nonce;
+    const signature = Buffer.from(ed25519.sign(new TextEncoder().encode(NODE_AUTH_PREFIX + nonce), secret)).toString("base64url");
+    socket.emit("message", JSON.stringify({ machineId: id, signature, hostProof: proof(nonce) }));
+    expect(socket.sent.some((s) => s.type === "ok")).toBe(true);
+    socket.close(); return id;
+  };
+  return { db, bus, audit, brains, machines, connect };
+}
