@@ -19,7 +19,7 @@ The Piomio app for iPhone is your hub in your pocket: the team, every chat with 
 
 A chat on the phone is the same chat as on the computer, cards included: sign-in cards, forms, maps, pages, approvals. You can dictate instead of typing and change how an agent thinks from its header. Settings, new agents, brains and plugins you change by asking the assistant in the chat, or on the computer.
 
-The app keeps the lists and the chats you opened, so it opens with them at once and refreshes them from the hub. **Clear cache** in the **Hub** tab removes that copy and the chats' pictures; the phone stays connected ([What your device keeps](chat.md#what-your-device-keeps)).
+The app keeps the lists and the chats you opened, so it opens with them at once and refreshes them from the hub. It also keeps a chat page ready in the background, so a chat you tap shows at once instead of loading; a chat you left open behind another one, or in another tab, lets its page go after a minute and picks up where it was when you come back. **Clear cache** in the **Hub** tab removes that copy and the chats' pictures; the phone stays connected ([What your device keeps](chat.md#what-your-device-keeps)).
 
 ## Connect the phone
 
