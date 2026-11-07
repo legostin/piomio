@@ -8,7 +8,7 @@ use crate::flavor::Flavor;
 use crate::i18n::{texts, Texts};
 use crate::settings::Mode;
 use crate::supervisor::Status;
-use crate::update::Item;
+use crate::update::{Got, Item};
 
 pub struct Tray {
   pub status: MenuItem<Wry>,
@@ -75,6 +75,11 @@ pub fn update_text(t: &Texts, item: &Item) -> String {
   match item {
     Item::Check => t.t("tray.update.check"),
     Item::Checking => t.t("tray.update.checking"),
+    Item::Downloading(version, None) => t.f("tray.update.downloading", &[("version", version)]),
+    Item::Downloading(version, Some(Got::Percent(percent))) => {
+      t.f("tray.update.downloadingPercent", &[("version", version), ("percent", &percent.to_string())])
+    }
+    Item::Downloading(version, Some(Got::Megabytes(mb))) => t.f("tray.update.downloadingMb", &[("version", version), ("mb", &mb.to_string())]),
     Item::Install(version) => t.f("tray.update.install", &[("version", version)]),
     Item::Installing => t.t("tray.update.installing"),
     Item::Failed => t.t("tray.update.failed"),
@@ -103,5 +108,17 @@ mod tests {
     assert_eq!(status_text(&t, &Status::Running, Some(Mode::Hub), None), "Running");
     assert_eq!(status_text(&t, &Status::Running, Some(Mode::Node), Some("https://bot.example.com")), "Machine of https://bot.example.com");
     assert_eq!(status_text(&t, &Status::PortBusy(8080), Some(Mode::Hub), None), "Port 8080 is taken");
+  }
+
+  #[test]
+  fn says_how_much_of_an_update_is_downloaded() {
+    let en = Texts::for_locale(Some("en"));
+    let ru = Texts::for_locale(Some("ru"));
+    let v = || "0.2.43".to_string();
+    assert_eq!(update_text(&en, &Item::Downloading(v(), None)), "Downloading update 0.2.43…");
+    assert_eq!(update_text(&en, &Item::Downloading(v(), Some(Got::Percent(20)))), "Downloading update 0.2.43… 20%");
+    assert_eq!(update_text(&en, &Item::Downloading(v(), Some(Got::Megabytes(28)))), "Downloading update 0.2.43… 28 MB");
+    assert_eq!(update_text(&ru, &Item::Downloading(v(), Some(Got::Percent(20)))), "Скачиваю обновление 0.2.43… 20%");
+    assert_eq!(update_text(&ru, &Item::Downloading(v(), Some(Got::Megabytes(28)))), "Скачиваю обновление 0.2.43… 28 МБ");
   }
 }
