@@ -493,6 +493,7 @@ export class Hub {
       triggers: () => this.triggers.engine?.list() ?? [],
       sink: { deliver: (triggerId, signals, reason, o) => this.triggers.deliver(triggerId, signals, reason, o) },
       bus: this.bus,
+      machines: () => this.machines.list().map((m) => ({ id: m.id, name: m.name, status: m.status })),
       redact: (v) => this.vault.redactor.value(v),
     });
     this.triggers = new CoreTriggers({

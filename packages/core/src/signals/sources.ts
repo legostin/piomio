@@ -19,6 +19,7 @@ import type { Locale, SignalDecl } from "@piomio/shared";
 import type { EventBus } from "../bus.ts";
 import { hubLocale, tFor } from "../i18n.ts";
 import { BUILTIN_SOURCES_INFO } from "./builtin-sources.ts";
+import { HUB_SOURCES, listenToHub, type MachineView } from "./hub-sources.ts";
 import { linearRegExp } from "./match.ts";
 import { canonicalJson, dataProblem, newSignalId } from "./pipeline.ts";
 import { BUILTIN_SOURCES, type Signal, type Trigger } from "./types.ts";
@@ -100,6 +101,8 @@ export interface SignalSourcesDeps {
   triggers: () => Trigger[];
   sink: SourceSink;
   bus: EventBus;
+  /** The computers and whether they are online now (the baseline for hub.machine.*); unset: none known. */
+  machines?: () => MachineView[];
   now?: () => number;
   /** Known secrets taken out of what a plugin sends (the vault's redactor); unset: kept as it came. */
   redact?: <T>(v: T) => T;
@@ -261,6 +264,8 @@ export class SignalSources {
   private d: SignalSourcesDeps;
   private now: () => number;
   private started = false;
+  /** Stops the listeners on the bus (the hub's own sources), while the engine runs. */
+  private unlisten: (() => void) | undefined;
   /** Live subscriptions by (type, canonical config), and by their ids in the plugins. */
   private live = new Map<string, Live>();
   private byId = new Map<string, Live>();
@@ -279,12 +284,16 @@ export class SignalSources {
   /** The trigger engine started: signals are routed, subscriptions made. */
   start(): void {
     this.started = true;
+    this.unlisten?.();
+    this.unlisten = listenToHub(this.d.bus, (type, s, skip) => this.fromHub(type, s, skip), () => this.d.machines?.() ?? [], this.now);
     void this.sync().catch((e) => this.log(`sync failed: ${message(e)}`));
   }
 
   /** The engine stopped: every plugin subscription is stopped (and none is tried again), nothing more is routed. */
   stop(): void {
     this.started = false;
+    this.unlisten?.();
+    this.unlisten = undefined;
     for (const l of this.live.values()) this.close(l);
     this.live.clear();
     this.byId.clear();
@@ -306,6 +315,9 @@ export class SignalSources {
       external: !!b.external,
       online: true,
     }));
+    for (const h of HUB_SOURCES) {
+      out.push({ type: h.type, source: "hub", mode: "broadcast", title: t(`triggers.source.${h.type}`), description: h.description, data: h.data, sample: h.sample, external: false, online: true });
+    }
     for (const [type, s] of this.sources()) {
       const { decl } = s;
       out.push({
@@ -440,6 +452,22 @@ export class SignalSources {
   }
 
   // ---------- internals ----------
+
+  /** A hub event as a signal, to every enabled trigger with an entry of its type except those `skip` names. */
+  private fromHub(type: string, s: Pick<Signal, "data" | "key" | "external">, skip?: (triggerId: string) => boolean): void {
+    if (!this.started) return;
+    const redact = this.d.redact ?? (<T>(v: T) => v);
+    const key = s.key ? redact(s.key).slice(0, KEY_MAX) : undefined;
+    const signal: Signal = { id: newSignalId(), type, source: HUB, at: new Date(this.now()).toISOString(), data: redact(s.data), ...(key ? { key } : {}), external: s.external };
+    for (const t of this.d.triggers()) {
+      if (!t.enabled || skip?.(t.id) || !(t.on ?? []).some((e) => e.type === type)) continue;
+      try {
+        void this.d.sink.deliver(t.id, [{ ...signal }], "signal").catch((e) => this.log(`${type} did not reach trigger ${t.id}: ${message(e)}`));
+      } catch (e) {
+        this.log(`${type} did not reach trigger ${t.id}: ${message(e)}`);
+      }
+    }
+  }
 
   /** A plugin's declarations, checked (and a refused one said in its log) the first time they are read. */
   private checked(p: PluginSignals): Map<string, Checked> {
