@@ -2,7 +2,7 @@
 // the person's credentials and the hub's data are never read, the rest of the home waits for the person's yes on an
 // approval card (and "always" remembers it), and only CLI brains see the permission tool.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { freePort } from "@piomio/testkit";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -112,6 +112,54 @@ describe("what a brain's own tools may do", () => {
       // System tools (sips) write their scratch files in the person's temp folder, whatever TMPDIR says.
       allowWrite: expect.arrayContaining([tmpdir().replace(/\/+$/, "")]),
     });
+  });
+});
+
+describe("the hub's data and the person's credentials behind symlinks", () => {
+  // macOS keeps temp folders behind /var → /private/var; a server may keep the data dir or the home behind a link.
+  const base = mkdtempSync(join(realpathSync(tmpdir()), "piomio-links-"));
+  const real = join(base, "real-data");
+  const data = join(base, "data");
+  const realHome = join(base, "real-home");
+  const linkHome = join(base, "home");
+  mkdirSync(join(real, "workspaces", "a", "c1"), { recursive: true });
+  mkdirSync(join(realHome, ".ssh"), { recursive: true });
+  symlinkSync(real, data);
+  symlinkSync(realHome, linkHome);
+  const ws = join(data, "workspaces", "a", "c1");
+  const scope = { workspace: ws, home: linkHome, denied: confinement(data, ws, [], linkHome).denyRead };
+  const d = (tool: string, input: unknown) => decideNative(classifyClaudeTool(tool, input, ws), scope).decision;
+
+  it("refuses them by the link's path and by the real one", () => {
+    for (const p of [join(data, "piomio.db"), join(real, "piomio.db"), join(real, "workspaces", "b", "c9", "x.md"), join(linkHome, ".ssh", "id_rsa"), join(realHome, ".ssh", "id_rsa")]) {
+      expect(d("Read", { file_path: p }), p).toBe("deny");
+      expect(d("Write", { file_path: p }), p).toBe("deny");
+    }
+    for (const p of [join(real, "piomio.db"), join(realHome, ".ssh", "id_rsa")]) expect(d("Bash", { command: `cat '${p}'`, dangerouslyDisableSandbox: true }), p).toBe("deny");
+    // Named through a link inside the hub's data, a path stays the hub's, wherever the link points now.
+    mkdirSync(join(real, "workspaces", "b"), { recursive: true });
+    symlinkSync(realHome, join(real, "workspaces", "b", "out"));
+    expect(d("Bash", { command: `cat '${join(data, "workspaces", "b", "out", "notes.txt")}'`, dangerouslyDisableSandbox: true })).toBe("deny");
+  });
+
+  it("still works in the agent's own folder, however its path is spelled", () => {
+    expect(d("Write", { file_path: join(ws, "a.md") })).toBe("allow");
+    expect(d("Write", { file_path: join(real, "workspaces", "a", "c1", "b.md") })).toBe("allow");
+    expect(d("Bash", { command: `ls '${join(real, "workspaces", "a", "c1")}'`, dangerouslyDisableSandbox: true })).toBe("allow");
+  });
+
+  it("never lets a folder the person opened open the hub's data or credentials inside it", () => {
+    // A yes on a file in ~/Library/Application Support opens that folder: the hub's data there stays closed.
+    const support = join(home, "Library", "Application Support");
+    const hubData = join(support, "Piomio-no-such-hub");
+    const own = join(hubData, "workspaces", "a", "c1");
+    const opened = { workspace: own, home, readRoots: [support, home], denied: confinement(hubData, own, [], home).denyRead };
+    const o = (tool: string, input: unknown) => decideNative(classifyClaudeTool(tool, input, own), opened).decision;
+    expect(o("Read", { file_path: join(support, "Notes", "a.txt") })).toBe("allow");
+    expect(o("Read", { file_path: join(hubData, "piomio.db") })).toBe("deny");
+    expect(o("Read", { file_path: join(home, ".ssh", "id_rsa") })).toBe("deny");
+    expect(o("Bash", { command: `cat '${join(hubData, "vault.db")}'`, dangerouslyDisableSandbox: true })).toBe("deny");
+    expect(o("Read", { file_path: join(own, "notes.md") })).toBe("allow");
   });
 });
 
@@ -280,6 +328,16 @@ describe("native_permission (integration)", () => {
     // Another session has not been given it.
     const no = answer("deny");
     expect((await Promise.all([ask("Read", { file_path: join(dir, "b.md") }, { session: "s-other" }), no]))[0].behavior).toBe("deny");
+  });
+
+  it("opens only the folder a read really was in: a link to the home never opens the whole home", async () => {
+    const link = join(mkdtempSync(join(tmpdir(), "owl-grant-")), "home");
+    symlinkSync(home, link);
+    const card = answer("approve");
+    expect((await Promise.all([ask("Read", { file_path: join(link, "piomio-no-such-file.md") }, { session: "s-link" }), card]))[0].behavior).toBe("allow");
+    // The rest of the home still asks (the person says no); an opened home would allow it at once.
+    void answer("deny");
+    expect((await ask("Read", { file_path: join(home, "Documents", "piomio-no-such-file.md") }, { session: "s-link" })).behavior).toBe("deny");
   });
 
   it("is on the tool list of CLI brains only", () => {

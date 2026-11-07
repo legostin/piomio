@@ -37,6 +37,11 @@ export interface NativeScope {
   readRoots?: string[];
   /** Folders no tool of the brain may read or write, whatever the person says (see `confinement`). */
   denied?: string[];
+  /**
+   * The agent's own dialog and task folders, from the hub's records (agent-workspaces.ts): it reads them, and the hub's
+   * data rule does not refuse a write there, but a write is not its session's own (the caller decides it).
+   */
+  owned?: string[];
   home?: string;
 }
 
@@ -137,6 +142,36 @@ export function commandRule(command: string): { op: "eq" | "glob"; value: string
   return { op: "glob", value: `${words[0]}${sub} *` };
 }
 
+/** Where a path really is (realPath); as written when that cannot be told (a dangling link, no permission). */
+export function realOr(p: string): string {
+  try {
+    return realPath(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/**
+ * Whether `p` lies in one of the `deny` folders that `open` does not open. Only a folder strictly inside a denied one
+ * opens that part of it (the agent's folders sit inside the hub's data); a folder that holds a denied one (say a folder
+ * the person opened) never opens it.
+ */
+function deniedIn(p: string, deny: string[], open: string[]): boolean {
+  return deny.some((x) => within(p, x) && !open.some((d) => within(p, d) && within(d, x) && !within(x, d)));
+}
+
+/** The same for a path a command names (deniedPathIn): letter case does not count, and only an open folder opens. */
+function openIn(deny: string[], open: string[]): (path: string) => boolean {
+  const [dl, ol] = [deny, open].map((xs) => xs.map((x) => x.toLowerCase()));
+  return (path) => ol.some((d) => within(path.toLowerCase(), d)) && !deniedIn(path.toLowerCase(), dl, ol);
+}
+
+/** Real folders also as written through each of `via` that is a link or lies behind one (the hub's data behind a link). */
+function spelledThrough(dirs: string[], via: string[]): string[] {
+  const links = via.map((x) => [resolve(x), realOr(x)] as const).filter(([s, r]) => s !== r);
+  return [...dirs, ...dirs.flatMap((d) => links.filter(([, r]) => within(d, r)).map(([s, r]) => join(s, relative(r, d))))];
+}
+
 /** The temp folders a command may use (macOS keeps them under /private). */
 function temps(): string[] {
   const t = tmpdir();
@@ -150,12 +185,11 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
   if (a.kind === "fetch") return { decision: "allow", reason: "the web, through the hub's egress rules" };
   if (a.kind === "other") return { decision: "ask", reason: `an unknown tool (${a.tool})` };
   const original = scope;
-  const originalExempt = [scope.workspace, ...(scope.roots ?? [])];
+  // The agent's own dialog and task folders come as real paths: as written, they may go through the hub's data's link.
+  const originalExempt = [scope.workspace, ...(scope.roots ?? []), ...spelledThrough(scope.owned ?? [], scope.denied ?? [])];
   const originalExemptRead = [...originalExempt, ...(scope.readRoots ?? [])];
   if (a.kind === "read" || a.kind === "write") {
-    const open = a.kind === "read" ? originalExemptRead : originalExempt;
-    const path = a.path;
-    if (!open.some((d) => within(path, d)) && (scope.denied ?? []).some((d) => within(path, d))) {
+    if (deniedIn(a.path, scope.denied ?? [], a.kind === "read" ? originalExemptRead : originalExempt)) {
       return { decision: "deny", reason: "the person's credentials or the hub's own data" };
     }
   }
@@ -169,6 +203,8 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
       workspace: realPath(scope.workspace),
       roots: scope.roots?.map(realPath),
       readRoots: scope.readRoots?.map(realPath),
+      // One the hub cannot resolve only opens less.
+      owned: scope.owned?.flatMap((p) => { try { return [realPath(p)]; } catch { return []; } }),
       denied: scope.denied?.map(realPath),
     };
   } catch { return { decision: "deny", reason: "cannot resolve the real permission roots" }; }
@@ -177,12 +213,12 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
     catch { return { decision: "deny", reason: "cannot resolve the real file path" }; }
   }
   const mine = (p: string) => own.some((d) => within(p, d));
-  const readable = (p: string) => (scope.readRoots ?? []).some((d) => within(p, d));
-  // Only the agent's own folders open a denied one (the hub's data may well sit in a temp folder); its agent's other
-  // folders only for reading.
-  const exempt = [scope.workspace, ...(scope.roots ?? [])];
+  const readable = (p: string) => [...(scope.readRoots ?? []), ...(scope.owned ?? [])].some((d) => within(p, d));
+  // Only the agent's own folders open a denied one (the hub's data may well sit in a temp folder); folders the person
+  // opened only for reading (deniedIn: never one that holds the hub's data or credentials).
+  const exempt = [scope.workspace, ...(scope.roots ?? []), ...(scope.owned ?? [])];
   const exemptRead = [...exempt, ...(scope.readRoots ?? [])];
-  const denied = (p: string, open: string[]) => !open.some((d) => within(p, d)) && (scope.denied ?? []).some((d) => within(p, d));
+  const denied = (p: string, open: string[]) => deniedIn(p, scope.denied ?? [], open);
   if (a.kind === "read" && denied(a.path, exemptRead)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
   if (a.kind === "write" && denied(a.path, exempt)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
   switch (a.kind) {
@@ -197,8 +233,8 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
     case "command": {
       const env = { home: original.home ?? homedir(), tmp: tmpdir() };
       // Retain the lexical check for complex command words that cannot be resolved as paths.
-      if (deniedPathIn(a.command, original.denied ?? [], originalExemptRead, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
-      if (deniedPathIn(a.command, scope.denied ?? [], exemptRead, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
+      if (deniedPathIn(a.command, original.denied ?? [], openIn(original.denied ?? [], originalExemptRead), env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
+      if (deniedPathIn(a.command, scope.denied ?? [], openIn(scope.denied ?? [], exemptRead), env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
       const words = commandParts(a.command, env)?.flat() ?? [];
       for (const word of words) {
         if (word.startsWith("-")) continue;
