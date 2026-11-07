@@ -9,7 +9,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function setup(machines: Array<Pick<Machine, "id" | "name" | "status">> = []) {
   const bus = new EventBus();
-  const feed = new MachineActivityFeed(bus, { list: () => machines } as unknown as MachineHub);
+  const feed = new MachineActivityFeed(bus, { list: () => machines, canonical: (id: string) => id } as unknown as MachineHub);
   const seen: MachineActivity[][] = [];
   bus.on("machines.activity", (v) => seen.push(v));
   return { bus, feed, seen };

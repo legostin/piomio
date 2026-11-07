@@ -785,6 +785,8 @@ export interface ProbeResult {
    */
   catalog?: ModelProfile[];
   detail?: string;
+  /** The brain's host did not answer (its connection closed or timed out): not connected for now, not a setup problem. */
+  unreachable?: boolean;
 }
 
 // ---------- Brain sign-in from the chat ----------
@@ -1102,6 +1104,8 @@ export type OutboundMedia =
 // ---------- Machines ----------
 
 export interface MachineInfo {
+  /** Node workspace root, independent of its allowed project folders. */
+  workspacesRoot?: string;
   os: string;
   hostname: string;
   arch: string;
@@ -1124,6 +1128,8 @@ export interface Machine {
   id: string;
   name: string;
   publicKey: string;
+  /** Authenticated as another executor on the hub computer; never supplied by node.hello. */
+  sameHost?: boolean;
   status: "online" | "offline";
   info?: MachineInfo;
   lastSeenAt?: ISODate;
@@ -1151,6 +1157,8 @@ export interface WorkRule {
  * "local"), a paired machine, or another replica of the hub (`standby`: it is not leading, so nothing runs there now).
  */
 export interface Computer {
+  /** Existing executor ids on this computer; refs keep using them. */
+  aliases?: string[];
   id: string;
   name: string;
   online: boolean;
@@ -1162,7 +1170,11 @@ export interface Computer {
  * answer, running a command, reading or editing files, on the web, calling another tool, or waiting for the user to
  * approve a call.
  */
-export type WorkStep = "thinking" | "writing" | "command" | "reading" | "editing" | "web" | "tool" | "approval";
+/**
+ * What a turn does now. "approval": it waits for the person's permission; "offline": its brains (or its computers) are
+ * not connected for now (the hub switching machines, a computer asleep, a plugin restarting), and it goes on once they are.
+ */
+export type WorkStep = "thinking" | "writing" | "command" | "reading" | "editing" | "web" | "tool" | "approval" | "offline";
 
 /** One turn in progress on a machine. */
 export interface MachineWork {

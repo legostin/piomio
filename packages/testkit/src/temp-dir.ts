@@ -12,6 +12,7 @@ export default function setup(): () => void {
   const dir = mkdtempSync(join(base, PREFIX));
   writeFileSync(join(dir, ".pid"), String(process.pid));
   for (const key of ["TMPDIR", "TMP", "TEMP"]) process.env[key] = dir;
+  process.env.PIOMIO_HOST_IDENTITY_DIR = join(dir, "host-identity");
   return () => rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
 }
 
