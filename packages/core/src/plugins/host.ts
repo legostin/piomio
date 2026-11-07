@@ -17,6 +17,7 @@ import type { AuditLog } from "../audit.ts";
 import type { EgressProxy } from "../egress.ts";
 import { npmEnv, npmInvocation, withPath } from "../cli-tools.ts";
 import { linkUserKeychains } from "./keychains.ts";
+import { pluginKv } from "./kv.ts";
 import { compilePluginUi } from "./ui-compile.ts";
 import { BRAIN_MODEL_EGRESS } from "../settings.ts";
 
@@ -163,6 +164,8 @@ export class PluginHost {
   private staging = new Map<string, { dir: string; commitHash?: string; layout: PluginLayout; source: string }>();
   /** What each running plugin last reported about its catalog entries. */
   private catalogs = new Map<string, CatalogEntryState[]>();
+  /** Core work that belongs to a plugin's card hears its settings change (signals/core-host.ts). */
+  private settingsListeners = new Map<string, Set<(settings: Record<string, unknown>) => void>>();
 
   constructor(deps: HostDeps) {
     this.d = deps;
@@ -550,30 +553,17 @@ export class PluginHost {
       return this.d.vault.access(p.ref, { actor: `plugin:${id}`, pluginId: id, domain: p.domain });
     });
 
-    const kv = this.d.db;
-    peer.handle("storage.get", (p: { key: string }) => {
-      const r = kv.prepare("select value from plugin_kv where plugin_id = ? and key = ?").get(id, p.key) as { value: string } | undefined;
-      return r ? JSON.parse(r.value) : null;
-    });
+    const kv = pluginKv(this.d.db, id);
+    peer.handle("storage.get", (p: { key: string }) => kv.get(p.key));
     peer.handle("storage.set", (p: { key: string; value: unknown }) => {
-      kv.prepare("insert into plugin_kv(plugin_id, key, value) values (?,?,?) on conflict(plugin_id, key) do update set value = excluded.value").run(
-        id,
-        p.key,
-        JSON.stringify(p.value ?? null),
-      );
+      kv.set(p.key, p.value);
       return {};
     });
     peer.handle("storage.delete", (p: { key: string }) => {
-      kv.prepare("delete from plugin_kv where plugin_id = ? and key = ?").run(id, p.key);
+      kv.delete(p.key);
       return {};
     });
-    peer.handle("storage.list", (p: { prefix?: string }) => {
-      const rows = kv.prepare("select key, value from plugin_kv where plugin_id = ? and key like ? order by key").all(id, `${(p.prefix ?? "").replace(/[%_]/g, "\\$&")}%`) as Array<{
-        key: string;
-        value: string;
-      }>;
-      return rows.map((r) => ({ key: r.key, value: JSON.parse(r.value) }));
-    });
+    peer.handle("storage.list", (p: { prefix?: string }) => kv.list(p.prefix ?? ""));
 
     peer.handle("core.call", async (p: { method: CoreMethod; params: unknown }) => {
       if (!rec.granted.core.includes(p.method)) deny(`core method ${p.method} not in permissions.core`);
@@ -680,6 +670,14 @@ export class PluginHost {
 
   // ---------- settings ----------
 
+  /** Hear a plugin's settings change; returns the way to stop hearing it. */
+  onSettings(id: string, cb: (settings: Record<string, unknown>) => void): () => void {
+    let set = this.settingsListeners.get(id);
+    if (!set) this.settingsListeners.set(id, (set = new Set()));
+    set.add(cb);
+    return () => void set.delete(cb);
+  }
+
   setSettings(id: string, settings: Record<string, unknown>): void {
     const rec = this.records.get(id);
     if (!rec) throw new Error(`unknown plugin ${id}`);
@@ -687,6 +685,7 @@ export class PluginHost {
     this.d.db.prepare("update plugins set settings = ? where id = ?").run(JSON.stringify(settings), id);
     const r = this.running.get(id);
     if (r && !r.peer.closed) r.peer.notify("settings.changed", { settings });
+    for (const cb of this.settingsListeners.get(id) ?? []) cb(settings);
     this.d.audit.append("user", "plugin.settings", id);
   }
 
