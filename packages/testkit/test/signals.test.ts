@@ -97,6 +97,17 @@ describe("plugin signals", () => {
     await expect(h.subscribeSignal("broken")).rejects.toThrow(/the service refused/);
   });
 
+  it("tells the hub when a provider fails a subscription it had taken, stops it, and sends nothing more by it", async () => {
+    const id = await h.subscribeSignal("fading");
+    await until(() => h.signalFailures.find((f) => f.id === id), "the failure report");
+    expect(h.signalFailures.find((f) => f.id === id)!.error).toBe("the account was signed out");
+    await until(() => h.storage.get(`stopped:${id}`), "the failed subscription's stop");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(h.signals.filter((s) => s.subscription === id).map((s) => (s.data as { word: string }).word)).toEqual(["before"]);
+    // The hub's own stop afterwards finds nothing left to stop.
+    await h.stopSignal(id);
+  });
+
   it("stops a subscription stopped while its provider was still subscribing, and drops what it sent", async () => {
     const subscribing = h.subscribeSignal("slow", {}, "sub_slow");
     await h.stopSignal("sub_slow");

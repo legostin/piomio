@@ -120,6 +120,9 @@ a trigger subscribes to it with `on: [{ type: "sun.sunrise", config: { … } }]`
   never ask the service again at once in a loop, catch every rejection of your own async work, and never send a
   signal for something you could not read. Take the poll interval from the config only: never from a setting (an
   agent can change settings), and never more often than every 10 minutes.
+  When a subscription can no longer work after it was taken (the account it reads was signed out), call the
+  third argument, `subscribe(sub, emit, fail)`, with the reason: its handle is stopped and the hub tries it again
+  later.
 - `emit(data, { key, subject })`: `key` is the event's identity (a feed item's id, a date); the hub drops a second
   signal with the same key to the same trigger within 24 hours, so a repeat poll or a restart does not wake the agent
   twice. `subject` is a short line naming the event for people and the model (the item's title). Neither is
