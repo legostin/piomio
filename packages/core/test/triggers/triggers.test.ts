@@ -75,7 +75,7 @@ describe("triggers plugin", () => {
   });
 
   it("registers tools with the trigger_ prefix contract and a default heartbeat", async () => {
-    expect([...h.tools.keys()].sort()).toEqual(["create", "delete", "list", "run_now", "update"]);
+    expect([...h.tools.keys()].sort()).toEqual(["create", "delete", "list", "run_now", "signals_recent", "update"]);
     expect(h.tools.get("create")!.effect).toBe("local-write");
     expect(h.tools.get("list")!.effect).toBe("read");
     expect(h.subscriptions.has("notification.feedback")).toBe(true);

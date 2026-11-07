@@ -18,7 +18,7 @@ import type { FetchLike, PipelineServices, TriggerHost, TriggerHttpRequest, Trig
 import { startTriggers } from "./index.ts";
 import { proxiedGet } from "./net.ts";
 import { gatewayReads } from "./pio.ts";
-import { migrateRunLists, sqlStore, type TriggerStore } from "./store.ts";
+import { migrateRunLists, sqlStore, type NoteQuery, type NoteRow, type TriggerStore } from "./store.ts";
 
 /** The Triggers card's id: its storage, its webhook addresses (/hooks/triggers/…) and its UI events carry it. */
 export const TRIGGERS_ID = "triggers";
@@ -58,6 +58,8 @@ interface Session {
   offs: Array<() => void>;
   toolNames: string[];
   handler?: (req: TriggerHttpRequest) => Promise<TriggerHttpResponse> | TriggerHttpResponse;
+  /** The session's guarded store (refused once closed). */
+  store?: TriggerStore;
   /**
    * Released: what its engine still does (a page load in flight, a stale start, a boot on the next turn) goes nowhere,
    * as it did when a stopped plugin's process was gone. Storage and core calls reject, UI events and logs are dropped.
@@ -102,6 +104,7 @@ export class CoreTriggers {
       this.session = s;
       try {
         const store = this.store(s);
+        s.store = store;
         // The run lists the plugin kept in storage move into the journal, once, before the engine reads them.
         migrateRunLists(pluginKv(this.d.db, TRIGGERS_ID), store, {
           atomically: (fn) => tx(this.d.db, fn),
@@ -144,6 +147,17 @@ export class CoreTriggers {
   async sync(): Promise<void> {
     if (this.wanted()) await this.start();
     else this.stop();
+  }
+
+  /** An agent's notes (store.ts), for the turns' `[Signals]` block; none while the engine does not run. */
+  notes(q: NoteQuery): NoteRow[] {
+    const s = this.session;
+    if (!this.engine || !s || s.closed || !s.store) return [];
+    try {
+      return s.store.notes(q);
+    } catch {
+      return [];
+    }
   }
 
   /** Its HTTP API (/api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
@@ -243,8 +257,8 @@ export class CoreTriggers {
       tools: {
         register: (r) => {
           if (s.closed) return;
-          const { handler, name: short, ...spec } = r;
-          const name = `${TOOL_PREFIX}_${short}`;
+          const { handler, name: short, fullName, ...spec } = r;
+          const name = fullName ?? `${TOOL_PREFIX}_${short}`;
           // As the plugin runner did: a string is the text, a throw is an error result.
           // Owned by the card, as the plugin's were: "always allow", the catalog's uses and its tool list go by the owner.
           d.tools.register({ ...spec, name, owner: TRIGGERS_ID }, async (input, ctx): Promise<ToolResult> => {

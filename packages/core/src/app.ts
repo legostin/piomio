@@ -395,6 +395,7 @@ export class Hub {
       ],
       activity: this.activity,
       locations: this.locations,
+      signalNotes: (q) => this.triggers.notes(q),
       secrets: this.secrets,
       transcriber: this.transcriber,
       toolNames: () =>
