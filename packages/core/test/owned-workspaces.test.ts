@@ -80,6 +80,16 @@ describe("ownership through native permissions and the gateway", () => {
     expect((await native("Write", { file_path: path })).behavior).toBe("deny");
     expect((await native("Read", { file_path: path })).behavior).toBe("deny");
   });
+  it("refuses symlink/.. escapes through the native ownership shortcut", async () => {
+    const foreign = join(root, "hub/workspaces/assistant", "traversal");
+    mkdirSync(join(foreign, "deep"), { recursive: true });
+    symlinkSync(join(foreign, "deep"), join(workspace, "traversal"));
+    const path = `${workspace}/traversal/../victim`;
+    for (const tool of ["Read", "Write", "kimi.Read", "kimi.Write", "codex.fileChange"]) {
+      expect((await native(tool, { path, file_path: path })).behavior, tool).toBe("deny");
+    }
+    expect((await native("Bash", { command: `cp '${workspace}/source' '${path}'`, dangerouslyDisableSandbox: true })).behavior).toBe("deny");
+  });
   it("reviews compound writes and a copy into a directory whose destination is a foreign symlink", async () => {
     const source = join(workspace, "source.txt");
     const dest = join(workspace, "dest");
