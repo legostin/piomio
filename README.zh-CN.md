@@ -120,7 +120,7 @@ flowchart LR
 - **中枢**是一个 Node.js 进程（桌面应用自带 Node）。它持有聊天、智能体、记忆、任务、插件、保险库和安全控制台。
 - **大脑**是智能体用来思考的东西：官方的 Claude Code、Codex 和 Kimi Code CLI，用你自己的订阅登录；允许的中枢上也可以用普通 API 密钥。一个碰到限额，智能体就用下一个继续。
 - **智能体**是 Markdown 文件，带名字、面孔、提示词，以及它们可以使用的大脑和工具。你在聊天里创建新的。
-- **其他一切都是插件，**包括界面：浏览器、记忆、触发器、Telegram、集成。见 [docs/plugins.md](docs/plugins.md)。
+- **其他一切都是插件，**包括界面：浏览器、记忆、Telegram、集成。见 [docs/plugins.md](docs/plugins.md)。
 
 ## 安全简况
 
