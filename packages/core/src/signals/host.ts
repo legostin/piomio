@@ -13,6 +13,8 @@ export interface TriggerHttpRequest {
   query: Record<string, string>;
   headers: Record<string, string>;
   body: unknown;
+  /** The body as it came in, kept for public webhooks so a signature can be checked on the exact bytes. */
+  rawBody?: string;
   /** True for unauthenticated public webhooks: the engine checks the trigger's secret itself. */
   public: boolean;
   /** Language of whoever made the request; the hub language for public webhooks. */
@@ -84,6 +86,8 @@ export interface TriggerHost {
   };
   /** The journal of runs, the agents' notes and the scripts' state (store.ts). */
   store: TriggerStore;
+  /** A vault item's fields, read for `actor` (trigger:<id>); throws when it is missing or refused. */
+  vault?: { get(ref: string, actor: string): Promise<Record<string, string>> };
   core: { call<T = any>(method: CoreMethod, params?: unknown): Promise<T> };
   /** How the watch loads pages; unset: the global fetch. */
   fetch?: FetchLike;

@@ -114,8 +114,8 @@ export interface Trigger {
   /** A quick-model check with this brief, run when the script has no verdict (or there is none). */
   triage?: { brief: string };
   triagePerDay?: number;
-  /** web.webhook: how the sender is verified (set from the web.webhook config). */
-  verify?: unknown;
+  /** web.webhook: how the sender is verified (set from the web.webhook config); none: the stored `secret`. */
+  verify?: { kind: "secret" } | { kind: "github" | "stripe" | "hmac-sha256"; secretRef: string; header?: string };
   state: TriggerState;
 }
 

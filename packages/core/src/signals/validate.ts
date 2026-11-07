@@ -262,12 +262,12 @@ function checkTriagePerDay(v: unknown): number {
 const VERIFY_KINDS = ["github", "stripe", "hmac-sha256"];
 
 /** How a webhook sender is verified; HMAC kinds name a vault entry, never hold the secret. */
-function checkVerify(v: unknown): Record<string, unknown> {
+function checkVerify(v: unknown): NonNullable<Trigger["verify"]> {
   const o = isObject(v) ? v : {};
   if (o.kind === "secret") {
     if (Object.keys(o).length === 1) return { kind: "secret" };
   } else if (typeof o.kind === "string" && VERIFY_KINDS.includes(o.kind) && typeof o.secretRef === "string" && /^vault:\/\/[A-Za-z0-9_.-]+$/.test(o.secretRef)) {
-    const out: Record<string, unknown> = { kind: o.kind, secretRef: o.secretRef };
+    const out = { kind: o.kind, secretRef: o.secretRef } as { kind: "github" | "stripe" | "hmac-sha256"; secretRef: string; header?: string };
     if (o.header !== undefined) {
       if (typeof o.header !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(o.header)) return fail("verifyInvalid", "verify is not valid: header must be an HTTP header name", {});
       out.header = o.header;

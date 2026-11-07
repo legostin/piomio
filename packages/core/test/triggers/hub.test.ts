@@ -2,6 +2,7 @@
 // and settings, standing down and leading again.
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +77,25 @@ describe("the hub's trigger engine", () => {
     const task = await until(() => hub.store.listTasks({ limit: 50 }).find((t) => t.triggerId === id), "the webhook's task");
     expect(task).toMatchObject({ agentId: "assistant", background: true, createdBy: "trigger" });
     expect(task.goal).toContain("42");
+  });
+
+  it("checks a signature over the exact bytes of a real request, with the key from the vault", async () => {
+    hub.vault.init("webhook-verify-passphrase");
+    hub.vault.upsert({ id: "gh-hook", type: "secret", name: "Hook key", fields: { value: "hookkey" } });
+    const made = await hub.triggers.http({ method: "POST", path: "/triggers", query: {}, headers: {}, public: false, locale: "en", body: { kind: "event", name: "GH", prompt: "Look.", verify: { kind: "github", secretRef: "vault://gh-hook" } } });
+    const id = ((made.body as any).trigger?.id ?? (made.body as any).id) as string;
+    // Spacing the parsed JSON would lose: only the raw bytes carry it.
+    const raw = '{ "action":  "opened",\n "n": 1 }';
+    const sig = (k: string) => "sha256=" + createHmac("sha256", k).update(raw).digest("hex");
+    const send = (signature: string) => fetch(`${base}/hooks/triggers/${id}`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": signature }, body: raw });
+    expect((await send(sig("wrong"))).status).toBe(401);
+    expect((await send(sig("hookkey"))).status).toBe(202);
+    // A trigger whose vault item is gone answers 503 (a key already read is kept for 30 s).
+    const gone = await hub.triggers.http({ method: "POST", path: "/triggers", query: {}, headers: {}, public: false, locale: "en", body: { kind: "event", name: "GH2", prompt: "Look.", verify: { kind: "github", secretRef: "vault://no-such" } } });
+    const goneId = ((gone.body as any).trigger?.id ?? (gone.body as any).id) as string;
+    const r2 = await fetch(`${base}/hooks/triggers/${goneId}`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": sig("hookkey") }, body: raw });
+    expect(r2.status).toBe(503);
+    hub.vault.seal();
   });
 
   it("turned on from its card in a chat, tells the agent its tool names", async () => {
