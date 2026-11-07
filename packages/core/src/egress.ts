@@ -1,5 +1,8 @@
 // Egress proxy: brains and plugins reach the network only through here.
 // Each process gets a token (in the proxy URL userinfo) mapped to a host allowlist.
+// It says why a connection did not happen: "not allowed" (403, audited as egress.deny) is the policy; "cannot reach"
+// (502, egress.unreachable) is the network: a host that does not resolve or refuses, a computer that is offline or
+// asleep. An agent told "not allowed" when the Mac had no internet took the proxy for broken.
 
 import http from "node:http";
 import net from "node:net";
@@ -67,6 +70,9 @@ export function networkPattern(value: string): string {
   return wildcard ? `*.${host}` : host;
 }
 
+/** The destination could not be reached (DNS, connection): the network, not the policy. */
+export class EgressUnreachable extends Error {}
+
 export interface NetworkContext {
   sessionId: string;
   conversationId: string;
@@ -100,6 +106,8 @@ export class EgressProxy {
   private sockets = new Set<net.Socket>();
   private denyLogged = new Map<string, number>();
   audit?: AuditLog;
+  /** Resolves a host to its addresses (tests replace it); dns.lookup otherwise. */
+  lookup?: (host: string) => Promise<string[]>;
   extraBrainAllow: () => string[] = () => [];
   privateAllow: () => string[] = () => [];
   requestApproval?: (request: NetworkRequest) => Promise<void>;
@@ -111,8 +119,13 @@ export class EgressProxy {
   /** Resolve once; pinnedLookup uses exactly these checked addresses, never a second DNS lookup. */
   async resolveTarget(host: string): Promise<string[]> {
     const bare = host.replace(/^\[|\]$/g, "");
-    const addrs = net.isIP(bare) ? [bare] : (await lookup(bare, { all: true, verbatim: true })).map((a) => a.address);
-    if (addrs.length === 0) throw new Error(`cannot resolve ${host}`);
+    let addrs: string[];
+    try {
+      addrs = net.isIP(bare) ? [bare] : this.lookup ? await this.lookup(bare) : (await lookup(bare, { all: true, verbatim: true })).map((a) => a.address);
+    } catch (e: any) {
+      throw new EgressUnreachable(`cannot resolve ${host} (${e?.code ?? e?.message ?? e})`);
+    }
+    if (addrs.length === 0) throw new EgressUnreachable(`cannot resolve ${host}`);
     const okPrivate = this.privateAllow().some((p) => hostMatches(bare, p));
     if (!okPrivate && addrs.some(isPrivateAddress)) throw new Error(`${host} resolves to a private address; network permission cannot authorize it`);
     return addrs;
@@ -122,6 +135,10 @@ export class EgressProxy {
     const token = randomBytes(18).toString("base64url");
     this.grants.set(token, { owner, allow, context, once: new Set(), cancel: new AbortController() });
     return token;
+  }
+  /** A live token carries this session's context: its brain's commands can reach the proxy. */
+  hasSession(sessionId: string): boolean {
+    return [...this.grants.values()].some((g) => g.context?.sessionId === sessionId && !g.cancel.signal.aborted);
   }
   revoke(token: string): void {
     this.grants.get(token)?.cancel.abort();
@@ -218,11 +235,24 @@ export class EgressProxy {
     const m = typeof h === "string" ? /^Basic\s+(.+)$/i.exec(h) : undefined;
     return m ? Buffer.from(m[1], "base64").toString("utf8").split(":")[0] : undefined;
   }
-  private logDeny(owner: string | undefined, host: string): void {
-    const key = `${owner}|${host}`;
+  /**
+   * A refused or failed connection, once a minute per owner, host and kind. Not the 407 every client gets first,
+   * before it sends its credentials: that is the handshake, not a denial.
+   */
+  private logRefusal(token: string | undefined, host: string, e: unknown): void {
+    if (!token) return;
+    const owner = this.allowed(token, host).owner ?? "unknown";
+    const action = e instanceof EgressUnreachable ? "egress.unreachable" : "egress.deny";
+    const key = `${action}|${owner}|${host}`;
     if (Date.now() - (this.denyLogged.get(key) ?? 0) < 60_000) return;
     this.denyLogged.set(key, Date.now());
-    this.audit?.append(owner ?? "unknown", "egress.deny", host);
+    if (this.denyLogged.size > 5000) this.denyLogged.clear();
+    this.audit?.append(owner, action, host, { reason: String((e as Error)?.message ?? e).slice(0, 300) });
+  }
+
+  /** The words an agent reads for a destination it could not reach. */
+  private unreachableText(host: string, e: unknown): string {
+    return `cannot reach ${host}: ${(e as Error)?.message ?? e}. This is the network, not a permission: this computer may be offline or the host down. Try again later.`;
   }
 
   listen(port: number): Promise<void> {
@@ -246,11 +276,21 @@ export class EgressProxy {
           upRes.pipe(res);
         });
         res.on("close", () => up.destroy());
-        up.on("error", (e) => { if (!res.headersSent) res.writeHead(502); res.end(`upstream error: ${e.message}`); });
+        up.on("error", (e) => {
+          // The client left first (its close destroyed the request): nothing failed on the way out.
+          if (cancel.signal.aborted || res.destroyed) return;
+          const err = new EgressUnreachable(e.message || (e as NodeJS.ErrnoException).code || String(e));
+          this.logRefusal(token, host, err);
+          // Half a body already went: an explanation appended to it would corrupt it.
+          if (res.headersSent) return void res.destroy();
+          res.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end(this.unreachableText(host, err));
+        });
         req.pipe(up);
       } catch (e) {
-        this.logDeny(this.allowed(token, host).owner, host);
-        if (!res.destroyed) res.writeHead(token && this.grants.has(token) ? 403 : 407, { "content-type": "text/plain; charset=utf-8", ...(!token || !this.grants.has(token) ? { "proxy-authenticate": "Basic realm=piomio" } : {}) }).end(`egress to ${host} is not allowed: ${(e as Error).message}`);
+        this.logRefusal(token, host, e);
+        if (res.destroyed) return;
+        if (e instanceof EgressUnreachable) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end(this.unreachableText(host, e));
+        else res.writeHead(token && this.grants.has(token) ? 403 : 407, { "content-type": "text/plain; charset=utf-8", ...(!token || !this.grants.has(token) ? { "proxy-authenticate": "Basic realm=piomio" } : {}) }).end(`egress to ${host} is not allowed: ${(e as Error).message}`);
       }
     });
     server.on("connect", async (req, client: net.Socket, head) => {
@@ -287,15 +327,28 @@ export class EgressProxy {
           upstream.pipe(client);
           client.pipe(upstream);
         });
-        upstream.on("error", () => client.destroy());
+        let established = false;
+        upstream.once("connect", () => (established = true));
+        upstream.on("error", (e) => {
+          if (established || client.destroyed) return client.destroy();
+          // Before the tunnel is up the client can still be told why.
+          // A refusal on every address comes as an AggregateError with no message of its own: its code says it.
+          const err = new EgressUnreachable(e.message || (e as NodeJS.ErrnoException).code || String(e));
+          this.logRefusal(token, host, err);
+          const reason = `cannot reach ${host}: ${err.message}`.replace(/[^\x20-\x7e]/g, " ").slice(0, 300);
+          const body = `${this.unreachableText(host, err)}\n`;
+          client.end(`HTTP/1.1 502 ${reason}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+        });
         client.on("close", () => upstream.destroy());
       } catch (e) {
         client.off("data", hold);
-        this.logDeny(this.allowed(token, host).owner, host);
+        this.logRefusal(token, host, e);
         // CONNECT clients often discard the response body: keep the explanation in the status reason too.
-        const reason = String((e as Error).message).replace(/[^\x20-\x7e]/g, " ").slice(0, 300);
-        const body = `Host ${host} is not allowed: ${reason}\n`;
-        if (!client.destroyed) client.end(`HTTP/1.1 ${token && this.grants.has(token) ? 403 : 407} ${reason}\r\n${!token || !this.grants.has(token) ? "Proxy-Authenticate: Basic realm=piomio\r\n" : ""}Content-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+        const unreachable = e instanceof EgressUnreachable;
+        const reason = String(unreachable ? `cannot reach ${host}: ${(e as Error).message}` : (e as Error).message).replace(/[^\x20-\x7e]/g, " ").slice(0, 300);
+        const body = unreachable ? `${this.unreachableText(host, e)}\n` : `Host ${host} is not allowed: ${reason}\n`;
+        const status = unreachable ? 502 : token && this.grants.has(token) ? 403 : 407;
+        if (!client.destroyed) client.end(`HTTP/1.1 ${status} ${reason}\r\n${status === 407 ? "Proxy-Authenticate: Basic realm=piomio\r\n" : ""}Content-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
       }
     });
     this.server = server;

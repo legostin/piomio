@@ -152,13 +152,13 @@ export class MachineActivityFeed {
   view(): MachineActivity[] {
     const work = (machineId: string): MachineWork[] =>
       [...this.turns.values()]
-        .filter((t) => t.machineId === machineId)
+        .filter((t) => this.machines.canonical(t.machineId) === this.machines.canonical(machineId))
         .sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0))
         .map(({ machineId: _, held: __, heldDetail: ___, ...w }) => w);
     const offer = (id: string, info?: MachineInfo) => this.updates?.offerFor(id, info) ?? {};
     return [
       { id: "local", name: hubName(), online: true, work: work("local"), ...offer("local") },
-      ...this.machines.list().map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id), ...(m.status === "online" ? offer(m.id, m.info) : {}) })),
+      ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id), ...(m.status === "online" ? offer(m.id, m.info) : {}) })),
     ];
   }
 

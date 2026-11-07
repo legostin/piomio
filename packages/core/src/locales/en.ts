@@ -161,6 +161,7 @@ export default {
   "chat.error": "error",
   "channel.notConnected": "not connected",
   "mcp.connectionClosed": "connection closed",
+  "mcp.reconnecting": "reconnecting by itself ({error})",
   "mcp.needsSignin": "waiting for you to sign in",
   "mcp.noSignin": "{name} has no sign-in",
   "mcp.signedIn": "Already signed in to {name}",

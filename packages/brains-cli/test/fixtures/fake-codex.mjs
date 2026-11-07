@@ -48,6 +48,16 @@ if (args[0] === "login" && args.includes("--device-auth")) {
     console.error("error: unrecognized subcommand 'app-server'");
     process.exit(2);
   }
+  // FAKE_CODEX_APP_FAIL_FILE holds how many starts still fail (a Codex that dies at start for a passing reason).
+  const failFile = process.env.FAKE_CODEX_APP_FAIL_FILE;
+  const fails = failFile && existsSync(failFile) ? Number(readFileSync(failFile, "utf8").trim() || 0) : 0;
+  if (fails > 0) {
+    writeFileSync(failFile, String(fails - 1));
+    if (process.env.FAKE_CODEX_SPAWNS) appendFileSync(process.env.FAKE_CODEX_SPAWNS, `${process.pid}\n`);
+    console.error("boom: state db locked");
+    process.exit(1);
+  }
+  if (process.env.FAKE_ARGS_FILE && process.env.FAKE_CODEX_LOG_APP_ARGS === "1") appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ app: true, args })}\n`);
   appServer();
 } else if (args[0] === "exec") {
   if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify({ args })}\n`);

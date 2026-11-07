@@ -1,11 +1,13 @@
 // What the hub may ask of this machine: brain.*, exec.run, fs.*. Every request is checked against the
 // local policy and logged as one line (never with file contents).
 
+import { ownsWorkspacePaths } from "@piomio/shared/agent-workspaces";
 import type { ChildProcess } from "node:child_process";
 import type { MachineUsage, NodeSetup, RpcPeer } from "@piomio/shared";
 import { pieceServer, type FileSync, type PieceRequest } from "@piomio/replica";
 import type { PolicyStore } from "./policy.ts";
 import type { BrainHost } from "./brains.ts";
+import { resolveAllowedPath } from "./guard.ts";
 import type { GuardOptions } from "./guard.ts";
 import type { Logger } from "./info.ts";
 import { execRun, killTree } from "./exec.ts";
@@ -144,6 +146,13 @@ export class NodeService {
       }),
     );
     peer.handle("exec.run", this.wrap("exec.run", (p: any) => execRun(p ?? {}, policy(), this.guard, this.children)));
+    peer.handle("workspace.owns", (p: { agentId: string; keys: string[]; paths: string[]; write: boolean; copies?: [string, string][] }) => {
+      const pol = policy();
+      if (!pol.fs.read || (p.write && !pol.fs.write) || !Array.isArray(p.keys) || !Array.isArray(p.paths) || p.keys.length > 100000 || p.paths.length > 1000 || !p.paths.every((v) => typeof v === "string") || !p.keys.every((v) => typeof v === "string")) return false;
+      if (p.copies && (!Array.isArray(p.copies) || p.copies.length > 1000 || !p.copies.every((pair) => Array.isArray(pair) && pair.length === 2 && pair.every((v) => typeof v === "string" && p.paths.includes(v))))) return false;
+      try { for (const path of p.paths) resolveAllowedPath(path, pol.allowedDirs, this.guard); } catch { return false; }
+      return ownsWorkspacePaths([pol.workspacesRoot], p.agentId, p.keys, p.paths, p.copies);
+    });
     peer.handle("fs.read", this.wrap("fs.read", (p: any) => fsRead(p ?? {}, policy(), this.guard)));
     peer.handle("fs.write", this.wrap("fs.write", (p: any) => fsWrite(p ?? {}, policy(), this.guard)));
     peer.handle("fs.list", this.wrap("fs.list", (p: any) => fsList(p ?? {}, policy(), this.guard)));

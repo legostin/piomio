@@ -160,6 +160,7 @@ export default {
   "chat.error": "ошибка",
   "channel.notConnected": "не подключён",
   "mcp.connectionClosed": "соединение закрыто",
+  "mcp.reconnecting": "переподключается сам ({error})",
   "mcp.needsSignin": "ждёт, когда вы войдёте",
   "mcp.noSignin": "У {name} нет входа",
   "mcp.signedIn": "Вход в {name} уже выполнен",

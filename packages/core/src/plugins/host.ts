@@ -18,6 +18,7 @@ import type { EgressProxy } from "../egress.ts";
 import { npmEnv, npmInvocation, withPath } from "../cli-tools.ts";
 import { linkUserKeychains } from "./keychains.ts";
 import { compilePluginUi } from "./ui-compile.ts";
+import { BRAIN_MODEL_EGRESS } from "../settings.ts";
 
 /**
  * What model access through plain API keys means for the builtin plugins (Config.apiKeys): without it the API brain
@@ -289,11 +290,11 @@ export class PluginHost {
     const dataDir = this.dataDirOf(id);
 
     const cfg = this.d.config;
-    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, rec.granted.network);
-    const proxyUrl = `http://${proxyToken}:x@127.0.0.1:${cfg.egressPort}`;
     // Builtin brain plugins run harness CLIs (claude, codex) with a persistent home where the CLI logins live
     // (config.brainHome: the user's own home in the desktop app); everything else gets its data dir as its home.
     const isBrainHost = rec.source === "builtin" && rec.layout.manifest.contributes.brains.length > 0;
+    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, pluginEgress(rec.granted.network, isBrainHost));
+    const proxyUrl = `http://${proxyToken}:x@127.0.0.1:${cfg.egressPort}`;
     const home = isBrainHost ? cfg.brainHome : dataDir;
     mkdirSync(dataDir, { recursive: true });
     mkdirSync(home, { recursive: true });
@@ -813,6 +814,14 @@ export class PluginHost {
     this.d.onLayoutsChanged();
     this.d.bus.emit("plugins.updated", {});
   }
+}
+
+/**
+ * The hosts a plugin's process reaches: what it was granted, and for a built-in brain plugin its CLIs' own model APIs
+ * too (listing models, signing in: a Codex there was refused chatgpt.com hundreds of times a day).
+ */
+export function pluginEgress(granted: string[], brainHost: boolean): string[] {
+  return brainHost ? [...new Set([...granted, ...BRAIN_MODEL_EGRESS])] : granted;
 }
 
 export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string> {

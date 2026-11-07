@@ -1,5 +1,24 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { githubApi, publishTagRelease } from "../../../scripts/release-tag.mjs";
+
+const workflow = (file: string) => readFileSync(resolve(import.meta.dirname, "../../../.github/workflows", file), "utf8");
+
+describe("the site after a release", () => {
+  it("is started by the publish job, once the release is out", () => {
+    const publish = workflow("release-tags.yml").split(/^  publish:$/m)[1]!;
+    expect(publish).toMatch(/^      actions: write\b/m);
+    const started = publish.search(/gh workflow run site\.yml .*--ref main/);
+    expect(started).toBeGreaterThan(publish.indexOf("release-publish.mjs"));
+  });
+
+  it("doesn't wait for workflow_run, which a run started by the workflow token never sends", () => {
+    const site = workflow("site.yml");
+    expect(site).not.toContain("workflow_run");
+    expect(site).toMatch(/^  workflow_dispatch:$/m);
+  });
+});
 
 const plan = { tag: "v0.2.37", sha: "a".repeat(40) };
 function service({ existing = false, target = plan.sha, race = false, denied = false, published = false, runs = [] as any[] } = {}) {

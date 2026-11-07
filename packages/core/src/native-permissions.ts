@@ -8,10 +8,11 @@
 // (policy/auto.ts) or the person's on an approval card, like an external action. Outside the home (system files,
 // tools) reading is fine. The person's credentials and the hub's own data (conversations, the vault, other agents'
 // folders) are never theirs to read, and a command that names them is refused.
+import { realPath } from "@piomio/shared/agent-workspaces";
 import { existsSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { deniedPathIn, readOnlyCommand } from "./policy/commands.ts";
+import { commandParts, deniedPathIn, readOnlyCommand } from "./policy/commands.ts";
 
 export type NativeAction =
   | { kind: "read"; tool: string; path: string }
@@ -143,6 +144,10 @@ function temps(): string[] {
 }
 
 export function decideNative(a: NativeAction, scope: NativeScope): NativeDecision {
+  if (a.kind === "read" || a.kind === "write") {
+    try { a = { ...a, path: realPath(a.path) }; }
+    catch { return { decision: "deny", reason: "cannot resolve the real file path" }; }
+  }
   const home = scope.home ?? homedir();
   const own = [scope.workspace, claudeProjectDir(scope.workspace, home), ...(scope.roots ?? []), ...temps()];
   const mine = (p: string) => own.some((d) => within(p, d));
@@ -172,6 +177,14 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
     case "command": {
       const env = { home, tmp: tmpdir() };
       if (deniedPathIn(a.command, scope.denied ?? [], exemptRead, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
+      const words = commandParts(a.command, env)?.flat() ?? [];
+      for (const word of words) {
+        if (word.startsWith("-")) continue;
+        try {
+          const path = realPath(resolve(a.cwd ?? scope.workspace, expandHome(word, home)));
+          if (denied(path, exemptRead)) return { decision: "deny", reason: "a file path resolves into the person's credentials or the hub's data" };
+        } catch { /* Complex or absent paths stay subject to the usual review. */ }
+      }
       if (!a.network && systemStatusOnly(a.command)) return { decision: "allow", reason: "only reads how the computer is doing" };
       if (!a.network && readOnlyCommand(a.command, env)) return { decision: "allow", reason: "only reads" };
       return { decision: "ask", reason: a.network ? `a command reaching ${a.network}` : "a command outside the sandbox" };
@@ -319,8 +332,8 @@ export function shownPath(p: string, home = homedir()): string {
   return within(p, home) && p !== home ? `~${sep}${relative(home, p)}` : p;
 }
 
-/** Credentials and private stores in a home folder that no agent's tool reads (relative to the home). */
-const PRIVATE = [
+/** Credentials and private stores in a home folder that no agent's tool reads (relative to the home); machines.ts checks other computers' commands against them too. */
+export const PRIVATE = [
   ".ssh",
   ".gnupg",
   ".aws",

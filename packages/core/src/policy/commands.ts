@@ -163,6 +163,16 @@ export function shownCommand(line: string): string {
 
 const any = () => true;
 const without = (bad: RegExp) => (args: string[]) => !args.some((a) => bad.test(a));
+/**
+ * A long option that is, or abbreviates, one of `names`: git and getopt_long take any unique prefix (`--open` is
+ * `--open-files-in-pager`, `--com` is `--compress-program`), so a prefix counts as the option itself.
+ */
+export function longOption(a: string, names: string[]): boolean {
+  if (!a.startsWith("--") || a === "--") return false;
+  const key = a.slice(2).split("=")[0]!;
+  return !!key && names.some((n) => n.startsWith(key));
+}
+const withoutLong = (names: string[], short?: RegExp) => (args: string[]) => !args.some((a) => longOption(a, names) || (!!short && !a.startsWith("--") && short.test(a)));
 const positional = (args: string[]) => args.filter((a) => !a.startsWith("-"));
 
 /** Programs that only read (files, the repository, the computer), with what would make one write or run something. */
@@ -185,7 +195,8 @@ const READERS: Record<string, (args: string[]) => boolean> = {
   strings: any,
   od: any,
   hexdump: any,
-  file: any,
+  // -C compiles a magic file: it writes one.
+  file: withoutLong(["compile"], /^-[A-Za-z]*C/),
   stat: any,
   du: any,
   df: any,
@@ -193,13 +204,14 @@ const READERS: Record<string, (args: string[]) => boolean> = {
   egrep: any,
   fgrep: any,
   // A preprocessor runs a program on every file.
-  rg: without(/^--pre(?:=|$)/),
+  rg: withoutLong(["pre"]),
   find: without(/^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/),
   tree: without(/^-o$/),
-  diff: without(/^--output/),
+  diff: withoutLong(["output"]),
   cmp: any,
   jq: any,
-  sort: without(/^(?:-[A-Za-z]*o|--output)/),
+  // --compress-program runs a program on what it sorts.
+  sort: withoutLong(["output", "compress-program"], /^-[A-Za-z]*o/),
   // A second name is the file it writes.
   uniq: (args) => positional(args).length <= 1,
   xxd: (args) => !args.some((a) => /^-r/.test(a)) && positional(args).length <= 1,
@@ -226,7 +238,7 @@ const READERS: Record<string, (args: string[]) => boolean> = {
   uptime: any,
   sw_vers: any,
   nproc: any,
-  date: without(/^-s$|^-f/),
+  date: withoutLong(["set", "file"], /^-[A-Za-z]*[sf]/),
   git: gitReads,
 };
 
@@ -253,7 +265,6 @@ const GIT_READ = new Set([
   "count-objects",
   "version",
   "check-ignore",
-  "ls-remote",
 ]);
 
 function gitReads(args: string[]): boolean {
@@ -266,7 +277,9 @@ function gitReads(args: string[]): boolean {
   }
   const [sub, ...rest] = args.slice(i);
   if (!sub) return false;
-  if (rest.some((a) => /^--output(?:=|$)/.test(a) || a === "-O" || a.startsWith("--open-files-in-pager"))) return false;
+  // What runs a program of the caller's choosing (a pager, an external diff), or writes a file. ls-remote and
+  // `remote show` are gone too: they reach the network, and ls-remote's --upload-pack runs any command.
+  if (rest.some((a) => /^-O/.test(a) || longOption(a, ["output", "open-files-in-pager", "ext-diff", "upload-pack", "receive-pack", "exec"]))) return false;
   if (GIT_READ.has(sub)) return true;
   switch (sub) {
     case "branch":
@@ -274,7 +287,7 @@ function gitReads(args: string[]): boolean {
     case "tag":
       return (!rest.length || rest.some((a) => a === "-l" || a.startsWith("--list"))) && !rest.some((a) => /^-[dasfmFu]$|^--(?:delete|annotate|sign|force|message|file)/.test(a));
     case "remote":
-      return !rest.length || (rest.length === 1 && (rest[0] === "-v" || rest[0] === "--verbose")) || rest[0] === "get-url" || rest[0] === "show";
+      return !rest.length || (rest.length === 1 && (rest[0] === "-v" || rest[0] === "--verbose")) || rest[0] === "get-url";
     case "config":
       return rest.some((a) => ["--get", "--get-all", "--get-regexp", "--list", "-l"].includes(a)) && !rest.some((a) => /^--(?:add|unset|replace|rename|remove|edit)|^-e$/.test(a));
     case "stash":
