@@ -1,6 +1,6 @@
 // The single path every tool call takes: agent allowlist → hooks → policy → approval → invoke → redact → taint → audit.
-// A trigger's script takes a narrower one (callRead): its agent's list → reads only → hooks → its hosts → policy, no
-// approval → invoke → redact → audit.
+// A trigger's script takes a narrower one (callRead): no closed family → its agent's list → reads only → hooks → only its
+// hosts in the input → policy, no approval → invoke → redact → audit.
 
 import type { AgentDef, Approval, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { hostMatches, hostOf, matchesAny, newId, parseBrainRef, renderTemplate, truncate } from "@piomio/shared";
@@ -69,12 +69,27 @@ function textOf(r: ToolResult): string {
 /** Saving what the person taught is for whichever agent they showed it to (it always asks on its own card). */
 const forEveryAgent = (t: ToolDescriptor) => t.owner === "core" && HUB_TOOLS_FOR_EVERY_AGENT.includes(t.name);
 
-/** Who a trigger's script calls a tool as (ToolGateway.callRead); `hosts`: the trigger's own, the addresses a source tool may open. */
+/** Who a trigger's script calls a tool as (ToolGateway.callRead); `hosts`: the trigger's own, the only ones a tool's input may name. */
 export interface TriggerCaller {
   agentId: string;
   triggerId: string;
   hosts?: string[];
 }
+
+/**
+ * Tool families a trigger's script never calls, whatever their effect says. Their reads reach outside on their own
+ * terms (web_fetch and web_rss follow redirects anywhere; browser tools drive a real browser with the person's
+ * sign-ins), or they act and spend (voice, transcription, the Pio companion's eyes, hub checks, machines, the vault).
+ * A script's web is pio.fetch, which checks every hop against the trigger's hosts.
+ */
+export const TRIGGER_CLOSED_PREFIXES = ["browser_", "web_", "voice_", "hub_", "pio_", "machine_", "vault_", "transcribe_"];
+
+/** How deep a trigger's tool input may nest: deeper, nobody could tell what addresses it carries. */
+const TRIGGER_INPUT_DEPTH = 8;
+/** An address's authority after "//" (or "\\", which URL parsers read the same way): up to its path, query or fragment. */
+const AUTHORITY = /[/\\]{2}([^\s/\\?#"'<>`]+)/g;
+/** What clings to an address in prose ("(see https://x.example).") */
+const TRAILING = /[.,;:!?)\]}*_]+$/;
 
 export class ToolGateway {
   d: GatewayDeps;
@@ -293,8 +308,8 @@ export class ToolGateway {
 
   /**
    * A trigger's script calls a hub tool on behalf of its agent (signals/pio.ts). Only a tool on the agent's own list
-   * whose effect is read, through the same hooks and policy as an agent's call; the addresses a source tool opens must
-   * be on the trigger's hosts, as pio.fetch's are. Nobody is there to approve anything, so whatever policy does not
+   * whose effect is read, outside the closed families (TRIGGER_CLOSED_PREFIXES) and not marked forTriggers: false,
+   * through the same hooks and policy as an agent's call; every address in its input must be on the trigger's hosts. Nobody is there to approve anything, so whatever policy does not
    * allow outright is refused: no card, no wait, no auto mode. There is no session: the call is audited as
    * trigger:<id>, and what came back from outside (a source tool, or a result that says so) carries _meta.taint for
    * the run to be marked external. Every refusal is an error with _meta.status "denied".
@@ -309,8 +324,17 @@ export class ToolGateway {
     const agent = this.d.agents.get(as.agentId);
     const entry = this.d.registry.get(name);
     const s = triggerSession(as);
-    if (!agent || !entry || !this.listed(entry.descriptor, agent, s, true)) return refuse(unavailable, "tool.denied", agent ? "not available" : "unknown agent");
+    if (!agent || !entry) return refuse(unavailable, "tool.denied", agent ? "not available" : "unknown agent");
     const tool = entry.descriptor;
+    if (TRIGGER_CLOSED_PREFIXES.some((p) => name.startsWith(p))) {
+      return refuse(
+        `Tool ${name} is closed to triggers: browser, web, voice, transcription, hub, Pio, machine and vault tools reach outside or act on their own. A trigger's script reads the web with pio.fetch, which checks every hop against its hosts.`,
+        "tool.denied",
+        "closed family",
+      );
+    }
+    if (tool.forTriggers === false) return refuse(`Tool ${name} is not for triggers: it acts or spends though it only reads, so a trigger's script cannot call it`, "tool.denied", "not for triggers");
+    if (!this.listed(tool, agent, s, true)) return refuse(unavailable, "tool.denied", "not available");
     if (tool.effect !== "read") return refuse(`Triggers only read: ${name} changes things (effect ${tool.effect}), so a trigger's script cannot call it`, "tool.denied", `effect ${tool.effect}`);
     if (!this.visible(tool, agent, s, false, true)) return refuse(unavailable, "tool.denied", "not available");
     const ctx = this.contextFor(s, newId("call_"));
@@ -320,13 +344,13 @@ export class ToolGateway {
     );
     if (hooked.blocked) return refuse(`Blocked: ${hooked.blocked}`, "tool.blocked", hooked.blocked);
     const input = hooked.payload.input;
-    // A read that reaches the web may carry data out in its address: only to the hosts the person sees on the card.
+    // An address in what a tool is given may carry data out: only the hosts the person sees on the card, wherever the
+    // address is and however it is written. What nests too deep to read through is refused.
+    const named = addressHosts(input);
+    if (!named) return refuse(`Triggers pass a tool only input they can read through: ${name}'s input is nested deeper than ${TRIGGER_INPUT_DEPTH} levels`, "tool.denied", "too deep");
     const hosts = as.hosts ?? [];
-    const off = tool.source ? urlsIn(input).find((u) => !hosts.some((p) => hostMatches(hostOf(u), p))) : undefined;
-    if (off !== undefined) {
-      const host = hostOf(off) || off;
-      return refuse(`Triggers reach only their listed hosts: ${host} is not on this trigger's list, so ${name} cannot open it`, "tool.denied", `host ${host}`);
-    }
+    const off = named.find((h) => !hosts.some((p) => hostMatches(h, p)));
+    if (off !== undefined) return refuse(`Triggers reach only their listed hosts: ${off} is not on this trigger's list, so ${name} cannot be given it`, "tool.denied", `host ${off}`);
     const policy = decide(
       { tool, input, agentId: as.agentId, tainted: false, background: true, initiative: agent.initiative, profile: agent.policyProfile },
       this.d.rules.list(),
@@ -448,6 +472,57 @@ export class ToolGateway {
       return truncate(renderTemplate(template, safe), 300);
     }
     return truncate(`${tool.name} ${JSON.stringify(safe)}`, 300);
+  }
+}
+
+/**
+ * The hosts every address in a trigger's tool input names: "scheme://host" and "//host" in any string or key (also
+ * percent-decoded, and with backslashes, which URL parsers read as slashes), and bare hosts in address fields.
+ * Undefined when the input nests deeper than TRIGGER_INPUT_DEPTH.
+ */
+function addressHosts(input: unknown): string[] | undefined {
+  const hosts = new Set<string>();
+  const scan = (text: string) => {
+    let s = text;
+    for (let i = 0; i < 3; i++) {
+      for (const m of s.matchAll(AUTHORITY)) {
+        const h = authorityHost(m[1]);
+        if (h) hosts.add(h);
+      }
+      let next: string;
+      try {
+        next = decodeURIComponent(s);
+      } catch {
+        break;
+      }
+      if (next === s) break;
+      s = next;
+    }
+  };
+  const walk = (v: unknown, depth: number): boolean => {
+    if (typeof v === "string") scan(v);
+    else if (v && typeof v === "object") {
+      if (depth >= TRIGGER_INPUT_DEPTH) return false;
+      for (const [k, x] of Object.entries(v)) {
+        scan(k);
+        if (!walk(x, depth + 1)) return false;
+      }
+    }
+    return true;
+  };
+  if (!walk(input, 0)) return undefined;
+  for (const u of urlsIn(input)) hosts.add(hostOf(u) || u);
+  return [...hosts];
+}
+
+/** The host of an address's authority ("user@host:port" and what clings to it in prose dropped); "" when there is none. */
+function authorityHost(raw: string): string {
+  const a = raw.slice(raw.lastIndexOf("@") + 1).replace(raw.includes("[") ? /[.,;:!?)}*_]+$/ : TRAILING, "");
+  if (!a) return "";
+  try {
+    return new URL(`http://${a}`).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return a.toLowerCase();
   }
 }
 

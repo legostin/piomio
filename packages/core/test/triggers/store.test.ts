@@ -93,6 +93,17 @@ describe.each([
     expect(s.stateGet("t2", "k")).toBe("other");
   });
 
+  it("keeps the engine's own keys (__) apart from the script's 1 MB, under 4 MB of their own", () => {
+    const s = make(() => T0);
+    s.stateSet("t1", "__batch", "b".repeat(900_000));
+    // The script still has its whole megabyte.
+    s.stateSet("t1", "k", "k".repeat(1_000_000));
+    expect(() => s.stateSet("t1", "k2", "x".repeat(100_000))).toThrow("trigger state is limited to 1 MB");
+    s.stateSet("t1", "__more", "m".repeat(3_000_000));
+    expect(() => s.stateSet("t1", "__over", "o".repeat(300_000))).toThrow(/engine's own state is limited to 4 MB/);
+    expect((s.stateGet("t1", "__batch") as string).length).toBe(900_000);
+  });
+
   it("moves the runs:<id> lists out of storage, newest first", () => {
     const db = openDb(":memory:");
     const kv = pluginKv(db, "triggers");

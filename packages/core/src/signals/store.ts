@@ -39,7 +39,7 @@ export interface TriggerStore {
   addNote(n: Omit<NoteRow, "id" | "at">): NoteRow;
   notes(q: NoteQuery): NoteRow[];
   stateGet(triggerId: string, key: string): unknown;
-  /** Throws RangeError when the trigger's state would pass 1 MB. */
+  /** Throws RangeError when the trigger's state would pass 1 MB (its "__" keys, the engine's own: 4 MB apart). */
   stateSet(triggerId: string, key: string, value: unknown): void;
   stateDelete(triggerId: string, key: string): void;
   dropState(triggerId: string): void;
@@ -66,10 +66,20 @@ const noteMatches = (n: NoteRow, q: NoteQuery) =>
   (!q.since || n.at >= q.since) &&
   (!q.text || n.text.toLowerCase().includes(q.text.toLowerCase()));
 
-/** The value's JSON, or a RangeError when the trigger's state (`others` bytes in its other keys) would pass 1 MB. */
+/** Keys starting with "__" are the engine's own (a pending batch, outside-content marks): kept apart from the script's 1 MB. */
+const engineKey = (key: string) => key.startsWith("__");
+export const MAX_ENGINE_STATE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The value's JSON, or a RangeError when the trigger's state would pass its cap: 1 MB for the script's keys, 4 MB for
+ * the engine's. `others`: the bytes in the trigger's other keys of the same kind.
+ */
 function checkState(others: number, key: string, value: unknown): string {
   const text = JSON.stringify(value ?? null);
-  if (others + Buffer.byteLength(key) + Buffer.byteLength(text) > MAX_STATE_BYTES) throw new RangeError("trigger state is limited to 1 MB");
+  const engine = engineKey(key);
+  if (others + Buffer.byteLength(key) + Buffer.byteLength(text) > (engine ? MAX_ENGINE_STATE_BYTES : MAX_STATE_BYTES)) {
+    throw new RangeError(engine ? "the trigger engine's own state is limited to 4 MB" : "trigger state is limited to 1 MB");
+  }
   return text;
 }
 
@@ -148,9 +158,11 @@ export function sqlStore(db: Db, now: () => number = Date.now): TriggerStore {
     },
     stateSet(triggerId, key, value) {
       const others = (
-        db.prepare("select coalesce(sum(length(cast(key as blob)) + length(cast(value as blob))), 0) as n from trigger_state where trigger_id = ? and key <> ?").get(triggerId, key) as {
-          n: number;
-        }
+        db
+          .prepare(
+            "select coalesce(sum(length(cast(key as blob)) + length(cast(value as blob))), 0) as n from trigger_state where trigger_id = ? and key <> ? and (substr(key, 1, 2) = '__') = ?",
+          )
+          .get(triggerId, key, engineKey(key) ? 1 : 0) as { n: number }
       ).n;
       const text = checkState(others, key, value);
       db.prepare("insert into trigger_state(trigger_id, key, value) values (?,?,?) on conflict(trigger_id, key) do update set value = excluded.value").run(triggerId, key, text);
@@ -213,7 +225,7 @@ export function memoryStore(now: () => number = Date.now): TriggerStore {
     stateSet(triggerId, key, value) {
       const m = state.get(triggerId) ?? new Map<string, string>();
       let others = 0;
-      for (const [k, v] of m) if (k !== key) others += Buffer.byteLength(k) + Buffer.byteLength(v);
+      for (const [k, v] of m) if (k !== key && engineKey(k) === engineKey(key)) others += Buffer.byteLength(k) + Buffer.byteLength(v);
       m.set(key, checkState(others, key, value));
       state.set(triggerId, m);
     },
