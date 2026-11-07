@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./signal-check": "./src/signals/decl-check.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",

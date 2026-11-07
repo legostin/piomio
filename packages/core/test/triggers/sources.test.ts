@@ -53,6 +53,8 @@ function setup(
     installed?: string[];
     /** How the plugin answers a subscribe (after it is recorded); default: it takes it. */
     subscribe?: () => Promise<void>;
+    /** The monotonic clock checks are timed with. */
+    clock?: () => number;
   } = {},
 ) {
   const decls = o.decls ?? { mail: MAIL, quotes: QUOTES };
@@ -90,6 +92,7 @@ function setup(
     bus: new EventBus(),
     now: () => clock.now,
     ...(o.redact ? { redact: o.redact } : {}),
+    ...(o.clock ? { clock: o.clock } : {}),
   });
   if (o.start !== false) s.start();
   const subscribed = () => calls.filter((c) => c.op === "subscribe");
@@ -118,6 +121,56 @@ describe("signal sources", () => {
     expect(f.deliveries).toEqual([]);
     // A type that declares no schema takes any JSON.
     expect(f.s.fromPlugin("mail", { type: "other", data: [1, "two"] })).toEqual({ ok: true });
+  });
+
+  it("takes a signal nobody listens to without checking its data, and checks it once a trigger listens", () => {
+    let timed = 0;
+    const f = setup({ clock: () => ++timed });
+    // Not declared is refused all the same: that costs nothing.
+    expect(f.s.fromPlugin("mail", { type: "nope", data: {} })).toEqual({ ok: false, error: expect.stringContaining("not declared") });
+    expect(f.s.fromPlugin("mail", { type: "message", data: { to: "a" } })).toEqual({ ok: true });
+    expect(timed).toBe(0);
+    f.triggers.push(trigger("t1", [{ type: "mail.message" }], { enabled: false }));
+    expect(f.s.fromPlugin("mail", { type: "message", data: { to: "a" } })).toEqual({ ok: true });
+    f.triggers.push(trigger("t2", [{ type: "mail.message" }]));
+    expect(f.s.fromPlugin("mail", { type: "message", data: { to: "a" } })).toEqual({ ok: false, error: expect.stringContaining("from") });
+    expect(timed).toBeGreaterThan(0);
+    expect(f.deliveries).toEqual([]);
+  });
+
+  it("refuses a plugin's signals for the rest of the minute once checking them took over a second, and says so once", () => {
+    let t = 0;
+    const f = setup({ triggers: [trigger("t1", [{ type: "mail.message" }])], clock: () => (t += 300) });
+    // Each check takes 300 ms on this clock: two fit, the third passes the second, the fourth is refused.
+    for (let i = 0; i < 4; i++) expect(f.s.fromPlugin("mail", { type: "message", data: { from: `a${i}` } })).toEqual({ ok: true });
+    const over = f.s.fromPlugin("mail", { type: "message", data: { from: "b" } });
+    expect(over).toEqual({ ok: false, error: expect.stringContaining("1000 ms of the hub's time") });
+    expect(f.s.fromPlugin("mail", { type: "message", data: { from: "c" } }).ok).toBe(false);
+    expect(f.logs.filter((l) => l.msg.includes("1000 ms of the hub's time"))).toHaveLength(1);
+    // Another plugin has its own minute; a new minute starts afresh.
+    f.triggers.push(trigger("t2", [{ type: "quotes.price", config: { sym: "A" } }]));
+    f.clock.now += 60_000;
+    expect(f.s.fromPlugin("mail", { type: "message", data: { from: "d" } })).toEqual({ ok: true });
+    expect(f.deliveries.map((d) => (d.signals[0].data as { from: string }).from)).toEqual(["a0", "a1", "a2", "a3", "d"]);
+  });
+
+  it("lists the declarations it refuses, with why", () => {
+    const f = setup({ decls: { mail: [...MAIL, decl({ type: "slow", data: { type: "object", properties: { id: { type: "string", pattern: "^[A-Z0-9_-]{1,32}$" } } } })] } });
+    expect(f.s.refused()).toEqual([{ type: "mail.slow", source: "mail", why: expect.stringContaining("linear time") }]);
+    expect(f.s.list("en").some((x) => x.type === "mail.slow")).toBe(false);
+  });
+
+  it("says what a trigger's on entry would get: ok, a config its source refuses, an unknown type, a plugin that does not run, a refused declaration", () => {
+    const f = setup({ decls: { mail: [...MAIL, decl({ type: "loop", data: { type: "object", uniqueItems: true } })], quotes: QUOTES } });
+    expect(f.s.check("mail.message", {})).toEqual({ status: "ok" });
+    expect(f.s.check("hub.task.failed", {})).toEqual({ status: "ok" });
+    expect(f.s.check("quotes.price", { sym: "A" })).toEqual({ status: "ok" });
+    expect(f.s.check("quotes.price", { n: 1 })).toEqual({ status: "config", source: "quotes", problem: expect.stringContaining("sym") });
+    expect(f.s.check("quotes.nope", {})).toEqual({ status: "unknown" });
+    expect(f.s.check("ghost.thing", {})).toEqual({ status: "unknown" });
+    expect(f.s.check("mail.loop", {})).toEqual({ status: "refused", source: "mail", why: expect.stringContaining("uniqueItems") });
+    f.running.delete("quotes");
+    expect(f.s.check("quotes.price", { sym: "A" })).toEqual({ status: "offline", source: "quotes" });
   });
 
   it("routes a broadcast to every enabled trigger that subscribes to its type, and to no other", async () => {
@@ -314,6 +367,24 @@ describe("signal sources", () => {
     expect(sig.key).toHaveLength(200);
     expect(sig.subject!.length).toBeLessThanOrEqual(500);
     expect(sig.data).toEqual({ text: "pw [redacted: vault://pw]" });
+  });
+
+  it("cuts a huge key and subject before taking secrets out of them, and still takes out one cut across the bound", () => {
+    const seen: number[] = [];
+    const f = setup({
+      triggers: [trigger("t1", [{ type: "mail.other" }])],
+      redact: (v) => {
+        if (typeof v === "string") seen.push(v.length);
+        return JSON.parse(JSON.stringify(v).replaceAll("hunter22", "[redacted]"));
+      },
+    });
+    const straddling = `${"k".repeat(195)}hunter22${"k".repeat(5_000_000)}`;
+    expect(f.s.fromPlugin("mail", { type: "other", data: {}, key: straddling, subject: `${"s".repeat(495)}hunter22${"s".repeat(5_000_000)}` })).toEqual({ ok: true });
+    const sig = f.deliveries[0].signals[0];
+    // The secret's start is not kept as it was: the cut came after it was taken out.
+    expect(sig.key).toBe(`${"k".repeat(195)}[reda`);
+    expect(sig.subject).toBe(`${"s".repeat(495)}[reda`);
+    expect(Math.max(...seen)).toBeLessThan(10_000);
   });
 
   it("runs a declared pattern in linear time on outside content, and checks a config once", async () => {

@@ -2,30 +2,35 @@
 // sources (builtin-sources.ts) and each plugin's, declared in its manifest (contributes.signals) and exposed as
 // <pluginId>.<type>; the hub's own (hub.*, from the bus) start and stop with this registry too.
 //
-// A plugin's signal is checked here: its rate, that its type is declared, the subscription it came by, the intake's
-// caps (50 levels, 256 KB) and its data schema. Then it goes to the enabled triggers that listen, through the pipeline's
+// A plugin's signal is checked here: its rate, that its type is declared, the subscription it came by (decl-check.ts),
+// then, only when an enabled trigger listens, the intake's caps (50 levels, 256 KB) and its data schema, within a
+// budget of the hub's time per plugin. Then it goes to the enabled triggers that listen, through the pipeline's
 // arrival-time intake (the sink, TriggerPipeline.deliver), which still matches, dedups and counts floods for each.
 // Subscribe-mode sources work only while a trigger subscribes: one plugin subscription per distinct (type, canonical
 // config) among the enabled triggers, stopped when none is left, made again when the plugin restarts, and tried again
 // with a growing pause when the plugin fails to take it.
 //
-// A declared schema runs on the hub's thread against outside content, so it is checked once, when the declarations
-// are first read: its patterns compile on V8's linear-time engine (match.ts), and what could take more than linear time
-// (uniqueItems, $ref, long enums, many patterns) or work asynchronously is refused, with the reason in the plugin's log.
+// A declaration whose schema could take more than linear time is refused when first read (decl-check.ts), with the
+// reason in the plugin's log and in trigger_sources.
 
 import { randomBytes } from "node:crypto";
-import { Ajv, type ValidateFunction } from "ajv";
+import { performance } from "node:perf_hooks";
 import type { Locale, SignalDecl } from "@piomio/shared";
 import type { EventBus } from "../bus.ts";
 import { hubLocale, tFor } from "../i18n.ts";
 import { BUILTIN_SOURCES_INFO } from "./builtin-sources.ts";
+import { checkedConfig, checkSignalDecls, checkSignalEmit, HUB_SOURCE, refusedSignalDecls, signalDataProblem, type AcceptedDecl, type CheckedDecl, type PluginEmit } from "./decl-check.ts";
+import type { SourceCheck } from "./host.ts";
 import { HUB_SOURCES, listenToHub, type HubListenDeps, type MachineView } from "./hub-sources.ts";
-import { linearRegExp } from "./match.ts";
-import { canonicalJson, dataProblem, newSignalId } from "./pipeline.ts";
+import { canonicalJson, newSignalId } from "./pipeline.ts";
 import { BUILTIN_SOURCES, type Signal, type Trigger } from "./types.ts";
+
+export { checkedConfig, type PluginEmit };
 
 /** Signals one plugin may emit a minute; past it they are refused before anything else is looked at. */
 export const EMITS_PER_MINUTE = 600;
+/** The hub's time one plugin's signals may take to check (their data against its schema) a minute; past it they are refused. */
+export const CHECK_MS_PER_MINUTE = 1000;
 /** A subscription the plugin did not take is tried again after these pauses, then every 30 minutes. */
 export const RETRY_MS = [30_000, 120_000, 600_000, 1_800_000];
 const RATE_MS = 60_000;
@@ -33,21 +38,7 @@ const KEY_MAX = 200;
 const SUBJECT_MAX = 500;
 /** Room kept past a key's or subject's bound before redacting: a known secret that starts within the bound stays whole. */
 const LINE_SPARE = 4096;
-/** A declared schema, at most: as JSON, its nesting, an enum's values, its patterns. */
-const SCHEMA_MAX = 16 * 1024;
-const SCHEMA_DEPTH = 32;
-const ENUM_MAX = 1000;
-const PATTERNS_MAX = 100;
-/** Config checks kept per declaration (by canonical config). */
-const CONFIG_CHECKS_KEPT = 1000;
-/** The hub's own sources are hub.*: no plugin's. */
-const HUB = "hub";
-/** Types no plugin's source may take: core's own sources and the signals they bring. */
-const RESERVED = new Set<string>([...BUILTIN_SOURCES, "time.tick"]);
-/** Keywords whose value maps names to schemas (the names are no keywords), and keywords whose value is data. */
-const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"]);
-const DATA_KEYWORDS = new Set(["enum", "const", "default", "examples", "$comment", "title", "description"]);
-const REFS = ["$ref", "$dynamicRef", "$recursiveRef"];
+const HUB = HUB_SOURCE;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const pause = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`);
@@ -110,31 +101,20 @@ export interface SignalSourcesDeps {
   /** A task by its id, for the self-loop guard to follow subtasks and approvals to a trigger's own wake task. */
   task?: HubListenDeps["task"];
   now?: () => number;
+  /** A monotonic clock in ms, for the time a plugin's signals take to check; unset: performance.now. */
+  clock?: () => number;
   /** Known secrets taken out of what a plugin sends (the vault's redactor); unset: kept as it came. */
   redact?: <T>(v: T) => T;
   /** What went wrong beyond one plugin; unset: the console. */
   log?: (msg: string) => void;
 }
 
-/** What a plugin sent with ctx.signals (its emit, or its provider's). */
-export interface PluginEmit {
-  type: string;
-  data: unknown;
-  key?: string;
-  subject?: string;
-  /** The subscription a provider's signal came by (signals.subscribe's id). */
-  subscription?: string;
-}
-
 export type EmitResult = { ok: true } | { ok: false; error: string };
-
-/** A declared type as checked once: its compiled schemas, or why it is refused. */
-type Checked = { data?: ValidateFunction; config?: ValidateFunction } | { refused: string };
 
 interface Source {
   pluginId: string;
   decl: SignalDecl;
-  checked: Exclude<Checked, { refused: string }>;
+  checked: AcceptedDecl;
   running: boolean;
   external: boolean;
   title: PluginSignals["title"];
@@ -160,111 +140,7 @@ interface Live {
 
 const OK: EmitResult = { ok: true };
 const refuse = (error: string): EmitResult => ({ ok: false, error });
-
-/** Patterns of a declared schema run on V8's linear-time engine (match.ts); one it cannot run is refused at compile. */
-const linearPatterns = Object.assign((pattern: string, flags: string) => linearRegExp(pattern, flags), { code: "linearRegExp" });
-
-/** Why a declared schema is refused before it is compiled; undefined when it may be. */
-function schemaRefusal(schema: unknown): string | undefined {
-  let size: number;
-  try {
-    size = Buffer.byteLength(JSON.stringify(schema));
-  } catch {
-    return "is not JSON";
-  }
-  if (size > SCHEMA_MAX) return `is over ${SCHEMA_MAX / 1024} KB`;
-  let patterns = 0;
-  const stack: Array<[unknown, number]> = [[schema, 0]];
-  while (stack.length) {
-    const [s, depth] = stack.pop()!;
-    if (!s || typeof s !== "object") continue;
-    if (depth > SCHEMA_DEPTH) return `is nested deeper than ${SCHEMA_DEPTH} levels`;
-    if (Array.isArray(s)) {
-      for (const x of s) stack.push([x, depth + 1]);
-      continue;
-    }
-    const o = s as Record<string, unknown>;
-    if (o.uniqueItems === true) return "uses uniqueItems (its check takes quadratic time)";
-    if ("$async" in o) return "uses $async (signals are checked as they come)";
-    for (const k of REFS) if (k in o) return `uses ${k} (write the schema out in full: a reference can make its check exponential)`;
-    if (Array.isArray(o.enum) && o.enum.length > ENUM_MAX) return `has an enum of more than ${ENUM_MAX} values`;
-    if (typeof o.pattern === "string") patterns++;
-    if (o.patternProperties && typeof o.patternProperties === "object") patterns += Object.keys(o.patternProperties).length;
-    if (patterns > PATTERNS_MAX) return `has more than ${PATTERNS_MAX} patterns`;
-    for (const [k, v] of Object.entries(o)) {
-      if (DATA_KEYWORDS.has(k)) continue;
-      if (SCHEMA_MAPS.has(k) && v && typeof v === "object" && !Array.isArray(v)) for (const x of Object.values(v)) stack.push([x, depth + 1]);
-      else stack.push([v, depth + 1]);
-    }
-  }
-  return undefined;
-}
-
-function checkDecl(ajv: Ajv, pluginId: string, decl: SignalDecl): Checked {
-  if (pluginId === HUB || RESERVED.has(`${pluginId}.${decl.type}`)) return { refused: "it takes the name of one of the hub's own sources" };
-  const out: { data?: ValidateFunction; config?: ValidateFunction } = {};
-  for (const what of ["data", "config"] as const) {
-    const schema = decl[what];
-    if (!schema) continue;
-    const bad = schemaRefusal(schema);
-    if (bad) return { refused: `its ${what} schema ${bad}` };
-    try {
-      out[what] = ajv.compile(schema);
-    } catch (e) {
-      return { refused: `its ${what} schema does not compile: ${message(e)}` };
-    }
-  }
-  return out;
-}
-
-/** Each plugin's declarations, checked once when first read (they change only with its layout), by type. */
-const checkedDecls = new WeakMap<SignalDecl[], Map<string, Checked>>();
-
-function checkDecls(pluginId: string, decls: SignalDecl[], onRefused?: (type: string, why: string) => void): Map<string, Checked> {
-  let out = checkedDecls.get(decls);
-  if (out) return out;
-  out = new Map();
-  // One Ajv per plugin's declarations: their $ids cannot clash with another plugin's.
-  const ajv = new Ajv({ strict: false, validateFormats: false, logger: false, unicodeRegExp: false, code: { regExp: linearPatterns } });
-  for (const decl of decls) {
-    const c = checkDecl(ajv, pluginId, decl);
-    out.set(decl.type, c);
-    if ("refused" in c) onRefused?.(decl.type, c.refused);
-  }
-  checkedDecls.set(decls, out);
-  return out;
-}
-
-/** The first thing a compiled schema found wrong, in one line. */
-function mismatch(v: ValidateFunction, what: string): string {
-  const e = v.errors?.[0];
-  return `${what} does not match the declared schema${e ? `: ${e.instancePath || "(top)"} ${e.message ?? "is invalid"}` : ""}`;
-}
-
-const configChecks = new WeakMap<ValidateFunction, Map<string, { problem?: string }>>();
-const FITS: { problem?: string } = Object.freeze({});
-
-/**
- * A subscription's config against its source's config schema, checked once per (declaration, canonical config): a
- * sync or a boot reads the answer. `problem` says why it does not fit.
- */
-export function checkedConfig(pluginId: string, decls: SignalDecl[], type: string, config: Record<string, unknown>): { problem?: string } {
-  const c = checkDecls(pluginId, decls).get(type);
-  if (!c) return { problem: `signal type "${type}" is not declared` };
-  if ("refused" in c) return { problem: `signal type ${pluginId}.${type} is refused: ${c.refused}` };
-  const v = c.config;
-  if (!v) return FITS;
-  let kept = configChecks.get(v);
-  if (!kept) configChecks.set(v, (kept = new Map()));
-  const canon = canonicalJson(config);
-  let r = kept.get(canon);
-  if (!r) {
-    r = v(config) ? FITS : { problem: mismatch(v, "its config") };
-    if (kept.size >= CONFIG_CHECKS_KEPT) kept.delete(kept.keys().next().value!);
-    kept.set(canon, r);
-  }
-  return r;
-}
+const BUILTIN_TYPES = new Set<string>(BUILTIN_SOURCES);
 
 export class SignalSources {
   private d: SignalSourcesDeps;
@@ -279,12 +155,16 @@ export class SignalSources {
   private epochs = new Map<string, number>();
   /** Emits in the current minute, by plugin. */
   private rates = new Map<string, { from: number; count: number }>();
+  /** The time each plugin's signals took to check in the current minute (ms), and whether its log was told it ran out. */
+  private checking = new Map<string, { from: number; ms: number; said: boolean }>();
+  private clock: () => number;
   /** Subscriptions whose config their source refuses, said once. */
-  private refused = new Set<string>();
+  private refusedConfigs = new Set<string>();
 
   constructor(d: SignalSourcesDeps) {
     this.d = d;
     this.now = d.now ?? Date.now;
+    this.clock = d.clock ?? (() => performance.now());
   }
 
   /** The trigger engine started: signals are routed, subscriptions made. */
@@ -308,7 +188,7 @@ export class SignalSources {
     for (const l of this.live.values()) this.close(l);
     this.live.clear();
     this.byId.clear();
-    this.refused.clear();
+    this.refusedConfigs.clear();
   }
 
   /** Core's own sources, then each enabled plugin's (one whose declaration is refused is left out). */
@@ -347,6 +227,39 @@ export class SignalSources {
     return out;
   }
 
+  /** The sources the enabled plugins declare that the hub refuses, with why: they bring no signal until the plugin is fixed. */
+  refused(): Array<{ type: string; source: string; why: string }> {
+    const out: Array<{ type: string; source: string; why: string }> = [];
+    for (const p of this.d.plugins.declared()) {
+      this.checked(p);
+      for (const r of refusedSignalDecls(p.pluginId, p.decls)) out.push({ type: `${p.pluginId}.${r.type}`, source: p.pluginId, why: r.why });
+    }
+    return out;
+  }
+
+  /**
+   * What a trigger's `on` entry of `type` with `config` would get: "ok"; "config" when its source refuses the config
+   * (`problem`); "unknown" when no source has the type (a plugin off or not installed); "offline" when its plugin does
+   * not run now; "refused" when its plugin's declaration is refused (`why`).
+   */
+  check(type: string, config: Record<string, unknown> = {}): SourceCheck {
+    if (BUILTIN_TYPES.has(type) || HUB_SOURCES.some((h) => h.type === type)) return { status: "ok" };
+    for (const p of this.d.plugins.declared()) {
+      if (!type.startsWith(`${p.pluginId}.`)) continue;
+      const local = type.slice(p.pluginId.length + 1);
+      const decl = p.decls.find((x) => x.type === local);
+      if (!decl) continue;
+      const c = this.checked(p).get(local);
+      if (!c || "refused" in c) return { status: "refused", source: p.pluginId, why: c && "refused" in c ? c.refused : "not checked" };
+      if (decl.mode === "subscribe") {
+        const { problem } = checkedConfig(p.pluginId, p.decls, local, config);
+        if (problem) return { status: "config", source: p.pluginId, problem };
+      }
+      return p.running ? { status: "ok" } : { status: "offline", source: p.pluginId };
+    }
+    return { status: "unknown" };
+  }
+
   /** The live plugin subscriptions, as they are now: their type and config, whether the plugin holds them, failed tries. */
   subscriptions(): Array<{ type: string; config: Record<string, unknown>; active: boolean; failures: number }> {
     return [...this.live.values()].map((l) => ({ type: l.type, config: structuredClone(l.config), active: !!l.id, failures: l.failures }));
@@ -372,8 +285,8 @@ export class SignalSources {
         if (wanted.has(key)) continue;
         const { problem } = checkedConfig(src.pluginId, this.declsOf(src.pluginId), src.decl.type, config);
         if (problem) {
-          if (!this.refused.has(key)) this.pluginLog(src.pluginId, `${sub.type}: not subscribed for trigger ${t.id}: ${problem}`);
-          this.refused.add(key);
+          if (!this.refusedConfigs.has(key)) this.pluginLog(src.pluginId, `${sub.type}: not subscribed for trigger ${t.id}: ${problem}`);
+          this.refusedConfigs.add(key);
           continue;
         }
         wanted.set(key, { key, type: sub.type, pluginId: src.pluginId, local: src.decl.type, config, canon, failures: 0 });
@@ -414,29 +327,44 @@ export class SignalSources {
   /**
    * A signal a plugin sent: refused with an English error (the plugin logs it) when it may not send it, else routed to
    * the enabled triggers listening. A broadcast goes to every trigger with an entry of its type; a provider's goes only
-   * to those whose entry has the config of the subscription it came by. Nothing listens while the engine is stopped.
+   * to those whose entry has the config of the subscription it came by. Nothing listens while the engine is stopped,
+   * and a signal nobody listens to is taken without checking its data (that costs the hub's time for nothing); one
+   * that is checked counts against the plugin's minute of checking (CHECK_MS_PER_MINUTE).
    */
   fromPlugin(pluginId: string, m: PluginEmit): EmitResult {
     if (!this.take(pluginId)) return refuse(`too many signals: at most ${EMITS_PER_MINUTE} a minute from one plugin; this one was dropped`);
-    const type = typeof m?.type === "string" ? m.type : "";
-    const full = `${pluginId}.${type}`;
     const plugin = this.d.plugins.declared().find((p) => p.pluginId === pluginId);
-    const decl = plugin?.decls.find((d) => d.type === type);
-    if (!plugin || !decl) return refuse(`signal type "${type}" is not declared in contributes.signals`);
-    const checked = this.checked(plugin).get(type);
-    if (!checked || "refused" in checked) return refuse(`signal type ${full} is refused: ${checked && "refused" in checked ? checked.refused : "not checked"}`);
+    if (!plugin) return refuse(`signal type "${typeof m?.type === "string" ? m.type : ""}" is not declared in contributes.signals`);
     let live: Live | undefined;
-    if (decl.mode === "subscribe") {
-      if (m.subscription === undefined) return refuse(`${full} is a subscribe-mode source: its signals come only by a subscription the hub made (the emit its provider is given)`);
-      live = this.byId.get(String(m.subscription));
-      if (!live || live.pluginId !== pluginId || live.local !== type) return refuse(`subscription ${String(m.subscription)} is not active for ${full}`);
-    }
-    if (m.key !== undefined && typeof m.key !== "string") return refuse(`${full}: key must be a string`);
-    if (m.subject !== undefined && typeof m.subject !== "string") return refuse(`${full}: subject must be a string`);
-    const data = m.data === undefined ? null : m.data;
-    const problem = dataProblem(data) ?? (checked.data && !checked.data(data) ? mismatch(checked.data, "its data") : undefined);
-    if (problem) return refuse(`${full} was refused: ${problem}`);
+    const shape = checkSignalEmit(pluginId, plugin.decls, m, {
+      subscribed: (id, type) => {
+        live = this.byId.get(id);
+        return !!live && live.pluginId === pluginId && live.local === type;
+      },
+      onRefused: (type, why) => this.refusedLog(pluginId, type, why),
+    });
+    if (!shape.ok) return refuse(shape.error);
+    const { decl, checked } = shape;
+    const full = `${pluginId}.${decl.type}`;
     if (!this.started) return OK;
+    const listening = this.d.triggers().filter((t) => t.enabled && (t.on ?? []).some((s) => s.type === full && (!live || canonicalJson(s.config ?? {}) === live.canon)));
+    if (!listening.length) return OK;
+    const data = m.data === undefined ? null : m.data;
+    const spent = this.checkTime(pluginId);
+    if (spent.ms >= CHECK_MS_PER_MINUTE) {
+      const why = `${full} was refused: this plugin's signals took over ${CHECK_MS_PER_MINUTE} ms of the hub's time to check in the last minute (keep their data small and the schema plain); signals are taken again when the minute is over`;
+      if (!spent.said) this.pluginLog(pluginId, why);
+      spent.said = true;
+      return refuse(why);
+    }
+    const from = this.clock();
+    let problem: string | undefined;
+    try {
+      problem = signalDataProblem(pluginId, decl.type, checked, data);
+    } finally {
+      spent.ms += Math.max(0, this.clock() - from);
+    }
+    if (problem) return refuse(problem);
     const key = this.line(m.key, KEY_MAX);
     const subject = this.line(m.subject, SUBJECT_MAX);
     const signal: Signal = {
@@ -449,9 +377,8 @@ export class SignalSources {
       ...(subject ? { subject } : {}),
       external: decl.external || !plugin.builtin,
     };
-    const via = live ? { config: live.canon } : {};
-    for (const t of this.d.triggers()) {
-      if (!t.enabled || !(t.on ?? []).some((s) => s.type === full && (!live || canonicalJson(s.config ?? {}) === live.canon))) continue;
+    const via = live ? { config: (live as Live).canon } : {};
+    for (const t of listening) {
       try {
         void this.d.sink.deliver(t.id, [{ ...signal }], "signal", { via }).catch((e) => this.log(`${full} did not reach trigger ${t.id}: ${message(e)}`));
       } catch (e) {
@@ -503,8 +430,20 @@ export class SignalSources {
   }
 
   /** A plugin's declarations, checked (and a refused one said in its log) the first time they are read. */
-  private checked(p: PluginSignals): Map<string, Checked> {
-    return checkDecls(p.pluginId, p.decls, (type, why) => this.pluginLog(p.pluginId, `signal type ${p.pluginId}.${type} is refused and left out: ${why}`));
+  private checked(p: PluginSignals): Map<string, CheckedDecl> {
+    return checkSignalDecls(p.pluginId, p.decls, (type, why) => this.refusedLog(p.pluginId, type, why));
+  }
+
+  private refusedLog(pluginId: string, type: string, why: string): void {
+    this.pluginLog(pluginId, `signal type ${pluginId}.${type} is refused and left out: ${why}`);
+  }
+
+  /** The plugin's checking time in the current minute (a new minute starts afresh). */
+  private checkTime(pluginId: string): { from: number; ms: number; said: boolean } {
+    const now = this.now();
+    let c = this.checking.get(pluginId);
+    if (!c || now - c.from >= RATE_MS) this.checking.set(pluginId, (c = { from: now, ms: 0, said: false }));
+    return c;
   }
 
   private declsOf(pluginId: string): SignalDecl[] {

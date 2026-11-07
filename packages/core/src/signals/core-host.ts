@@ -60,7 +60,7 @@ export interface CoreTriggersDeps {
    * The signal sources beyond core's own (sources.ts): trigger_sources lists them, the engine syncs their plugin
    * subscriptions. They start with the engine and stop with it. Unset: only core's four.
    */
-  sources?: Pick<SignalSources, "list" | "sync" | "start" | "stop">;
+  sources?: Pick<SignalSources, "list" | "sync" | "start" | "stop"> & Partial<Pick<SignalSources, "check" | "refused">>;
 }
 
 /** What one start registered: released together, so a stop during a start takes back exactly that start's. */
@@ -323,7 +323,16 @@ export class CoreTriggers {
       ...(fetch ? { fetch: (url, init) => open(() => fetch(url, init)) } : {}),
       pipeline,
       // Listed in the hub language (trigger_sources is for the model); a sync once the session closed does nothing.
-      ...(d.sources ? { sources: { list: () => d.sources!.list(hubLocale()), sync: () => (s.closed ? Promise.resolve() : d.sources!.sync()) } } : {}),
+      ...(d.sources
+        ? {
+            sources: {
+              list: () => d.sources!.list(hubLocale()),
+              sync: () => (s.closed ? Promise.resolve() : d.sources!.sync()),
+              ...(d.sources.check ? { check: (type: string, config: Record<string, unknown>) => d.sources!.check!(type, config) } : {}),
+              ...(d.sources.refused ? { refused: () => d.sources!.refused!() } : {}),
+            },
+          }
+        : {}),
     };
   }
 }
