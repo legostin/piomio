@@ -209,6 +209,8 @@ export default {
   "cluster.removeApproval": "Навсегда убрать реплику {replica} из хаба",
   "cluster.unlockApproval": "Передать ключ хранилища реплике хаба {replica}",
   "cluster.standby": "Хаб переезжает на {leader}: повторите через пару секунд",
+  "cluster.none": "Хаб работает на одной машине: выбирать не из чего, реплик нет",
+  "cluster.noReplica": "Реплики {replica} нет",
   "machine.badPairingCode": "Приглашение устарело или уже использовано. Попросите новую ссылку в чате",
   "machine.badPublicKey": "Неверный публичный ключ",
   "machine.notFound": "Такого компьютера нет",

@@ -147,12 +147,13 @@ A hub can live on more than one of your computers, so it keeps working while one
 
 How it behaves:
 
-- **Who leads.** The computer the hub started on leads while it's online. If the leader goes quiet for about eight seconds, the next replica takes over, and gives the lead back once the first is back and caught up (after five minutes awake, if it had been asleep). **Settings** → **Machines** shows it in one line, **The hub lives on**: each replica with **leads**, **standby**, **away** or **vault locked**.
+- **Who leads.** The **primary** replica leads while it's online: at first the computer the hub started on. If the leader goes quiet for about eight seconds, the next replica takes over, and gives the lead back once the primary is back and caught up (after five minutes awake, if it had been asleep). **Settings** → **Machines** shows it in one line, **The hub lives on**: each replica with **leads**, **standby**, **away** or **vault locked**, and a star on the primary.
+- **The primary.** Say "keep the hub on the vps" (or tap the outlined star next to a replica in that line) and that replica becomes the primary: the lead moves there within a minute or two, once the running replies are done, and stays while it's up. A laptop that sleeps, wakes and drops off no longer takes the lead from a server that stays up; it leads only while the primary is away. In the addresses the hub gives phones, the leader's comes first, then the primary's.
 - **What the leader does.** Tasks, channels, digests and plugins run on the leader only. A standby's web UI shows what it has, a few seconds behind; changes there wait for the leader ("The hub is moving to …: try again in a moment"). Phones and machines that reach a standby are passed on to the leader.
 - **What is shared.** Chats, tasks, approvals and rules, settings, agents, skills, channels, pages, working folders, phones and machines, your password and passkeys, memory facts and the vault, still encrypted. Each replica keeps its own audit log, and brains sign in on each computer separately.
 - **The vault.** When a replica's vault is locked (after a restart, say), the leader asks you, with an approval card, to hand it the vault's key, which the replica keeps in memory only. Allowing it always for that replica skips the card next time.
 
-"How is the cluster?" shows the replicas; "remove the replica vps" takes one out for good (with your approval). `PIOMIO_REPLICA_NAME` names a replica, `PIOMIO_NODE_URLS` says where machines reach it ([Settings and environment variables](settings.md)).
+"How is the cluster?" shows the replicas and which is the primary; "remove the replica vps" takes one out for good (with your approval). `PIOMIO_REPLICA_NAME` names a replica, `PIOMIO_NODE_URLS` says where machines reach it ([Settings and environment variables](settings.md)).
 
 ## Updates
 

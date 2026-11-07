@@ -25,7 +25,7 @@ import {
 import type WebSocket from "ws";
 import type { RpcPeer } from "@piomio/shared";
 import { json } from "./db.ts";
-import { t } from "./i18n.ts";
+import { LocalizedError, t } from "./i18n.ts";
 import type { Hub } from "./app.ts";
 import { ruleMatches } from "./policy/engine.ts";
 import { dialLink, linkPeer, serveLink, type LinkAnswer, type LinkCall } from "./replica-link.ts";
@@ -137,6 +137,74 @@ const rowToReplica = (r: any): Replica & { publicKey: string; nodeUrls: string[]
   createdAt: r.created_at,
   publicKey: r.public_key,
 });
+
+/**
+ * Who leads first: the lower priority, then the lower id. The first replica in this order is the primary, the one the
+ * person chose (replica_primary) or else the one the cluster started on.
+ */
+export function ahead(a: { id: string; priority: number }, b: { id: string; priority: number }): boolean {
+  return a.priority < b.priority || (a.priority === b.priority && a.id < b.id);
+}
+
+/** A peer as the lead choice sees it: online, with its last hello. */
+export interface LeadPeer {
+  id: string;
+  priority: number;
+  role: Role;
+  /** It led into a sleep and has yet to hear who led meanwhile. */
+  stale?: boolean;
+  wantLead: boolean;
+  /** Our last pulls from it found nothing more (both databases). */
+  caughtUp: boolean;
+}
+
+export interface LeadView {
+  me: { id: string; priority: number };
+  role: Role;
+  /** This replica's lead went stale: it led into a sleep (see Cluster.noticeSleep). */
+  stale: boolean;
+  handingOver: boolean;
+  /** Since this replica started. */
+  upMs: number;
+  /** Since it last came back from a sleep (since it started, if it has not slept). */
+  awakeMs: number;
+  awakeBeforeLead: number;
+  /** The peers that answer now. */
+  peers: LeadPeer[];
+}
+
+export type LeadStep =
+  | { do: "standby"; why: string; stale?: boolean }
+  | { do: "handOver" }
+  | { do: "lead"; why: string }
+  /** No switch; `wantLead` (when set) is what this replica now tells the leader. */
+  | { do: "stay"; wantLead?: boolean };
+
+/**
+ * The lead choice at each heartbeat. The replica first in the order (the primary) leads whenever it is up and caught
+ * up; one behind it leads only while no replica ahead of it answers, and gives the lead back when one asks for it. So a
+ * primary that stays up keeps the lead however often the others sleep, wake or drop off, and one that slept asks for
+ * the lead back only after it has stayed awake a while (awakeBeforeLead).
+ */
+export function leadStep(v: LeadView): LeadStep {
+  const better = v.peers.filter((p) => ahead(p, v.me));
+  const leader = v.peers.find((p) => p.role === "leader");
+  if (v.role === "leader") {
+    // Back from a sleep another replica led through: that one keeps the lead. This one held on to what it had before
+    // it slept (plugins' memory, timers, its copies of rows): it stands down, catches up and asks for the lead later.
+    if (leader && v.stale) return { do: "standby", why: "another replica led while this one slept", stale: true };
+    // After a split both led: the better one keeps it. A better one that is back and caught up gets it.
+    if (better.some((p) => p.role === "leader" && !p.stale)) return { do: "standby", why: "a replica ahead of this one leads" };
+    if (!v.handingOver && better.some((p) => p.wantLead)) return { do: "handOver" };
+    return { do: "stay" };
+  }
+  if (better.length) return { do: "stay", wantLead: false };
+  if (!leader) return v.upMs >= STARTUP_GRACE_MS ? { do: "lead", why: v.peers.length ? "no replica leads" : "no other replica answers" } : { do: "stay" };
+  // A replica behind this one leads (it took over while this one was away): catch up, then ask for the lead. Back from
+  // a sleep, it asks only once it has stayed awake a while: a computer that naps all night leaves the lead with the
+  // replica that stays up, instead of both switching at every wake.
+  return { do: "stay", wantLead: leader.caughtUp && v.awakeMs >= v.awakeBeforeLead };
+}
 
 /** piomio://replica?c=<code>&u=<url>&u=…&fp=<fingerprint> */
 export function replicaLink(code: string, urls: string[], fingerprint: string): string {
@@ -527,12 +595,6 @@ export class Cluster {
 
   // ---------- who leads ----------
 
-  private better(p: Peer): boolean {
-    const me = this.self();
-    if (!me) return false;
-    return p.priority < me.priority || (p.priority === me.priority && p.id < this.identity!.id);
-  }
-
   /**
    * A sleeping computer runs nothing while its wall clock goes on (a Mac's DarkWake puts it to sleep every few minutes
    * at night): past GONE_MS another replica takes the lead. Checked at every heartbeat and hello, so the first peer to
@@ -553,32 +615,47 @@ export class Cluster {
   }
 
   private async decide(): Promise<void> {
-    const online = [...this.peers.values()].filter((p) => p.online && p.hello);
-    const better = online.filter((p) => this.better(p));
-    const leader = online.find((p) => p.hello!.role === "leader");
-    if (this.role === "leader") {
-      // Back from a sleep another replica led through: that one keeps the lead. This one held on to what it had before
-      // it slept (plugins' memory, timers, its copies of rows): it stands down, catches up and asks for the lead later.
-      if (leader && this.leadStale()) await this.switchTo("standby", "another replica led while this one slept", { stale: true });
-      // After a split both led: the better one keeps it. A better one that is back and caught up gets it.
-      else if (better.some((p) => p.hello!.role === "leader" && !p.hello!.stale)) await this.switchTo("standby", "a replica ahead of this one leads");
-      else if (!this.handingOver && better.some((p) => p.hello!.wantLead)) void this.handOver();
-      return;
-    }
-    if (better.length) {
-      this.wantLead = false;
-      return;
-    }
-    if (!leader) {
-      if (Date.now() - this.startedAt >= STARTUP_GRACE_MS) await this.switchTo("leader", online.length ? "no replica leads" : "no other replica answers");
-      return;
-    }
-    // A replica behind this one leads (it took over while this one was away): catch up, then ask for the lead.
-    // Pulls are long polls (20 s): one that came back with nothing more within that time means caught up. Back from a
-    // sleep, it asks only once it has stayed awake a while: a computer that naps all night leaves the lead with the
-    // replica that stays up, instead of both switching at every wake.
-    const fresh = (db: DbName) => Date.now() - (this.peers.get(leader.id)?.current[db] ?? 0) < 25_000;
-    this.wantLead = fresh("main") && fresh("vault") && Date.now() - this.wokeAt >= this.awakeBeforeLead;
+    const me = this.self();
+    if (!me) return;
+    const now = Date.now();
+    // Pulls are long polls (20 s): one that came back with nothing more within that time means caught up.
+    const fresh = (p: Peer, db: DbName) => now - p.current[db] < 25_000;
+    const step = leadStep({
+      me: { id: me.id, priority: me.priority },
+      role: this.role,
+      stale: this.leadStale(),
+      handingOver: this.handingOver,
+      upMs: now - this.startedAt,
+      awakeMs: now - this.wokeAt,
+      awakeBeforeLead: this.awakeBeforeLead,
+      peers: [...this.peers.values()]
+        .filter((p) => p.online && p.hello)
+        .map((p) => ({ id: p.id, priority: p.priority, role: p.hello!.role, stale: !!p.hello!.stale, wantLead: p.hello!.wantLead, caughtUp: fresh(p, "main") && fresh(p, "vault") })),
+    });
+    if (step.do === "standby") await this.switchTo("standby", step.why, step.stale ? { stale: true } : {});
+    else if (step.do === "lead") await this.switchTo("leader", step.why);
+    else if (step.do === "handOver") void this.handOver();
+    else if (step.wantLead !== undefined) this.wantLead = step.wantLead;
+  }
+
+  /**
+   * Makes a replica the primary one: it goes to the front of the order (its priority below every other's), so it leads
+   * whenever it is up. If another replica leads now, it hands over once the primary has caught up and its turns are done.
+   */
+  setPrimary(idOrName: string): { id: string; name: string; changed: boolean } {
+    if (!this.identity) throw new LocalizedError("cluster.none", undefined, 409);
+    const rows = this.hub.db.prepare("select id, name, priority from replicas where revoked = 0").all() as { id: string; name: string; priority: number }[];
+    const want = idOrName.trim();
+    const r = rows.find((x) => x.id === want) ?? rows.find((x) => x.name.toLowerCase() === want.toLowerCase());
+    if (!r) throw new LocalizedError("cluster.noReplica", { replica: want }, 404);
+    const first = rows.reduce((a, b) => (ahead(b, a) ? b : a));
+    if (first.id === r.id) return { id: r.id, name: r.name, changed: false };
+    // One row changes: the others keep their order behind it.
+    this.hub.db.prepare("update replicas set priority = ? where id = ?").run(Math.min(...rows.map((x) => x.priority)) - 1, r.id);
+    this.hub.audit.append("user", "replica.primary", r.id, { name: r.name, before: first.id });
+    this.loadPeers();
+    this.emitState(true);
+    return { id: r.id, name: r.name, changed: true };
   }
 
   /** The leader steps down for a better replica once its turns are done (at most DRAIN_MS). */
@@ -816,15 +893,24 @@ export class Cluster {
         ...(p.lastSeen ? { lastSeenAt: new Date(p.lastSeen).toISOString() } : {}),
       });
     }
-    return out.sort((a, b) => a.priority - b.priority);
+    out.sort((a, b) => (ahead(a, b) ? -1 : 1));
+    if (out[0]) out[0].primary = true;
+    return out;
   }
 
-  /** Every replica's device addresses, the leader's first (phones keep the list and take the first that answers). */
+  /**
+   * Every replica's device addresses: the leader's first, then the primary's, then the others in order (phones keep the
+   * list and take the first that answers).
+   */
   phoneUrls(own: string[]): string[] {
     if (!this.identity) return own;
-    const lead = this.leads() ? own : [];
-    const peers = [...this.peers.values()].sort((a, b) => Number(b.hello?.role === "leader") - Number(a.hello?.role === "leader") || a.priority - b.priority);
-    return [...new Set([...lead, ...peers.flatMap((p) => p.urls), ...own])];
+    const me = this.self();
+    const all = [
+      { id: this.identity.id, priority: me?.priority ?? Number.MAX_SAFE_INTEGER, leads: this.leads(), urls: own },
+      ...[...this.peers.values()].map((p) => ({ id: p.id, priority: p.priority, leads: p.online && p.hello?.role === "leader", urls: p.urls })),
+    ];
+    all.sort((a, b) => Number(b.leads) - Number(a.leads) || (ahead(a, b) ? -1 : 1));
+    return [...new Set(all.flatMap((x) => x.urls))];
   }
 
   /** Every replica's address for machines (node.setup), this one's first. */
