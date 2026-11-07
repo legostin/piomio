@@ -36,7 +36,7 @@ export function TaskLine({ taskId, text, reply, from }: { taskId: string; text?:
   if (text !== undefined) return <MessageLine task={task} text={text} reply={reply} from={from ?? task.from} agentList={agentList} />;
   const agent = agentList?.find((a) => a.id === task.agentId);
   const name = agent?.name ?? task.agentId;
-  const machineId = task.brainRef ? brainMachine(task.brainRef) : "local";
+  const machineId = task.machineId ?? (task.brainRef ? brainMachine(task.brainRef) : "local");
   const where = machineId === "local" ? undefined : (machines?.find((m) => m.id === machineId)?.name ?? machineId);
   const st = taskStatus(task.status);
   const working = task.status === "running" || task.status === "queued";

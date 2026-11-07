@@ -92,7 +92,7 @@ export function TaskDetailPage({ id }: { id: string }) {
         <AgentAvatar avatar={to?.avatar} id={current.agentId} name={agentName} size={26} running={running} />
         <span className="min-w-0 flex-1 truncate text-xs text-muted">
           <span className="font-semibold text-fg">{agentName}</span>
-          {current.brainRef ? ` · ${current.brainRef}` : ""} · {t("task.createdAt", { time: formatDateTime(current.createdAt) })}
+          {" · "}{t("task.createdAt", { time: formatDateTime(current.createdAt) })}
           {current.resumeAt && current.status === "paused" ? ` · ${t("tasks.resumes", { time: relativeTime(current.resumeAt) })}` : ""}
         </span>
         {current.background && <Badge>{t("tasks.background")}</Badge>}

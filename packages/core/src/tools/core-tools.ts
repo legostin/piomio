@@ -25,7 +25,7 @@ export interface CoreToolDeps {
   store: Store;
   notifier: Notifier;
   agents: AgentRegistry;
-  createTask: (t: { agentId: string; goal: string; title: string; parentConversationId?: string; parentTaskId?: string; background: boolean; createdBy: "agent"; brainRef?: string; tainted?: boolean }) => { id: string; title: string };
+  createTask: (t: { agentId: string; goal: string; title: string; parentConversationId?: string; parentTaskId?: string; background: boolean; createdBy: "agent"; machineId?: string; tainted?: boolean }) => { id: string; title: string };
   /** The live line between tasks and whoever started them (SessionRunner). */
   tasks: TaskLine;
   /** The team's rules for where work goes (work-rules.ts). */
@@ -52,7 +52,7 @@ export interface CoreToolDeps {
 export type TaskSender = { agentId: string; conversationId: string; taskId?: string; tainted?: boolean };
 
 export interface TaskLine {
-  place(agentId: string, machine: string): { brainRef?: string; machineName: string; note?: string; offline?: boolean } | { error: string };
+  place(agentId: string, machine: string): { machineId: string; machineName: string; note?: string; offline?: boolean } | { error: string };
   ask(taskId: string, question: string): Promise<{ ok: boolean; text: string }>;
   /** goal_report: a long goal (/goal) is reached, or cannot go on without the person. */
   goal(taskId: string, status: "achieved" | "blocked", summary: string): Promise<{ ok: boolean; text: string }>;
@@ -355,7 +355,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
       const thinking = { ...(depth ? { preset: depth } : {}), ...(brain ? { brain } : {}), ...(skill ? { skill } : {}) };
       if (depthOf(ctx.taskId) >= MAX_TASK_DEPTH) return text("Tasks are already nested too deep here: do this part yourself.", true);
       let goal = String(i.goal);
-      let place: { brainRef?: string; machineName: string; note?: string; offline?: boolean } | undefined;
+      let place: { machineId: string; machineName: string; note?: string; offline?: boolean } | undefined;
       if (i.machine) {
         const p = d.tasks.place(agentId, String(i.machine));
         if ("error" in p) return text(p.error, true);
@@ -370,17 +370,17 @@ export function registerCoreTools(d: CoreToolDeps): void {
         parentTaskId: ctx.taskId,
         background: ctx.background,
         createdBy: "agent",
-        ...(place?.brainRef ? { brainRef: place.brainRef } : {}),
+        ...(place ? { machineId: place.machineId } : {}),
         ...(depth || brain || skill ? { thinking } : {}),
         // Instructions from a session that read outside content may carry it: the task starts marked too.
         ...(ctx.tainted ? { tainted: true } : {}),
       });
       d.attachPart(ctx.conversationId, { type: "task", taskId: t.id });
-      const where = place ? ` on ${place.machineName}${place.brainRef ? "" : " (through the machine tools)"}` : "";
+      const where = place ? ` on ${place.machineName}` : "";
       const how = [brain, depth, i.about].filter(Boolean).join(", ");
       // Placed on a computer that is off: it waits for it (tell the user so).
       const wait = place?.offline ? ` ${place.machineName} is offline now: the task starts when it comes online.` : "";
-      return text(`Task created: ${t.id} “${t.title}”${where}${how ? ` (${how})` : ""}.${wait} It works on the side; its questions and its result will arrive here as messages.`);
+      return text(`Task created: ${t.id} “${t.title}”${where}${how ? ` (${how})` : ""}.${wait} It is queued; creation does not mean its brain has started. Its questions and result will arrive here as messages.`);
     },
   );
 
