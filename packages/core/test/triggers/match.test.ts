@@ -68,10 +68,10 @@ describe("signal filter limits", () => {
     expect(matches({ path: "a", eq: { x: [2] } }, { a: { x: [1] } })).toBe(false);
   });
   it("refuses regular expressions that can take forever", () => {
-    for (const p of ["(a+)+$", "(a|aa)*", "(\\w+\\s?)*$", "((a+)b)*", "(a)\\1"]) {
+    for (const p of ["(a+)+$", "(a|aa)*", "(\\w+\\s?)*$", "((a+)b)*", "(a)\\1", "((a+)?)+", "(a+){2,}", "(a|b){2,5}"]) {
       expect(matchError({ path: "a", matches: p }), p).toMatch(/take forever/);
     }
-    for (const p of ["^Invoice #\\d+", "[a+]+", "\\(a+\\)+", "(?:ab)c+", "(ab)+"]) {
+    for (const p of ["^Invoice #\\d+", "[a+]+", "\\(a+\\)+", "(?:ab)c+", "(ab)+", "(a|b)?", "(https?://)?", "(\\d+)?", "(a+){1}", "(a|b){0,1}", "(a+?)"]) {
       expect(matchError({ path: "a", matches: p }), p).toBeUndefined();
     }
   });

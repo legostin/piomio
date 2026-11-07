@@ -31,9 +31,19 @@ export function pathGet(value: unknown, path: string): unknown {
 }
 
 /**
- * True when a pattern can backtrack catastrophically: a quantified group whose body holds a
+ * True when a pattern can backtrack catastrophically: a repeated group whose body holds a repeating
  * quantifier or an alternation, or a backreference. A conservative scan, not a full parser.
  */
+/** Whether a quantifier starts at the text and repeats (`*`, `+`, `{n,}`, `{n,m}` with m > 1). `?`, `{1}` and `{0,1}` do not. */
+function repeats(text: string): boolean {
+  const c = text[0];
+  if (c === "*" || c === "+") return true;
+  const m = /^\{(\d+)(,(\d*))?\}/.exec(text);
+  if (!m) return false;
+  if (m[2] === undefined) return Number(m[1]) > 1;
+  return m[3] === "" || Number(m[3]) > 1;
+}
+
 function riskyPattern(pattern: string): boolean {
   type Frame = { q: boolean; alt: boolean };
   const stack: Frame[] = [{ q: false, alt: false }];
@@ -53,14 +63,14 @@ function riskyPattern(pattern: string): boolean {
       if (stack.length === 1) continue;
       const g = stack.pop()!;
       const rest = pattern.slice(i + 1);
-      const quantified = /^(?:[*+?]|\{\d+,\d*\})/.test(rest);
+      const quantified = repeats(rest);
       if (quantified && (g.q || g.alt)) return true;
       const parent = top();
       parent.q = parent.q || g.q || quantified;
       parent.alt = parent.alt || g.alt;
     } else if (c === "|") {
       top().alt = true;
-    } else if (c === "*" || c === "+" || c === "?" || (c === "{" && /^\{\d+(?:,\d*)?\}/.test(pattern.slice(i)))) {
+    } else if (repeats(pattern.slice(i))) {
       top().q = true;
     }
   }
