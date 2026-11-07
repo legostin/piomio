@@ -110,6 +110,8 @@ export interface HostDeps {
     fromPlugin(pluginId: string, m: { type: string; data: unknown; key?: string; subject?: string; subscription?: string }): { ok: true } | { ok: false; error: string };
     pluginUp(pluginId: string): Promise<void>;
     pluginDown(pluginId: string): void;
+    /** A provider failed a subscription it had taken (the runner's signals.failed). */
+    failed(pluginId: string, subscription: string, error: string): void;
   };
 }
 
@@ -337,6 +339,12 @@ export class PluginHost {
     const peer = createRpcPeer(ndjsonTransport(child.stdout!, child.stdin!));
     const running: Running = { child, peer, stopping: false, unsubs: [] };
     this.running.set(id, running);
+    // The stream broke on what the plugin sent (a message past the line cap): it is treated as a crashed plugin.
+    peer.onClose((err) => {
+      if (!err || running.stopping) return;
+      this.log(rec, "error", `its messages could not be read: ${err.message}`);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    });
 
     child.stderr!.setEncoding("utf8");
     child.stderr!.on("data", (chunk: string) => {
@@ -575,6 +583,12 @@ export class PluginHost {
       if (!r.ok) throw new Error(r.error);
       return {};
     });
+    // A provider failed a subscription after the plugin took it (provided late, and its subscribe threw).
+    peer.onNotification("signals.failed", (p: { id?: unknown; error?: unknown }) => {
+      const sub = String(p?.id ?? "").slice(0, 64);
+      const error = String(p?.error ?? "failed").slice(0, 2000);
+      if (sub) this.d.signals?.failed(id, sub, error);
+    });
 
     peer.handle("events.subscribe", (p: { names: BusEventName[] }) => {
       for (const name of p.names) {
@@ -642,7 +656,7 @@ export class PluginHost {
   // ---------- Signal sources ----------
 
   /** The signals each enabled plugin the hub loads declares (contributes.signals), and whether it runs. */
-  signalSources(): Array<{ pluginId: string; decls: SignalDecl[]; running: boolean; title(key: string, locale?: Locale): string }> {
+  signalSources(): Array<{ pluginId: string; decls: SignalDecl[]; running: boolean; builtin: boolean; title(key: string, locale?: Locale): string }> {
     const filter = this.d.config.plugins;
     return this.list()
       .filter((r) => r.enabled && r.layout?.manifest.contributes.signals?.length && (filter === "all" || (Array.isArray(filter) && filter.includes(r.id))))
@@ -650,14 +664,21 @@ export class PluginHost {
         pluginId: r.id,
         decls: r.layout!.manifest.contributes.signals,
         running: r.status === "running" && this.running.has(r.id),
+        builtin: r.source === "builtin",
         title: (key: string, locale?: Locale) => localizePluginValue(r.layout, key, locale ?? hubLocale()),
       }));
+  }
+
+  /** A line in a plugin's own log (the registry's failed subscriptions and refused declarations). */
+  pluginLog(id: string, msg: string, level: "warn" | "error" = "warn"): void {
+    const rec = this.records.get(id);
+    if (rec) this.log(rec, level, msg);
   }
 
   /** Start one of a running plugin's providers for a subscription (its id is the hub's). */
   async signalSubscribe(id: string, subscription: string, type: string, config: Record<string, unknown>): Promise<void> {
     const r = this.running.get(id);
-    if (!r || r.peer.closed) throw new Error(`plugin ${id} is not running`);
+    if (!r || r.peer.closed || r.stopping) throw new Error(`plugin ${id} is not running`);
     await r.peer.request("signals.subscribe", { id: subscription, type, config }, { timeoutMs: SIGNAL_SUBSCRIBE_TIMEOUT_MS });
   }
 

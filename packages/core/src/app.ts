@@ -479,6 +479,7 @@ export class Hub {
         fromPlugin: (pluginId, m) => this.sources.fromPlugin(pluginId, m),
         pluginUp: (pluginId) => this.sources.pluginUp(pluginId),
         pluginDown: (pluginId) => this.sources.pluginDown(pluginId),
+        failed: (pluginId, subscription, error) => this.sources.failed(pluginId, subscription, error),
       },
     });
     // Plugins' signals go to the triggers listening, through the engine's pipeline (CoreTriggers.deliver).
@@ -487,6 +488,7 @@ export class Hub {
         declared: () => this.plugins.signalSources(),
         subscribe: (pluginId, id, type, config) => this.plugins.signalSubscribe(pluginId, id, type, config),
         stop: (pluginId, id) => this.plugins.signalStop(pluginId, id),
+        log: (pluginId, msg) => this.plugins.pluginLog(pluginId, msg),
       },
       triggers: () => this.triggers.engine?.list() ?? [],
       sink: { deliver: (triggerId, signals, reason, o) => this.triggers.deliver(triggerId, signals, reason, o) },

@@ -32,6 +32,20 @@ export default {
       },
     });
     ctx.tools.register({
+      name: "provide_broken",
+      description: "Provide the broken source now.",
+      effect: "read",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        ctx.signals.provide("broken", {
+          subscribe() {
+            throw new Error("the service refused");
+          },
+        });
+        return "provided";
+      },
+    });
+    ctx.tools.register({
       name: "provide_late",
       description: "Provide the late source now.",
       effect: "read",

@@ -48,6 +48,8 @@ export interface PluginHarness {
    * type its manifest does not declare is refused, as the hub refuses it, and not recorded.
    */
   signals: HarnessSignal[];
+  /** Subscriptions its provider failed after the plugin took them (a provider given later that threw), as the hub hears them. */
+  signalFailures: Array<{ id: string; error: string }>;
   /** Subscribe to one of its providers as the hub does for a trigger; resolves with the subscription's id once the plugin answered. */
   subscribeSignal(type: string, config?: Record<string, unknown>, id?: string): Promise<string>;
   /** Stop a subscription (no trigger needs it any more). */
@@ -171,6 +173,8 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     });
     return {};
   });
+  const signalFailures: Array<{ id: string; error: string }> = [];
+  peer.onNotification("signals.failed", (p: { id: string; error: string }) => signalFailures.push({ id: p.id, error: p.error }));
   let subscriptionCount = 0;
   peer.handle("events.subscribe", (p: { names: string[] }) => {
     p.names.forEach((n) => subscriptions.add(n));
@@ -246,6 +250,7 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     coreCalls,
     vaultGets,
     signals,
+    signalFailures,
     async subscribeSignal(type, config = {}, id = `sub_test_${++subscriptionCount}`) {
       await peer.request("signals.subscribe", { id, type, config }, { timeoutMs: 30_000 });
       return id;

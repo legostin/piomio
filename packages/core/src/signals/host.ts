@@ -52,6 +52,8 @@ export interface TriggerSourceInfo {
   source?: string;
   /** subscribe: it works only while a trigger subscribes, for each config (sources.ts); unset: broadcast. */
   mode?: "broadcast" | "subscribe";
+  /** JSON Schema of its signals' data. */
+  data?: unknown;
   config?: unknown;
   sample?: unknown;
   external?: boolean;

@@ -53,6 +53,17 @@ describe("plugin signals", () => {
     await until(() => h.signals.find((s) => s.subscription === id), "the late provider's signal");
   });
 
+  it("tells the hub when a provider given later fails a subscription the plugin had taken", async () => {
+    const id = await h.subscribeSignal("broken");
+    expect(h.signalFailures).toEqual([]);
+    await h.invokeText("provide_broken");
+    await until(() => h.signalFailures.find((f) => f.id === id), "the failure report");
+    expect(h.signalFailures.find((f) => f.id === id)!.error).toContain("the service refused");
+    expect(h.logs.some((l) => l.includes("broken") && l.includes("the service refused"))).toBe(true);
+    // With its provider there, a failing subscribe is the subscribe's own error.
+    await expect(h.subscribeSignal("broken")).rejects.toThrow(/the service refused/);
+  });
+
   it("stops a subscription stopped while its provider was still subscribing, and drops what it sent", async () => {
     const subscribing = h.subscribeSignal("slow", {}, "sub_slow");
     await h.stopSignal("sub_slow");

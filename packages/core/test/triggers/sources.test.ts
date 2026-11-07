@@ -2,11 +2,11 @@
 // what a plugin may not emit, keeps one plugin subscription per distinct (type, config) among the enabled triggers,
 // and routes each signal to the triggers listening through the pipeline's intake (the sink).
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SignalDeclSchema, type Locale, type SignalDecl } from "@piomio/shared";
 import { EventBus } from "../../src/bus.ts";
 import { renderPrompt } from "../../src/signals/prompt.ts";
-import { SignalSources } from "../../src/signals/sources.ts";
+import { checkedConfig, SignalSources } from "../../src/signals/sources.ts";
 import type { Signal, Trigger } from "../../src/signals/types.ts";
 import { startTriggerHarness } from "./harness.ts";
 
@@ -43,11 +43,23 @@ interface Delivery {
   o?: { via?: { config?: string } };
 }
 
-function setup(o: { decls?: Record<string, SignalDecl[]>; triggers?: Trigger[]; start?: boolean; redact?: (v: unknown) => unknown } = {}) {
+function setup(
+  o: {
+    decls?: Record<string, SignalDecl[]>;
+    triggers?: Trigger[];
+    start?: boolean;
+    redact?: (v: unknown) => unknown;
+    /** Plugins that were installed rather than shipped with the hub. */
+    installed?: string[];
+    /** How the plugin answers a subscribe (after it is recorded); default: it takes it. */
+    subscribe?: () => Promise<void>;
+  } = {},
+) {
   const decls = o.decls ?? { mail: MAIL, quotes: QUOTES };
   const running = new Set(Object.keys(decls));
   const calls: Array<{ op: "subscribe" | "stop"; pluginId: string; id: string; type?: string; config?: unknown }> = [];
   const deliveries: Delivery[] = [];
+  const logs: Array<{ pluginId: string; msg: string }> = [];
   const triggers: Trigger[] = [...(o.triggers ?? [])];
   const clock = { now: Date.parse("2026-11-08T10:00:00Z") };
   const plugins = {
@@ -56,10 +68,15 @@ function setup(o: { decls?: Record<string, SignalDecl[]>; triggers?: Trigger[]; 
         pluginId,
         decls: d,
         running: running.has(pluginId),
+        builtin: !o.installed?.includes(pluginId),
         title: (key: string, locale?: Locale) => (key === "%signal.message%" ? (locale === "ru" ? "Новое письмо" : "New message") : key),
       })),
-    subscribe: async (pluginId: string, id: string, type: string, config: unknown) => void calls.push({ op: "subscribe", pluginId, id, type, config }),
+    subscribe: async (pluginId: string, id: string, type: string, config: unknown) => {
+      calls.push({ op: "subscribe", pluginId, id, type, config });
+      await o.subscribe?.();
+    },
     stop: async (pluginId: string, id: string) => void calls.push({ op: "stop", pluginId, id }),
+    log: (pluginId: string, msg: string) => void logs.push({ pluginId, msg }),
   };
   const s = new SignalSources({
     plugins,
@@ -77,7 +94,7 @@ function setup(o: { decls?: Record<string, SignalDecl[]>; triggers?: Trigger[]; 
   if (o.start !== false) s.start();
   const subscribed = () => calls.filter((c) => c.op === "subscribe");
   const stopped = () => calls.filter((c) => c.op === "stop");
-  return { s, calls, deliveries, triggers, running, clock, subscribed, stopped };
+  return { s, calls, deliveries, logs, triggers, running, clock, subscribed, stopped };
 }
 
 describe("signal sources", () => {
@@ -298,6 +315,156 @@ describe("signal sources", () => {
     expect(sig.subject!.length).toBeLessThanOrEqual(500);
     expect(sig.data).toEqual({ text: "pw [redacted: vault://pw]" });
   });
+
+  it("runs a declared pattern in linear time on outside content, and checks a config once", async () => {
+    const BAD = "^(\\w+\\s?)+$";
+    const decls = [
+      decl({ type: "note", data: { type: "object", properties: { text: { type: "string", pattern: BAD } } } }),
+      decl({ type: "feed", mode: "subscribe", config: { type: "object", properties: { q: { type: "string", pattern: BAD } } } }),
+    ];
+    const f = setup({ decls: { lab: decls }, triggers: [trigger("t1", [{ type: "lab.note" }]), trigger("t2", [{ type: "lab.feed", config: { q: `${"a".repeat(7000)}!` } }])] });
+    expect(f.s.list().map((x) => x.type)).toContain("lab.note");
+    const t0 = performance.now();
+    expect(f.s.fromPlugin("lab", { type: "note", data: { text: `${"a".repeat(10_000)}!` } })).toEqual({ ok: false, error: expect.stringContaining("pattern") });
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(f.s.fromPlugin("lab", { type: "note", data: { text: "hello world" } })).toEqual({ ok: true });
+    const t1 = performance.now();
+    for (let i = 0; i < 5; i++) await f.s.sync();
+    expect(performance.now() - t1).toBeLessThan(50);
+    expect(f.subscribed()).toEqual([]);
+    expect(f.logs.filter((l) => l.msg.includes("not subscribed"))).toHaveLength(1);
+    // The answer is kept per declaration and config (in any key order): a sync or a boot does not check it again.
+    const bad = checkedConfig("lab", decls, "feed", { q: "x!", n: 1 });
+    expect(bad.problem).toContain("pattern");
+    expect(checkedConfig("lab", decls, "feed", { n: 1, q: "x!" })).toBe(bad);
+    expect(checkedConfig("lab", decls, "feed", { q: "y!" })).not.toBe(bad);
+    expect(checkedConfig("lab", decls, "feed", { q: "fine words" })).toEqual({});
+  });
+
+  it("refuses, when it first reads them, declarations whose schema could take more than linear time", () => {
+    const lab = [
+      decl({ type: "uniq", data: { type: "array", uniqueItems: true } }),
+      decl({ type: "async", data: { $async: true, type: "object" } }),
+      decl({ type: "backref", data: { type: "string", pattern: "(a)\\1" } }),
+      decl({ type: "lookahead", mode: "subscribe", config: { type: "object", properties: { q: { type: "string", pattern: "(?=x)y" } } } }),
+      decl({ type: "classes", data: { type: "string", pattern: "\\p{L}+" } }),
+      decl({ type: "enumbig", data: { enum: Array.from({ length: 1001 }, (_, i) => i) } }),
+      decl({ type: "ref", data: { $defs: { a: { type: "string" } }, $ref: "#/$defs/a" } }),
+      decl({ type: "fine", data: { type: "object", properties: { uniqueItems: { type: "string" }, enum: { enum: [1, 2] } }, required: ["uniqueItems"] } }),
+    ];
+    const f = setup({ decls: { lab }, triggers: [trigger("t1", [{ type: "lab.fine" }]), trigger("t2", [{ type: "lab.uniq" }])] });
+    f.s.list();
+    expect(f.s.list().filter((x) => x.source === "lab").map((x) => x.type)).toEqual(["lab.fine"]);
+    // Each said once in the plugin's log, with why.
+    const said = (type: string) => f.logs.filter((l) => l.pluginId === "lab" && l.msg.includes(`lab.${type} `));
+    for (const [type, why] of [
+      ["uniq", "uniqueItems"],
+      ["async", "$async"],
+      ["backref", "linear time"],
+      ["lookahead", "linear time"],
+      ["classes", "\\p{…}"],
+      ["enumbig", "1000"],
+      ["ref", "$ref"],
+    ]) {
+      expect(said(type)).toHaveLength(1);
+      expect(said(type)[0].msg).toContain(why);
+    }
+    expect(said("fine")).toEqual([]);
+    expect(f.s.fromPlugin("lab", { type: "uniq", data: [] })).toEqual({ ok: false, error: expect.stringContaining("uniqueItems") });
+    expect(f.s.fromPlugin("lab", { type: "fine", data: { uniqueItems: "x" } })).toEqual({ ok: true });
+    expect(f.deliveries.map((d) => d.triggerId)).toEqual(["t1"]);
+  });
+
+  it("believes a source's external: false only from a plugin that ships with the hub", async () => {
+    for (const installed of [false, true]) {
+      const f = setup({ triggers: [trigger("t1", [{ type: "quotes.price", config: { sym: "A" } }])], ...(installed ? { installed: ["quotes"] } : {}) });
+      await f.s.sync();
+      expect(f.s.fromPlugin("quotes", { type: "price", data: {}, subscription: f.subscribed()[0].id })).toEqual({ ok: true });
+      expect(f.deliveries[0].signals[0].external).toBe(installed);
+      expect(f.s.list().find((x) => x.type === "quotes.price")!.external).toBe(installed);
+    }
+  });
+
+  it("stops a subscription the plugin did not take, and tries it again with growing pauses while a trigger uses it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let fails = 4;
+      const f = setup({
+        triggers: [trigger("t1", [{ type: "quotes.price", config: { sym: "A" } }])],
+        subscribe: async () => {
+          if (fails-- > 0) throw new Error("provider down");
+        },
+      });
+      await f.s.sync();
+      const first = f.subscribed()[0].id;
+      // Stopped in the plugin (it may still hold it after a timeout), said in its log, and not active.
+      expect(f.stopped().map((c) => c.id)).toEqual([first]);
+      expect(f.logs).toEqual([{ pluginId: "quotes", msg: expect.stringContaining("provider down; trying again in 30 s") }]);
+      expect(f.s.subscriptions()).toEqual([{ type: "quotes.price", config: { sym: "A" }, active: false, failures: 1 }]);
+      expect(f.s.fromPlugin("quotes", { type: "price", data: {}, subscription: first })).toMatchObject({ ok: false });
+      // A sync does not try it before its pause is over.
+      await f.s.sync();
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(f.subscribed()).toHaveLength(1);
+      for (const [wait, next] of [
+        [1_000, "2 min"],
+        [120_000, "10 min"],
+        [600_000, "30 min"],
+      ] as const) {
+        await vi.advanceTimersByTimeAsync(wait);
+        expect(f.logs.at(-1)!.msg).toContain(`trying again in ${next}`);
+      }
+      expect(f.subscribed()).toHaveLength(4);
+      await vi.advanceTimersByTimeAsync(1_800_000);
+      expect(f.subscribed()).toHaveLength(5);
+      expect(f.s.subscriptions()).toEqual([{ type: "quotes.price", config: { sym: "A" }, active: true, failures: 0 }]);
+      expect(f.s.fromPlugin("quotes", { type: "price", data: {}, subscription: f.subscribed()[4].id })).toEqual({ ok: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tries no more once no trigger uses the subscription, or the engine stops", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const f = setup({
+        triggers: [trigger("t1", [{ type: "quotes.price", config: { sym: "A" } }]), trigger("t2", [{ type: "quotes.price", config: { sym: "B" } }])],
+        subscribe: async () => {
+          throw new Error("no");
+        },
+      });
+      await f.s.sync();
+      expect(f.subscribed()).toHaveLength(2);
+      f.triggers.splice(0, 1);
+      await f.s.sync();
+      f.s.stop();
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      expect(f.subscribed()).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats a provider's failure the plugin reports as a failed subscription, tried again later", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const f = setup({ triggers: [trigger("t1", [{ type: "quotes.price", config: { sym: "A" } }])] });
+      await f.s.sync();
+      const id = f.subscribed()[0].id;
+      // Another plugin cannot fail it.
+      f.s.failed("mail", id, "nope");
+      expect(f.stopped()).toEqual([]);
+      f.s.failed("quotes", id, "boom");
+      expect(f.stopped().map((c) => c.id)).toEqual([id]);
+      expect(f.logs.at(-1)).toEqual({ pluginId: "quotes", msg: expect.stringContaining("its provider failed: boom; trying again in 30 s") });
+      expect(f.s.fromPlugin("quotes", { type: "price", data: {}, subscription: id })).toMatchObject({ ok: false });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(f.subscribed()).toHaveLength(2);
+      expect(f.s.subscriptions()[0]).toMatchObject({ active: true, failures: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("the engine and its sources", () => {
@@ -321,6 +488,23 @@ describe("the engine and its sources", () => {
     await step(() => h.engine.update(id, { enabled: true }));
     await step(() => h.engine.onFeedback({ triggerId: id, feedback: "off" }));
     await step(() => h.engine.remove(id));
+    await h.stop();
+  });
+
+  it("shows a source's data schema to the agents, cut to 4 KB", async () => {
+    const props = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`field_${i}`, { type: "string", description: "x".repeat(20) }]));
+    const h = await startTriggerHarness({
+      sources: [
+        { type: "mail.message", source: "mail", description: "A message", data: { type: "object", properties: { from: { type: "string" } } } },
+        { type: "big.thing", source: "big", description: "Big", data: { type: "object", properties: props } },
+      ],
+    });
+    const list = JSON.parse((await h.invokeText("sources")).replace(/^[^\n]*\n/, "")) as Array<{ type: string; dataSchema?: string }>;
+    expect(list.find((s) => s.type === "mail.message")!.dataSchema).toBe('{"type":"object","properties":{"from":{"type":"string"}}}');
+    const big = list.find((s) => s.type === "big.thing")!.dataSchema!;
+    expect(big.length).toBeLessThanOrEqual(4096);
+    expect(big.endsWith("…")).toBe(true);
+    expect(list.find((s) => s.type === "time.cron")).not.toHaveProperty("dataSchema");
     await h.stop();
   });
 

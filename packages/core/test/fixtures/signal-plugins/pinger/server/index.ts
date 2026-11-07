@@ -13,6 +13,22 @@ export default {
         return { stop() {} };
       },
     });
+    const refusing = {
+      subscribe(): { stop(): void } {
+        throw new Error("the service refused");
+      },
+    };
+    ctx.signals.provide("flaky", refusing);
+    ctx.tools.register({
+      name: "provide_late",
+      description: "Provide the late source now (it fails).",
+      effect: "read",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        ctx.signals.provide("late", refusing);
+        return "provided";
+      },
+    });
     ctx.tools.register({
       name: "emit",
       description: "Emit a signal of the given type (tests).",

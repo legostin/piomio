@@ -8,7 +8,8 @@
       { "type": "tick", "title": "Tick", "description": "A tick, when the tick tool says so." },
       { "type": "count", "mode": "subscribe", "title": "Count", "description": "One signal for each subscription." },
       { "type": "late", "mode": "subscribe", "title": "Late", "description": "Provided only once provide_late is called." },
-      { "type": "slow", "mode": "subscribe", "title": "Slow", "description": "Takes a while to subscribe." }
+      { "type": "slow", "mode": "subscribe", "title": "Slow", "description": "Takes a while to subscribe." },
+      { "type": "broken", "mode": "subscribe", "title": "Broken", "description": "Provided only once provide_broken is called; it never takes a subscription." }
     ]
   },
   "permissions": {}

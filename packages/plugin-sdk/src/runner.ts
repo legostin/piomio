@@ -276,9 +276,14 @@ peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pl
         if (!provider || typeof provider.subscribe !== "function") throw new Error("signals.provide: a provider has subscribe(sub, emit)");
         const name = String(type);
         signalProviders.set(name, provider);
-        // Subscriptions the hub made before this provider existed start now.
+        // Subscriptions the hub made before this provider existed start now; one that fails is the hub's to try again.
         for (const [id, s] of signalSubs) {
-          if (s.type === name && !s.started) void startSub(id, s).catch((e) => signalLog("warn", `the ${name} provider failed to subscribe: ${fmt(e)}`));
+          if (s.type !== name || s.started) continue;
+          void startSub(id, s).catch((e) => {
+            const error = e instanceof Error ? e.message : fmt(e);
+            signalLog("warn", `the ${name} provider failed to subscribe: ${error}`);
+            peer.notify("signals.failed", { id, error });
+          });
         }
       },
     },

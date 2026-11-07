@@ -50,6 +50,8 @@ describe("signals from a plugin", () => {
     const text = await invoke("trigger_sources", {});
     expect(text).toContain('"type": "pinger.ping"');
     expect(text).toContain('"type": "pinger.pong"');
+    // What a ping's data holds, for the agent writing a script or a filter.
+    expect(text).toContain('"dataSchema": "{\\"type\\":\\"object\\"');
     expect(hub.sources.list("ru").find((s) => s.type === "pinger.ping")).toMatchObject({ source: "pinger", mode: "subscribe", title: "Пинг", external: true, online: true });
   });
 
@@ -90,6 +92,22 @@ describe("signals from a plugin", () => {
     expect(hub.audit.list({ action: "plugin.permission-denied" }).some((a) => a.actor === "plugin:pinger" && String(a.target).includes("nope"))).toBe(true);
   });
 
+  it("says in the plugin's log when its provider fails a subscription, at once or after it was taken", async () => {
+    const rec = hub.plugins.get("pinger")!;
+    const logged = (what: string) => rec.logs.find((l) => l.msg.includes(what));
+    const make = (type: string) => invoke("trigger_create", { name: type, prompt: "Look.", on: [{ type }], script: { code: `export default () => ({ note: "x" })` } });
+    await make("pinger.flaky");
+    await until(() => logged("pinger.flaky: the plugin did not take the subscription") && logged("the service refused; trying again in 30 s"), "the refused subscription in the log");
+    expect(hub.sources.subscriptions().find((s) => s.type === "pinger.flaky")).toMatchObject({ active: false, failures: 1 });
+    // No provider yet: the plugin takes it, then fails it once the provider comes; the hub hears and tries again later.
+    await make("pinger.late");
+    await until(() => hub.sources.subscriptions().find((s) => s.type === "pinger.late" && s.active), "the late subscription taken");
+    await invoke("pinger_provide_late", {});
+    await until(() => logged("pinger.late: its provider failed"), "the provider's failure in the log");
+    expect(hub.sources.subscriptions().find((s) => s.type === "pinger.late")).toMatchObject({ active: false, failures: 1 });
+    for (const t of hub.triggers.engine!.list().filter((x) => x.name === "pinger.flaky" || x.name === "pinger.late")) await invoke("trigger_delete", { id: t.id });
+  });
+
   it("subscribes again when the plugin restarts", async () => {
     const id = (await hub.triggers.engine!.list()).find((t) => t.name === "Pings")!.id;
     await hub.plugins.restart("pinger");
@@ -99,8 +117,8 @@ describe("signals from a plugin", () => {
 
   it("stops the plugin's subscription when its trigger goes", async () => {
     const id = (await hub.triggers.engine!.list()).find((t) => t.name === "Pings")!.id;
-    expect((hub.sources as any).live.size).toBe(1);
+    expect(hub.sources.subscriptions()).toEqual([{ type: "pinger.ping", config: { word: "hello" }, active: true, failures: 0 }]);
     await invoke("trigger_delete", { id });
-    await until(() => (hub.sources as any).live.size === 0, "the subscription to stop");
+    await until(() => hub.sources.subscriptions().length === 0, "the subscription to stop");
   });
 });

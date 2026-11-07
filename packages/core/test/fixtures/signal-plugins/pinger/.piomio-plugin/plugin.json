@@ -14,7 +14,9 @@
         "data": { "type": "object", "properties": { "word": { "type": "string" }, "n": { "type": "number" } }, "required": ["word"] },
         "sample": { "word": "ping", "n": 1 }
       },
-      { "type": "pong", "title": "%signal.pong%", "description": "A pong, sent when the pinger_emit tool says so.", "external": false }
+      { "type": "pong", "title": "%signal.pong%", "description": "A pong, sent when the pinger_emit tool says so.", "external": false },
+      { "type": "flaky", "mode": "subscribe", "title": "%signal.pong%", "description": "A source whose provider never takes a subscription." },
+      { "type": "late", "mode": "subscribe", "title": "%signal.pong%", "description": "A source provided only when pinger_provide_late is called; it fails." }
     ]
   },
   "permissions": {}

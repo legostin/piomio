@@ -19,6 +19,15 @@ describe("contributes.signals", () => {
     expect(m.contributes.signals[1]).toMatchObject({ mode: "subscribe", external: false });
   });
 
+  it("refuses a type declared twice", () => {
+    const r = PiomioManifestSchema.safeParse({
+      ...base,
+      contributes: { signals: [{ type: "ping", title: "a", description: "a" }, { type: "pong", title: "b", description: "b" }, { type: "ping", mode: "subscribe", title: "c", description: "c" }] },
+    });
+    expect(r.success).toBe(false);
+    expect(r.error!.issues).toMatchObject([{ path: ["contributes", "signals", 2, "type"], message: 'signal type "ping" is declared twice' }]);
+  });
+
   it("defaults to no signals", () => {
     expect(PiomioManifestSchema.parse(base).contributes.signals).toEqual([]);
   });

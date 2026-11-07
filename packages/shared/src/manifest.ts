@@ -141,7 +141,16 @@ export const PiomioManifestSchema = z.object({
       brains: z.array(z.string()).default([]),
       channels: z.array(z.string()).default([]),
       /** The signals it produces (PluginContext.signals). The old `triggers` key is accepted and ignored. */
-      signals: z.array(SignalDeclSchema).default([]),
+      signals: z
+        .array(SignalDeclSchema)
+        .default([])
+        .superRefine((list, ctx) => {
+          const seen = new Set<string>();
+          for (const [i, s] of list.entries()) {
+            if (seen.has(s.type)) ctx.addIssue({ code: "custom", path: [i, "type"], message: `signal type "${s.type}" is declared twice` });
+            seen.add(s.type);
+          }
+        }),
       hooks: z.array(z.string()).default([]),
       /** Kinds of cards its tools show in the chat (PluginContext.widgets.show; drawn by ui.widgets.add). */
       widgets: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/)).default([]),
