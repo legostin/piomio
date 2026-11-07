@@ -685,7 +685,14 @@ export class PluginHost {
     this.d.db.prepare("update plugins set settings = ? where id = ?").run(JSON.stringify(settings), id);
     const r = this.running.get(id);
     if (r && !r.peer.closed) r.peer.notify("settings.changed", { settings });
-    for (const cb of this.settingsListeners.get(id) ?? []) cb(settings);
+    // Core work that hears them (signals/core-host.ts): one that throws stops neither the others nor the audit line.
+    for (const cb of this.settingsListeners.get(id) ?? []) {
+      try {
+        cb(settings);
+      } catch (e) {
+        this.log(rec, "error", `a settings listener failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     this.d.audit.append("user", "plugin.settings", id);
   }
 

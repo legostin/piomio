@@ -106,6 +106,27 @@ describe("the hub's trigger engine", () => {
     await until(() => hub.triggers.engine, "the engine to start again");
   });
 
+  it("a settings listener that throws stops neither the others nor the audit line", () => {
+    const heard: unknown[] = [];
+    const offBad = hub.plugins.onSettings("triggers", () => {
+      throw new Error("listener broke");
+    });
+    const offGood = hub.plugins.onSettings("triggers", (x) => void heard.push(x));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const before = hub.audit.list({ action: "plugin.settings" }).length;
+    try {
+      expect(() => hub.plugins.setSettings("triggers", { watchTimeoutSec: 7 })).not.toThrow();
+      expect(heard).toEqual([{ watchTimeoutSec: 7 }]);
+      expect(hub.triggers.engine!.settings.watchTimeoutSec).toBe(7);
+      expect(hub.audit.list({ action: "plugin.settings" }).length).toBe(before + 1);
+      expect(err).toHaveBeenCalledWith(expect.stringContaining("listener broke"));
+    } finally {
+      err.mockRestore();
+      offBad();
+      offGood();
+    }
+  });
+
   it("follows the card: settings reach the engine, off stops it, on starts it again", async () => {
     hub.plugins.setSettings("triggers", { allowPrivateUrls: true, watchTimeoutSec: 5 });
     expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 5 });
