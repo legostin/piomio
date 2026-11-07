@@ -134,6 +134,9 @@ export interface TriggerRun {
   outcome?: Outcome;
   noteId?: string;
   external?: boolean;
+  /** The same error in a row is one line: how many runs ended with it, and when the last did (ISO). */
+  count?: number;
+  lastAt?: string;
 }
 
 /** Fields accepted from tools and the UI for create / update. */

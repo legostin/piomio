@@ -153,11 +153,11 @@ export function parseTriage(text: string): TriageAnswer | undefined {
   };
 }
 
-/** Ask the quick model; one retry on an unparseable answer, then throws "unparseable". */
-export async function triage(model: QuickModel, i: TriageInput): Promise<TriageAnswer & { ref: string }> {
+/** Ask the quick model; one retry on an unparseable answer, then throws "unparseable". `signal` closes a question still out. */
+export async function triage(model: QuickModel, i: TriageInput, signal?: AbortSignal): Promise<TriageAnswer & { ref: string }> {
   const prompt = triagePrompt(i);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await model.ask(prompt, { system: TRIAGE_SYSTEM });
+    const r = await model.ask(prompt, { system: TRIAGE_SYSTEM, ...(signal ? { signal } : {}) });
     const a = parseTriage(r.text);
     if (a) return { ...a, ref: r.ref };
   }

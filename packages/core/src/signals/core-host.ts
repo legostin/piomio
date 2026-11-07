@@ -188,6 +188,7 @@ export class CoreTriggers {
       };
     return {
       runs: guard(inner.runs),
+      run: guard(inner.run),
       addRun: guard(inner.addRun),
       signal: guard(inner.signal),
       recentSignals: guard(inner.recentSignals),

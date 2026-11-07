@@ -269,9 +269,10 @@ export class TriggerEngine {
   }
 
   /**
-   * Serialize everything that mutates one trigger (the pipeline's queued runs take it too). A pipeline run holds it at
-   * most about a minute: the script's 30 s wall (its pio calls cut off with it), then a quick check bounded at 25 s
-   * (QUICK_TIMEOUT_MS), plus any wait for a free sandbox slot. An update, a delete or feedback "off" waits no longer.
+   * Serialize everything that mutates one trigger. The pipeline takes it for one queued run at a time and lines up
+   * again for the next (pipeline.ts kick), so an update, a delete, feedback "off" or a run now waits for one run at
+   * most, however long the queue. One run holds it about a minute at most: the script's 30 s wall (its pio calls cut
+   * off with it), then a quick check bounded at 25 s (QUICK_TIMEOUT_MS), plus any wait for a free sandbox slot.
    */
   withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(id) ?? Promise.resolve();

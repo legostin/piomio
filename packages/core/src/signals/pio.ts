@@ -237,7 +237,8 @@ export function pioFor(d: PioDeps): PioRun {
       throw new Error(`pio.llm.ask: the question, its system text and schema are over ${ASK_MAX_BYTES / 1024} KB together`);
     }
     if (!d.triageBudget()) throw new Error("this trigger's quick-model checks for today are used up (triagePerDay)");
-    const r = await d.quick.ask(prompt, system === undefined ? {} : { system });
+    // The run's end closes a question still out (its CLI session does not run on).
+    const r = await d.quick.ask(prompt, { ...(system === undefined ? {} : { system }), signal: ended.signal });
     tokens += Math.ceil(((system ?? "").length + prompt.length + r.text.length) / 4);
     if (schemaLine === undefined) return r.text.trim();
     const parsed = firstJsonObject(r.text);

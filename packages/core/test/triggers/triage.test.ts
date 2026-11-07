@@ -1,5 +1,5 @@
 // Triage: a quick model decides whether an event deserves an agent's attention (signals/triage.ts, bare-ask.ts).
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -150,9 +150,14 @@ describe("triage", () => {
   });
 });
 
-/** Brains as in reviewer.test.ts: `answers[brainId]` is the text, or an error event when it starts with "!" (limit_hit with "~"). */
+/**
+ * Brains as in reviewer.test.ts: `answers[brainId]` is the text, or an error event when it starts with "!" (limit_hit
+ * with "~"); "@hang" never answers. `closed` and `interrupted` name the sessions let go.
+ */
 function registry(probes: Record<string, Partial<ProbeResult>>, answers: Record<string, string>) {
   const opened: Array<{ ref: string; opts: BrainSessionOptions }> = [];
+  const closed: string[] = [];
+  const interrupted: string[] = [];
   const brains = {
     has: (ref: string) => ref.split("@")[0] in probes,
     probe: async (ref: string) => ({ available: true, authenticated: true, ...probes[ref.split("@")[0]] }) as ProbeResult,
@@ -162,17 +167,19 @@ function registry(probes: Record<string, Partial<ProbeResult>>, answers: Record<
       return {
         ref,
         async send(_turn, onEvent: (e: BrainEvent) => void) {
+          if (said === "@hang") return new Promise<void>(() => {});
           if (said.startsWith("~")) onEvent({ type: "limit_hit", detail: said.slice(1) });
           else if (said.startsWith("!")) onEvent({ type: "error", message: said.slice(1) });
           else onEvent({ type: "text", delta: said });
         },
         steer: async () => false,
         warm: async () => {},
-        close: async () => {},
+        interrupt: async () => void interrupted.push(opts.sessionId),
+        close: async () => void closed.push(opts.sessionId),
       } as unknown as BrainHandle;
     },
   } as unknown as BrainRegistry;
-  return { brains, opened };
+  return { brains, opened, closed, interrupted };
 }
 
 describe("quickModel", () => {
@@ -198,6 +205,37 @@ describe("quickModel", () => {
     const before = opened.length;
     expect((await m.ask("q")).ref).toBe("codex@local");
     expect(opened.slice(before).some((o) => o.ref === "claude-code@local")).toBe(false);
+  });
+
+  it("closes a question's session when the asker stops waiting, and does not try the next brain", async () => {
+    const { brains, opened, closed, interrupted } = registry({ "claude-code": {}, codex: {} }, { "claude-code": "@hang", codex: "OK" });
+    const m = quickModel({ brains, dataDir });
+    const c = new AbortController();
+    const asked = m.ask("q", { signal: c.signal });
+    await vi.waitFor(() => expect(opened).toHaveLength(1));
+    c.abort(new Error("the quick model did not answer within 25 s"));
+    await expect(asked).rejects.toThrow("the quick model did not answer within 25 s");
+    const id = opened[0].opts.sessionId;
+    expect(interrupted).toContain(id);
+    expect(closed).toContain(id);
+    expect(opened.map((o) => o.ref)).toEqual(["claude-code@local"]);
+  });
+
+  it("takes two questions at once and refuses a third at once, as unavailable", async () => {
+    const { brains, opened } = registry({ codex: {} }, { codex: "@hang" });
+    const m = quickModel({ brains, dataDir });
+    const c = new AbortController();
+    const first = m.ask("q1", { signal: c.signal });
+    const second = m.ask("q2", { signal: c.signal });
+    await expect(m.ask("q3")).rejects.toThrow("the quick model is busy (2 questions at once)");
+    await vi.waitFor(() => expect(opened).toHaveLength(2));
+    c.abort();
+    await expect(first).rejects.toThrow();
+    await expect(second).rejects.toThrow();
+    // Once they are let go, it takes questions again.
+    const later = m.ask("q4", { signal: AbortSignal.timeout(50) });
+    await expect(later).rejects.toThrow();
+    expect(opened).toHaveLength(3);
   });
 
   it("throws when no quick model is signed in", async () => {

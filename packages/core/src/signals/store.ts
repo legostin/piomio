@@ -29,6 +29,8 @@ export interface NoteQuery {
 export interface TriggerStore {
   /** Newest first. */
   runs(triggerId: string, limit?: number): TriggerRun[];
+  /** One run of the trigger's journal by its id (a primary-key lookup). */
+  run(triggerId: string, runId: string): TriggerRun | undefined;
   /** Prunes that trigger's journal to 200 runs / 14 days. */
   addRun(triggerId: string, run: TriggerRun & { signalData?: Signal[] }): void;
   /** A signal kept with one of the journal's runs. */
@@ -91,6 +93,10 @@ export function sqlStore(db: Db, now: () => number = Date.now): TriggerStore {
     );
   return {
     runs: (triggerId, limit = MAX_JOURNAL_RUNS) => storedRuns(triggerId, limit).map(bare),
+    run(triggerId, runId) {
+      const r = db.prepare("select data from trigger_runs where id = ? and trigger_id = ?").get(runId, triggerId) as { data: string } | undefined;
+      return r ? bare(parse<StoredRun>(r.data)) : undefined;
+    },
     addRun(triggerId, run) {
       db.prepare("insert or replace into trigger_runs(id, trigger_id, at, data) values (?,?,?,?)").run(run.id, triggerId, run.at, JSON.stringify(run));
       db.prepare("delete from trigger_runs where trigger_id = ? and at < ?").run(triggerId, iso(now() - JOURNAL_DAYS * DAY_MS));
@@ -186,6 +192,10 @@ export function memoryStore(now: () => number = Date.now): TriggerStore {
       newestFirst(runs.get(triggerId) ?? [])
         .slice(0, limit)
         .map((r) => bare(structuredClone(r))),
+    run(triggerId, runId) {
+      const r = (runs.get(triggerId) ?? []).find((x) => x.id === runId);
+      return r ? bare(structuredClone(r)) : undefined;
+    },
     addRun(triggerId, run) {
       const list = (runs.get(triggerId) ?? []).filter((r) => r.id !== run.id);
       list.push(structuredClone(run));

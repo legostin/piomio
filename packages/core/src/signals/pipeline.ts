@@ -5,8 +5,9 @@
 //
 // Signals are taken in when they arrive (`accept`): trimmed, matched, deduplicated, counted for floods, and put in the
 // trigger's open batch or in its queue. All of that is synchronous, so a webhook is answered at once. What is queued is
-// carried out in order under the engine's lock for the trigger (`drain`): the script, the quick check, the outcome. The
-// open batch ("__batch") and the queue ("__queue") live in trigger_state (keys starting with "__" are the engine's own).
+// carried out in order, one run per turn of the engine's lock for the trigger (`kick`, `step`): the script, the quick
+// check, the outcome. So an update or a delete never waits for more than one run. The open batch ("__batch") and the
+// queue ("__queue") live in trigger_state (keys starting with "__" are the engine's own).
 // A queued run keeps its journal id and leaves the queue only once its outcome is written, so a stop, a crash or
 // another replica taking the lead carries it on, and a retry replaces its journal line instead of adding one.
 
@@ -35,6 +36,12 @@ const FLOOD_DROP = 1000;
 const FLOOD_WINDOW_SEC = 60;
 /** Failed runs in a row before the person hears of it, once. */
 export const FAILING_AFTER = 5;
+/** A batch flushed this much past its time came due while the hub slept or was down (as engine.ts ASLEEP_MS)... */
+const LATE_MS = 5_000;
+/** ...and waits this long once for what another replica wrote (as engine.ts SETTLE_MS: its pulls are 30 s long polls). */
+const SETTLE_MS = 45_000;
+/** A queue step that failed outside its run is tried again after this long. */
+const STEP_RETRY_MS = 5_000;
 /** One question to the quick model (triage, pio.llm.ask) may take this long; past it the model is unavailable. */
 export const QUICK_TIMEOUT_MS = 25_000;
 /** trigger_state keys of the engine's own: the open batch, the runs waiting their turn, seen delivery keys, signals filtered out. */
@@ -189,6 +196,8 @@ export interface DryRun {
 }
 
 interface OpenBatch {
+  /** Its journal line's id, given when it opens: a second flush (another replica, after a sleep) replaces that line. */
+  runId?: string;
   /** ms */
   openedAt: number;
   windowSec: number;
@@ -208,6 +217,8 @@ interface Work {
   window?: number;
   /** A batch that went on by itself (its window, or full), not because someone asked. */
   flush?: true;
+  /** Taken now (a run now, a one-time reminder): carried out even when the trigger is off by then. */
+  now?: true;
   force?: boolean;
   skipIfBusy?: boolean;
   currentValue?: string;
@@ -301,8 +312,12 @@ export class TriggerPipeline {
   private floodLine = new Map<string, number>();
   /** Who waits for a queued run's outcome, by its run id. */
   private waiters = new Map<string, { triggerId: string; resolve: (run: TriggerRun | undefined) => void }>();
-  /** Queues being carried out in the background. */
+  /** Steps and runs being carried out, for idle(). */
   private work = new Set<Promise<void>>();
+  /** Triggers with a step waiting for (or holding) the lock. */
+  private stepping = new Set<string>();
+  /** Batches that came due while the hub slept or was down, waiting once for what another replica wrote: trigger → when the wait ends (ms). */
+  private settling = new Map<string, { due: number; until: number }>();
   private stopped = false;
 
   constructor(e: TriggerEngine, s: PipelineServices) {
@@ -354,7 +369,7 @@ export class TriggerPipeline {
     if (o.immediate) {
       // Now, with whatever the open batch gathered.
       const open = this.open(t.id);
-      const w = work([...(open?.signals ?? []), ...passed], open ? { window: open.windowSec } : {});
+      const w = work([...(open?.signals ?? []), ...passed], { now: true, ...(open ? { window: open.windowSec } : {}) });
       if (!this.enqueue(t.id, [w])) return refused("full");
       if (open) this.closeBatch(t.id);
       return { signals: passed, done: this.start(t.id, w.runId, !!o.locked) };
@@ -372,6 +387,7 @@ export class TriggerPipeline {
     const b: OpenBatch = open
       ? { ...open, signals: [...open.signals, ...passed] }
       : {
+          runId: newRunId(),
           openedAt: now,
           windowSec: cfg.windowSec,
           max: Math.min(cfg.max ?? MAX_BATCH_SIGNALS, MAX_BATCH_SIGNALS),
@@ -423,7 +439,7 @@ export class TriggerPipeline {
   async resume(): Promise<void> {
     for (const t of this.e.list()) {
       if (this.stopped) return;
-      if (this.queue(t.id).length) this.start(t.id, undefined, false);
+      this.kick(t.id);
       const b = this.open(t.id);
       if (b) this.arm(t.id, b);
     }
@@ -457,6 +473,7 @@ export class TriggerPipeline {
   forget(id: string): void {
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
+    this.settling.delete(id);
     this.arrivals.delete(id);
     this.floodLine.delete(id);
     for (const [runId, w] of this.waiters) {
@@ -561,7 +578,7 @@ export class TriggerPipeline {
 
   private workOf(b: OpenBatch): Work {
     return {
-      runId: newRunId(),
+      runId: b.runId ?? newRunId(),
       reason: b.reason,
       signals: b.signals,
       window: b.windowSec,
@@ -572,10 +589,15 @@ export class TriggerPipeline {
   }
 
   private arm(id: string, b: OpenBatch): void {
+    this.armAt(id, this.settling.get(id)?.until ?? b.openedAt + b.windowSec * 1000);
+  }
+
+  /** The batch's timer, for `at` (ms). */
+  private armAt(id: string, at: number): void {
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
     if (this.stopped) return;
-    const delay = Math.max(0, b.openedAt + b.windowSec * 1000 - this.e.now());
+    const delay = Math.max(0, at - this.e.now());
     const timer: NodeJS.Timeout = setTimeout(() => {
       if (this.timers.get(id) === timer) this.timers.delete(id);
       void this.e.withLock(id, () => this.flushIfDue(id)).catch((err) => this.e.ctx.log.error(`trigger ${id}: its batch failed: ${message(err)}`));
@@ -593,10 +615,26 @@ export class TriggerPipeline {
       this.closeBatch(id);
       return undefined;
     }
-    if (this.e.now() < b.openedAt + b.windowSec * 1000) {
+    const now = this.e.now();
+    const due = b.openedAt + b.windowSec * 1000;
+    if (now < due) {
       this.arm(id, b);
       return undefined;
     }
+    // Due while the hub slept or was down (another replica may have led and flushed it): it waits once for what that
+    // replica wrote to arrive, as a schedule's slot does (engine.settle). Its stable run id covers a flush that still
+    // happens twice: the journal line is replaced, not added.
+    const waiting = this.settling.get(id);
+    if (waiting?.due !== due && now - due > LATE_MS) {
+      this.settling.set(id, { due, until: now + SETTLE_MS });
+      this.armAt(id, now + SETTLE_MS);
+      return undefined;
+    }
+    if (waiting?.due === due && now < waiting.until) {
+      this.armAt(id, waiting.until);
+      return undefined;
+    }
+    this.settling.delete(id);
     const w = this.workOf(b);
     if (!this.enqueue(id, [w])) {
       // The queue is full: the batch waits for the next turn.
@@ -632,22 +670,36 @@ export class TriggerPipeline {
     else this.store.stateDelete(id, QUEUE_KEY);
   }
 
-  /** The queue is carried out: right here when the caller holds the lock, else in the background under it. Resolves to run `runId`'s outcome. */
+  /**
+   * Run `runId` is carried out. A caller that holds the trigger's lock carries out its own run right there and resolves
+   * after it; the rest of the queue goes on by steps. Otherwise the run waits its turn in the steps. Resolves to the run.
+   */
   private start(id: string, runId: string | undefined, locked: boolean): Promise<TriggerRun | undefined> {
     // Stopped: what was queued stays queued for the next start.
     if (this.stopped) return Promise.resolve(undefined);
-    const done = runId === undefined ? Promise.resolve(undefined) : new Promise<TriggerRun | undefined>((resolve) => this.waiters.set(runId, { triggerId: id, resolve }));
-    const p = (locked ? this.drain(id) : this.e.withLock(id, () => this.drain(id))).catch((err) => {
-      if (!this.stopped) this.e.ctx.log.error(`trigger ${id}: its queue failed: ${message(err)}`);
-    });
-    this.work.add(p);
-    void p.finally(() => this.work.delete(p));
-    if (!locked) return done;
-    // The caller holds the lock: it keeps it until the whole queue is through, so no other drain starts meanwhile.
-    return p.then(() => {
-      if (runId !== undefined) this.settle(runId, undefined);
+    if (!locked || runId === undefined) {
+      const done = runId === undefined ? Promise.resolve(undefined) : new Promise<TriggerRun | undefined>((resolve) => this.waiters.set(runId, { triggerId: id, resolve }));
+      this.kick(id);
       return done;
-    });
+    }
+    const w = this.queue(id).find((x) => x.runId === runId);
+    const own = (w ? this.carryQueued(id, w) : Promise.resolve(undefined))
+      .catch((err) => {
+        if (!this.stopped) this.e.ctx.log.error(`trigger ${id}: a run failed: ${message(err)}`);
+        return undefined;
+      })
+      .finally(() => this.kick(id));
+    this.track(own);
+    return own;
+  }
+
+  private track(p: Promise<unknown>): void {
+    const q = p.then(
+      () => {},
+      () => {},
+    );
+    this.work.add(q);
+    void q.finally(() => this.work.delete(q));
   }
 
   private settle(runId: string, run: TriggerRun | undefined): void {
@@ -656,39 +708,79 @@ export class TriggerPipeline {
   }
 
   /**
-   * Under the trigger's lock: its queued runs, in order. A run leaves the queue only once its outcome is written; one the
-   * journal already has (written just before a stop) is not carried out again. A stop leaves the rest queued.
+   * The queue goes on by steps: one queued run per turn of the trigger's lock, the next step taking its place at the
+   * end of the line. So an update, a delete, feedback "off" or a run now waits for one run at most, never for the whole
+   * queue, however much keeps coming in. At most one step per trigger waits for the lock at a time.
    */
-  private async drain(id: string): Promise<void> {
-    for (;;) {
-      if (this.stopped) return;
-      const w = this.queue(id)[0];
-      if (!w) return;
-      const t = this.e.get(id);
-      if (!t) {
-        this.store.stateDelete(id, QUEUE_KEY);
-        return this.forget(id);
-      }
-      let run = this.store.runs(id).find((r) => r.id === w.runId);
-      if (!run) {
-        try {
-          run = await this.carry(t, w);
-        } catch (e) {
-          if (this.stopped) return;
-          run = await this.broken(t, w, message(e));
-        }
-      }
-      if (this.stopped) return;
-      this.unqueue(id, w.runId);
-      this.settle(w.runId, run);
+  private kick(id: string): void {
+    if (this.stopped || this.stepping.has(id)) return;
+    let left = false;
+    try {
+      left = this.queue(id).length > 0;
+    } catch {
+      // The store is closed (the engine stopped): nothing goes on.
     }
+    if (!left) return;
+    this.stepping.add(id);
+    let failed = false;
+    const p: Promise<void> = new Promise<void>((r) => setImmediate(r))
+      .then(() => this.e.withLock(id, () => this.step(id)))
+      .catch((err) => {
+        failed = true;
+        if (!this.stopped) this.e.ctx.log.error(`trigger ${id}: its queue failed: ${message(err)}`);
+      })
+      .finally(() => {
+        this.stepping.delete(id);
+        this.work.delete(p);
+        // A step that failed outside its run (the store, say) is tried again a little later, not in a tight loop.
+        if (failed) setTimeout(() => this.kick(id), STEP_RETRY_MS).unref?.();
+        else this.kick(id);
+      });
+    this.work.add(p);
+  }
+
+  /** Under the trigger's lock: the first queued run. */
+  private async step(id: string): Promise<void> {
+    if (this.stopped) return;
+    const w = this.queue(id)[0];
+    if (w) await this.carryQueued(id, w);
+  }
+
+  /**
+   * Under the trigger's lock: one queued run. It leaves the queue only once its outcome is written; one the journal
+   * already has (written just before a stop) is not carried out again. A stop leaves it queued.
+   */
+  private async carryQueued(id: string, w: Work): Promise<TriggerRun | undefined> {
+    const t = this.e.get(id);
+    if (!t) {
+      this.store.stateDelete(id, QUEUE_KEY);
+      this.forget(id);
+      return undefined;
+    }
+    let run = this.store.run(id, w.runId);
+    if (!run) {
+      try {
+        run = await this.carry(t, w);
+      } catch (e) {
+        if (this.stopped) return undefined;
+        run = await this.broken(t, w, message(e));
+      }
+    }
+    if (this.stopped) return undefined;
+    this.unqueue(id, w.runId);
+    this.settle(w.runId, run);
+    return run;
   }
 
   // ---------- a run ----------
 
   private async carry(t: Trigger, w: Work): Promise<TriggerRun> {
-    // Turned off while its batch was open: what it gathered is kept as a note, not lost.
-    if (w.flush && !t.enabled) return this.noteOnly(t, w, "the trigger was turned off before its batch went on: kept as a note");
+    // Turned off while it waited (its batch open, or behind other runs): what came in is kept as a note, not lost,
+    // and nothing more runs for it. A run taken now (a run now, a one-time reminder) goes all the same.
+    if (!t.enabled && !w.now) {
+      const why = w.flush ? "the trigger was turned off before its batch went on: kept as a note" : "the trigger was turned off before this run's turn came: kept as a note";
+      return this.noteOnly(t, w, why);
+    }
     return this.run(t, w);
   }
 
@@ -698,9 +790,12 @@ export class TriggerPipeline {
     const j = await this.judge(t, signals, { dry: false, force: w.force });
     // Stopped meanwhile: nothing is written, the run stays queued for the next start.
     if (this.stopped) throw new Error(STOPPED);
+    // A trigger that does not batch, given several (a flood batched them): its script's first argument was one signal.
+    const firstOnly = !!t.script && !t.batch && signals.length > 1;
     const stages: StageRecord[] = [
       ...trimLine(signals),
       ...(w.window !== undefined ? [{ stage: "batch" as const, verdict: "flush", why: `${signals.length} signal(s) gathered over ${w.window} s` }] : []),
+      ...(firstOnly ? [{ stage: "batch" as const, verdict: "first", why: `the script saw the first of ${signals.length} signals (flood batch); all ${signals.length} had its verdict` }] : []),
       ...j.stages,
     ];
     const journal = { signals: signals.map(briefOf), stages, external: j.external };
@@ -710,6 +805,8 @@ export class TriggerPipeline {
     const outcome: Outcome = j.outcome ?? "wake";
     stages.push({ stage: "outcome", verdict: outcome, ...(j.why ? { why: j.why } : {}) });
     if (outcome === "wake") {
+      // Left as it is: a stop between tasks.create and fire's journal line wakes the agent again on the retry (the
+      // queue cannot tell the task was started). Rare, and one wake too many is better than one too few.
       const missedAt = missedAtOf(signals);
       const pipeline = { summary: j.summary ?? "", ...(j.context !== undefined ? { context: j.context } : {}), signals: journal.signals, external: j.external };
       const run = await this.e.fire(
@@ -778,7 +875,7 @@ export class TriggerPipeline {
       stages: [...trimLine(w.signals), { stage: "outcome", verdict: "note", why }],
       outcome: "note",
       external,
-      noteId: this.addNote(t, describe(w.signals, "Gathered while the trigger was off"), w.signals, external),
+      noteId: this.addNote(t, describe(w.signals, "Came in before the trigger was turned off"), w.signals, external),
     };
     this.journal(t.id, run, keptData(w.signals));
     this.e.emit(t.id);
@@ -800,7 +897,12 @@ export class TriggerPipeline {
 
   /** The script failed: an error run, the keys let go (a retry is carried out); after the fifth in a row the person hears of it, once. */
   private async failed(t: Trigger, w: Work, at: string, journal: Pick<TriggerRun, "signals" | "stages" | "external">, signalData: Signal[], error: string): Promise<TriggerRun> {
-    const run: TriggerRun = { id: w.runId, at, reason: w.reason, status: "error", detail: error, ...journal };
+    // The same error as the trigger's last run is the same line, counted (with the newest run's signals and stages).
+    const last = this.store.runs(t.id, 1)[0];
+    const again = last && last.id !== w.runId && last.status === "error" && last.detail === error ? last : undefined;
+    const run: TriggerRun = again
+      ? { ...again, ...journal, count: (again.count ?? 1) + 1, lastAt: at }
+      : { id: w.runId, at, reason: w.reason, status: "error", detail: error, ...journal };
     this.unsee(t.id, w.signals);
     this.journal(t.id, run, signalData);
     t.state.errorsInRow = (t.state.errorsInRow ?? 0) + 1;
@@ -939,16 +1041,25 @@ export class TriggerPipeline {
     return { ...r, external: pio.external(), tokens: pio.tokens() };
   }
 
-  /** The quick model with each question bounded (at `deadline`, ms of performance.now(), when given): past it, it is unavailable. */
+  /**
+   * The quick model with each question bounded (at `deadline`, ms of performance.now(), when given): past it, it is
+   * unavailable, and the question is aborted, which closes its CLI session (bare-ask.ts) instead of leaving it to run.
+   */
   private bounded(deadline?: number): QuickModel {
     const limit = this.quickMs;
     return {
-      ask: (prompt, o) =>
+      ask: (prompt, o = {}) =>
         new Promise((resolve, reject) => {
           const ms = deadline === undefined ? limit : Math.max(0, deadline - performance.now());
-          const timer = setTimeout(() => reject(new Error(`the quick model did not answer within ${limit >= 1000 ? `${Math.round(limit / 1000)} s` : `${limit} ms`}`)), ms);
+          const bound = new AbortController();
+          const late = new Error(`the quick model did not answer within ${limit >= 1000 ? `${Math.round(limit / 1000)} s` : `${limit} ms`}`);
+          const timer = setTimeout(() => {
+            bound.abort(late);
+            reject(late);
+          }, ms);
           timer.unref?.();
-          this.s.quick.ask(prompt, o).then(
+          const signal = o.signal ? AbortSignal.any([o.signal, bound.signal]) : bound.signal;
+          this.s.quick.ask(prompt, { ...o, signal }).then(
             (r) => {
               clearTimeout(timer);
               resolve(r);

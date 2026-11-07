@@ -105,26 +105,46 @@ export async function openBare(d: BareAskDeps, t: BareThinking, o: BareOpen): Pr
   return handle;
 }
 
-/** Send one question on an open session and close it; rejects with `rest: true` when the brain said it cannot. */
-export async function askOn(handle: BrainHandle, prompt: string): Promise<string> {
+/** Why an aborted question stopped (the abort's reason when it gave one). */
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error("the question was cancelled");
+}
+
+/**
+ * Send one question on an open session and close it; rejects with `rest: true` when the brain said it cannot. With a
+ * `signal`, an abort interrupts and closes the session at once (its CLI does not run on) and rejects.
+ */
+export async function askOn(handle: BrainHandle, prompt: string, signal?: AbortSignal): Promise<string> {
   let text = "";
   let failed: string | undefined;
+  const stop = () => {
+    void handle.interrupt().catch(() => {});
+    void handle.close().catch(() => {});
+  };
   try {
-    await handle.send({ text: prompt }, (e) => {
+    if (signal?.aborted) throw abortError(signal);
+    const sent = handle.send({ text: prompt }, (e) => {
       if (e.type === "text") text += e.delta;
       else if (e.type === "error") failed = e.message;
       else if (e.type === "limit_hit") failed = e.detail ?? "over its limit";
     });
+    if (signal) {
+      signal.addEventListener("abort", stop, { once: true });
+      sent.catch(() => {});
+      await Promise.race([sent, new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(abortError(signal)), { once: true }))]);
+    } else await sent;
   } finally {
+    signal?.removeEventListener("abort", stop);
     void handle.close();
   }
   if (!text.trim()) throw Object.assign(new Error(failed ?? "no answer"), { rest: !!failed });
   return text;
 }
 
-/** One question in a session of its own: no tools, no hub, no memory. Rejects with `rest: true` when the brain said it cannot. */
-export async function bareAsk(d: BareAskDeps, t: BareThinking, prompt: string, o: BareOpen): Promise<string> {
-  return askOn(await openBare(d, t, o), prompt);
+/** One question in a session of its own: no tools, no hub, no memory. Rejects with `rest: true` when the brain said it cannot; `signal` closes it. */
+export async function bareAsk(d: BareAskDeps, t: BareThinking, prompt: string, o: BareOpen, signal?: AbortSignal): Promise<string> {
+  const handle = await openBare(d, t, o);
+  return askOn(handle, prompt, signal);
 }
 
 /** The local CLI brains that are signed in, cheapest model each, effort `low`; those resting left out. */
@@ -147,29 +167,46 @@ export async function quickCandidates(
 }
 
 export interface QuickModel {
-  ask(prompt: string, o?: { system?: string }): Promise<{ text: string; ref: string }>;
+  /** `signal`: the asker stopped waiting; the session is closed (its CLI does not run on). */
+  ask(prompt: string, o?: { system?: string; signal?: AbortSignal }): Promise<{ text: string; ref: string }>;
 }
 
 const QUICK_SYSTEM = "You answer a short question exactly in the form it asks for, in text only.";
+/** Questions the quick model takes at once; one past that is refused at once (each holds a CLI session). */
+export const QUICK_IN_FLIGHT = 2;
 
-/** The quick model: tries the signed-in brains in order; one that said it cannot rests 5 minutes. */
-export function quickModel(d: BareAskDeps): QuickModel {
+/**
+ * The quick model: tries the signed-in brains in order; one that said it cannot rests 5 minutes. At most
+ * `maxInFlight` questions at once across everything that asks it (the hub has one for its triggers); past that it is
+ * unavailable at once. An aborted question closes its session and is not tried on the next brain.
+ */
+export function quickModel(d: BareAskDeps, o: { maxInFlight?: number } = {}): QuickModel {
   const resting = new Map<string, number>();
+  const max = o.maxInFlight ?? QUICK_IN_FLIGHT;
+  let inFlight = 0;
   return {
-    async ask(prompt, o = {}) {
-      const candidates = await quickCandidates(d, { resting });
-      if (!candidates.length) throw new Error("no quick model is signed in");
-      const tried: string[] = [];
-      for (const t of candidates) {
-        try {
-          const text = await bareAsk(d, t, prompt, { system: o.system ?? QUICK_SYSTEM, folder: "quick" });
-          return { text, ref: t.ref };
-        } catch (e) {
-          if ((e as { rest?: boolean }).rest) resting.set(t.ref, Date.now() + REST_MS);
-          tried.push(`${t.ref}: ${(e as Error).message}`);
+    async ask(prompt, q = {}) {
+      if (inFlight >= max) throw new Error(`the quick model is busy (${max} questions at once)`);
+      inFlight++;
+      try {
+        if (q.signal?.aborted) throw abortError(q.signal);
+        const candidates = await quickCandidates(d, { resting });
+        if (!candidates.length) throw new Error("no quick model is signed in");
+        const tried: string[] = [];
+        for (const t of candidates) {
+          try {
+            const text = await bareAsk(d, t, prompt, { system: q.system ?? QUICK_SYSTEM, folder: "quick" }, q.signal);
+            return { text, ref: t.ref };
+          } catch (e) {
+            if (q.signal?.aborted) throw abortError(q.signal);
+            if ((e as { rest?: boolean }).rest) resting.set(t.ref, Date.now() + REST_MS);
+            tried.push(`${t.ref}: ${(e as Error).message}`);
+          }
         }
+        throw new Error(tried.join("; "));
+      } finally {
+        inFlight--;
       }
-      throw new Error(tried.join("; "));
     },
   };
 }

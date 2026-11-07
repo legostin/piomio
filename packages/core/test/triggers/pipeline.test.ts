@@ -29,10 +29,10 @@ function setup(o: { triggers?: Trigger[]; kv?: Map<string, unknown>; clock?: { n
   stores.set(kv, store);
   const calls: Array<{ method: string; params: any }> = [];
   let n = 0;
-  const asked: Array<{ prompt: string; system?: string }> = [];
+  const asked: Array<{ prompt: string; system?: string; signal?: AbortSignal }> = [];
   const quick: QuickModel = {
-    ask: vi.fn(async (prompt: string, opts?: { system?: string }) => {
-      asked.push({ prompt, system: opts?.system });
+    ask: vi.fn(async (prompt: string, opts?: { system?: string; signal?: AbortSignal }) => {
+      asked.push({ prompt, system: opts?.system, signal: opts?.signal });
       const a = typeof o.answer === "function" ? o.answer() : o.answer;
       if (a === "hang") return new Promise<never>(() => {});
       if (o.answerAfterMs) await new Promise((r) => setTimeout(r, o.answerAfterMs));
@@ -270,6 +270,45 @@ describe("the trigger pipeline", () => {
     expect(run.stages?.find((s) => s.stage === "triage")).toMatchObject({ error: "the quick model did not answer within 50 ms" });
     expect(run.stages?.find((s) => s.stage === "outcome")?.why).toMatch(/unavailable/);
     expect(f.created()).toHaveLength(1);
+    // The question was aborted at the bound: its CLI session is closed, not left to run (bare-ask.ts).
+    expect(f.asked[0].signal?.aborted).toBe(true);
+    e.stop();
+  });
+
+  it("lets an update through after one queued run, however long the queue, and then runs nothing for a trigger turned off", async () => {
+    const f = setup({ triggers: [hook({ triage: { brief: "x" }, triagePerDay: 2000 })], answer: { decision: "drop", why: "dull", summary: "" }, answerAfterMs: 30 });
+    const e = await f.start();
+    await Promise.all(Array.from({ length: 60 }, (_, n) => post(e, { n })));
+    await vi.waitFor(() => expect(f.asked.length).toBeGreaterThan(0), { interval: 1 });
+    // The runs done and the one in progress when the person turns it off: the update waits for that one alone.
+    const begun = f.asked.length;
+    expect(begun).toBeLessThan(10);
+    expect((await e.update("t_hook", { enabled: false })).enabled).toBe(false);
+    expect(f.store.runs("t_hook").length).toBeLessThanOrEqual(begun);
+    await e.pipeline.idle();
+    // Nothing more ran for it: what waited is kept as notes.
+    expect(f.asked).toHaveLength(begun);
+    const runs = f.store.runs("t_hook");
+    expect(runs).toHaveLength(60);
+    expect(runs.filter((r) => r.status === "skipped" && r.outcome === "note")).toHaveLength(60 - begun);
+    expect(f.store.notes({ triggerId: "t_hook", limit: 100 })).toHaveLength(60 - begun);
+    expect(f.store.stateGet("t_hook", "__queue")).toBeUndefined();
+    e.stop();
+  });
+
+  it("carries out a run now behind a long queue right after the run in progress", async () => {
+    const f = setup({ triggers: [hook({ triage: { brief: "x" }, triagePerDay: 2000 })], answer: { decision: "drop", why: "dull", summary: "" }, answerAfterMs: 30 });
+    const e = await f.start();
+    await Promise.all(Array.from({ length: 60 }, (_, n) => post(e, { n })));
+    await vi.waitFor(() => expect(f.asked.length).toBeGreaterThan(0), { interval: 1 });
+    const begun = f.asked.length;
+    expect(begun).toBeLessThan(10);
+    const run = await e.runNow("t_hook");
+    expect(run).toMatchObject({ reason: "manual", outcome: "drop" });
+    // The run in progress, then its own: no more of the queue.
+    expect(f.store.runs("t_hook").length).toBeLessThanOrEqual(begun + 1);
+    await e.pipeline.idle();
+    expect(f.store.runs("t_hook")).toHaveLength(61);
     e.stop();
   });
 
@@ -363,8 +402,10 @@ describe("the trigger pipeline", () => {
     const f = setup({ triggers: [base({ id: "t_one", kind: "signal", on: [{ type: "demo.item" }], script: script(`export default (signal, pio, all) => ({ note: signal.id + ":" + all.map((s) => s.id).join(",") })`) })] });
     const e = await f.start();
     await e.pipeline.deliver(e.get("t_one")!, [sig(1)], "manual");
-    await e.pipeline.deliver(e.get("t_one")!, [sig(2), sig(3)], "manual");
+    const both = await e.pipeline.deliver(e.get("t_one")!, [sig(2), sig(3)], "manual");
     expect(f.store.notes({ triggerId: "t_one" }).map((n) => n.text).sort()).toEqual(["sig_1:sig_1", "sig_2:sig_2,sig_3"]);
+    // The journal says the script's first argument was one of them.
+    expect(both!.stages).toContainEqual({ stage: "batch", verdict: "first", why: "the script saw the first of 2 signals (flood batch); all 2 had its verdict" });
     e.stop();
   });
 
@@ -410,6 +451,55 @@ describe("the trigger pipeline", () => {
     expect(f.store.notes({ triggerId: "t_hook" })).toHaveLength(1);
     expect(f.store.stateGet("t_hook", "__queue")).toBeUndefined();
     e2.stop();
+  });
+
+  it("waits once before flushing a batch that came due while the hub was down, and flushes it under its own run id", async () => {
+    const note = { decision: "note", why: "ok", summary: "Two pushes" };
+    const f = setup({ triggers: [hook({ batch: { windowSec: 5 }, triage: { brief: "x" }, triagePerDay: 10 })], answer: note });
+    const e = await f.start();
+    await post(e, { n: 1 });
+    await post(e, { n: 2 });
+    const runId = (f.store.stateGet("t_hook", "__batch") as { runId: string }).runId;
+    expect(runId).toMatch(/^r_/);
+    e.stop();
+    // Down past the batch's time: another replica on the same database may have led and flushed it.
+    f.clock.now += 120_000;
+    const again = setup({ kv: f.kv, clock: f.clock, answer: note });
+    const e2 = await again.start();
+    await e2.boot();
+    await e2.pipeline.flushDue();
+    expect(again.quick.ask).not.toHaveBeenCalled();
+    // What that replica wrote arrives meanwhile: the batch is gone, its run journaled under the batch's id.
+    f.store.stateDelete("t_hook", "__batch");
+    f.store.addRun("t_hook", { id: runId, at: new Date(f.clock.now).toISOString(), reason: "webhook", status: "started", outcome: "note" });
+    f.clock.now += 46_000;
+    await e2.pipeline.flushDue();
+    await e2.pipeline.idle();
+    expect(again.quick.ask).not.toHaveBeenCalled();
+    expect(await e2.runs("t_hook")).toHaveLength(1);
+    e2.stop();
+
+    // Nobody flushed it: after the wait it goes on once; a stale copy flushed again replaces the same line.
+    const g = setup({ triggers: [hook({ batch: { windowSec: 5 }, triage: { brief: "x" }, triagePerDay: 10 })], answer: note });
+    const e3 = await g.start();
+    await post(e3, { n: 1 });
+    const stale = structuredClone(g.store.stateGet("t_hook", "__batch"));
+    g.clock.now += 120_000;
+    await e3.pipeline.flushDue();
+    expect(g.quick.ask).not.toHaveBeenCalled();
+    g.clock.now += 46_000;
+    await e3.pipeline.flushDue();
+    await e3.pipeline.idle();
+    expect(await e3.runs("t_hook")).toHaveLength(1);
+    g.store.stateSet("t_hook", "__batch", stale);
+    g.clock.now += 46_000;
+    await e3.pipeline.flushDue();
+    g.clock.now += 46_000;
+    await e3.pipeline.flushDue();
+    await e3.pipeline.idle();
+    expect(await e3.runs("t_hook")).toHaveLength(1);
+    expect(g.quick.ask).toHaveBeenCalledTimes(1);
+    e3.stop();
   });
 
   it("does not carry out again a queued run whose journal line was written before a stop", async () => {
@@ -471,6 +561,22 @@ describe("the trigger pipeline", () => {
     expect(e.get("t_hook")!.state).toMatchObject({ errorsInRow: 0, lastStatus: "ok" });
     for (let n = 8; n <= 12; n++) await send(e, { fail: true, n });
     expect(f.notified()).toHaveLength(2);
+    e.stop();
+  });
+
+  it("keeps the same error in a row as one journal line, counted", async () => {
+    const f = setup({ triggers: [hook({ script: script(`export default (s) => { throw new Error(s.data.payload.why) }`) })] });
+    const e = await f.start();
+    for (const n of [1, 2, 3]) await send(e, { why: "the API changed", n });
+    let runs = await e.runs("t_hook");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: "error", count: 3, lastAt: expect.any(String) });
+    expect(runs[0].detail).toContain("the API changed");
+    expect(e.get("t_hook")!.state.errorsInRow).toBe(3);
+    await send(e, { why: "something else" });
+    runs = await e.runs("t_hook");
+    expect(runs).toHaveLength(2);
+    expect(runs[0].count).toBeUndefined();
     e.stop();
   });
 

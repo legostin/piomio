@@ -30,6 +30,15 @@ describe.each([
     expect(s.runs("t2").length).toBe(1);
   });
 
+  it("finds one run by its id, without its signals, and only the trigger's own", () => {
+    const s = make(() => T0);
+    s.addRun("t1", { ...run("r1", T0, { outcome: "note" }), signalData: [sig("sig_a")] });
+    s.addRun("t2", run("r2", T0));
+    expect(s.run("t1", "r1")).toEqual(run("r1", T0, { outcome: "note" }));
+    expect(s.run("t2", "r1")).toBeUndefined();
+    expect(s.run("t1", "nope")).toBeUndefined();
+  });
+
   it("prunes runs older than 14 days on the next add", () => {
     let now = T0;
     const s = make(() => now);
