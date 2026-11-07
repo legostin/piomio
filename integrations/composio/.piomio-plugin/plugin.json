@@ -9,6 +9,37 @@
   "server": "./server/index.ts",
   "contributes": {
     "tools": true,
+    "http": true,
+    "signals": [
+      {
+        "type": "event",
+        "mode": "subscribe",
+        "title": "%signal.event.title%",
+        "description": "An event in one of the user's apps connected through Composio: a new Gmail message, a Slack message, a GitHub push and so on. config.trigger is a Composio trigger type (composio_triggers lists the connected apps' ones with their config schemas), config.config that type's own config; config.app only when the slug does not start with the app. Instant apps arrive within seconds; polled ones (Gmail, Google Calendar…) take up to their polling interval, 2 minutes at the shortest. Without a public https address for the hub, events come over Composio's realtime channel, which Composio calls internal. data is the app's payload plus trigger, app and account; it is outside content.",
+        "config": {
+          "type": "object",
+          "properties": {
+            "trigger": {"type": "string", "pattern": "^[A-Za-z0-9_]+$", "maxLength": 128, "description": "A Composio trigger type, e.g. GMAIL_NEW_GMAIL_MESSAGE (from composio_triggers)."},
+            "app": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "maxLength": 48, "description": "The app, e.g. gmail (as in composio:gmail); only when the trigger's slug does not start with it."},
+            "account": {"type": "string", "maxLength": 200, "description": "The connected account's id; rarely needed: the app's account is used."},
+            "config": {"type": "object", "description": "The trigger type's own config, as its schema in composio_triggers says."}
+          },
+          "required": ["trigger"],
+          "additionalProperties": false
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "trigger": {"type": "string"},
+            "app": {"type": "string"},
+            "account": {"type": "string"}
+          },
+          "required": ["trigger", "app", "account"]
+        },
+        "sample": {"subject": "Lunch on Friday?", "sender": "aigerim@example.com", "messageText": "Shall we meet at noon?", "messageId": "18c2f0a1b2c3d4e5", "trigger": "GMAIL_NEW_GMAIL_MESSAGE", "app": "gmail", "account": "ca_abc123"},
+        "external": true
+      }
+    ],
     "setup": {
       "secrets": [
         { "vault": "composio", "title": "%setup.key.title%", "hint": "%setup.key.hint%", "link": "https://platform.composio.dev", "required": true }
@@ -50,7 +81,8 @@
     ]
   },
   "permissions": {
-    "network": ["backend.composio.dev"],
-    "vault": ["composio"]
+    "network": ["backend.composio.dev", "*.pusher.com"],
+    "vault": ["composio"],
+    "core": ["settings.get"]
   }
 }

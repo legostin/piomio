@@ -113,6 +113,10 @@ Box, Outlook, Microsoft Teams, OneDrive, Trello, Jira, Zoom, Calendly, Figma, Sa
 Reddit. For anything else, ask: the agent searches Composio's list (about a thousand apps) and adds those Composio can
 sign in to by itself. Google Calendar, Gmail and the other Google apps connect this way today.
 
+A connected app's events can start a trigger: a new email, a Slack message, a push. How they reach the hub, by a
+webhook in your Composio project or Composio's realtime channel, is in
+[Events from apps connected through Composio](tasks.md#events-from-apps-connected-through-composio).
+
 ## Blender
 
 Turn it on and agents can look at your scene, its objects and files, take screenshots, render and run Python in
