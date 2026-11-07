@@ -282,7 +282,7 @@ export class SessionRunner {
   /** The `[You now]` block each live session saw last (situation.ts). */
   private seen = new Map<string, string>();
   /** The `at` of the newest trigger note each live session was shown (`[Signals]`). */
-  private seenSignals = new Map<string, string>();
+  private seenSignals = new Map<string, { at: string; ids: string[] }>();
   private timer?: NodeJS.Timeout;
   private kickoff?: NodeJS.Timeout;
   private streamingMessage = new Map<string, string>(); // conversationId -> messageId
@@ -370,7 +370,7 @@ export class SessionRunner {
     this.d.egress.revokeOwner(`brain:${id}`);
     this.clock.forget(id);
     this.seen.delete(id);
-    this.seenSignals.delete(id);
+    // seenSignals stays: a resumed session must not be shown the same notes again.
     await l?.handle.close().catch(() => {});
   }
 
@@ -2219,10 +2219,15 @@ export class SessionRunner {
     if (!this.d.signalNotes) return undefined;
     try {
       if (this.d.store.getConversation(row.conversationId)?.kind === "group") return undefined;
-      const since = this.seenSignals.get(row.id) ?? row.createdAt;
+      const seen = this.seenSignals.get(row.id);
+      const since = seen?.at ?? row.createdAt;
       const notes = this.d.signalNotes({ agentId: row.agentId, since, limit: 50 });
-      const block = signalsBlock(notes, since, 10, (iso) => clockTime(iso, this.d.settings.get().timezone));
-      if (block) this.seenSignals.set(row.id, newestNoteAt(notes)!);
+      const block = signalsBlock(notes, since, 10, (iso) => clockTime(iso, this.d.settings.get().timezone), seen ? new Set(seen.ids) : undefined);
+      if (block) {
+        const at = newestNoteAt(notes)!;
+        const ids = notes.filter((n) => n.at === at).map((n) => n.id);
+        this.seenSignals.set(row.id, { at, ids: seen?.at === at ? [...seen.ids, ...ids] : ids });
+      }
       return block;
     } catch {
       return undefined;
