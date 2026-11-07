@@ -183,7 +183,9 @@ function summary(e: TriggerEngine, t: Trigger) {
     ...(t.on?.length ? { on: t.on } : {}),
     ...(t.batch ? { batch: t.batch } : {}),
     ...(t.script ? { script: { code: clip(t.script.code, 200), hosts: t.script.hosts } } : {}),
-    ...(t.triage ? { triage: clip(t.triage.brief, 300), triagePerDay: t.triagePerDay ?? DEFAULT_TRIAGE_PER_DAY } : {}),
+    ...(t.triage ? { triage: clip(t.triage.brief, 300) } : {}),
+    // The day's quick-model checks: the quick check's and the script's pio.llm.ask together.
+    ...(t.triage || t.script ? { triagePerDay: t.triagePerDay ?? DEFAULT_TRIAGE_PER_DAY } : {}),
     ...(last?.outcome ? { lastOutcome: { at: formatLocal(last.at, e.tz), outcome: last.outcome, status: last.status } } : {}),
   };
 }

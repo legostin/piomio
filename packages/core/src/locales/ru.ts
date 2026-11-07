@@ -560,6 +560,7 @@ export default {
   "triggers.error.triageLimit": "triagePerDay должно быть целым числом от 1 до {max}",
   "triggers.error.onFieldConflict": "{field} указано дважды с разными значениями: в триггере и в настройках источника",
   "triggers.error.cronAndTimes": "Источник time.cron принимает либо cron, либо times (с weekdays), но не оба сразу",
+  "triggers.error.cronAndWeekdays": "С cron дни недели пишутся в самой строке cron (её пятое поле, например \"0 9 * * 1-5\"): источник time.cron принимает weekdays только вместе с times",
   "triggers.error.verifyEventOnly": "verify подходит только вебхук-триггерам",
   "triggers.error.verifyInvalid": "verify некорректно: нужен secret либо github, stripe или hmac-sha256 со ссылкой secretRef вида vault://",
   "triggers.error.unknownMachine": "Нет компьютера \"{machine}\". Компьютеры: {available}",

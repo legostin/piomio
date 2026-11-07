@@ -209,6 +209,8 @@ describe("the trigger tools in the chat", () => {
     expect(row.script).toMatchObject({ hosts: [] });
     expect(row.script.code).toContain("export default");
     expect(row.lastOutcome).toMatchObject({ outcome: "note", status: "started" });
+    // A script alone has the day's quick-model checks too (pio.llm.ask).
+    expect(row.triagePerDay).toBe(200);
   });
 
   it("keeps a script's error out of the list and run now once its run read outside content; the journal shows it marked", async () => {

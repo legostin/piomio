@@ -147,7 +147,7 @@ The sites a script may open are part of the trigger. When the agent wants to add
 
 ### A quick check in your words
 
-Say what matters and what doesn't: "only failed deploys", "letters from clients and invoices, not newsletters". A quick model reads what came in, what the script found and the trigger's last notes, and chooses wake, note or drop. It is a bare session on a brain signed in on the hub's computer, on its cheapest model, with no tools: text inside what came in can at most change its choice. Each trigger has 200 quick checks a day unless you ask for more. When no quick model can answer, the agent is woken as before while the day's runs last, and after that a note is kept, so nothing is lost.
+Say what matters and what doesn't: "only failed deploys", "letters from clients and invoices, not newsletters". A quick model reads what came in, what the script found and the trigger's last notes, and chooses wake, note or drop. It is a bare session on a brain signed in on the hub's computer, on its cheapest model, with no tools: text inside what came in can at most change its choice. Each trigger has 200 quick checks a day unless you ask for more; its script's own questions to the quick model count toward them too. When no quick model can answer, the agent is woken as before while the day's runs last, and after that a note is kept, so nothing is lost.
 
 ### Notes
 

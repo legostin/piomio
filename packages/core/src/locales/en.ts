@@ -561,6 +561,7 @@ export default {
   "triggers.error.triageLimit": "triagePerDay must be an integer from 1 to {max}",
   "triggers.error.onFieldConflict": "{field} is given twice with different values: in the trigger and in its source config",
   "triggers.error.cronAndTimes": "A time.cron source takes either cron or times (with weekdays), not both",
+  "triggers.error.cronAndWeekdays": "With cron, put the weekdays in the cron line itself (its fifth field, e.g. \"0 9 * * 1-5\"): a time.cron source takes weekdays only with times",
   "triggers.error.verifyEventOnly": "verify applies only to webhook triggers",
   "triggers.error.verifyInvalid": "verify is not valid: use secret, or github, stripe or hmac-sha256 with a vault:// secretRef",
   "triggers.error.unknownMachine": "No computer \"{machine}\". Computers: {available}",

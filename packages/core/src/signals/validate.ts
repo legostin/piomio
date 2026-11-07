@@ -152,14 +152,19 @@ export function normalizeOn(input: TriggerInput, o: { create?: boolean } = {}): 
   if (entry.where !== undefined && entry.where !== null)
     fail("onWhereBuiltin", `A filter (where) does not apply to the built-in source ${entry.type}: return { drop } from the trigger's script for what does not matter`, { type: entry.type });
   const config = isObject(entry.config) ? entry.config : {};
+  if (entry.type === "time.cron") {
+    const cron = config.cron !== undefined || input.cron !== undefined;
+    if (cron && (config.times !== undefined || input.times !== undefined)) fail("cronAndTimes", "A time.cron source takes either cron or times (with weekdays), not both");
+    // Weekdays make it a review at its times (10:00 and 18:00 by default): the cron line would be dropped without a word.
+    if (cron && (config.weekdays !== undefined || input.weekdays !== undefined))
+      fail("cronAndWeekdays", "A time.cron source takes weekdays only with times: with cron, put the weekdays in the cron line (its fifth field, e.g. '0 9 * * 1-5')");
+  }
   const kind = builtinKind(entry.type, config, input);
   if (input.kind !== undefined && input.kind !== kind)
     fail("onKindConflict", `The source ${entry.type} does not fit a trigger of kind ${String(input.kind)}`, { type: entry.type, kind: String(input.kind) });
   const fields: Record<string, unknown> = {};
   switch (entry.type) {
     case "time.cron":
-      if ((config.cron !== undefined || input.cron !== undefined) && (config.times !== undefined || input.times !== undefined))
-        fail("cronAndTimes", "A time.cron source takes either cron or times (with weekdays), not both");
       for (const k of ["cron", "times", "weekdays"]) fields[k] = config[k];
       break;
     case "time.at":
@@ -291,6 +296,15 @@ function checkVerify(v: unknown): NonNullable<Trigger["verify"]> {
 
 const isUnset = (v: unknown) => v === null || v === undefined;
 
+/**
+ * triagePerDay bounds the quick check and the script's pio.llm.ask together: kept while the trigger has either, stored
+ * with its default when it has a quick check, gone when it has neither.
+ */
+function keepTriagePerDay(t: Trigger): void {
+  if (!t.triage && !t.script) delete t.triagePerDay;
+  else if (t.triage) t.triagePerDay ??= DEFAULT_TRIAGE_PER_DAY;
+}
+
 export interface BuildOptions {
   now: Date;
   tz: string;
@@ -359,8 +373,7 @@ export function buildTrigger(input: TriggerInput, o: BuildOptions): Trigger {
   if (!isUnset(input.script)) t.script = checkScript(input.script);
   if (!isUnset(input.triage)) t.triage = checkTriage(input.triage);
   if (!isUnset(input.triagePerDay)) t.triagePerDay = checkTriagePerDay(input.triagePerDay);
-  if (t.triage) t.triagePerDay ??= DEFAULT_TRIAGE_PER_DAY;
-  else delete t.triagePerDay;
+  keepTriagePerDay(t);
   t.report = input.report === undefined ? defaultReport(t, o.tz, o.now) : checkReport(input.report, kind);
   return t;
 }
@@ -437,23 +450,14 @@ export function applyUpdate(t: Trigger, patch: TriggerInput, o: { now: Date; tz:
     else next.script = checkScript(patch.script);
   }
   if (patch.triage !== undefined) {
-    if (isUnset(patch.triage)) {
-      delete next.triage;
-      delete next.triagePerDay;
-    } else {
-      next.triage = checkTriage(patch.triage);
-      if (next.triagePerDay === undefined) next.triagePerDay = DEFAULT_TRIAGE_PER_DAY;
-    }
+    if (isUnset(patch.triage)) delete next.triage;
+    else next.triage = checkTriage(patch.triage);
   }
   if (patch.triagePerDay !== undefined) {
-    if (isUnset(patch.triagePerDay)) {
-      if (next.triage) next.triagePerDay = DEFAULT_TRIAGE_PER_DAY;
-      else delete next.triagePerDay;
-    } else {
-      const n = checkTriagePerDay(patch.triagePerDay);
-      if (next.triage) next.triagePerDay = n;
-    }
+    if (isUnset(patch.triagePerDay)) delete next.triagePerDay;
+    else next.triagePerDay = checkTriagePerDay(patch.triagePerDay);
   }
+  keepTriagePerDay(next);
   if (patch.verify !== undefined) {
     if (isUnset(patch.verify)) delete next.verify;
     else {
