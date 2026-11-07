@@ -15,11 +15,15 @@ const RECONNECT_MAX_MS = 60_000;
 /** How long the server may stay quiet before it is pinged (Pusher's activity_timeout, at most), and the pong waited for. */
 const ACTIVITY_MAX_S = 120;
 const PONG_MS = 30_000;
+/** How long a new connection may take to say pusher:connection_established. */
+const HANDSHAKE_MS = 30_000;
+/** A frame longer than this is not even parsed. */
+const FRAME_MAX = 1024 * 1024;
 /** Chunked events: at most this many in progress, this long each, this many chunks and characters. */
-const PENDING_MAX = 20;
+const PENDING_MAX = 5;
 const PENDING_MS = 60_000;
 const CHUNKS_MAX = 1000;
-const CHUNKED_TEXT_MAX = 1024 * 1024;
+const CHUNKED_TEXT_MAX = 300 * 1024;
 const TRIGGER_EVENT = "trigger_to_client";
 const CHUNKED_EVENT = `chunked-${TRIGGER_EVENT}`;
 const CLUSTER_RE = /^[a-z0-9-]{1,40}$/;
@@ -36,6 +40,8 @@ export interface RealtimeDeps {
   base?: string;
   /** The first reconnect pause (tests). */
   reconnectMs?: number;
+  /** How long a connection may take to be established (tests). */
+  handshakeMs?: number;
 }
 
 interface Chunked {
@@ -68,6 +74,7 @@ export class RealtimeChannel {
   private reconnect: ReturnType<typeof setTimeout> | undefined;
   private quiet: ReturnType<typeof setTimeout> | undefined;
   private pong: ReturnType<typeof setTimeout> | undefined;
+  private handshake: ReturnType<typeof setTimeout> | undefined;
   private activityMs = ACTIVITY_MAX_S * 1000;
   private chunks = new Map<string, Chunked>();
   /** The channel is subscribed on the current socket. */
@@ -118,6 +125,14 @@ export class RealtimeChannel {
     this.ws = ws;
     this.subscribed = false;
     const mine = () => gen === this.gen && this.ws === ws;
+    // A connection that never says it is established is given up and made again.
+    this.handshake = setTimeout(() => {
+      if (!mine()) return;
+      this.d.log("warn", "composio: the realtime channel did not answer in time; connecting again");
+      this.drop();
+      this.later();
+    }, this.d.handshakeMs ?? HANDSHAKE_MS);
+    this.handshake.unref?.();
     ws.onmessage = (ev) => {
       if (mine()) this.frame(ws, channel, String(ev.data));
     };
@@ -171,7 +186,8 @@ export class RealtimeChannel {
   private clearTimers(): void {
     clearTimeout(this.quiet);
     clearTimeout(this.pong);
-    this.quiet = this.pong = undefined;
+    clearTimeout(this.handshake);
+    this.quiet = this.pong = this.handshake = undefined;
   }
 
   /** Every frame counts as life: the server is pinged only after it was quiet for activity_timeout. */
@@ -201,6 +217,11 @@ export class RealtimeChannel {
   }
 
   private frame(ws: WebSocket, channel: string, text: string): void {
+    if (text.length > FRAME_MAX) {
+      this.alive(ws);
+      this.d.log("warn", `composio: a frame over ${FRAME_MAX / 1024} KB from the realtime channel was left out`);
+      return;
+    }
     let f: { event?: unknown; data?: unknown; channel?: unknown };
     try {
       f = JSON.parse(text);
@@ -214,6 +235,8 @@ export class RealtimeChannel {
         const d = (data ?? {}) as { socket_id?: unknown; activity_timeout?: unknown };
         const t = Number(d.activity_timeout);
         if (Number.isFinite(t) && t > 0) this.activityMs = Math.min(t, ACTIVITY_MAX_S) * 1000;
+        clearTimeout(this.handshake);
+        this.handshake = undefined;
         this.alive(ws);
         const socketId = typeof d.socket_id === "string" ? d.socket_id : "";
         if (!socketId) return ws.close();

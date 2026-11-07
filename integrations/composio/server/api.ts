@@ -27,6 +27,45 @@ export class ComposioError extends Error {
 /** A success answer without what it should hold: Composio answered, so it is the request's problem, not an outage. */
 const malformed = (message: string) => new ComposioError(502, message, "other");
 
+/**
+ * The project's webhook subscription goes somewhere this hub did not set up (the person's own server): the hub leaves
+ * it alone. `host` is where it goes.
+ */
+export class WebhookTaken extends ComposioError {
+  host: string;
+  constructor(host: string) {
+    super(409, `Composio's project already sends its webhook to ${host}, which this hub did not set up; the hub leaves it alone`, "other");
+    this.host = host;
+  }
+}
+
+/** A hub's own webhook address (any hub's: an earlier address of this one, or another replica's). */
+const HUB_HOOK_RE = /^https:\/\/[^/]+\/hooks\/composio\/events$/;
+
+/** The webhook event the hub's subscription is for. */
+export const TRIGGER_MESSAGE = "composio.trigger.message";
+
+/**
+ * Of the project's webhook subscriptions, the hub's own one for `url` (it goes there, or it is the kept one and still
+ * goes to a hub's address), else the one that is someone else's.
+ */
+export function ownWebhook(list: WebhookSubscription[], url: string, keptId?: string): { mine?: WebhookSubscription; theirs?: WebhookSubscription } {
+  const kept = keptId ? list.find((w) => w.id === keptId) : undefined;
+  const mine = list.find((w) => w.url === url) ?? (kept && HUB_HOOK_RE.test(kept.url) ? kept : undefined);
+  if (mine) return { mine };
+  const theirs = kept ?? list.find((w) => w.events.includes(TRIGGER_MESSAGE)) ?? list[0];
+  return theirs ? { theirs } : {};
+}
+
+/** Where a webhook goes, for people and logs: its host. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host || "another address";
+  } catch {
+    return "another address";
+  }
+}
+
 /** An app of Composio's (a toolkit). `managed`: Composio signs in to it with its own OAuth app. */
 export interface Toolkit {
   slug: string;
@@ -78,9 +117,16 @@ export interface ComposioApi {
   listActiveTriggers(filters?: { connectedAccountIds?: string[]; userIds?: string[]; triggerIds?: string[]; triggerNames?: string[]; showDisabled?: boolean }): Promise<TriggerInstance[]>;
   setTriggerEnabled(id: string, enabled: boolean): Promise<void>;
   deleteTrigger(id: string): Promise<void>;
-  /** The project's one webhook subscription for trigger messages, pointed at `url`; an existing one is updated, not duplicated. */
-  createWebhookSubscription(url: string): Promise<WebhookSubscription>;
+  /**
+   * The project's webhook subscription for trigger messages at `url`, made when there is none. Composio keeps one per
+   * project (a second is a 409): the one there is used only when it is the hub's own (it goes to `url`, or it is
+   * `keptId` and still goes to a hub's address), and only `url` and the trigger-message event are added to it, its other
+   * events kept. Any other is left as it is: WebhookTaken says where it goes.
+   */
+  createWebhookSubscription(url: string, keptId?: string): Promise<WebhookSubscription>;
   getWebhookSubscription(id: string): Promise<WebhookSubscription>;
+  /** The project's webhook subscriptions, without their secrets. */
+  listWebhookSubscriptions(): Promise<WebhookSubscription[]>;
   /** Composio's internal realtime channel (Pusher) for projects without a public address. Undocumented, may change. */
   realtimeCredentials(): Promise<RealtimeCredentials>;
   /** The private channel's authorisation for one socket (Pusher's `auth`), asked for as pusher-js does. */
@@ -122,8 +168,10 @@ export interface TriggerInstance {
 export interface WebhookSubscription {
   id: string;
   url: string;
-  /** Returned by create and by get; kept only in hub storage. */
+  /** Returned by create and by get (not by the list); kept only in hub storage. */
   secret: string;
+  /** The events it is for ("composio.trigger.message"…). */
+  events: string[];
 }
 
 export interface RealtimeCredentials {
@@ -133,7 +181,7 @@ export interface RealtimeCredentials {
 }
 
 const PAGE = 50;
-const TRIGGER_EVENT = "composio.trigger.message";
+const TRIGGER_EVENT = TRIGGER_MESSAGE;
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -223,7 +271,13 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
     }
     return items;
   }
-  const subscriptionOf = (r: any): WebhookSubscription => ({ id: str(r?.id), url: str(r?.webhook_url), secret: str(r?.secret) });
+  const subscriptionOf = (r: any): WebhookSubscription => ({
+    id: str(r?.id),
+    url: str(r?.webhook_url),
+    secret: str(r?.secret),
+    events: Array.isArray(r?.enabled_events) ? r.enabled_events.filter((x: unknown) => typeof x === "string") : [],
+  });
+  const subscriptions = async () => (await pages("/webhook_subscriptions", {})).map(subscriptionOf).filter((s) => s.id);
   const q = (params: Record<string, string | number | boolean | undefined>) =>
     new URLSearchParams(Object.entries(params).flatMap(([k, v]): Array<[string, string]> => (v === undefined || v === "" ? [] : [[k, String(v)]]))).toString();
 
@@ -312,7 +366,7 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
         if (!(e instanceof ComposioError && e.status === 404)) throw e;
       }
     },
-    async createWebhookSubscription(url) {
+    async createWebhookSubscription(url, keptId) {
       try {
         const r = subscriptionOf(await req("POST", "/webhook_subscriptions", { webhook_url: url, enabled_events: [TRIGGER_EVENT], version: "V3" }));
         if (!r.id) throw malformed("Composio created no webhook subscription");
@@ -320,18 +374,23 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
       } catch (e) {
         if (!(e instanceof ComposioError && e.status === 409)) throw e;
       }
-      // One subscription per project: take the existing one over instead of making a second (the one for trigger
-      // messages when there are several).
-      const list = await pages("/webhook_subscriptions", {});
-      const existing = list.find((w) => Array.isArray(w?.enabled_events) && w.enabled_events.includes(TRIGGER_EVENT)) ?? list[0];
-      const id = str(existing?.id);
-      if (!id) throw new ComposioError(409, "Composio says a webhook subscription exists but lists none");
-      await req("PATCH", `/webhook_subscriptions/${encodeURIComponent(id)}`, { webhook_url: url, enabled_events: [TRIGGER_EVENT] });
-      return subscriptionOf(await req("GET", `/webhook_subscriptions/${encodeURIComponent(id)}`));
+      // One subscription per project, and it is there already: the hub's own one is used; the person's is never
+      // changed (not its address, not its events).
+      const { mine, theirs } = ownWebhook(await subscriptions(), url, keptId);
+      if (!mine) {
+        if (!theirs) throw new ComposioError(409, "Composio says a webhook subscription exists but lists none", "other");
+        throw new WebhookTaken(hostOf(theirs.url));
+      }
+      const patch: Record<string, unknown> = {};
+      if (mine.url !== url) patch.webhook_url = url;
+      if (!mine.events.includes(TRIGGER_EVENT)) patch.enabled_events = [...mine.events, TRIGGER_EVENT];
+      if (Object.keys(patch).length) await req("PATCH", `/webhook_subscriptions/${encodeURIComponent(mine.id)}`, patch);
+      return subscriptionOf(await req("GET", `/webhook_subscriptions/${encodeURIComponent(mine.id)}`));
     },
     async getWebhookSubscription(id) {
       return subscriptionOf(await req("GET", `/webhook_subscriptions/${encodeURIComponent(id)}`));
     },
+    listWebhookSubscriptions: subscriptions,
     async realtimeCredentials() {
       const r = await req("GET", "/internal/sdk/realtime/credentials", undefined, internalRoot);
       const c = { pusherKey: str(r?.pusher_key), projectId: str(r?.project_id), cluster: str(r?.pusher_cluster) };

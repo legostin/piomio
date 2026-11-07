@@ -114,7 +114,9 @@ a trigger subscribes to it with `on: [{ type: "sun.sunrise", config: { … } }]`
   that matters (what was seen) in `ctx.storage`, and never hold a timer, socket or poll after `stop`. Use it for
   polling or watching something for the person (`integrations/_template` waits for the sunrise; the `web` plugin's
   `rss_item` reads a feed). Do the first network call without making `subscribe` wait for it, tell failures to
-  `ctx.log` and try again at the next interval, and never send a signal for something you could not read.
+  `ctx.log` and try again at the next interval, and never send a signal for something you could not read. When a
+  subscription can no longer work after it was taken (the account it reads was signed out), call the third argument,
+  `subscribe(sub, emit, fail)`, with the reason: its handle is stopped and the hub tries it again later.
 - `emit(data, { key, subject })`: `key` is the event's identity (a feed item's id, a date); the hub drops a second
   signal with the same key to the same trigger within 24 hours, so a repeat poll or a restart does not wake the agent
   twice. `subject` is a short line naming the event for people and the model (the item's title). Neither is

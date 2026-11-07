@@ -45,6 +45,8 @@ const POLL_MS = Math.max(20, Number(process.env.PIOMIO_COMPOSIO_POLL_MS) || 3000
 /** Tests only: a local stand-in for Pusher's wss://ws-<cluster>.pusher.com, and the realtime channel's first reconnect pause. */
 const PUSHER = process.env.PIOMIO_COMPOSIO_PUSHER || undefined;
 const RECONNECT_MS = Number(process.env.PIOMIO_COMPOSIO_RECONNECT_MS) || undefined;
+/** Tests only: how long a minute is for the triggers' grace, leases, reconcile and warm-up. */
+const MINUTE_MS = Number(process.env.PIOMIO_COMPOSIO_MINUTE_MS) || undefined;
 /** Main tools one app gets as tools of its own, at most; and with those composio_tools_search added. */
 const MAX_TOOLS = 30;
 const MAX_APP_TOOLS = 60;
@@ -262,6 +264,8 @@ const plugin: PluginModule & { stop?: () => void } = {
           delete a.pending;
           delete a.pendingUntil;
           await save();
+          // Its triggers move to the new account.
+          triggers?.accountsChanged();
           if (old && old !== accountId) forget(old);
           await registerTools(app, accountId).catch((e) => ctx.log.warn(`composio: ${app}'s tools: ${(e as Error).message}`));
           report();
@@ -309,6 +313,8 @@ const plugin: PluginModule & { stop?: () => void } = {
       }
       await save();
       report();
+      // An account that stopped working takes its triggers with it (the hub tries them again later).
+      triggers?.accountsChanged();
     }
     // One sync at a time: the vault's events come in bursts.
     let syncing: Promise<void> = Promise.resolve();
@@ -382,6 +388,7 @@ const plugin: PluginModule & { stop?: () => void } = {
       }
       await save();
       report();
+      triggers?.accountsChanged();
     });
 
     // A key stored, changed or removed, or the vault unlocked: read it again and check everything with it.
@@ -537,7 +544,8 @@ const plugin: PluginModule & { stop?: () => void } = {
             shown++;
           }
           const more = shown < types.length ? `\n…and ${types.length - shown} more: ask for one app (app: …) to see them.` : "";
-          return text(`${out}${more}\nListen with on: [{ type: "composio.event", config: { trigger, config } }]; a signal's data is the event's payload plus trigger, app and account.`);
+          const how = await triggers!.deliveryNote();
+          return text(`${out}${more}\nListen with on: [{ type: "composio.event", config: { trigger, config } }]; a signal's data is the event's payload plus trigger, app and account.\n${how}`);
         } catch (e) {
           return failure(e);
         }
@@ -555,14 +563,16 @@ const plugin: PluginModule & { stop?: () => void } = {
       nameOf,
       ...(PUSHER ? { pusherBase: PUSHER } : {}),
       ...(RECONNECT_MS && RECONNECT_MS > 0 ? { reconnectMs: RECONNECT_MS } : {}),
+      ...(MINUTE_MS && MINUTE_MS > 0 ? { minuteMs: MINUTE_MS } : {}),
     });
     ctx.signals.provide("event", triggers.provider);
     ctx.http.handle((req) => triggers!.http(req));
 
-    // The catalog first (no request to Composio needed), then where the accounts are.
+    // The catalog first (no request to Composio needed), then where the accounts are; the triggers' warm-up waits for
+    // that first look.
     keyState = (await hasKey()) ? "ok" : "missing";
     report();
-    void resync();
+    void resync().then(() => triggers?.synced());
   },
   async deactivate() {
     plugin.stop?.();

@@ -150,9 +150,14 @@ export interface SignalEmitOptions {
   subject?: string;
 }
 export interface SignalProvider {
+  /**
+   * `fail(error)`: the subscription stopped working after it was taken (the account it read was signed out). Its
+   * handle is stopped, nothing more is sent by it, and the hub tries it again later, as when `subscribe` throws.
+   */
   subscribe(
     sub: SignalSubscription,
     emit: (data: unknown, o?: SignalEmitOptions) => void,
+    fail: (error: string) => void,
   ): { stop(): void } | Promise<{ stop(): void }>;
 }
 

@@ -122,9 +122,19 @@ async function startSub(id: string, s: SignalSub): Promise<void> {
   const emit = (data: unknown, o?: SignalEmitOptions) => {
     if (!s.stopped) sendSignal(s.type, data, o, id);
   };
+  // The provider gave the subscription up after it took it: stopped here, and the hub tries it again later.
+  const fail = (error: string) => {
+    if (s.stopped || signalSubs.get(id) !== s) return;
+    s.stopped = true;
+    signalSubs.delete(id);
+    if (s.handle) stopHandle(s.type, s.handle);
+    const text = String(error ?? "failed").slice(0, 2000);
+    signalLog("warn", `the ${s.type} provider gave up subscription ${id}: ${text}`);
+    peer.notify("signals.failed", { id, error: text });
+  };
   let handle: { stop(): void };
   try {
-    handle = await p.subscribe({ id, config: s.config }, emit);
+    handle = await p.subscribe({ id, config: s.config }, emit, fail);
   } catch (e) {
     if (signalSubs.get(id) === s) signalSubs.delete(id);
     throw e;

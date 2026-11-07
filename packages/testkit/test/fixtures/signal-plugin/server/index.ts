@@ -13,6 +13,17 @@ export default {
       },
     });
     ctx.signals.provide("count", provider("count"));
+    // Works, then stops working (an account signed out): fail tells the hub, and emits after it go nowhere.
+    ctx.signals.provide("fading", {
+      subscribe(sub, emit, fail) {
+        emit({ word: "before" });
+        const t = setTimeout(() => {
+          fail("the account was signed out");
+          emit({ word: "after" });
+        }, 50);
+        return { stop: () => (clearTimeout(t), void ctx.storage.set(`stopped:${sub.id}`, true)) };
+      },
+    });
     ctx.signals.provide("slow", {
       async subscribe(sub, emit) {
         await new Promise((r) => setTimeout(r, 300));

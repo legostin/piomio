@@ -1,16 +1,19 @@
 // The trigger and webhook-subscription calls of the Composio API client against a tiny fake Composio: trigger types
 // (paged by next_cursor, limit 50), instance upsert / list / enable / disable / delete, the project webhook
-// subscription (a 409 finds the existing one and updates it) and the realtime credentials on the internal v3 path.
+// subscription (a 409 reuses only the hub's own one and never touches the person's) and the realtime credentials and
+// channel authorisation on the internal v3 path.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { composioApi, ComposioError, type ComposioApi } from "../server/api.ts";
+import { composioApi, ComposioError, WebhookTaken, type ComposioApi } from "../server/api.ts";
 
 type Call = { method: string; path: string; query: URLSearchParams; body: any; raw: string; type: string | undefined; key: string | undefined };
+type Sub = { id: string; webhook_url: string; enabled_events: string[]; secret: string };
 let calls: Call[];
 let server: Server;
 let api: ComposioApi;
-const state = { subscriptionExists: false, upsertStatus: 201, oldUrl: "https://old.example/h", malformed: false };
+const state = { upsertStatus: 201, malformed: false, subscriptions: [] as Sub[] };
+const HUB_URL = "https://hub.example/hooks/composio/events";
 
 const types = Array.from({ length: 3 }, (_, i) => ({
   slug: `GMAIL_T${i}`, name: `T${i}`, description: `d${i}`, instructions: "i", version: "1", types: ["poll"], toolkit: { slug: "gmail" },
@@ -43,24 +46,23 @@ beforeAll(async () => {
       if (req.method === "PATCH" && p === "/api/v3.1/trigger_instances/manage/ti_1") return send(200, { status: "success" });
       if (req.method === "DELETE" && p === "/api/v3.1/trigger_instances/manage/ti_1") return send(200, { status: "success" });
       if (req.method === "DELETE" && p === "/api/v3.1/trigger_instances/manage/ti_gone") return send(404, { error: { message: "no such trigger" } });
+      // One webhook subscription per project, as Composio has it: a second POST is a 409.
       if (req.method === "POST" && p === "/api/v3.1/webhook_subscriptions") {
-        return state.subscriptionExists
-          ? send(409, { error: { message: "already exists" } })
-          : send(201, { id: "whs_1", webhook_url: body.webhook_url, secret: "sec_new", enabled_events: body.enabled_events });
+        if (state.subscriptions.length) return send(409, { error: { message: "already exists" } });
+        const s = { id: "whs_1", webhook_url: body.webhook_url, enabled_events: body.enabled_events, secret: "sec_new" };
+        state.subscriptions.push(s);
+        return send(201, s);
       }
       if (req.method === "GET" && p === "/api/v3.1/webhook_subscriptions")
-        return send(200, {
-          items: [
-            { id: "whs_other", webhook_url: "https://other.example/h", enabled_events: ["composio.connected_account.expired"] },
-            { id: "whs_old", webhook_url: "https://old.example/h", enabled_events: ["composio.trigger.message"] },
-          ],
-          next_cursor: null,
-        });
-      if (req.method === "PATCH" && p === "/api/v3.1/webhook_subscriptions/whs_old") {
-        state.oldUrl = body.webhook_url;
-        return send(200, { id: "whs_old", webhook_url: body.webhook_url, enabled_events: body.enabled_events });
+        return send(200, { items: state.subscriptions.map(({ secret: _, ...s }) => s), next_cursor: null });
+      const sub = /^\/api\/v3\.1\/webhook_subscriptions\/(\w+)$/.exec(p);
+      const s = sub && state.subscriptions.find((x) => x.id === sub[1]);
+      if (sub && !s) return send(404, { error: { message: "no such subscription" } });
+      if (req.method === "PATCH" && s) {
+        Object.assign(s, body);
+        return send(200, { id: s.id, webhook_url: s.webhook_url, enabled_events: s.enabled_events });
       }
-      if (req.method === "GET" && p === "/api/v3.1/webhook_subscriptions/whs_old") return send(200, { id: "whs_old", webhook_url: state.oldUrl, secret: "sec_old", enabled_events: ["composio.trigger.message"] });
+      if (req.method === "GET" && s) return send(200, s);
       if (req.method === "GET" && p === "/api/v3/internal/sdk/realtime/credentials")
         return send(200, state.malformed ? { pusher_key: "k" } : { pusher_key: "k", project_id: "pr_1", pusher_cluster: "mt1" });
       if (req.method === "POST" && p === "/api/v3/internal/sdk/realtime/auth") {
@@ -76,10 +78,9 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   calls = [];
-  state.subscriptionExists = false;
   state.upsertStatus = 201;
-  state.oldUrl = "https://old.example/h";
   state.malformed = false;
+  state.subscriptions = [];
 });
 
 describe("trigger types", () => {
@@ -135,27 +136,46 @@ describe("trigger instances", () => {
 });
 
 describe("webhook subscriptions", () => {
+  const routes = () => calls.map((c) => `${c.method} ${c.path}`);
+
   it("creates one for trigger messages (V3) and returns its secret", async () => {
-    const r = await api.createWebhookSubscription("https://hub.example/hooks/composio/events");
-    expect(r).toEqual({ id: "whs_1", url: "https://hub.example/hooks/composio/events", secret: "sec_new" });
-    expect(calls[0]!.body).toEqual({ webhook_url: "https://hub.example/hooks/composio/events", enabled_events: ["composio.trigger.message"], version: "V3" });
+    const r = await api.createWebhookSubscription(HUB_URL);
+    expect(r).toEqual({ id: "whs_1", url: HUB_URL, secret: "sec_new", events: ["composio.trigger.message"] });
+    expect(calls[0]!.body).toEqual({ webhook_url: HUB_URL, enabled_events: ["composio.trigger.message"], version: "V3" });
   });
 
-  it("on 409 finds the existing subscription for trigger messages, points it at the new URL and returns its secret", async () => {
-    state.subscriptionExists = true;
-    const r = await api.createWebhookSubscription("https://hub.example/h");
-    expect(r).toEqual({ id: "whs_old", url: "https://hub.example/h", secret: "sec_old" });
-    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
-      "POST /api/v3.1/webhook_subscriptions",
-      "GET /api/v3.1/webhook_subscriptions",
-      "PATCH /api/v3.1/webhook_subscriptions/whs_old",
-      "GET /api/v3.1/webhook_subscriptions/whs_old",
-    ]);
-    expect(calls[2]!.body).toEqual({ webhook_url: "https://hub.example/h", enabled_events: ["composio.trigger.message"] });
+  it("on 409 reuses the subscription that already goes to this hub, adding only the trigger event to the ones it has", async () => {
+    state.subscriptions = [{ id: "whs_here", webhook_url: HUB_URL, enabled_events: ["composio.connected_account.expired"], secret: "sec_here" }];
+    const r = await api.createWebhookSubscription(HUB_URL);
+    expect(r).toEqual({ id: "whs_here", url: HUB_URL, secret: "sec_here", events: ["composio.connected_account.expired", "composio.trigger.message"] });
+    expect(routes()).toEqual(["POST /api/v3.1/webhook_subscriptions", "GET /api/v3.1/webhook_subscriptions", "PATCH /api/v3.1/webhook_subscriptions/whs_here", "GET /api/v3.1/webhook_subscriptions/whs_here"]);
+    expect(calls[2]!.body).toEqual({ enabled_events: ["composio.connected_account.expired", "composio.trigger.message"] });
   });
 
-  it("reads one subscription with its secret", async () => {
-    expect(await api.getWebhookSubscription("whs_old")).toEqual({ id: "whs_old", url: "https://old.example/h", secret: "sec_old" });
+  it("on 409 points the hub's own subscription (the id it kept) at its new address, and changes nothing when nothing differs", async () => {
+    state.subscriptions = [{ id: "whs_old", webhook_url: "https://old-hub.example/hooks/composio/events", enabled_events: ["composio.trigger.message"], secret: "sec_old" }];
+    const r = await api.createWebhookSubscription(HUB_URL, "whs_old");
+    expect(r).toMatchObject({ id: "whs_old", url: HUB_URL, secret: "sec_old" });
+    expect(calls[2]).toMatchObject({ method: "PATCH", body: { webhook_url: HUB_URL } });
+    calls = [];
+    await api.createWebhookSubscription(HUB_URL, "whs_old");
+    expect(routes()).toEqual(["POST /api/v3.1/webhook_subscriptions", "GET /api/v3.1/webhook_subscriptions", "GET /api/v3.1/webhook_subscriptions/whs_old"]);
+  });
+
+  it("never changes a subscription the person set up: it says where theirs goes instead", async () => {
+    state.subscriptions = [{ id: "whs_theirs", webhook_url: "https://their.example/composio", enabled_events: ["composio.connected_account.expired"], secret: "theirs" }];
+    await expect(api.createWebhookSubscription(HUB_URL)).rejects.toMatchObject({ host: "their.example", kind: "other" });
+    // Not even when the kept id names it: they pointed it somewhere of their own since.
+    await expect(api.createWebhookSubscription(HUB_URL, "whs_theirs")).rejects.toBeInstanceOf(WebhookTaken);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    expect(state.subscriptions[0]).toMatchObject({ webhook_url: "https://their.example/composio", enabled_events: ["composio.connected_account.expired"] });
+  });
+
+  it("reads one subscription with its secret, and lists them without", async () => {
+    state.subscriptions = [{ id: "whs_old", webhook_url: "https://old.example/h", enabled_events: ["composio.trigger.message"], secret: "sec_old" }];
+    expect(await api.getWebhookSubscription("whs_old")).toEqual({ id: "whs_old", url: "https://old.example/h", secret: "sec_old", events: ["composio.trigger.message"] });
+    expect(await api.listWebhookSubscriptions()).toEqual([{ id: "whs_old", url: "https://old.example/h", secret: "", events: ["composio.trigger.message"] }]);
+    await expect(api.getWebhookSubscription("whs_gone")).rejects.toMatchObject({ status: 404 });
   });
 });
 

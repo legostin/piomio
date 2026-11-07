@@ -134,10 +134,22 @@ A trigger waits for something to happen. What it waits for comes from one of thr
 | Built in | A time, a page or a webhook | a schedule, a one-time reminder, a watched page, an address that takes events |
 | The hub's own events | Something inside Piomio | a task finished or failed, a computer came online or went offline, a channel got a post, an approval is waiting |
 | A plugin | Whatever the plugin watches | a new item in an RSS or Atom feed (`web.rss_item`), a plugin you installed or an agent built |
+| An app through Composio | An event in an app you connected through Composio | a new Gmail message, a Slack message, a GitHub push (`composio.event`) |
 
 Ask in the chat: "when a task of mine fails, tell me on Telegram", "when this blog has a new post, summarize it". The agent can list what is available and sets the trigger up for you. A feed is read every 10 minutes at the most often; the first time it only remembers what is already there, and then each new item starts the trigger once. A feed that can't be read starts nothing and is tried again later.
 
 Text that comes from the internet or from outside (a page, a webhook, a feed, a plugin you installed) is treated as untrusted: the agent it wakes is told not to follow instructions inside it. The hub's own events are not treated as outside text, except those that carry what a task or channel wrote.
+
+### Events from apps connected through Composio
+
+An app you connected through Composio (see [Apps through Composio](plugins.md#apps-through-composio)) can start a trigger: a new Gmail message, a Slack message, a GitHub push, a new Calendar event, and whatever else Composio offers for that app. Ask in the chat: "when I get an email from the bank, summarize it", "when someone writes in #support, tell me". The agent looks up the app's events and their settings, and sets the trigger up.
+
+- Apps that tell Composio at once (Slack, GitHub…) arrive within seconds. Apps Composio checks on a timer (Gmail, Google Calendar…) take up to their polling interval, 2 minutes at the shortest.
+- When the hub's address, `PIOMIO_PUBLIC_URL`, is an https address the internet can reach (your own domain in front of a server, say), the hub registers a webhook in your Composio project and checks the signature of every delivery. Until the first signed delivery arrives it also listens the other way, in case the address can't be reached from outside.
+- Otherwise the events come over Composio's realtime channel. Composio calls it internal, so it may change without notice. The **Access from anywhere** link never carries webhooks, so a hub reached only through it uses this channel.
+- The hub never takes over a webhook you set up in your Composio project yourself. If the project already sends its webhook somewhere else, the hub leaves it as it is and uses the realtime channel; the agent tells you so.
+- What an app sends is outside content, like a web page.
+- Sign an app out and its triggers stop listening; the hub tries them again from time to time, so they pick up once you sign in again. After a new sign-in they move to the new account by themselves. A restart or a move of the hub to another computer doesn't stop them; deleting the trigger does, a few minutes later.
 
 ## What a trigger does before it wakes an agent
 

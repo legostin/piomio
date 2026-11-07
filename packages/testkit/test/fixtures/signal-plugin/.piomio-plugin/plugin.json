@@ -9,7 +9,8 @@
       { "type": "count", "mode": "subscribe", "title": "Count", "description": "One signal for each subscription." },
       { "type": "late", "mode": "subscribe", "title": "Late", "description": "Provided only once provide_late is called." },
       { "type": "slow", "mode": "subscribe", "title": "Slow", "description": "Takes a while to subscribe." },
-      { "type": "broken", "mode": "subscribe", "title": "Broken", "description": "Provided only once provide_broken is called; it never takes a subscription." }
+      { "type": "broken", "mode": "subscribe", "title": "Broken", "description": "Provided only once provide_broken is called; it never takes a subscription." },
+      { "type": "fading", "mode": "subscribe", "title": "Fading", "description": "Takes a subscription, then fails it a moment later." }
     ]
   },
   "permissions": {}
