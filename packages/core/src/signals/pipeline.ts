@@ -913,6 +913,7 @@ export class TriggerPipeline {
   private async carryQueued(id: string, w: Work): Promise<TriggerRun | undefined> {
     const t = this.e.get(id);
     if (!t) {
+      for (const x of this.queue(id)) this.mine.delete(x.runId);
       this.store.stateDelete(id, QUEUE_KEY);
       this.forget(id);
       return undefined;
