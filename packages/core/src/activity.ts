@@ -6,7 +6,6 @@ import type { Approval, MachineActivity, MachineInfo, MachineWork, WorkStep } fr
 import { nowIso, parseBrainRef } from "@piomio/shared";
 import type { EventBus } from "./bus.ts";
 import type { MachineHub } from "./machines.ts";
-import { hubName } from "./pairing.ts";
 import { sameComputer, type ReplicaOffer } from "./self-update.ts";
 
 interface Turn extends MachineWork {
@@ -161,7 +160,7 @@ export class MachineActivityFeed {
         .map(({ machineId: _, held: __, heldDetail: ___, ...w }) => w);
     const offer = (id: string, info?: MachineInfo) => this.updates?.offerFor(id, info) ?? {};
     const rows: MachineActivity[] = [
-      { id: "local", name: hubName(), online: true, work: work("local"), ...offer("local") },
+      { id: "local", name: this.machines.localName(), online: true, work: work("local"), ...offer("local") },
       ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id), ...(m.status === "online" ? offer(m.id, m.info) : {}) })),
     ];
     for (const r of this.updates?.replicaOffers?.() ?? []) {

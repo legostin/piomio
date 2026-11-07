@@ -64,7 +64,7 @@ import { MachineActivityFeed } from "./activity.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { InviteRegistry } from "./invites.ts";
 import { deviceTls, type DeviceTls } from "./devices-tls.ts";
-import { deviceUrls, hubName, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
+import { deviceUrls, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
 import { createCoreCall } from "./core-call.ts";
 import { configureHubLocale, coreCatalog, hubLocale, localizePluginValue, LocalizedError, t } from "./i18n.ts";
 import { registerHubTools, slug } from "./tools/hub-tools.ts";
@@ -278,7 +278,7 @@ export class Hub {
     this.cluster = new Cluster(this);
     this.machines.cluster = this.cluster;
     this.machines.version = config.version;
-    this.machines.here = () => ({ id: this.here(), name: hubName() });
+    this.machines.here = () => ({ id: this.here(), name: this.machines.localName() });
     this.machines.boundTo = (id) => this.agents.get(id)?.machines;
     this.activity = new MachineActivityFeed(this.bus, this.machines);
     this.updates = new HubUpdates({
@@ -700,7 +700,7 @@ export class Hub {
   /** The phone's link for an invite code, while phones can reach the hub (the device port or the link). */
   phoneLink(code: string): string | undefined {
     const urls = this.phoneUrls();
-    return urls.length ? pairingLink({ code, hubName: hubName(), fingerprint: this.deviceTls().fingerprint, urls }) : undefined;
+    return urls.length ? pairingLink({ code, hubName: this.machines.localName(), fingerprint: this.deviceTls().fingerprint, urls }) : undefined;
   }
 
   /** One invite for any device: the shareable /join link and, while phones can reach the hub, the phone's QR. */
@@ -719,7 +719,7 @@ export class Hub {
     if (!urls.length) throw new LocalizedError("device.noAddress", undefined, 409);
     const { fingerprint } = this.deviceTls();
     const { code, expiresAt } = this.devices.createPairingCode();
-    const link = pairingLink({ code, hubName: hubName(), fingerprint, urls });
+    const link = pairingLink({ code, hubName: this.machines.localName(), fingerprint, urls });
     return { code, expiresAt, link, qrSvg: qrSvg(link), urls, fingerprint };
   }
 
@@ -914,7 +914,7 @@ export class Hub {
     const here = this.here();
     const replicas = this.db.prepare("select id, name from replicas where revoked = 0 and id != ? order by priority").all(here) as Array<{ id: string; name: string }>;
     return [
-      { id: here, aliases: this.machines.aliases(), name: hubName(), online: true },
+      { id: here, aliases: this.machines.aliases(), name: this.machines.localName(), online: true },
       ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online" })),
       ...replicas.map((r) => ({ id: r.id, name: r.name, online: false, standby: true })),
     ];

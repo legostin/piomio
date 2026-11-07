@@ -4,10 +4,11 @@
 // hub's files (skills, attachments, downloads) never land in the project. A folder opens only with the person's yes on
 // a card (hub_agent_folder_add), and never one that holds their credentials, the hub's data, the whole home or the system.
 
-import { realpathSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import type { AgentFolder } from "@piomio/shared";
+import { realPath } from "@piomio/shared/agent-workspaces";
 import { expandHome, privateDirs, shownPath, within } from "./native-permissions.ts";
 
 /** Most folders an agent keeps. */
@@ -69,27 +70,25 @@ export function checkLocalFolder(path: string, o: { dataDir: string; home?: stri
   if (!isAbsolute(asked)) return { error: `${path}: give the full path (like ~/code/site or /Volumes/Work/site).` };
   let real: string;
   try {
-    real = realpathSync(resolve(asked));
+    real = realPath(asked);
     if (!statSync(real).isDirectory()) return { error: `${path} is a file, not a folder.` };
   } catch {
     return { error: `There is no folder ${path} on this computer.` };
   }
-  const realHome = safeReal(home);
-  const dataDir = safeReal(o.dataDir);
+  let realHome: string;
+  let dataDir: string;
+  let secrets: string[];
+  try {
+    realHome = realPath(home);
+    dataDir = realPath(o.dataDir);
+    secrets = privateDirs(realHome).map(realPath);
+  } catch { return { error: "Cannot resolve the protected folders on this computer." }; }
   if (real === dirname(real) || within(realHome, real)) return { error: `${shownPath(real, realHome)} is too wide: name the project's own folder.` };
   if (within(real, dataDir) || within(dataDir, real)) return { error: `${shownPath(real, realHome)} holds the hub's own data, which no agent opens.` };
-  const secret = privateDirs(realHome).find((d) => within(real, d) || within(d, real));
+  const secret = secrets.find((d) => within(real, d) || within(d, real));
   if (secret) return { error: `${shownPath(real, realHome)} holds the person's credentials (${shownPath(secret, realHome)}), which no agent opens.` };
   if (SYSTEM.some((d) => within(real, d) && !within(real, realHome))) return { error: `${real} is a system folder, not a project.` };
   return { path: real };
-}
-
-function safeReal(p: string): string {
-  try {
-    return realpathSync(p);
-  } catch {
-    return resolve(p);
-  }
 }
 
 /**

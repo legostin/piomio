@@ -54,7 +54,8 @@ export function createNative(host: NativeHost | undefined): NativeBridge | undef
 
   return {
     call,
-    ready: (conversationId) => call("ready", { conversationId }),
+    // `show`: this page can switch to another chat when the app says so (a warm page the app keeps ready).
+    ready: (conversationId) => call("ready", { conversationId, show: true }),
     approve: (approvalId) => call("approve", { approvalId }),
     deny: (approvalId) => call("deny", { approvalId }),
     dictation: {

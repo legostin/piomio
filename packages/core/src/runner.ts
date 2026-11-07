@@ -45,7 +45,7 @@ import type { UserLocations } from "./user-location.ts";
 import { attachmentNote, forSession, isSpeech, SPEECH_NOT_SET_UP, type AttachmentPart, type SessionFile } from "./attachments.ts";
 import { MAX_AUTO_TRANSCRIBE_SEC, type Transcriber } from "./transcribe.ts";
 import { firstSpeakers, groupTurn, groupTurnText, handOff, MAX_HANDOFFS, USER_LABEL } from "./group-chat.ts";
-import { hubName } from "./pairing.ts";
+import { localComputerName } from "./pairing.ts";
 import { cardKind, delivered, deliveredNote, recap, type NotificationPart } from "./continuity.ts";
 import { ruleLine, WorkRules } from "./work-rules.ts";
 import { heardParts, type HeardPrefix } from "./speech/interruption.ts";
@@ -1455,9 +1455,10 @@ export class SessionRunner {
   /** The computers a task can run on: the hub's own first, then the paired ones. */
   computers(): Array<{ id: string; aliases?: string[]; name: string; online: boolean; gpus?: string[]; commands?: boolean }> {
     const gpus = (list: string[] | undefined) => (list?.length ? { gpus: list } : {});
+    const machines = this.d.machines?.() ?? [];
     return [
-      { id: "local", aliases: (this.d.machines?.() ?? []).filter((m) => m.sameHost).map((m) => m.id), name: hubName(), online: true, ...gpus(this.d.gpus?.()) },
-      ...(this.d.machines?.() ?? []).filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", ...gpus(m.info?.gpus), ...(m.info && !m.info.commands ? { commands: false } : {}) })),
+      { id: "local", aliases: machines.filter((m) => m.sameHost).map((m) => m.id), name: localComputerName(machines), online: true, ...gpus(this.d.gpus?.()) },
+      ...machines.filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", ...gpus(m.info?.gpus), ...(m.info && !m.info.commands ? { commands: false } : {}) })),
     ];
   }
 
@@ -1468,7 +1469,7 @@ export class SessionRunner {
 
   /** A computer's name for people: the hub's own, a paired machine, or another replica of the hub. */
   computerName(id: string): string {
-    return id === "local" || id === this.here() ? hubName() : (this.d.machineName(id) ?? id);
+    return id === "local" || id === this.here() ? localComputerName(this.d.machines?.()) : (this.d.machineName(id) ?? id);
   }
 
   /** The computers a bound agent works on, by name ("box, vps"). */
@@ -2234,7 +2235,7 @@ export class SessionRunner {
     return {
       team: this.d.agents.list().map((a) => ({ id: a.id, name: agentName(a, hubLocale()) })),
       tasks: this.d.store.listTasks({ status: OPEN_TASK, limit: 200 }),
-      activity: this.d.activity?.view() ?? [{ id: "local", name: hubName(), online: true, work: [] }],
+      activity: this.d.activity?.view() ?? [{ id: "local", name: localComputerName(this.d.machines?.()), online: true, work: [] }],
       starter: (t: Task) => this.startedBy(t),
       machineOf: (t: Task) => this.computerName(this.taskMachine(t)),
       time: (iso: string) => clockTime(iso, timezone),

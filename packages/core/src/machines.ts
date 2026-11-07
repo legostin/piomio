@@ -21,6 +21,7 @@ import { replicaVersionNote } from "./self-update.ts";
 import { posix } from "node:path";
 import { commandParts, readOnlyCommand } from "./policy/commands.ts";
 import { PRIVATE } from "./native-permissions.ts";
+import { localComputerName } from "./pairing.ts";
 
 /**
  * What names credentials or private stores: a command that names one is never "only reads", wherever it runs. The
@@ -119,6 +120,8 @@ export class MachineHub {
     return id === "local" || id === here || this.sameHost.has(id) ? here : id;
   }
   aliases(): string[] { return [...this.sameHost]; }
+  /** This hub's own computer for people: the name of a machine paired from it, else the hostname (pairing.ts). */
+  localName(): string { return localComputerName(this.list()); }
   async ownsFiles(id: string, agentId: string, keys: string[], files: WorkspaceFileOperation): Promise<boolean> {
     try { return await this.call<boolean>(id, "workspace.owns", { agentId, keys, ...files }, 5_000); } catch { return false; }
   }

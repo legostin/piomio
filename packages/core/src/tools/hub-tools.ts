@@ -1045,7 +1045,7 @@ export function registerHubTools(hub: Hub): void {
     },
     async (i) => {
       const asked = String(i.machine ?? "").trim() || "local";
-      const local = asked === "local" || asked.toLowerCase() === hubName().toLowerCase();
+      const local = asked === "local" || [hubName(), hub.machines.localName()].some((n) => n.toLowerCase() === asked.toLowerCase());
       const m = local ? undefined : hub.machines.find(asked);
       const replica = local || m ? undefined : hub.updates.replicaPeer(asked);
       if (!local && !m && !replica) return text(`No machine or hub replica ${asked}. See machine_list and cluster_status.`, true);

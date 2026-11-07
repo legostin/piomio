@@ -4,12 +4,13 @@ import type { Approval, Machine, MachineActivity } from "@piomio/shared";
 import { EventBus } from "../src/bus.ts";
 import { detailOfTool, MachineActivityFeed, stepOfTool } from "../src/activity.ts";
 import type { MachineHub } from "../src/machines.ts";
+import { localComputerName } from "../src/pairing.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function setup(machines: Array<Pick<Machine, "id" | "name" | "status">> = []) {
   const bus = new EventBus();
-  const feed = new MachineActivityFeed(bus, { list: () => machines, canonical: (id: string) => id } as unknown as MachineHub);
+  const feed = new MachineActivityFeed(bus, { list: () => machines, canonical: (id: string) => id, localName: () => localComputerName(machines) } as unknown as MachineHub);
   const seen: MachineActivity[][] = [];
   bus.on("machines.activity", (v) => seen.push(v));
   return { bus, feed, seen };

@@ -18,7 +18,6 @@ import { agentName } from "../agents.ts";
 import { messageNote, pushNote } from "../push.ts";
 import type { DeviceTls } from "../devices-tls.ts";
 import { DEVICE_COOKIE } from "../devices.ts";
-import { hubName } from "../pairing.ts";
 import { registerApi } from "./api.ts";
 import { clientIp, HttpError, registerCompression } from "./http.ts";
 import { registerSpa } from "./spa.ts";
@@ -55,7 +54,7 @@ export async function buildDeviceApp(hub: Hub, tls: DeviceTls, opts: { remote?: 
   // ---------- public ----------
 
   // The phone probes every address from the QR with this and keeps the first that answers.
-  app.get("/api/device/hello", async () => ({ piomio: true, name: hubName(), version: cfg.version }));
+  app.get("/api/device/hello", async () => ({ piomio: true, name: hub.machines.localName(), version: cfg.version }));
 
   const pairFailures = new Map<string, number[]>();
   app.post("/api/devices/pair", async (req) => {
@@ -72,7 +71,7 @@ export async function buildDeviceApp(hub: Hub, tls: DeviceTls, opts: { remote?: 
         model: String(b.model ?? ""),
         publicKey: String(b.publicKey ?? ""),
       });
-      return { deviceId: device.id, token, device, hub: { name: hubName(), version: cfg.version } };
+      return { deviceId: device.id, token, device, hub: { name: hub.machines.localName(), version: cfg.version } };
     } catch (e) {
       recent.push(now);
       pairFailures.set(ip, recent);
@@ -126,7 +125,7 @@ export async function buildDeviceApp(hub: Hub, tls: DeviceTls, opts: { remote?: 
     await registerApi(api, hub, {
       authenticate,
       kind: "device",
-      bootstrap: (req) => ({ device: req.device, hubName: hubName(), ...(req.webCsrf ? { csrf: req.webCsrf } : {}) }),
+      bootstrap: (req) => ({ device: req.device, hubName: hub.machines.localName(), ...(req.webCsrf ? { csrf: req.webCsrf } : {}) }),
       // The app's socket carries its token; the page's carries the cookie and must come from the page itself.
       wsAllowed: (req) => !req.webCsrf || sameOrigin(req),
       onSocket: (socket, req) => {
