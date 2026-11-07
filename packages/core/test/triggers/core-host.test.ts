@@ -80,8 +80,17 @@ describe("the trigger engine's host in core", () => {
       ["trigger_delete", "triggers"],
       ["trigger_list", "triggers"],
       ["trigger_run_now", "triggers"],
+      ["trigger_runs", "triggers"],
+      ["trigger_sources", "triggers"],
+      ["trigger_test", "triggers"],
       ["trigger_update", "triggers"],
     ]);
+    // A call's own effect and its card's text reach the registry: a script host the trigger did not have is an outside action.
+    const create = s.tools.get("trigger_create")!;
+    const code = "export default () => {}";
+    expect(create.effectOf!({ kind: "event", name: "API", prompt: "Look.", script: { code, hosts: ["api.example.com"] } }, call)).toBe("external");
+    expect(create.effectOf!({ kind: "event", name: "API", prompt: "Look.", script: { code } }, call)).toBeUndefined();
+    expect(create.describe!({ kind: "event", name: "API", prompt: "Look.", script: { code, hosts: ["api.example.com"] } })).toContain("api.example.com");
     // A new hub's default heartbeat is written where the plugin kept its triggers.
     const stored = pluginKv(s.db, "triggers").list("trigger:");
     expect(stored).toHaveLength(1);
@@ -125,7 +134,7 @@ describe("the trigger engine's host in core", () => {
     s.setCard({ enabled: true, settings: {} });
     await s.ct.sync();
     expect(s.ct.engine).toBeDefined();
-    expect(triggerTools(s.tools)).toHaveLength(5);
+    expect(triggerTools(s.tools)).toHaveLength(8);
     s.ct.stop();
   });
 
@@ -192,7 +201,7 @@ describe("the trigger engine's host in core", () => {
     expect((await s.ct.http(req({}))).status).toBe(404);
     await s.ct.start();
     expect(s.ct.engine).toBeDefined();
-    expect(triggerTools(s.tools)).toHaveLength(5);
+    expect(triggerTools(s.tools)).toHaveLength(8);
     s.ct.stop();
   });
 

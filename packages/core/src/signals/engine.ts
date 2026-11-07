@@ -9,6 +9,7 @@ import type { RunReason, Signal, Trigger, TriggerInput, TriggerRun, TriggerState
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
 import { pageReader } from "./extract.ts";
 import { builtinSignal, fitted, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline } from "./pipeline.ts";
+import { testTrigger, type TestInput, type TestReport } from "./test-run.ts";
 import { verifyWebhook } from "./webhook-verify.ts";
 import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
@@ -257,8 +258,8 @@ export class TriggerEngine {
     await this.ctx.storage.set(`trigger:${t.id}`, t);
   }
 
-  async runs(id: string): Promise<TriggerRun[]> {
-    return this.ctx.store.runs(id, MAX_RUNS_KEPT);
+  async runs(id: string, limit = MAX_RUNS_KEPT): Promise<TriggerRun[]> {
+    return this.ctx.store.runs(id, limit);
   }
 
   /** A run into the journal, with its signals in full when it had any. */
@@ -739,8 +740,8 @@ export class TriggerEngine {
     }
   }
 
-  async runsWithStatus(id: string): Promise<Array<TriggerRun & { taskStatus?: string }>> {
-    const runs = await this.runs(id);
+  async runsWithStatus(id: string, limit = MAX_RUNS_KEPT): Promise<Array<TriggerRun & { taskStatus?: string }>> {
+    const runs = await this.runs(id, limit);
     if (!runs.some((r) => r.taskId)) return runs;
     try {
       const tasks = await this.ctx.core.call<Array<{ id: string; status: string }>>("tasks.list", { limit: 200 });
@@ -749,6 +750,11 @@ export class TriggerEngine {
     } catch {
       return runs;
     }
+  }
+
+  /** A test run (trigger_test, POST /triggers/:id/test): the pipeline on some signals with no outcome (test-run.ts). */
+  test(input: TestInput, o: { defaultAgent?: string } = {}): Promise<TestReport> {
+    return testTrigger(this, input, o);
   }
 
   // ---------- feedback ----------

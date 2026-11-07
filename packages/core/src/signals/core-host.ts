@@ -260,18 +260,25 @@ export class CoreTriggers {
       tools: {
         register: (r) => {
           if (s.closed) return;
-          const { handler, name: short, fullName, ...spec } = r;
+          const { handler, name: short, fullName, effectOf, describe, ...spec } = r;
           const name = fullName ?? `${TOOL_PREFIX}_${short}`;
           // As the plugin runner did: a string is the text, a throw is an error result.
           // Owned by the card, as the plugin's were: "always allow", the catalog's uses and its tool list go by the owner.
-          d.tools.register({ ...spec, name, owner: TRIGGERS_ID }, async (input, ctx): Promise<ToolResult> => {
-            try {
-              const out = await handler(input ?? {}, ctx);
-              return typeof out === "string" ? { content: [{ type: "text", text: out }] } : out;
-            } catch (e: any) {
-              return { content: [{ type: "text", text: `Error: ${e?.message ?? String(e)}` }], isError: true };
-            }
-          });
+          // A call's own effect (a new script host is an outside action) and its card's text go to the registry as a
+          // core tool's do.
+          d.tools.register(
+            { ...spec, name, owner: TRIGGERS_ID },
+            async (input, ctx): Promise<ToolResult> => {
+              try {
+                const out = await handler(input ?? {}, ctx);
+                return typeof out === "string" ? { content: [{ type: "text", text: out }] } : out;
+              } catch (e: any) {
+                return { content: [{ type: "text", text: `Error: ${e?.message ?? String(e)}` }], isError: true };
+              }
+            },
+            describe,
+            effectOf && ((input, ctx) => effectOf(input ?? {}, ctx)),
+          );
           s.toolNames.push(name);
         },
       },

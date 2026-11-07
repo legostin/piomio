@@ -189,6 +189,11 @@ export interface DryRun {
   summary?: string;
   context?: unknown;
   external: boolean;
+  /**
+   * Outside content came in during the test beyond the signals it was given: the script fetched, a source tool
+   * answered, a state value or a note made from outside content was read (trigger_test marks its answer so).
+   */
+  read: boolean;
   /** The script failed: there is no outcome. */
   error?: string;
 }
@@ -226,10 +231,12 @@ interface Pass {
   /** A test run: the script's state writes stay in it, nothing is carried out. */
   dry: boolean;
   force?: boolean;
+  /** A test run's: set when the script or the quick check read outside content beyond the signals (DryRun.read). */
+  read?: boolean;
 }
 
 /** What the stages decided, before the outcome is carried out; `why` goes on the outcome's journal line. */
-interface Judgement extends DryRun {
+interface Judgement extends Omit<DryRun, "read"> {
   why?: string;
   /** The script could not run at all (the sandbox full or stopped): not the script's failure. */
   unavailable?: boolean;
@@ -415,22 +422,26 @@ export class TriggerPipeline {
     return { signals: passed, held: "batch", done: none };
   }
 
-  /** The same path with no outcome: what each stage did (trigger_test). The script runs for real; its state writes stay in the test. */
-  async dryRun(t: Trigger, signals: Signal[]): Promise<DryRun> {
+  /**
+   * The same path with no outcome: what each stage did (trigger_test). The script runs for real; its state writes stay
+   * in the test. `replay`: the signals are the trigger's own from its journal, so their keys were seen: not dropped.
+   */
+  async dryRun(t: Trigger, signals: Signal[], o: { replay?: boolean } = {}): Promise<DryRun> {
     const now = this.e.now();
     const stages: StageRecord[] = [];
     const kept: Signal[] = [];
     for (const s of signals.map(trimmed)) {
       if (!this.passes(t, s)) stages.push({ stage: "match", verdict: "drop", why: `${s.id}: the filter (where) leaves it out` });
-      else if (s.key !== undefined && this.seen(t.id, s.key, now, false)) stages.push({ stage: "dedup", verdict: "drop", why: `${s.id}: its key was seen in the last 24 h` });
+      else if (!o.replay && s.key !== undefined && this.seen(t.id, s.key, now, false)) stages.push({ stage: "dedup", verdict: "drop", why: `${s.id}: its key was seen in the last 24 h` });
       else kept.push(s);
     }
-    if (!kept.length) return { stages, outcome: "drop", external: signals.some((s) => s.external) };
+    if (!kept.length) return { stages, outcome: "drop", external: signals.some((s) => s.external), read: false };
     const asked = t.state.triageToday;
-    const { why: _why, unavailable: _u, ...j } = await this.judge(t, kept, { dry: true });
+    const pass: Pass = { dry: true };
+    const { why: _why, unavailable: _u, ...j } = await this.judge(t, kept, pass);
     // Its quick-model questions count against the day's, as a real run's do.
     if (t.state.triageToday !== asked) await this.e.save(t);
-    return { ...j, stages: [...stages, ...trimLine(kept), ...j.stages] };
+    return { ...j, read: !!pass.read, stages: [...stages, ...trimLine(kept), ...j.stages] };
   }
 
   /** At start: queued runs are carried out (again: one cut short by a stop is retried), open batches get their timers back. */
@@ -970,6 +981,7 @@ export class TriggerPipeline {
     if (t.script) {
       const r = await this.script(t, signals, p);
       external ||= r.external;
+      if (p.dry && r.external) p.read = true;
       // pio calls the script left running when its wall time ran out (the sandbox counts them).
       const logs = r.droppedCalls ? [...r.logs, `[piomio] ${r.droppedCalls} pio call(s) the script did not wait for were dropped at the wall time`] : r.logs;
       const rec: StageRecord = { stage: "script", ms: r.ms, ...(logs.length ? { logs } : {}), ...(r.tokens ? { tokens: r.tokens } : {}) };
@@ -1003,6 +1015,7 @@ export class TriggerPipeline {
     } else if (!t.triage) return { stages, external, outcome: "wake", why: "no script and no quick check" };
     const q = await this.quickCheck(t, signals, context, p);
     stages.push(q.stage);
+    if (p.dry && q.external) p.read = true;
     return { stages, external: external || q.external, outcome: q.outcome, summary: q.summary, why: q.why, ...(context !== undefined ? { context } : {}) };
   }
 
@@ -1025,7 +1038,9 @@ export class TriggerPipeline {
       fetch: net.fetch,
       release: net.release,
       allowPrivate: this.e.settings.allowPrivateUrls,
-      external: signals.some((s) => s.external),
+      // A test run's pio starts clean, so what it reports is what the script itself read from outside (DryRun.read);
+      // the run is external all the same when its signals are (judge). Its state writes are the test's alone.
+      external: p.dry ? false : signals.some((s) => s.external),
       // Each question bounded: a hung CLI cannot hold the script's sandbox slot past it. One that brought no answer
       // gives back the quick check it took (pio takes one before each question).
       quick: this.refunding(t, this.bounded()),

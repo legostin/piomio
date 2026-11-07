@@ -8,7 +8,7 @@ import { NotFoundError, type TriggerEngine } from "./engine.ts";
 import type { ErrorParams, TriggerError } from "./errors.ts";
 import { describeSchedule } from "./schedule.ts";
 import type { Trigger, TriggerInput } from "./types.ts";
-import { ValidationError } from "./validate.ts";
+import { normalizeOn, ValidationError } from "./validate.ts";
 import { whenText } from "./when.ts";
 
 /** A trigger for the UI and the phone: with when it runs and its last error in the reader's language. */
@@ -43,15 +43,15 @@ export async function handleHttp(e: TriggerEngine, req: TriggerHttpRequest): Pro
     if (path === "/triggers") {
       if (method === "GET")
         return ok({ triggers: e.list().map((t) => view(e, t, req.locale)), timezone: e.tz, publicUrl: e.publicUrl, agents: await e.agents(), computers: await e.computers() });
-      if (method === "POST") return ok(view(e, await e.create(body(req), { createdBy: "user" }), req.locale), 201);
+      if (method === "POST") return ok(view(e, await e.create(normalizeOn(body(req), { create: true }), { createdBy: "user" }), req.locale), 201);
       return ok({ error: "method not allowed" }, 405);
     }
-    const m = /^\/triggers\/([A-Za-z0-9_-]+)(?:\/(run|runs|check))?$/.exec(path);
+    const m = /^\/triggers\/([A-Za-z0-9_-]+)(?:\/(run|runs|check|test))?$/.exec(path);
     if (m) {
       const [, id, sub] = m;
       const t = e.require(id);
       if (!sub && method === "GET") return ok(view(e, t, req.locale));
-      if (!sub && method === "PATCH") return ok(view(e, await e.update(id, body(req)), req.locale));
+      if (!sub && method === "PATCH") return ok(view(e, await e.update(id, normalizeOn(body(req))), req.locale));
       if (!sub && method === "DELETE") {
         await e.remove(id);
         return ok({ ok: true });
@@ -63,7 +63,16 @@ export async function handleHttp(e: TriggerEngine, req: TriggerHttpRequest): Pro
         return ok(text ? { ...run, text } : run);
       }
       if (sub === "check" && method === "POST") return ok(await e.checkNow(id));
-      if (sub === "runs" && method === "GET") return ok({ runs: await e.runsWithStatus(id) });
+      if (sub === "runs" && method === "GET") {
+        // The journal keeps 200 runs; the page and the phone ask for the last 20 unless they say how many.
+        const limit = Math.min(200, Math.max(1, Math.floor(Number(req.query?.limit) || 20)));
+        return ok({ runs: await e.runsWithStatus(id, limit) });
+      }
+      if (sub === "test" && method === "POST") {
+        // A test run on the trigger's recent signals (or "sample", or signals given): stages and outcomes, nothing carried out.
+        const b = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+        return ok(await e.test({ id, signals: b.signals ?? b.from, n: b.n }));
+      }
       return ok({ error: "method not allowed" }, 405);
     }
     return ok({ error: "not found" }, 404);

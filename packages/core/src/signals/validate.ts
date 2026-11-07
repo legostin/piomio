@@ -139,14 +139,18 @@ const builtinKind = (type: string, config: Record<string, unknown>, input: Trigg
 
 /**
  * Turn a built-in `on` entry (time.cron, time.at, web.page, web.webhook) into the trigger's kind and its fields,
- * leaving the other subscriptions in `on`. Input without such an entry comes back unchanged.
+ * leaving the other subscriptions in `on`. Input without such an entry comes back unchanged, except that a new
+ * trigger (`create`) with subscriptions and no kind is a signal trigger.
  */
-export function normalizeOn(input: TriggerInput): TriggerInput {
+export function normalizeOn(input: TriggerInput, o: { create?: boolean } = {}): TriggerInput {
   if (!input || typeof input !== "object" || !Array.isArray(input.on)) return input;
   const builtin = input.on.filter((s) => isObject(s) && isBuiltin(s.type));
-  if (!builtin.length) return input;
+  if (!builtin.length) return o.create && input.kind === undefined && input.on.length ? { ...input, kind: "signal" } : input;
   if (builtin.length > 1) fail("onBuiltinTwice", "Only one built-in source (time.cron, time.at, web.page, web.webhook) fits in one trigger");
   const entry = builtin[0];
+  // A built-in source becomes the trigger's kind, which keeps no filter: one given here would be lost without a word.
+  if (entry.where !== undefined && entry.where !== null)
+    fail("onWhereBuiltin", `A filter (where) does not apply to the built-in source ${entry.type}: return { drop } from the trigger's script for what does not matter`, { type: entry.type });
   const config = isObject(entry.config) ? entry.config : {};
   const kind = builtinKind(entry.type, config, input);
   if (input.kind !== undefined && input.kind !== kind)
@@ -220,19 +224,27 @@ function checkBatch(v: unknown): { windowSec: number; max?: number } {
   return out;
 }
 
+/** A script host as a trigger keeps it (lower case, `*.domain` or a public IP), or undefined when it is not one. */
+export function hostPattern(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  try {
+    return networkPattern(v.trim());
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * A host the script may reach: a DNS name or *.domain (or a public IP), nothing else. There is no public-suffix list, so
- * wildcards such as *.co.uk pass; the person confirms each new host on a network card anyway.
+ * wildcards such as *.co.uk pass; but an agent's call that gives a script a host its trigger did not have counts as an
+ * outside action (tools.ts addedHosts), so policy decides each new one as it does any: the person's yes on its card, a
+ * rule of theirs, or auto mode's reviewer.
  */
 function checkHost(v: unknown): string {
-  if (typeof v === "string") {
-    try {
-      return networkPattern(v.trim());
-    } catch {
-      // falls through to the error below
-    }
-  }
-  return fail("hostInvalid", `"${String(v)}" is not a valid host: use a host name like example.com, *.example.com or a public IP, with no scheme, port or path`, { host: String(v) });
+  return (
+    hostPattern(v) ??
+    fail("hostInvalid", `"${String(v)}" is not a valid host: use a host name like example.com, *.example.com or a public IP, with no scheme, port or path`, { host: String(v) })
+  );
 }
 
 function checkScript(v: unknown): { code: string; hosts: string[] } {

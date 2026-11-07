@@ -565,4 +565,18 @@ export default {
   "triggers.error.machineOffline": "The computer \"{machine}\" is offline",
   "triggers.error.machineGone": "The computer \"{machine}\" is no longer connected to the hub",
   "triggers.error.checkWatchOnly": "Only a watch trigger can be checked now",
+  "triggers.error.onWhereBuiltin": "A filter (where) does not apply to the built-in source {type}: the trigger's script can drop what does not matter",
+  "triggers.error.testWhat": "Say what to test: a trigger, a draft of one, or a change to one",
+  "triggers.error.testRecentNeedsId": "Testing on recent signals needs a saved trigger: test a draft on sample signals or on signals you give",
+  "triggers.error.testNoRecent": "Trigger {id} has no signals in its history yet: test it on sample signals or on signals you give",
+  "triggers.error.testNoSample": "There is no sample signal for {types}: give the signals to test on",
+  "triggers.error.testSignals": "Signals to test on are “recent”, “sample” or a list of 1 to {max} signals, each with a type",
+  "triggers.error.testN": "n must be an integer from 1 to {max}",
+  // approval cards for the trigger tools (tools.ts describe), in the hub language
+  "triggers.approval.create": "Create the trigger “{name}”: {what}",
+  "triggers.approval.createHosts": "Create the trigger “{name}”: {what}. Its script will reach {hosts}",
+  "triggers.approval.update": "Change the trigger “{name}”: {fields}",
+  "triggers.approval.updateHosts": "Change the trigger “{name}” ({fields}): its script will also reach {hosts}",
+  "triggers.approval.test": "Test the trigger “{name}” once, with nothing carried out",
+  "triggers.approval.testHosts": "Test the trigger “{name}” once: its script will reach {hosts}",
 } satisfies Record<string, string>;

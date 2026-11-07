@@ -564,4 +564,18 @@ export default {
   "triggers.error.machineOffline": "Компьютер \"{machine}\" не в сети",
   "triggers.error.machineGone": "Компьютер \"{machine}\" больше не подключён к хабу",
   "triggers.error.checkWatchOnly": "Проверить сейчас можно только триггер слежения (watch)",
+  "triggers.error.onWhereBuiltin": "Фильтр (where) не действует на встроенный источник {type}: лишнее может отбросить скрипт триггера",
+  "triggers.error.testWhat": "Укажи, что проверить: триггер, его черновик или изменение в нём",
+  "triggers.error.testRecentNeedsId": "Проверить на последних сигналах можно только сохранённый триггер: черновик проверяй на образцах или на своих сигналах",
+  "triggers.error.testNoRecent": "У триггера {id} в истории ещё нет сигналов: проверь его на образцах или на своих сигналах",
+  "triggers.error.testNoSample": "Для {types} нет образца сигнала: передай сигналы для проверки",
+  "triggers.error.testSignals": "Сигналы для проверки — «recent», «sample» или список от 1 до {max} сигналов, у каждого есть type",
+  "triggers.error.testN": "n должно быть целым числом от 1 до {max}",
+  // карточки подтверждения для инструментов триггеров (tools.ts describe), на языке хаба
+  "triggers.approval.create": "Создать триггер «{name}»: {what}",
+  "triggers.approval.createHosts": "Создать триггер «{name}»: {what}. Его скрипт будет обращаться к {hosts}",
+  "triggers.approval.update": "Изменить триггер «{name}»: {fields}",
+  "triggers.approval.updateHosts": "Изменить триггер «{name}» ({fields}): его скрипт будет обращаться ещё и к {hosts}",
+  "triggers.approval.test": "Один раз проверить триггер «{name}», ничего не выполняя",
+  "triggers.approval.testHosts": "Один раз проверить триггер «{name}»: его скрипт обратится к {hosts}",
 } satisfies Record<keyof typeof en, string>;

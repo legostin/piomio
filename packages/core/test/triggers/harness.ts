@@ -4,10 +4,10 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Locale, ToolCallContext, ToolResult, ToolSpec } from "@piomio/shared";
+import type { Locale, ToolCallContext, ToolResult } from "@piomio/shared";
 import { tFor } from "../../src/i18n.ts";
 import type { TriggerEngine } from "../../src/signals/engine.ts";
-import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse, TriggerToolRegistration } from "../../src/signals/host.ts";
+import type { PipelineServices, TriggerHost, TriggerHttpRequest, TriggerHttpResponse, TriggerSourceInfo, TriggerToolRegistration } from "../../src/signals/host.ts";
 import { startTriggers } from "../../src/signals/index.ts";
 import { memoryStore } from "../../src/signals/store.ts";
 
@@ -19,7 +19,14 @@ export interface TriggerHarnessOptions {
   core?: (method: string, params: any) => unknown;
   /** The vault: the fields of an item, or a throw when it is missing. */
   vault?: (ref: string, actor: string) => Promise<Record<string, string>>;
+  /** What scripts and quick checks reach; unset: none of it (the pipeline's NO_SERVICES). */
+  pipeline?: PipelineServices;
+  /** Signal sources beyond core's own (trigger_sources, trigger_test's samples). */
+  sources?: TriggerSourceInfo[];
 }
+
+/** A registered tool as the harness keeps it: its spec, effectOf and describe (the handler is behind invoke). */
+export type HarnessTool = Omit<TriggerToolRegistration, "handler">;
 
 export interface TriggerHarness {
   engine: TriggerEngine;
@@ -27,7 +34,7 @@ export interface TriggerHarness {
   store: ReturnType<typeof memoryStore>;
   storage: Map<string, unknown>;
   /** Tools by short name. */
-  tools: Map<string, ToolSpec>;
+  tools: Map<string, HarnessTool>;
   /** Bus events the engine listens to. */
   subscriptions: Set<string>;
   /** Core calls and UI events (as method "ui.emit"), in order. */
@@ -49,7 +56,7 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
   let locale: Locale = o.locale ?? "en";
   const storage = new Map<string, unknown>();
   const store = memoryStore();
-  const tools = new Map<string, ToolSpec>();
+  const tools = new Map<string, HarnessTool>();
   const handlers = new Map<string, TriggerToolRegistration["handler"]>();
   const listeners = new Map<string, Array<(payload: any) => void>>();
   const subscriptions = new Set<string>();
@@ -86,6 +93,8 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
     },
     store,
     ...(o.vault ? { vault: { get: (ref: string, actor: string) => o.vault!(ref, actor) } } : {}),
+    ...(o.pipeline ? { pipeline: o.pipeline } : {}),
+    ...(o.sources ? { sources: { list: () => o.sources! } } : {}),
     core: {
       call: async (method, params) => {
         coreCalls.push({ method, params });

@@ -79,6 +79,42 @@ describe("the hub's trigger engine", () => {
     expect(task.goal).toContain("42");
   });
 
+  it("asks the person before an agent gives a script a host its trigger did not have", async () => {
+    const was = hub.settings.get();
+    hub.settings.update({ approvalMode: "ask", approvalInlineWaitSec: 0.2 });
+    try {
+      const conv = hub.store.agentConversation("assistant").id;
+      const session = hub.store.createSession({ conversationId: conv, agentId: "assistant", brainRef: "fake@local", background: false }).row.id;
+      const code = "export default () => ({ note: 'seen' })";
+      const textOf = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((c) => c.text ?? "").join("\n");
+      // No host: a change like any other, made at once.
+      const plain = await hub.gateway.call(session, "trigger_create", { kind: "event", name: "Plain", prompt: "Look.", script: { code } });
+      expect(textOf(plain)).toContain("Created trigger");
+      const plainId = /trigger (t_[0-9a-f]+)/.exec(textOf(plain))![1];
+      // A host: an outside action, on a card that names it, and nothing made meanwhile.
+      const reach = await hub.gateway.call(session, "trigger_create", { kind: "event", name: "Reach", prompt: "Look.", script: { code, hosts: ["api.example.com"] } });
+      expect(reach._meta?.status).toBe("awaiting_approval");
+      const card = hub.approvals.get(String(reach._meta?.approvalId))!;
+      expect(card).toMatchObject({ tool: "trigger_create", effect: "external" });
+      expect(card.summary).toContain("api.example.com");
+      expect(hub.triggers.engine!.list().some((t) => t.name === "Reach")).toBe(false);
+      // Keeping the hosts a trigger has is a change; adding one is an outside action again, which the normal policy
+      // decides: here the person's "always allow" for trigger_update (the first test) lets it through.
+      const same = await hub.gateway.call(session, "trigger_update", { id: plainId, name: "Plain again" });
+      expect(textOf(same)).toContain("Updated trigger");
+      const added = { id: plainId, script: { code, hosts: ["evil.example.org"] } };
+      expect(hub.tools.get("trigger_update")!.effectOf!(added, call)).toBe("external");
+      expect(hub.tools.get("trigger_update")!.effectOf!({ id: plainId, name: "x" }, call)).toBeUndefined();
+      const more = await hub.gateway.call(session, "trigger_update", added);
+      expect(textOf(more)).toContain("Updated trigger");
+      // Newest first: this call's decision.
+      const decision = hub.audit.list({ action: "policy.decision" }).find((a) => a.target === "trigger_update");
+      expect(decision?.data).toMatchObject({ decision: "allow", ruleId: expect.any(String) });
+    } finally {
+      hub.settings.update({ approvalMode: was.approvalMode, approvalInlineWaitSec: was.approvalInlineWaitSec });
+    }
+  });
+
   it("checks a signature over the exact bytes of a real request, with the key from the vault", async () => {
     hub.vault.init("webhook-verify-passphrase");
     hub.vault.upsert({ id: "gh-hook", type: "secret", name: "Hook key", fields: { value: "hookkey" } });

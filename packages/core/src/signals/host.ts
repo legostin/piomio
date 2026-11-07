@@ -2,7 +2,7 @@
 // plugin. Core gives it one (core-host.ts); tests give it a fake. Keeping that shape lets the engine and its tests move
 // unchanged (docs/superpowers/specs/2026-11-07-unified-triggers-design.md, phase 1).
 
-import type { CoreMethod, Locale, Params, ToolCallContext, ToolResult, ToolSpec } from "@piomio/shared";
+import type { CoreMethod, Locale, Params, ToolCallContext, ToolEffect, ToolResult, ToolSpec } from "@piomio/shared";
 import type { QuickModel } from "../bare-ask.ts";
 import type { TriggerStore } from "./store.ts";
 
@@ -33,6 +33,27 @@ export interface TriggerToolRegistration extends ToolSpec {
   /** The tool's whole name, when it should not carry the `trigger_` prefix (`signals_recent`). */
   fullName?: string;
   handler: (input: any, ctx: ToolCallContext) => Promise<ToolResult | string> | ToolResult | string;
+  /**
+   * What this very call does, when it is more or less than `effect` (the registry's ToolEffectOf): a create or update
+   * that gives the script a host it did not have is an outside action. Undefined keeps `effect`.
+   */
+  effectOf?: (input: any, ctx: ToolCallContext) => ToolEffect | undefined;
+  /** The approval card's text for a call, in the hub language (the registry's ToolDescriber). */
+  describe?: (input: any) => string;
+}
+
+/**
+ * A signal source beyond core's own four (plugins and the hub, from phase 3), as trigger_sources lists it. `sample` is
+ * the data of a sample signal, for test runs; `external` defaults to true.
+ */
+export interface TriggerSourceInfo {
+  type: string;
+  description: string;
+  source?: string;
+  config?: unknown;
+  sample?: unknown;
+  external?: boolean;
+  online?: boolean;
 }
 
 /**
@@ -93,4 +114,6 @@ export interface TriggerHost {
   fetch?: FetchLike;
   /** What scripts and quick checks reach (pipeline.ts); unset: none of it is available. */
   pipeline?: PipelineServices;
+  /** Signal sources beyond core's own (phase 3 registers them); unset: only core's four. */
+  sources?: { list(): TriggerSourceInfo[] };
 }

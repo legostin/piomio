@@ -1,7 +1,7 @@
 ---
 title: Tasks, schedules and the Inbox
 nav: Tasks, schedules, Inbox
-description: How a request becomes a task on the side, the task line and the Tasks page, /task and /goal, reminders, schedules and watched pages, what background runs tell you, the Inbox, the digest and quiet hours.
+description: How a request becomes a task on the side, the task line and the Tasks page, /task and /goal, reminders, schedules and watched pages, what a trigger checks before it wakes an agent, what background runs tell you, the Inbox, the digest and quiet hours.
 ---
 
 You talk to an agent; the work happens on the side. Anything with steps becomes a task that runs by itself and reports back, and the dialog stays free. Schedules and watched pages start tasks on their own, and what they find reaches you as a message, a notification or a line in the digest.
@@ -124,6 +124,42 @@ A schedule can name a computer. If that computer is offline when it is due, the 
 Limits: each schedule runs at most 24 times a day unless you raise it; a run is skipped while the previous one is still going; runs missed while the hub was off catch up once; addresses on your local network can't be watched unless you turn on **Allow watching local network addresses** in the Triggers plugin's settings. A watched page that takes more than 10 seconds to read (very large or very deeply nested) is not compared: its check ends with an error on the card.
 
 To change or stop one, say so: "pause the weather schedule", "delete the price watch". The same is on the **Triggers** page (**Settings** → **Triggers**): **Create trigger**, and on each card the **On** switch, **Run now**, **Check** (for a watch), **Edit**, **History** and **Delete**.
+
+## What a trigger does before it wakes an agent
+
+A trigger doesn't have to wake its agent for everything that comes in. Ask for a check first, in your own words: "watch this webhook and wake me only for failed deploys", "check the shop page every hour, keep a note when the price moves, and wake me only below 500". The agent sets up the check, tests it and tells you what it will do.
+
+Each time something comes in, the check ends in one of three ways:
+
+| Outcome | What happens |
+|---|---|
+| Wake | The agent starts its task as before, with what the check found |
+| Note | Nothing starts: the agent keeps a short note and sees it before its next reply |
+| Drop | Nothing happens; the trigger's history says why |
+
+A trigger without a check wakes its agent every time, as before. A trigger can also gather what comes in for a few minutes and look at it all at once; when very many events arrive in a minute, it does that by itself.
+
+### A script that only reads
+
+The agent can write a short script for the trigger. The script reads and decides; it never acts. It can use the agent's tools that only read (mail, a calendar, a search), open the sites listed on the trigger, ask a quick model, and remember a few values between runs. It can't send, post, buy, delete or change anything anywhere: whatever needs doing waits for the agent. Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
+
+The sites a script may open are part of the trigger. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
+
+### A quick check in your words
+
+Say what matters and what doesn't: "only failed deploys", "letters from clients and invoices, not newsletters". A quick model reads what came in, what the script found and the trigger's last notes, and chooses wake, note or drop. It is a bare session on a brain signed in on the hub's computer, on its cheapest model, with no tools: text inside what came in can at most change its choice. Each trigger has 200 quick checks a day unless you ask for more. When no quick model can answer, the agent is woken as before while the day's runs last, and after that a note is kept, so nothing is lost.
+
+### Notes
+
+Before its next reply, in a chat or a task, the agent sees a short list of what its triggers noted since it last looked. A note made from outside content (a page, a webhook, an email) shows there only as a count, never its text, so a stranger's words never land in every chat. The agent reads such notes in full when they matter, and treats what it read the way it treats a web page (see [After outside content](approvals.md#after-outside-content)); so does a task woken by a check that read outside content. Notes are kept for 30 days.
+
+### Webhooks signed by the sender
+
+A webhook can check the sender's signature instead of a secret in the request: GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`), or any service that signs with HMAC-SHA256. Say "make this webhook check GitHub's signature". The assistant asks for the signing secret on a secure card in the chat; it goes straight into the vault, and the agent never sees it. Set the same secret in the sender's webhook settings. A webhook with a check is answered at once and checked right after, and a delivery the sender repeats is handled once.
+
+### Ask the agent to test it
+
+Before it tells you a trigger works, the agent tests it: on a sample, on the trigger's last real events, or on examples it writes. A test runs the whole check and shows what each step decided, with nothing carried out: no task, no note. You can ask for one too: "test the deploy trigger on its last five events". And you can ask "why didn't it wake me for that email?": the agent reads the trigger's history, where each run says what the script and the quick check decided and why.
 
 ## What a background run tells you
 

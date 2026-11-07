@@ -56,6 +56,13 @@ describe("normalizeOn", () => {
     expect(out.on).toEqual([mail]);
     const plain = { ...base, kind: "signal", on: [mail] };
     expect(normalizeOn(plain)).toBe(plain);
+    // A new trigger with only other sources' subscriptions is a signal trigger; a change keeps its trigger's kind.
+    expect(normalizeOn({ ...base, on: [mail] }, { create: true }).kind).toBe("signal");
+    expect(normalizeOn({ ...base, on: [mail] }).kind).toBeUndefined();
+  });
+
+  it("refuses a filter on a built-in source, which its kind could not keep", () => {
+    bad("onWhereBuiltin", () => normalizeOn({ ...base, on: [{ type: "web.webhook", where: { path: "data.payload.kind", eq: "push" } }] }));
   });
 
   it("refuses two built-ins and a conflicting kind", () => {
