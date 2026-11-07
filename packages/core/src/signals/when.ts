@@ -64,6 +64,8 @@ export function whenText(t: Trigger, tr: Translate, locale: string, tz: string):
       return tr("when.watch", { n: t.intervalMinutes ?? 60, target: `${t.url}${t.selector ? ` [${t.selector}]` : ""}${t.jsonPath ? ` {${t.jsonPath}}` : ""}` });
     case "event":
       return tr("when.webhook");
+    case "signal":
+      return tr("when.signals", { types: (t.on ?? []).map((s) => s.type).join(", ") });
     case "heartbeat":
       return tr("when.daysAt", { days: days(t.weekdays ?? [], tr, locale), times: (t.times ?? []).join(", ") });
   }

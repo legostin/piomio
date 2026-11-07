@@ -4,11 +4,12 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Locale, ToolCallContext, ToolResult, ToolSpec } from "@piomio/shared";
+import type { Locale, ToolCallContext, ToolResult } from "@piomio/shared";
 import { tFor } from "../../src/i18n.ts";
 import type { TriggerEngine } from "../../src/signals/engine.ts";
-import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse, TriggerToolRegistration } from "../../src/signals/host.ts";
+import type { PipelineServices, TriggerHost, TriggerHttpRequest, TriggerHttpResponse, TriggerSourceInfo, TriggerToolRegistration } from "../../src/signals/host.ts";
 import { startTriggers } from "../../src/signals/index.ts";
+import { memoryStore } from "../../src/signals/store.ts";
 
 export interface TriggerHarnessOptions {
   settings?: Record<string, unknown>;
@@ -16,20 +17,33 @@ export interface TriggerHarnessOptions {
   locale?: Locale;
   /** Answers the engine's core calls; undefined for the rest. */
   core?: (method: string, params: any) => unknown;
+  /** The vault: the fields of an item, or a throw when it is missing. */
+  vault?: (ref: string, actor: string) => Promise<Record<string, string>>;
+  /** What scripts and quick checks reach; unset: none of it (the pipeline's NO_SERVICES). */
+  pipeline?: PipelineServices;
+  /** Signal sources beyond core's own (trigger_sources, trigger_test's samples). */
+  sources?: TriggerSourceInfo[];
 }
+
+/** A registered tool as the harness keeps it: its spec, effectOf and describe (the handler is behind invoke). */
+export type HarnessTool = Omit<TriggerToolRegistration, "handler">;
 
 export interface TriggerHarness {
   engine: TriggerEngine;
+  /** The journal, notes and state the engine writes. */
+  store: ReturnType<typeof memoryStore>;
   storage: Map<string, unknown>;
   /** Tools by short name. */
-  tools: Map<string, ToolSpec>;
+  tools: Map<string, HarnessTool>;
   /** Bus events the engine listens to. */
   subscriptions: Set<string>;
   /** Core calls and UI events (as method "ui.emit"), in order. */
   coreCalls: Array<{ method: string; params: any }>;
+  /** Vault items the fake vault handed out (tests push to it). */
+  vaultCalls: Array<{ ref: string; actor: string }>;
   invoke(name: string, input?: unknown, ctx?: Partial<ToolCallContext>): Promise<ToolResult>;
   invokeText(name: string, input?: unknown, ctx?: Partial<ToolCallContext>): Promise<string>;
-  http(req: { method?: string; path: string; query?: Record<string, string>; headers?: Record<string, string>; body?: unknown; public?: boolean; locale?: Locale }): Promise<TriggerHttpResponse>;
+  http(req: { method?: string; path: string; query?: Record<string, string>; headers?: Record<string, string>; body?: unknown; rawBody?: string; public?: boolean; locale?: Locale }): Promise<TriggerHttpResponse>;
   emit(event: string, payload: unknown): void;
   /** Change the hub language (and the default language of requests). */
   setLocale(locale: Locale): void;
@@ -41,7 +55,8 @@ const clone = <T>(v: T): T => (v === undefined ? v : structuredClone(v));
 export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promise<TriggerHarness> {
   let locale: Locale = o.locale ?? "en";
   const storage = new Map<string, unknown>();
-  const tools = new Map<string, ToolSpec>();
+  const store = memoryStore();
+  const tools = new Map<string, HarnessTool>();
   const handlers = new Map<string, TriggerToolRegistration["handler"]>();
   const listeners = new Map<string, Array<(payload: any) => void>>();
   const subscriptions = new Set<string>();
@@ -76,6 +91,10 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
       delete: async (k) => void storage.delete(k),
       list: async (prefix = "") => [...storage.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value: clone(value) })),
     },
+    store,
+    ...(o.vault ? { vault: { get: (ref: string, actor: string) => o.vault!(ref, actor) } } : {}),
+    ...(o.pipeline ? { pipeline: o.pipeline } : {}),
+    ...(o.sources ? { sources: { list: () => o.sources! } } : {}),
     core: {
       call: async (method, params) => {
         coreCalls.push({ method, params });
@@ -99,10 +118,12 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
 
   const h: TriggerHarness = {
     engine,
+    store,
     storage,
     tools,
     subscriptions,
     coreCalls,
+    vaultCalls: [],
     async invoke(name, input = {}, ctx) {
       const fn = handlers.get(name);
       if (!fn) throw new Error(`unknown tool ${name}`);

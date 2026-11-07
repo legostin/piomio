@@ -627,7 +627,7 @@ export class PluginHost {
 
   async http(
     id: string,
-    req: { method: string; path: string; query: Record<string, string>; headers: Record<string, string>; body: unknown; public: boolean; locale: Locale },
+    req: { method: string; path: string; query: Record<string, string>; headers: Record<string, string>; body: unknown; rawBody?: string; public: boolean; locale: Locale },
   ) {
     const r = this.running.get(id);
     if (!r || !this.httpPlugins.has(id)) return { status: 404, body: { error: "plugin has no http handler" } };

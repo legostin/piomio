@@ -3,9 +3,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TriggerHost } from "../../src/signals/host.ts";
 import { TriggerEngine } from "../../src/signals/engine.ts";
+import { memoryStore, type TriggerStore } from "../../src/signals/store.ts";
 import type { Trigger } from "../../src/signals/types.ts";
 
+// The journal lives beside the storage: a context made on the same storage map (a restart, a second replica on the
+// shared database) sees the same runs.
+const stores = new WeakMap<Map<string, unknown>, TriggerStore>();
+
 function fakeCtx(kv = new Map<string, unknown>(), tz = "Europe/Moscow") {
+  const store = stores.get(kv) ?? memoryStore();
+  stores.set(kv, store);
   const calls: Array<{ method: string; params: any }> = [];
   let n = 0;
   const ctx = {
@@ -21,6 +28,7 @@ function fakeCtx(kv = new Map<string, unknown>(), tz = "Europe/Moscow") {
       delete: async (k: string) => void kv.delete(k),
       list: async (prefix = "") => [...kv.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value: structuredClone(value) })),
     },
+    store,
     core: {
       call: async (method: string, params: any) => {
         calls.push({ method, params });
@@ -257,6 +265,32 @@ describe("trigger engine", () => {
     expect(e.get("t_s")).toMatchObject({ enabled: false, state: { nextRunAt: undefined, lastFeedback: { value: "off" } } });
     expect((kv.get("trigger:t_s") as Trigger).enabled).toBe(false);
     await e.onFeedback({ id: "n5", triggerId: "t_unknown", feedback: "off" });
+    e.stop();
+  });
+
+  it("asks a trigger's quick check to be stricter, once, when the person wants fewer", async () => {
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    const hook = (id: string, brief: string) => base({ id, kind: "event", cron: undefined, secret: "s", triage: { brief }, triagePerDay: 10 });
+    kv.set("trigger:t_q", hook("t_q", "failed deploys on main"));
+    kv.set("trigger:t_full", hook("t_full", "a".repeat(2000)));
+    kv.set("trigger:t_plain", base({ id: "t_plain", kind: "event", cron: undefined, secret: "s" }));
+    const f = fakeCtx(kv);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    const line = "The person asked for fewer: be stricter.";
+    await e.onFeedback({ id: "n1", triggerId: "t_q", feedback: "less" });
+    expect(e.get("t_q")!.triage!.brief).toBe(`failed deploys on main\n${line}`);
+    expect((kv.get("trigger:t_q") as Trigger).triage!.brief).toBe(`failed deploys on main\n${line}`);
+    await e.onFeedback({ id: "n2", triggerId: "t_q", feedback: "less" });
+    expect(e.get("t_q")!.triage!.brief).toBe(`failed deploys on main\n${line}`);
+    // A brief at its limit makes room for the line.
+    await e.onFeedback({ id: "n3", triggerId: "t_full", feedback: "less" });
+    const full = e.get("t_full")!.triage!.brief;
+    expect(full.length).toBeLessThanOrEqual(2000);
+    expect(full.endsWith(`\n${line}`)).toBe(true);
+    // No quick check: nothing to make stricter.
+    await e.onFeedback({ id: "n4", triggerId: "t_plain", feedback: "less" });
+    expect(e.get("t_plain")!.triage).toBeUndefined();
     e.stop();
   });
 

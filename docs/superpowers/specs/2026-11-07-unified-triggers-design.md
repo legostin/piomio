@@ -81,6 +81,8 @@ interface Trigger {
 
 `Match` is a small declarative filter over a signal's fields, with no code: `eq`, `ne`, `contains`, `matches` (regex), `in`, `exists`, `gt`/`lt`, combined with `all`/`any`/`not`. Paths are dotted (`data.from.address`).
 
+Phase 2 kept the stored shape it found (see "Decided in phase 2" in section 7): a trigger keeps `kind` and its kind's fields as its built-in source, `prompt`, `maxRunsPerDay`, `machine`, `skill` and `report` stay where they were, and the new fields sit beside them: `on` (other sources only), `batch`, `script`, `triage`, `triagePerDay`, and `verify` for a webhook. The shape above is where phase 5 may take it.
+
 ## 3. The pipeline
 
 For each signal (or each batch):
@@ -104,14 +106,14 @@ Every run (from step 2 on) is written to `trigger_runs`: the signal ids and subj
 
 ## 4. The script sandbox and `pio`
 
-A script is JavaScript, or TypeScript stripped by Node's `module.stripTypeScriptTypes`. It is an ES module whose default export is `async (signal | signals[], pio) => Verdict | void`. It runs in **QuickJS compiled to WASM** (`quickjs-emscripten` 0.32, sync build; host functions return QuickJS promises, which the host resolves while it pumps `executePendingJobs`):
+A script is JavaScript, or TypeScript stripped by Node's `module.stripTypeScriptTypes`. It is an ES module whose default export is `async (signal | signals[], pio, signals) => Verdict | void`: the first argument is the trigger's own shape (the list when it batches, else one signal; a flood batch of a trigger that does not batch hands it the first), the third is always the whole list. It runs in **QuickJS compiled to WASM** (`quickjs-emscripten` 0.32, sync build; host functions return QuickJS promises, which the host resolves while it pumps `executePendingJobs`):
 
 - no files, processes or network, no `require` or `import` of anything; the only way out is `pio`;
 - limits: 64 MB of memory, 2 s of CPU (interrupt handler), 30 s for the whole run including waits, 50 `pio` calls per run;
 - a fresh runtime for every run; only `pio.state` lives between runs.
 
 ```ts
-pio.tools.call(name, input)          // → { text, data? }; a hub tool with effect "read" only
+pio.tools.call(name, input)          // → { text, isError, truncated? }; a hub tool with effect "read" only
 pio.fetch(url, { method?, headers?, body? })  // → { status, headers, text, json() }; only `hosts`, through the egress proxy
 pio.llm.ask(prompt, { schema?, system? })     // → string or parsed JSON; the quick model
 pio.state.get(key) / set(key, value) / delete(key)  // the trigger's own KV (table trigger_state), 1 MB in all
@@ -120,9 +122,9 @@ pio.log(...args)                      // into the run's journal
 pio.now()                             // { iso, local, timezone }
 ```
 
-**`pio.tools.call`** goes through `ToolGateway` under the identity `trigger:<id>` and the agent's tool list. A tool whose effect is not `read` is refused before policy, with a clear error in the run's journal. Its calls are audited like an agent's. That one call covers our plugins, every MCP server (`<server>_<tool>`) and Composio. A tool that needs a person (a card) is refused: nobody is there to approve it.
+**`pio.tools.call`** goes through `ToolGateway` under the identity `trigger:<id>` and the agent's tool list. A tool whose effect is not `read` is refused before policy, with a clear error in the run's journal. Its calls are audited like an agent's. That one call covers our plugins, every MCP server (`<server>_<tool>`) and Composio. A tool that needs a person (a card) is refused: nobody is there to approve it. Refusals reject inside the script.
 
-**`pio.fetch`** is made by core, not inside QuickJS. It uses an egress token `trigger:<id>` whose allowlist is the trigger's `hosts`. Private networks are closed unless the person allowed them (today's `allowPrivateUrls`), answers are capped at 5 MB, and 15 s is the limit per request. The hosts are on the trigger's card. When an agent adds a host the trigger did not have, the person confirms it once on the existing network approval card (`network-approvals.ts`), so what was read from the mail cannot quietly go to an address nobody saw.
+**`pio.fetch`** is made by core, not inside QuickJS. It uses an egress token `trigger:<id>` whose allowlist is the trigger's `hosts`. Private networks are closed unless the person allowed them (today's `allowPrivateUrls`), answers are capped at 5 MB, and 15 s is the limit per request. The hosts are on the trigger's card. An agent's `trigger_create`, `trigger_update` or `trigger_test` call that gives a script a host its trigger did not have counts as an outside action (effect `external` for that call, through the registry's per-call `effectOf`), so the normal policy decides it: the person's card, a rule of theirs, or auto mode's reviewer, with the new hosts named on the card. What was read from the mail cannot quietly go to an address nobody saw. (Phase 2 decided this instead of the network approval card the plan named: a script's token carries no session, so no network card can be raised from a run.)
 
 **`pio.llm.ask`** is a bare session with no tools, the way auto mode's reviewer runs (`policy/reviewer.ts`): the router's `need: "light"` over the brains that are signed in. Its answer goes back only to the script. It counts against `triagePerDay`.
 
@@ -142,11 +144,11 @@ pio.now()                             // { iso, local, timezone }
 The agent's tools (core tools, the same `trigger_*` names as today):
 
 - `trigger_sources`: the signal types available now, each with its description, config schema and sample. The agent learns what it can subscribe to from this.
-- `trigger_create` / `trigger_update` take the new fields (`on`, `batch`, `script`, `triage`, `wake`, `limits`). The old ones (`kind`, `cron`, `at`, `url`, `selector`, `jsonPath`, `intervalMinutes`, `times`, `weekdays`, `prompt`, `maxRunsPerDay`) are still accepted and translated, so calls made the old way keep working.
-- `trigger_test`: a **test run with no outcome**, on the source's sample, on the trigger's last real signals, or on data the agent gives. It returns the whole path: what match dropped, what the script returned and logged, what the model decided. The agent writes, tests and fixes the script before the person ever sees it.
-- `trigger_runs`: the journal.
+- `trigger_create` / `trigger_update` take the new fields (`on`, `batch`, `script`, `triage`, `triagePerDay`, and `verify` for a webhook, whose key is a `vault://` reference the person stores through the secret card). The old ones (`kind`, `cron`, `at`, `url`, `selector`, `jsonPath`, `intervalMinutes`, `times`, `weekdays`, `prompt`, `maxRunsPerDay`) stay as they are; an `on` entry for a built-in source becomes the kind and its fields (`normalizeOn`), and a new trigger with only other subscriptions is a `signal` trigger.
+- `trigger_test`: a **test run with no outcome**, on the source's sample, on the trigger's last real signals (dedup does not drop them: they are its own), or on data the agent gives, for a trigger as it is, a draft before it exists, or a change before it is made. It returns the whole path: what match dropped, what the script returned and logged, what the model decided. No state, note, task or journal line is written; its quick-model calls count against the day's `triagePerDay`. A test of the trigger as it is only reads; of a draft or the agent's own signals it is a change (asked about after outside content); of new hosts, an outside action. Its answer is marked as outside content when the test read some. The agent writes, tests and fixes the script before the person ever sees it.
+- `trigger_runs`: the journal, newest first with each run's stages, or one signal in full; marked as outside content when a run read some. Over HTTP: `GET /triggers/:id/runs` and `POST /triggers/:id/test`.
 - `trigger_list`, `trigger_delete`, `trigger_run_now`: as today.
-- A `trigger` card in the chat: what the trigger listens to, its stages, its hosts, its last runs, on/off, Test and Delete. A new host is confirmed on it.
+- A `trigger` card in the chat: what the trigger listens to, its stages, its hosts, its last runs, on/off, Test and Delete (a later phase; until then a new host is confirmed on the approval card of the call that adds it).
 
 A typical exchange: «Следи за почтой, буди меня только по счетам и письмам от клиентов, остальное просто запоминай». The agent finds the mail source, writes the filter and the brief, runs `trigger_test` on the last 20 messages and shows: 3 would wake, 5 would become notes, 12 are dropped, and which ones.
 
@@ -157,18 +159,34 @@ A typical exchange: «Следи за почтой, буди меня тольк
 **Moving in** happens in steps, so nothing breaks on the way:
 
 - Phase 1 moves the engine's code into core behind a small host interface (`TriggerHost`, the part of the plugin context it used) and keeps everything else where it is. The triggers stay in `plugin_kv` under `triggers` (already replicated), the settings stay on the Triggers card in Plugins, and the page stays the plugin's UI module. The plugin stays as a UI-only plugin, and its on/off switch still turns triggers on and off. The old addresses keep working as they are: webhooks at `/hooks/triggers/<id>` and the API at `/api/plugins/triggers/http/*`, both served by core. The `trigger_*` tools keep their names.
-- Phase 2 changes the stored shape in place, once, at start (a trigger without `on` is converted):
+- Phase 2 keeps the stored shape (below): the built-in kinds are the built-in sources, and tools accept them as `on` entries, mapped like this:
 
-| before | after |
+| `on` entry | stored as |
 |---|---|
-| `schedule` | `on: [{ type: "time.cron", config: { cron } }]` |
-| `once` | `time.at { at }` |
-| `heartbeat` | `time.cron { times, weekdays }`, same prompt |
-| `watch` | `web.page { url, selector, jsonPath, intervalMinutes }` |
-| `event` | `web.webhook { secret }` |
+| `time.cron { cron }` | `schedule` with `cron` |
+| `time.at { at }` | `once` with `at` |
+| `time.cron { times, weekdays }` | `heartbeat` with `times`, `weekdays` |
+| `web.page { url, selector, jsonPath, intervalMinutes }` | `watch` with those fields |
+| `web.webhook { verify? }` | `event` with its `secret` (and `verify`) |
 
-  `prompt` → `wake.prompt`, `maxRunsPerDay` → `limits.wakesPerDay`, and `machine`, `skill`, `report` → `wake`. State moves with it, so no slot fires twice. The default heartbeat is still created once, for a new hub. The API answers in the same shape plus the new fields, so the phone keeps working.
+  Nothing stored is converted, so no slot fires twice and the default heartbeat is still created once, for a new hub. The API answers in the same shape plus the new fields, so the phone keeps working.
 - Phase 5 moves the page into the web app (`/api/triggers/*`, with the old path kept as an alias), turns the plugin's settings into hub settings in `packages/core/src/settings.ts` (`triggersAllowPrivateUrls`, `triggersWatchTimeoutSec`, carried over from the plugin's saved values; not environment variables), and removes the plugin.
+
+**Decided in phase 2:**
+
+- **Storage keeps the built-in kinds.** A trigger keeps `kind` and its kind's fields (`cron`, `at`, `times`, `weekdays`, `url`, `selector`, `jsonPath`, `intervalMinutes`, `secret`): they are its built-in source. `on` holds only subscriptions to other sources (plugins and the hub, phase 3); a new kind `signal` is a trigger with only `on`. A filter (`where`) on a built-in `on` entry is refused, since the kind cannot keep it: the script drops what does not matter.
+- **The journal replaces `runs:<id>`.** `trigger_runs` holds every run, old and new; the plugin's `runs:<id>` lists move into it once, at start, each list whole or not at all. `/triggers/:id/runs` reads it.
+- **Pending batches and the queue live in `trigger_state`** (`__batch`, `__queue`; keys starting with `__` are the engine's own, 4 MB apart from the script's 1 MB; the `__ext:` marks beside the script's keys count with them). A restart, a stop or another replica taking the lead carries them on. The queue goes one run per turn of the trigger's lock, so an update or a delete waits for one run at most.
+- **The sandbox:** a fresh QuickJS runtime per run on a worker thread, with a 256 KB QuickJS stack in a 16 MB worker stack (QuickJS's own check fires well before V8's stack runs out inside the WASM). One warm worker is kept and goes after 5 minutes without a script; at most two runs hold a slot at once, the rest wait their turn.
+- **What a script may reach.** Tool families closed to triggers whatever their effect: `browser_`, `web_`, `voice_`, `transcribe_`, `hub_`, `pio_`, `machine_`, `vault_`, and any tool marked `forTriggers: false` (it acts or spends though it reads). Every address in a tool's input, however written, must be on the trigger's `hosts` (an input too deep to read through is refused); a `source` tool refuses any host name in its input (an e-mail address in a text field is fine), because its own fetches could follow redirects anywhere. `pio.fetch` reaches only `hosts`, on ports 80 and 443, with every redirect checked again and no credentials in the address. The run's egress token carries no session, so nothing in it raises a network card.
+- **Filters run on V8's linear-time regexp engine** (the `l` flag): no backreferences or lookaround; `i` is emulated by lowering the text and the pattern.
+- **Webhooks answer 202 at once** for a trigger with a pipeline: the signal is taken in (matched, deduplicated, counted for floods) synchronously and its run follows under the trigger's lock. 429 for a flood or a full queue.
+- **Runs queued before a start wait once** (45 s) when the hub takes the lead, as a batch due while it was away does: a run the old leader carried out may not have reached it yet, and when its journal line arrives meanwhile it is not carried out again. Runs this hub queued itself go on at once.
+- **The quick model:** each question is bounded at 25 s, after which it is unavailable and its CLI session is closed; at most 2 questions are in flight on the hub, a third waits its turn. A question that brought no answer gives its `triagePerDay` check back.
+- **Notes:** what a note was made from reaches the quick model fenced as data (`RECENT_NOTES`, `SIGNAL_DATA`, `SIGNAL_CONTEXT`); in `[Signals]` an internal note is one line under a header that calls them notes, not instructions, and an external one shows only its trigger's name and a count. Outside content kept in `pio.state` stays marked (`__ext:<key>`), so a later run that reads it is external too.
+- **A new script host is an outside action** for the call that adds it (section 4).
+- **A run's script state goes with its outcome.** `pio.state` writes stay in the run and reach `trigger_state` in the same step as its journal line (a note, a drop, a wake that started or became a note). A stop before that, or a run that fails (the script's error, the sandbox unavailable, a wake that could not start), keeps none of them, so a retry starts from the state as it was and a poll does not lose a change.
+- **A script's error after outside content stays marked.** Its text may carry what the run read, so `trigger_list`, `trigger_run_now` and the "keeps failing" notification show a fixed line instead (`lastErrorExternal`); `trigger_runs` shows it, marked as outside content.
 
 **Cluster**: the engine runs on the leading replica only, as plugins do today. Triggers live in `plugin_kv`, which is replicated already; `trigger_runs`, `signal_notes` and `trigger_state` join replication (`cluster.ts` tables) when phase 2 adds them. A webhook that reaches a standby replica is forwarded to the leader (`server/forward.ts`).
 
@@ -177,11 +195,12 @@ A typical exchange: «Следи за почтой, буди меня тольк
 - A script that throws, runs out of a limit, or calls what it may not: the run is an `error`, and the trigger keeps working. The same error in a row is collapsed. After 5 in a row the person gets one notification, and the agent can fix the script in the chat.
 - The quick model is unavailable (nobody signed in, over a limit, unparseable twice): the signal wakes the agent while the day's wakes last, and becomes a note after that. Nothing is lost, and the agent is the stronger judge.
 - A flood: over 60 signals a minute on one trigger turns on a 60 s batch by itself; over 1000 a minute, signals are dropped with one line in the journal per minute.
+- A full queue (the engine's 4 MB of state for the trigger): signals are refused with a journal line (one a minute; every time for a run now or a one-time reminder), a webhook gets 429, a one-time reminder stays due and is tried again a minute later, and run now says so (`queueFull`). A queued run that cannot be read (a malformed entry) leaves the queue with a journal line instead of failing every step after it.
 - A source plugin that stops or is turned off: its subscriptions wait. The trigger's card says so («источник выключен»), and they start again with the plugin.
 
 ## Security
 
-- Nothing a trigger does writes outside the hub: the gateway refuses non-read tools for `trigger:<id>`, and `fetch` reaches only the hosts on the card.
+- Nothing a trigger does changes the hub: the gateway refuses non-read tools for `trigger:<id>`. Its only reach outside is `fetch` to the hosts on the card, which may send requests there, POST included (searches and GraphQL reads need it): the card that adds a host says so, and what was read can go only to a host the person saw.
 - Outside content stays marked: an external signal, a `source` tool's result or a fetch makes the run external. Its notes show no text in `[Signals]`, and its wake task is tainted, so EgressGuard and the reviewer treat the agent as they do after it reads the web.
 - Triage and `llm.ask` are bare sessions: a prompt injection in an email can at most change a decision (wake instead of drop), not act.
 - A source can emit only the types it declared; core validates `data` against the declared schema and its size.

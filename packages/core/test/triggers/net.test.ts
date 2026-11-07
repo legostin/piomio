@@ -59,6 +59,31 @@ describe("watch page loads", () => {
     expect(seen.length).toBe(before);
   });
 
+  it("sends a POST with its body (a script asking a read API), through the proxy too", async () => {
+    const got: Array<{ method?: string; url?: string; body: string; type?: string }> = [];
+    const echo = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        got.push({ method: req.method, url: req.url, body, type: req.headers["content-type"] });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end('{"ok":true}');
+      });
+    });
+    await new Promise<void>((r) => echo.listen(0, "127.0.0.1", r));
+    const port = (echo.address() as AddressInfo).port;
+    // The echo server stands in for the proxy: an outside address arrives there with its method and body.
+    const get = proxiedGet(`http://tok123:x@127.0.0.1:${port}`);
+    try {
+      const res = await get("http://api.example.test/graphql", { method: "POST", headers: { "content-type": "application/json" }, body: '{"query":"{ n }"}' });
+      expect(await res.text()).toBe('{"ok":true}');
+      expect(got).toEqual([{ method: "POST", url: "http://api.example.test/graphql", body: '{"query":"{ n }"}', type: "application/json" }]);
+    } finally {
+      get.close();
+      echo.close();
+    }
+  });
+
   it("close() lets its kept-alive connections go", async () => {
     const others = new Set(sockets);
     const mine = () => [...sockets].filter((x) => !others.has(x)).length;

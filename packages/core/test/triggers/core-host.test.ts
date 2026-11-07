@@ -5,8 +5,10 @@ import { PiomioManifestSchema, toolPrefixOf, type ToolCallContext } from "@piomi
 import { EventBus } from "../../src/bus.ts";
 import { openDb } from "../../src/db.ts";
 import { pluginKv } from "../../src/plugins/kv.ts";
-import { CoreTriggers } from "../../src/signals/core-host.ts";
+import { CoreTriggers, type CoreTriggersDeps } from "../../src/signals/core-host.ts";
 import type { TriggerHttpRequest } from "../../src/signals/host.ts";
+import { scriptSandbox } from "../../src/signals/sandbox.ts";
+import { sqlStore } from "../../src/signals/store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 
 type Card = { enabled: boolean; settings: Record<string, unknown> } | undefined;
@@ -19,7 +21,12 @@ function latch() {
 }
 
 /** `before`: awaited before a core call is answered (a latch holds it). */
-function setup(card: Card | null = { enabled: true, settings: {} }, fetch?: () => any, before?: (method: string) => Promise<void> | undefined) {
+function setup(
+  card: Card | null = { enabled: true, settings: {} },
+  fetch?: () => any,
+  before?: (method: string) => Promise<void> | undefined,
+  pipeline: Pick<CoreTriggersDeps, "gateway" | "quick" | "egress"> = {},
+) {
   const db = openDb(":memory:");
   const bus = new EventBus();
   const tools = new ToolRegistry();
@@ -32,6 +39,7 @@ function setup(card: Card | null = { enabled: true, settings: {} }, fetch?: () =
     tools,
     hubUrl: "http://127.0.0.1:8080",
     ...(fetch ? { fetch } : {}),
+    ...pipeline,
     card: {
       get: () => current,
       onSettings: (cb) => {
@@ -72,8 +80,17 @@ describe("the trigger engine's host in core", () => {
       ["trigger_delete", "triggers"],
       ["trigger_list", "triggers"],
       ["trigger_run_now", "triggers"],
+      ["trigger_runs", "triggers"],
+      ["trigger_sources", "triggers"],
+      ["trigger_test", "triggers"],
       ["trigger_update", "triggers"],
     ]);
+    // A call's own effect and its card's text reach the registry: a script host the trigger did not have is an outside action.
+    const create = s.tools.get("trigger_create")!;
+    const code = "export default () => {}";
+    expect(create.effectOf!({ kind: "event", name: "API", prompt: "Look.", script: { code, hosts: ["api.example.com"] } }, call)).toBe("external");
+    expect(create.effectOf!({ kind: "event", name: "API", prompt: "Look.", script: { code } }, call)).toBeUndefined();
+    expect(create.describe!({ kind: "event", name: "API", prompt: "Look.", script: { code, hosts: ["api.example.com"] } })).toContain("api.example.com");
     // A new hub's default heartbeat is written where the plugin kept its triggers.
     const stored = pluginKv(s.db, "triggers").list("trigger:");
     expect(stored).toHaveLength(1);
@@ -117,7 +134,7 @@ describe("the trigger engine's host in core", () => {
     s.setCard({ enabled: true, settings: {} });
     await s.ct.sync();
     expect(s.ct.engine).toBeDefined();
-    expect(triggerTools(s.tools)).toHaveLength(5);
+    expect(triggerTools(s.tools)).toHaveLength(8);
     s.ct.stop();
   });
 
@@ -184,7 +201,7 @@ describe("the trigger engine's host in core", () => {
     expect((await s.ct.http(req({}))).status).toBe(404);
     await s.ct.start();
     expect(s.ct.engine).toBeDefined();
-    expect(triggerTools(s.tools)).toHaveLength(5);
+    expect(triggerTools(s.tools)).toHaveLength(8);
     s.ct.stop();
   });
 
@@ -280,5 +297,72 @@ describe("the trigger engine's host in core", () => {
     s.ct.stop();
     s.ct.stop();
     expect(made).toEqual([{ released: 1 }, { released: 1 }]);
+  });
+
+  it("keeps the journal in the hub's database, moves the plugin's run lists into it, and refuses the store once stopped", async () => {
+    const s = setup();
+    const kv = pluginKv(s.db, "triggers");
+    kv.set("initialized", true);
+    kv.set("runs:t_bad", [{ at: "x" }]);
+    kv.set("runs:t_old", [{ id: "r_old", at: new Date().toISOString(), reason: "schedule", status: "started" }]);
+    await s.ct.start();
+    const store = (s.ct.engine as any).ctx.store;
+    expect(store.runs("t_old").map((r: { id: string }) => r.id)).toEqual(["r_old"]);
+    expect(kv.list("runs:").map((r) => r.key)).toEqual(["runs:t_bad"]);
+    expect((s.db.prepare("select count(*) as n from trigger_runs").get() as { n: number }).n).toBe(1);
+    s.ct.stop();
+    expect(() => store.runs("t_old")).toThrow(/stopped/);
+    expect(() => store.stateSet("t_old", "k", 1)).toThrow(/stopped/);
+    expect(() => store.addNote({ agentId: "a", triggerId: "t", triggerName: "T", text: "x", signalIds: [], external: false })).toThrow(/stopped/);
+  });
+  it("gives a trigger's script its agent's read tools, the quick model and an egress token of each run's own", async () => {
+    const reads: unknown[] = [];
+    const tokens: Array<{ owner: string; allow: string[]; context: unknown; revoked: boolean }> = [];
+    const s = setup(undefined, undefined, undefined, {
+      gateway: {
+        callRead: async (as, name, input) => {
+          reads.push({ as, name, input });
+          return { content: [{ type: "text", text: "42 open" }], _meta: { taint: true } };
+        },
+      },
+      quick: { ask: async () => ({ text: '{"decision":"note","why":"worth keeping","summary":"42 open issues"}', ref: "fake@local" }) },
+      egress: {
+        proxy: {
+          issueToken: (owner: string, allow: string[], ...rest: unknown[]) => {
+            tokens.push({ owner, allow, context: rest[0], revoked: false });
+            return `tok${tokens.length}`;
+          },
+          revoke: (token: string) => void (tokens[Number(token.slice(3)) - 1].revoked = true),
+        },
+        port: 1,
+      },
+    });
+    const kv = pluginKv(s.db, "triggers");
+    kv.set("initialized", true);
+    kv.set("trigger:t_hook", {
+      id: "t_hook", kind: "event", name: "Issues", prompt: "Look.", agentId: "assistant", enabled: true, maxRunsPerDay: 24,
+      createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", secret: "s3cret", report: false, state: {},
+      script: { code: `export default async (s, pio) => ({ triage: (await pio.tools.call("issues_count", {})).text })`, hosts: ["api.example.com"] },
+      triage: { brief: "many open issues" }, triagePerDay: 10,
+    });
+    await s.ct.start();
+    try {
+      const hook = await s.ct.http(req({ method: "POST", path: "/t_hook", headers: { "x-piomio-secret": "s3cret" }, body: { a: 1 }, public: true }));
+      // Answered at once; the script, the quick check and the note follow.
+      expect(hook).toMatchObject({ status: 202, body: { ok: true, signalId: expect.any(String) } });
+      await s.ct.engine!.pipeline.idle();
+      expect(reads).toEqual([{ as: { agentId: "assistant", triggerId: "t_hook", hosts: ["api.example.com"] }, name: "issues_count", input: {} }]);
+      // The run's own token: owned by the trigger, its hosts only, no session context (nothing may raise a network card), gone after the run.
+      expect(tokens).toEqual([{ owner: "trigger:t_hook", allow: ["api.example.com"], context: undefined, revoked: true }]);
+      expect(sqlStore(s.db).notes({ triggerId: "t_hook" })).toMatchObject([{ text: "42 open issues", external: true }]);
+      expect(s.calls.some((c) => c.method === "tasks.create")).toBe(false);
+      // A run's token still out when the engine stops goes with it.
+      s.ct.engine!.ctx.pipeline!.fetchFor("t_hook", ["api.example.com"]);
+      expect(tokens[1]).toMatchObject({ owner: "trigger:t_hook", revoked: false });
+    } finally {
+      s.ct.stop();
+      scriptSandbox.stop();
+    }
+    expect(tokens[1].revoked).toBe(true);
   });
 });
