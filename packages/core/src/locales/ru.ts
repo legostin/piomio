@@ -576,9 +576,9 @@ export default {
   "triggers.error.testN": "n должно быть целым числом от 1 до {max}",
   // карточки подтверждения для инструментов триггеров (tools.ts describe), на языке хаба
   "triggers.approval.create": "Создать триггер «{name}»: {what}",
-  "triggers.approval.createHosts": "Создать триггер «{name}»: {what}. Его скрипт будет обращаться к {hosts}",
+  "triggers.approval.createHosts": "Создать триггер «{name}»: {what}. Его скрипт сможет отправлять запросы, в том числе POST, на {hosts}",
   "triggers.approval.update": "Изменить триггер «{name}»: {fields}",
-  "triggers.approval.updateHosts": "Изменить триггер «{name}» ({fields}): его скрипт будет обращаться ещё и к {hosts}",
+  "triggers.approval.updateHosts": "Изменить триггер «{name}» ({fields}): его скрипт сможет отправлять запросы, в том числе POST, ещё и на {hosts}",
   "triggers.approval.test": "Один раз проверить триггер «{name}», ничего не выполняя",
-  "triggers.approval.testHosts": "Один раз проверить триггер «{name}»: его скрипт обратится к {hosts}",
+  "triggers.approval.testHosts": "Один раз проверить триггер «{name}»: его скрипт сможет отправлять запросы, в том числе POST, на {hosts}",
 } satisfies Record<keyof typeof en, string>;

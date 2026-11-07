@@ -256,6 +256,24 @@ describe("the trigger tools in the chat", () => {
     await h.invoke("delete", { id: busy });
   });
 
+  it("tells the agent what a trigger's pipeline does as it is: what a script reaches, what a wake carries, what a webhook answers", async () => {
+    const props = h.tools.get("create")!.inputSchema.properties as Record<string, { description?: string }>;
+    // A script may send to its hosts, POST included.
+    expect(props.script.description).toMatch(/may send requests to them, POST included/);
+    expect(props.script.description).not.toMatch(/it only reads\./);
+    // pio.llm.ask with a schema answers an object; a source tool refuses a word shaped like a host name.
+    expect(props.script.description).toMatch(/with a JSON schema it answers one parsed JSON object/);
+    expect(props.script.description).toMatch(/report\.pdf/);
+    // The goal of a trigger with a pipeline carries the [Signal] block, not the payload.
+    expect(props.prompt.description).toMatch(/\[Signal\] block/);
+    // The signing secret is stored through the secret card, which only the default agent shows.
+    expect(props.verify.description).toMatch(/ask the person to store it through the secret card \(the default agent's hub_secret_request/);
+    // A webhook is answered at once and repeats dropped only with a pipeline, and only with a delivery header.
+    const hook = jsonOf<Array<{ type: string; description: string }>>(await h.invokeText("sources")).find((s) => s.type === "web.webhook")!;
+    expect(hook.description).toMatch(/With a script, a quick check or a batch/);
+    expect(hook.description).toMatch(/Stripe and plain HMAC senders send none/);
+  });
+
   it("names a signed webhook's key by its vault reference, never as text", async () => {
     const out = await h.invokeText("create", { name: "GitHub", prompt: "Look at the push.", on: [{ type: "web.webhook", config: { verify: { kind: "github", secretRef: "vault://gh-hook" } } }] });
     const t = h.engine.get(idOf(out))!;
@@ -275,6 +293,8 @@ describe("the trigger tools in the chat", () => {
     expect(create.effectOf!(withHosts, ctx)).toBe("external");
     expect(create.effectOf!({ name: "API", prompt: "Look.", kind: "event", script: { code } }, ctx)).toBeUndefined();
     expect(create.describe!(withHosts)).toContain("api.example.com");
+    // The card says what the reach is: requests, POST among them, not just reading.
+    expect(create.describe!(withHosts)).toMatch(/may send requests, including POST, to api\.example\.com/);
     const id = idOf(await h.invokeText("create", withHosts));
     expect(update.effectOf!({ id, script: { code, hosts: ["API.example.com"] } }, ctx)).toBeUndefined();
     expect(update.effectOf!({ id, name: "Renamed" }, ctx)).toBeUndefined();

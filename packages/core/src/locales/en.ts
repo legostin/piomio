@@ -577,9 +577,9 @@ export default {
   "triggers.error.testN": "n must be an integer from 1 to {max}",
   // approval cards for the trigger tools (tools.ts describe), in the hub language
   "triggers.approval.create": "Create the trigger “{name}”: {what}",
-  "triggers.approval.createHosts": "Create the trigger “{name}”: {what}. Its script will reach {hosts}",
+  "triggers.approval.createHosts": "Create the trigger “{name}”: {what}. Its script may send requests, including POST, to {hosts}",
   "triggers.approval.update": "Change the trigger “{name}”: {fields}",
-  "triggers.approval.updateHosts": "Change the trigger “{name}” ({fields}): its script will also reach {hosts}",
+  "triggers.approval.updateHosts": "Change the trigger “{name}” ({fields}): its script may also send requests, including POST, to {hosts}",
   "triggers.approval.test": "Test the trigger “{name}” once, with nothing carried out",
-  "triggers.approval.testHosts": "Test the trigger “{name}” once: its script will reach {hosts}",
+  "triggers.approval.testHosts": "Test the trigger “{name}” once: its script may send requests, including POST, to {hosts}",
 } satisfies Record<string, string>;

@@ -69,7 +69,7 @@ export const BUILTIN_SOURCES_INFO: BuiltinSource[] = [
     signal: "web.webhook",
     source: "hub",
     description:
-      "A webhook address of the trigger's own. A sender proves itself with the trigger's secret (x-piomio-secret header or ?secret=), or verify signs every delivery: github (X-Hub-Signature-256), stripe (Stripe-Signature) or hmac-sha256 (the header it names, x-signature by default), the key kept in the vault as secretRef vault://<id>. Each delivery is answered 202 at once and brings a web.webhook signal: payload (the parsed JSON body, or its text), query, contentType. A delivery id (X-GitHub-Delivery, Idempotency-Key, x-piomio-delivery) is its key: a repeat within 24 h is dropped. Outside content.",
+      "A webhook address of the trigger's own. A sender proves itself with the trigger's secret (x-piomio-secret header or ?secret=), or verify signs every delivery: github (X-Hub-Signature-256), stripe (Stripe-Signature) or hmac-sha256 (the header it names, x-signature by default), the key kept in the vault as secretRef vault://<id>. Each delivery brings a web.webhook signal: payload (the parsed JSON body, or its text), query, contentType. With a script, a quick check or a batch, a delivery is answered 202 at once and its run follows; one that names its delivery (X-GitHub-Delivery, Idempotency-Key or x-piomio-delivery) has that as its key, and a repeat within 24 h is dropped. Stripe and plain HMAC senders send none of these headers, so their repeats are not dropped: the script can drop them by an id in the payload, kept in pio.state. Without any of the three, the agent's task is started before the delivery is answered, every time. Outside content.",
     config: {
       type: "object",
       properties: {

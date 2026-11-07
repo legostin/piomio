@@ -200,7 +200,7 @@ A typical exchange: «Следи за почтой, буди меня тольк
 
 ## Security
 
-- Nothing a trigger does writes outside the hub: the gateway refuses non-read tools for `trigger:<id>`, and `fetch` reaches only the hosts on the card.
+- Nothing a trigger does changes the hub: the gateway refuses non-read tools for `trigger:<id>`. Its only reach outside is `fetch` to the hosts on the card, which may send requests there, POST included (searches and GraphQL reads need it): the card that adds a host says so, and what was read can go only to a host the person saw.
 - Outside content stays marked: an external signal, a `source` tool's result or a fetch makes the run external. Its notes show no text in `[Signals]`, and its wake task is tainted, so EgressGuard and the reviewer treat the agent as they do after it reads the web.
 - Triage and `llm.ask` are bare sessions: a prompt injection in an email can at most change a decision (wake instead of drop), not act.
 - A source can emit only the types it declared; core validates `data` against the declared schema and its size.

@@ -141,9 +141,9 @@ A trigger without a check wakes its agent every time, as before. A trigger can a
 
 ### A script that only reads
 
-The agent can write a short script for the trigger. The script reads and decides; it never acts. It can use the agent's tools that only read (mail, a calendar, a search), open the sites listed on the trigger, ask a quick model, and remember a few values between runs. A run that fails or is cut short keeps none of what it meant to remember, so the next one starts from the same place. It can't send, post, buy, delete or change anything anywhere: whatever needs doing waits for the agent. Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
+The agent can write a short script for the trigger. The script reads and decides; it changes nothing in the hub. It can use the agent's tools that only read (mail, a calendar, a search), reach the sites listed on the trigger, ask a quick model, and remember a few values between runs. A run that fails or is cut short keeps none of what it meant to remember, so the next one starts from the same place. It has no tools that send, post, buy, delete or change anything: whatever needs doing waits for the agent. It reaches only the sites you approved, and it may send requests there, including POST (searches and API queries often take one). Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
 
-The sites a script may open are part of the trigger. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
+The sites a script may reach are part of the trigger, and the card that asks about a new one says the script may send requests there. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
 
 ### A quick check in your words
 
@@ -155,7 +155,7 @@ Before its next reply, in a chat or a task, the agent sees a short list of what 
 
 ### Webhooks signed by the sender
 
-A webhook can check the sender's signature instead of a secret in the request: GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`), or any service that signs with HMAC-SHA256. Say "make this webhook check GitHub's signature". The assistant asks for the signing secret on a secure card in the chat; it goes straight into the vault, and the agent never sees it. Set the same secret in the sender's webhook settings. A webhook with a check is answered at once and checked right after, and a delivery the sender repeats is handled once.
+A webhook can check the sender's signature instead of a secret in the request: GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`), or any service that signs with HMAC-SHA256. Say "make this webhook check GitHub's signature". The assistant asks for the signing secret on a secure card in the chat; it goes straight into the vault, and the agent never sees it. Set the same secret in the sender's webhook settings. A webhook with a check is answered at once and checked right after. A delivery the sender repeats is handled once when the sender names its deliveries, as GitHub does; Stripe and services that only sign with HMAC don't, so the check itself has to notice a repeat (the agent writes it to).
 
 ### Ask the agent to test it
 

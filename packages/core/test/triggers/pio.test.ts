@@ -378,11 +378,15 @@ describe("ToolGateway.callRead", () => {
     h.tool("mail_search", "read");
     h.tool("show_choices", "read");
     h.tool("notion_live", "read", { availability: "interactive" });
-    for (const name of ["mail_search", "show_choices", "notion_live", "no_such_tool"]) {
+    for (const name of ["mail_search", "notion_live", "no_such_tool"]) {
       const r = await h.gateway.callRead(as, name, {});
       expect(textOf(r), name).toBe(`Tool ${name} is not available to this trigger's agent`);
       expect(r.isError).toBe(true);
     }
+    // What draws in a chat is on the list but closed: a trigger's script has no chat to show it in.
+    const show = await h.gateway.callRead(as, "show_choices", {});
+    expect(show.isError).toBe(true);
+    expect(textOf(show)).toMatch(/^Tool show_choices is closed to triggers: it shows things in a chat/);
     expect((await h.gateway.callRead({ agentId: "gone", triggerId: "t1" }, "notion_search", {})).isError).toBe(true);
     expect((await h.gateway.callRead(as, "notion_search", {})).isError).toBeFalsy();
     expect(h.calls.map((c) => c.name)).toEqual(["notion_search"]);

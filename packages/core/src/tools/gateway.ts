@@ -372,6 +372,13 @@ export class ToolGateway {
         "closed family",
       );
     }
+    if (SHOW_TOOLS.includes(name)) {
+      return refuse(
+        `Tool ${name} is closed to triggers: it shows things in a chat, and a trigger's script has no chat. The script reads what it needs and returns a verdict; the agent it wakes shows the person what matters.`,
+        "tool.denied",
+        "shows in a chat",
+      );
+    }
     if (tool.forTriggers === false) return refuse(`Tool ${name} is not for triggers: it acts or spends though it only reads, so a trigger's script cannot call it`, "tool.denied", "not for triggers");
     if (!this.listed(tool, agent, s, true)) return refuse(unavailable, "tool.denied", "not available");
     if (tool.effect !== "read") return refuse(`Triggers only read: ${name} changes things (effect ${tool.effect}), so a trigger's script cannot call it`, "tool.denied", `effect ${tool.effect}`);
