@@ -15,6 +15,8 @@ const idOf = (text: string) => /trigger (t_[0-9a-f]+)/.exec(text)![1];
 const textOf = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((c) => c.text ?? "").join("\n");
 /** The JSON after a tool's first line. */
 const jsonOf = <T>(text: string): T => JSON.parse(text.slice(text.indexOf("\n") + 1)) as T;
+/** trigger_sources' list, without the refused ones after it. */
+const sourcesOf = <T>(text: string): T => jsonOf<T>(text.split("\nRefused (")[0]);
 const ctx = { sessionId: "s", conversationId: "c", agentId: "assistant", callId: "x", tainted: false, background: false, workspace: "/tmp", machineId: "local" } as ToolCallContext;
 
 describe("the trigger tools in the chat", () => {
@@ -53,6 +55,16 @@ describe("the trigger tools in the chat", () => {
           online: true,
         },
       ],
+      // As the registry answers (sources.ts check): mail's config takes a folder name; mail.offline's plugin is off;
+      // mail.slow is a declaration the hub refuses; everything else is unknown.
+      checkSource: (type, config) => {
+        if (type === "mail.message")
+          return typeof config.folder === "number" ? { status: "config", source: "mail", problem: "its config does not match the declared schema: /folder must be string" } : { status: "ok" };
+        if (type === "mail.offline") return { status: "offline", source: "mail" };
+        if (type === "mail.slow") return { status: "refused", source: "mail", why: "its data schema does not compile: cannot run in linear time" };
+        return { status: "unknown" };
+      },
+      refusedSources: [{ type: "mail.slow", source: "mail", why: "its data schema does not compile: cannot run in linear time" }],
       core: (method, p) => {
         if (method === "settings.get") return { timezone: "Europe/Moscow", publicUrl: "https://bot.example.com", defaultAgent: "assistant" };
         if (method === "agents.list") return [{ id: "assistant", name: "Assistant" }];
@@ -94,7 +106,7 @@ describe("the trigger tools in the chat", () => {
   });
 
   it("lists the four built-in sources with a sample signal each, and the others the hub has", async () => {
-    const list = jsonOf<Array<{ type: string; signal: { type: string; data: unknown; external: boolean } }>>(await h.invokeText("sources"));
+    const list = sourcesOf<Array<{ type: string; signal: { type: string; data: unknown; external: boolean } }>>(await h.invokeText("sources"));
     expect(list.map((s) => s.type)).toEqual(["time.cron", "time.at", "web.page", "web.webhook", "mail.message"]);
     expect(list.find((s) => s.type === "time.cron")!.signal).toMatchObject({ type: "time.tick", external: false, data: { reason: "schedule" } });
     expect(list.find((s) => s.type === "web.webhook")!.signal).toMatchObject({ type: "web.webhook", external: true, data: { payload: expect.anything() } });
@@ -285,7 +297,7 @@ describe("the trigger tools in the chat", () => {
     // The signing secret is stored through the secret card, which only the default agent shows.
     expect(props.verify.description).toMatch(/ask the person to store it through the secret card \(the default agent's hub_secret_request/);
     // A webhook is answered at once and repeats dropped only with a pipeline, and only with a delivery header.
-    const hook = jsonOf<Array<{ type: string; description: string }>>(await h.invokeText("sources")).find((s) => s.type === "web.webhook")!;
+    const hook = sourcesOf<Array<{ type: string; description: string }>>(await h.invokeText("sources")).find((s) => s.type === "web.webhook")!;
     expect(hook.description).toMatch(/With a script, a quick check or a batch/);
     expect(hook.description).toMatch(/Stripe and plain HMAC senders send none/);
   });
@@ -324,6 +336,63 @@ describe("the trigger tools in the chat", () => {
     expect(test.effectOf!({ id, trigger: { script: { code: "export default () => ({ drop: 'x' })" } } }, ctx)).toBeUndefined();
     expect(test.effectOf!({ trigger: withHosts }, ctx)).toBe("external");
     expect(test.effectOf!({ id, trigger: { script: { code, hosts: ["api.example.com", "*.evil.example.org"] } } }, ctx)).toBe("external");
+  });
+
+  it("refuses an on entry whose config its source refuses, and keeps one whose source is unknown, off or refused, saying so", async () => {
+    const bad = await h.invoke("create", { name: "Bad folder", prompt: "Look.", on: [{ type: "mail.message", config: { folder: 5 } }] });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("/folder must be string");
+    expect(h.engine.list().some((t) => t.name === "Bad folder")).toBe(false);
+    const kept = await h.invokeText("create", {
+      name: "Several",
+      prompt: "Look.",
+      on: [{ type: "mail.message", config: { folder: "inbox" } }, { type: "mial.message" }, { type: "mail.offline" }, { type: "mail.slow" }],
+    });
+    const id = idOf(kept);
+    expect(kept).toMatch(/no source brings mial\.message now/);
+    expect(kept).toMatch(/mail\.offline comes from the plugin mail, which does not run now/);
+    expect(kept).toMatch(/refuses that declaration \(its data schema does not compile/);
+    expect(kept).not.toMatch(/mail\.message (now|comes)/);
+    const upd = await h.invoke("update", { id, on: [{ type: "mail.message", config: { folder: 7 } }] });
+    expect(upd.isError).toBe(true);
+    expect(h.engine.get(id)!.on).toHaveLength(4);
+    expect(await h.invokeText("update", { id, on: [{ type: "mial.message" }] })).toMatch(/no source brings mial\.message now/);
+    expect(await h.invokeText("update", { id, name: "Renamed" })).not.toMatch(/Note:/);
+  });
+
+  it("lists the sources the hub refuses in trigger_sources, with why", async () => {
+    const text = await h.invokeText("sources");
+    expect(text).toContain("Refused");
+    expect(text).toContain('"type": "mail.slow"');
+    expect(text).toContain("cannot run in linear time");
+  });
+
+  it("counts a call whose sources read from a host the trigger did not have as an outside action, and names the hosts on the card", async () => {
+    const create = h.tools.get("create")!;
+    const update = h.tools.get("update")!;
+    const feed = { name: "Feed", prompt: "Look.", on: [{ type: "web.rss_item", config: { url: "https://attacker.example/f?d=secret-data" } }] };
+    expect(create.effectOf!(feed, ctx)).toBe("external");
+    expect(create.describe!(feed)).toContain("attacker.example");
+    // A watched page, as an on entry or a watch's url, and a bare host in an address field.
+    expect(create.effectOf!({ name: "Page", prompt: "Look.", on: [{ type: "web.page", config: { url: "https://shop.example.com/item" } }] }, ctx)).toBe("external");
+    expect(create.effectOf!({ name: "Page", prompt: "Look.", kind: "watch", url: "https://shop.example.com/item" }, ctx)).toBe("external");
+    expect(create.describe!({ name: "Page", prompt: "Look.", kind: "watch", url: "https://shop.example.com/item" })).toContain("shop.example.com");
+    expect(create.effectOf!({ name: "Bare", prompt: "Look.", on: [{ type: "x.feed", config: { feedUrl: "evil.example/x" } }] }, ctx)).toBe("external");
+    // No address: nothing new.
+    expect(create.effectOf!({ name: "Mail", prompt: "Look.", on: [{ type: "mail.message", config: { folder: "inbox" } }] }, ctx)).toBeUndefined();
+    const id = idOf(await h.invokeText("create", { name: "Feed", prompt: "Look.", on: [{ type: "mail.message" }, { type: "web.rss_item", config: { url: "https://news.example.com/rss" } }] }));
+    expect(update.effectOf!({ id, on: [{ type: "web.rss_item", config: { url: "https://news.example.com/other" } }] }, ctx)).toBeUndefined();
+    expect(update.effectOf!({ id, name: "Renamed" }, ctx)).toBeUndefined();
+    const more = { id, on: [{ type: "web.rss_item", config: { url: "https://news.example.com/rss" } }, { type: "web.rss_item", config: { url: "https://evil.example.org/f" } }] };
+    expect(update.effectOf!(more, ctx)).toBe("external");
+    expect(update.describe!(more)).toContain("evil.example.org");
+    expect(update.describe!(more)).not.toContain("news.example.com");
+    // A config nobody can read through for addresses is refused rather than taken on trust.
+    let deep: unknown = { url: "https://x.example" };
+    for (let i = 0; i < 10; i++) deep = { inner: deep };
+    const r = await h.invoke("create", { name: "Deep", prompt: "Look.", on: [{ type: "web.rss_item", config: deep }] });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain("cannot be read through");
   });
 
   it("serves the journal and a test run over HTTP", async () => {

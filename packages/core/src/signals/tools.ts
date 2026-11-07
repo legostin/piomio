@@ -5,6 +5,7 @@
 
 import type { TriggerHost } from "./host.ts";
 import { hostMatches, type JsonSchema, type ToolEffect, type ToolResult } from "@piomio/shared";
+import { addressesIn } from "../tools/gateway.ts";
 import { BUILTIN_SOURCES_INFO } from "./builtin-sources.ts";
 import { NotFoundError, QueueFullError, type TriggerEngine } from "./engine.ts";
 import { describeSchedule, formatLocal } from "./schedule.ts";
@@ -127,6 +128,37 @@ export function addedHosts(script: unknown, have: string[]): string[] {
     out.add(p);
   }
   return [...out];
+}
+
+/** The configs whose addresses a call (or a trigger) gives its sources: each `on` entry's, and a watch's url. */
+function sourceConfigs(i: unknown): Array<{ type: string; config: unknown }> {
+  const o = isObject(i) ? i : {};
+  const out: Array<{ type: string; config: unknown }> = [];
+  if (o.url !== undefined && o.url !== null) out.push({ type: "web.page", config: { url: o.url } });
+  if (Array.isArray(o.on)) for (const e of o.on) if (isObject(e) && e.config !== undefined && e.config !== null) out.push({ type: String(e.type ?? ""), config: e.config });
+  return out;
+}
+
+/**
+ * The hosts the addresses in a call's sources name (a feed, a watched page: a source fetches them for the trigger, the
+ * web plugin outside the egress guard), read as the gateway reads a trigger's tool input; `unreadable` names the first
+ * entry that cannot be read through.
+ */
+export function sourceHosts(i: unknown): { hosts: string[]; unreadable?: string } {
+  const hosts = new Set<string>();
+  for (const { type, config } of sourceConfigs(i)) {
+    const r = addressesIn(config);
+    if ("unreadable" in r) return { hosts: [...hosts], unreadable: type };
+    for (const h of r.hosts) hosts.add(h);
+  }
+  return { hosts: [...hosts] };
+}
+
+/** The hosts a call's sources name that `have` (the trigger as it is: its sources' hosts and its script's) does not cover. */
+export function addedSourceHosts(i: unknown, have?: Trigger): string[] {
+  const own = have ? sourceHosts(have).hosts : [];
+  const patterns = have?.script?.hosts ?? [];
+  return sourceHosts(i).hosts.filter((h) => !own.includes(h) && !patterns.some((p) => hostMatches(h, p)));
 }
 
 function stageLines(stages: StageRecord[] = []): string[] {
@@ -275,6 +307,34 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
   };
   /** What a test would run: the draft's script if it has one, else the trigger's; the hosts it adds to the trigger's. */
   const testHosts = (i: any): string[] => addedHosts(isObject(i?.trigger) ? i.trigger.script : undefined, stored(i?.id)?.script?.hosts ?? []);
+  /** The card's sentence on the hosts its sources will read from, when there are new ones. */
+  const reach = (hosts: string[]) => (hosts.length ? `. ${t("approval.sourceHosts", { hosts: hosts.join(", ") })}` : "");
+  /** A call whose sources' configs cannot be read through for addresses: refused, as the gateway refuses such tool input. */
+  const unreadable = (i: unknown): ToolResult | undefined => {
+    const type = sourceHosts(i).unreadable;
+    return type === undefined
+      ? undefined
+      : error(`The config of ${type} cannot be read through for addresses (nested deeper than 8 levels, or naming a host longer than any host name): the hub could not tell the person where it reaches. Give it a plain config.`);
+  };
+  /**
+   * The registry's word on each of a call's `on` entries (other sources only, after normalizeOn): a config its source
+   * refuses is an error; a type no source brings now, a plugin that does not run, a refused declaration are kept with a
+   * note, since a plugin may be off for now.
+   */
+  const checkOn = (on: unknown): { error?: string; notes: string[] } => {
+    const notes: string[] = [];
+    if (!Array.isArray(on) || !ctx.sources?.check) return { notes };
+    for (const entry of on) {
+      if (!isObject(entry) || typeof entry.type !== "string") continue;
+      const type = entry.type;
+      const r = ctx.sources.check(type, isObject(entry.config) ? entry.config : {});
+      if (r.status === "config") return { error: `The config of ${type} does not fit its source (plugin ${r.source}): ${r.problem}. Its config schema is in trigger_sources.`, notes };
+      if (r.status === "unknown") notes.push(`Note: no source brings ${type} now (its plugin may be off or not installed; see trigger_sources): the trigger is kept and hears it once a source of that type runs.`);
+      if (r.status === "offline") notes.push(`Note: ${type} comes from the plugin ${r.source}, which does not run now: the trigger hears it once the plugin runs again.`);
+      if (r.status === "refused") notes.push(`Note: the plugin ${r.source} declares ${type}, but the hub refuses that declaration (${r.why}): it brings no signal until the plugin is fixed.`);
+    }
+    return { notes };
+  };
 
   ctx.tools.register({
     name: "create",
@@ -290,12 +350,13 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     effect: "local-write",
     // A trigger outlives the session: after outside content (a page could ask for one) the person says yes on a card.
     askWhenTainted: true,
-    // Its script reaching a host is reach the person has not given: an outside action, decided as one.
-    effectOf: (i): ToolEffect | undefined => (addedHosts(i?.script, []).length ? "external" : undefined),
+    // Its script reaching a host, or its sources reading from one (a feed, a watched page: the address goes there), is
+    // reach the person has not given: an outside action, decided as one.
+    effectOf: (i): ToolEffect | undefined => (addedHosts(i?.script, []).length || addedSourceHosts(i).length ? "external" : undefined),
     describe: (i) => {
       const hosts = addedHosts(i?.script, []);
       const params = { name: nameIn(i), what: clip(oneLine(String(i?.prompt ?? "")), 200) };
-      return hosts.length ? t("approval.createHosts", { ...params, hosts: hosts.join(", ") }) : t("approval.create", params);
+      return (hosts.length ? t("approval.createHosts", { ...params, hosts: hosts.join(", ") }) : t("approval.create", params)) + reach(addedSourceHosts(i));
     },
     inputSchema: {
       type: "object",
@@ -304,8 +365,13 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     },
     handler: (input, call) =>
       guarded(async () => {
-        const created = await e.create(normalizeOn(pick(input), { create: true }), { createdBy: `agent:${call.agentId}`, defaultAgent: call.agentId });
-        return text(describeCreated(e, created, "Created"));
+        const bad = unreadable(input);
+        if (bad) return bad;
+        const fields = normalizeOn(pick(input), { create: true });
+        const checked = checkOn(fields.on);
+        if (checked.error) return error(checked.error);
+        const created = await e.create(fields, { createdBy: `agent:${call.agentId}`, defaultAgent: call.agentId });
+        return text([describeCreated(e, created, "Created"), ...checked.notes].join("\n"));
       }),
   });
 
@@ -330,16 +396,16 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     effect: "local-write",
     // As for create: after outside content the person says yes.
     askWhenTainted: true,
-    // A host the script did not have is new reach: an outside action.
+    // A host the script did not have, or one its sources did not read from, is new reach: an outside action.
     effectOf: (i): ToolEffect | undefined => {
       const cur = stored(i?.id);
-      return cur && addedHosts(i?.script, cur.script?.hosts ?? []).length ? "external" : undefined;
+      return cur && (addedHosts(i?.script, cur.script?.hosts ?? []).length || addedSourceHosts(i, cur).length) ? "external" : undefined;
     },
     describe: (i) => {
       const cur = stored(i?.id);
       const hosts = addedHosts(i?.script, cur?.script?.hosts ?? []);
       const params = { name: cur?.name ?? String(i?.id ?? ""), fields: Object.keys(isObject(i) ? i : {}).filter((k) => k !== "id").join(", ") };
-      return hosts.length ? t("approval.updateHosts", { ...params, hosts: hosts.join(", ") }) : t("approval.update", params);
+      return (hosts.length ? t("approval.updateHosts", { ...params, hosts: hosts.join(", ") }) : t("approval.update", params)) + reach(cur ? addedSourceHosts(i, cur) : []);
     },
     inputSchema: {
       type: "object",
@@ -348,8 +414,13 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     },
     handler: (input) =>
       guarded(async () => {
-        const changed = await e.update(String(input?.id ?? ""), normalizeOn(pick({ ...input, kind: undefined })));
-        return text(describeCreated(e, changed, "Updated"));
+        const bad = unreadable(input);
+        if (bad) return bad;
+        const fields = normalizeOn(pick({ ...input, kind: undefined }));
+        const checked = checkOn(fields.on);
+        if (checked.error) return error(checked.error);
+        const changed = await e.update(String(input?.id ?? ""), fields);
+        return text([describeCreated(e, changed, "Updated"), ...checked.notes].join("\n"));
       }),
   });
 
@@ -409,7 +480,18 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
           signal: { type: s.type, source: s.source ?? s.type.split(".")[0], ...(s.sample !== undefined ? { data: s.sample } : {}), external: s.external ?? true },
           ...(s.online === false ? { online: false } : {}),
         }));
-      return text(`Signal sources (put the type in on; a signal's data is what its sample shows; external: outside content):\n${JSON.stringify([...builtins, ...others], null, 1)}`);
+      // A declaration its plugin gives but the hub refuses: listed with why, so the agent that wrote it can fix it.
+      const refused = ctx.sources?.refused?.() ?? [];
+      const listed = `Signal sources (put the type in on; a signal's data is what its sample shows; external: outside content):\n${JSON.stringify([...builtins, ...others], null, 1)}`;
+      return text(
+        refused.length
+          ? `${listed}\nRefused (declared by their plugin, but the hub does not run them, so they bring no signal until the plugin is fixed):\n${JSON.stringify(
+              refused.map((r) => ({ type: r.type, source: r.source, refused: clip(r.why, 500) })),
+              null,
+              1,
+            )}`
+          : listed,
+      );
     },
   });
 

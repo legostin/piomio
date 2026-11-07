@@ -16,7 +16,13 @@
       },
       { "type": "pong", "title": "%signal.pong%", "description": "A pong, sent when the pinger_emit tool says so.", "external": false },
       { "type": "flaky", "mode": "subscribe", "title": "%signal.pong%", "description": "A source whose provider never takes a subscription." },
-      { "type": "late", "mode": "subscribe", "title": "%signal.pong%", "description": "A source provided only when pinger_provide_late is called; it fails." }
+      { "type": "late", "mode": "subscribe", "title": "%signal.pong%", "description": "A source provided only when pinger_provide_late is called; it fails." },
+      {
+        "type": "strict",
+        "title": "%signal.pong%",
+        "description": "A source whose data schema the hub refuses: a counted repeat over 16 cannot run in linear time.",
+        "data": { "type": "object", "properties": { "id": { "type": "string", "pattern": "^[A-Z0-9_-]{1,32}$" } } }
+      }
     ]
   },
   "permissions": {}

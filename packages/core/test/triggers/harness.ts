@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Locale, ToolCallContext, ToolResult } from "@piomio/shared";
 import { tFor } from "../../src/i18n.ts";
 import type { TriggerEngine } from "../../src/signals/engine.ts";
-import type { PipelineServices, TriggerHost, TriggerHttpRequest, TriggerHttpResponse, TriggerSourceInfo, TriggerToolRegistration } from "../../src/signals/host.ts";
+import type { PipelineServices, SourceCheck, TriggerHost, TriggerHttpRequest, TriggerHttpResponse, TriggerSourceInfo, TriggerToolRegistration } from "../../src/signals/host.ts";
 import { startTriggers } from "../../src/signals/index.ts";
 import { memoryStore } from "../../src/signals/store.ts";
 
@@ -25,6 +25,10 @@ export interface TriggerHarnessOptions {
   sources?: TriggerSourceInfo[];
   /** Called each time the engine syncs its sources' subscriptions (with `sources` given). */
   onSourcesSync?: () => void;
+  /** What an `on` entry would get from its source (with `sources` given); unset: not checked. */
+  checkSource?: (type: string, config: Record<string, unknown>) => SourceCheck;
+  /** Declarations the hub refuses (with `sources` given). */
+  refusedSources?: Array<{ type: string; source: string; why: string }>;
 }
 
 /** A registered tool as the harness keeps it: its spec, effectOf and describe (the handler is behind invoke). */
@@ -96,7 +100,16 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
     store,
     ...(o.vault ? { vault: { get: (ref: string, actor: string) => o.vault!(ref, actor) } } : {}),
     ...(o.pipeline ? { pipeline: o.pipeline } : {}),
-    ...(o.sources ? { sources: { list: () => o.sources!, sync: async () => o.onSourcesSync?.() } } : {}),
+    ...(o.sources
+      ? {
+          sources: {
+            list: () => o.sources!,
+            sync: async () => o.onSourcesSync?.(),
+            ...(o.checkSource ? { check: o.checkSource } : {}),
+            ...(o.refusedSources ? { refused: () => o.refusedSources! } : {}),
+          },
+        }
+      : {}),
     core: {
       call: async (method, params) => {
         coreCalls.push({ method, params });

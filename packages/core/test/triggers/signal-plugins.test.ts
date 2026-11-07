@@ -55,6 +55,22 @@ describe("signals from a plugin", () => {
     expect(hub.sources.list("ru").find((s) => s.type === "pinger.ping")).toMatchObject({ source: "pinger", mode: "subscribe", title: "Пинг", external: true, online: true });
   });
 
+  it("lists a declaration it refuses in trigger_sources with why, and checks a trigger's on against the sources", async () => {
+    const text = await invoke("trigger_sources", {});
+    expect(text).toContain("Refused (");
+    expect(text).toMatch(/"type": "pinger\.strict",\s*"source": "pinger",\s*"refused": "its data schema does not compile: .*linear time/);
+    // A config the source's schema refuses is refused at once, with why; nothing is made.
+    const bad = await hub.tools.get("trigger_create")!.invoke({ name: "Bad word", prompt: "Look.", on: [{ type: "pinger.ping", config: { word: 5 } }] }, call);
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("/word must be string");
+    expect(hub.triggers.engine!.list().some((t) => t.name === "Bad word")).toBe(false);
+    // A type nobody brings, or a refused one, is kept with a note.
+    const out = await invoke("trigger_create", { name: "Typo", prompt: "Look.", on: [{ type: "pinger.pnig" }, { type: "pinger.strict" }] });
+    expect(out).toContain("no source brings pinger.pnig now");
+    expect(out).toContain("the plugin pinger declares pinger.strict, but the hub refuses that declaration");
+    await invoke("trigger_delete", { id: /trigger (t_[0-9a-f]+)/.exec(out)![1] });
+  });
+
   it("subscribes for a signal trigger, whose script keeps the ping as a note", async () => {
     const out = await invoke("trigger_create", {
       name: "Pings",

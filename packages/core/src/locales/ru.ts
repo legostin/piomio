@@ -589,6 +589,7 @@ export default {
   "triggers.approval.createHosts": "Создать триггер «{name}»: {what}. Его скрипт сможет отправлять запросы, в том числе POST, на {hosts}",
   "triggers.approval.update": "Изменить триггер «{name}»: {fields}",
   "triggers.approval.updateHosts": "Изменить триггер «{name}» ({fields}): его скрипт сможет отправлять запросы, в том числе POST, ещё и на {hosts}",
+  "triggers.approval.sourceHosts": "То, что он слушает, будет читаться с {hosts} по указанным адресам",
   "triggers.approval.test": "Один раз проверить триггер «{name}», ничего не выполняя",
   "triggers.approval.testHosts": "Один раз проверить триггер «{name}»: его скрипт сможет отправлять запросы, в том числе POST, на {hosts}",
 } satisfies Record<keyof typeof en, string>;
