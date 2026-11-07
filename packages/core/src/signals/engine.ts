@@ -118,6 +118,8 @@ export class TriggerEngine {
 
   /** Run at most one catch-up per trigger for runs missed while the hub was down, then arm the timer. */
   async boot(): Promise<void> {
+    // Stopped before its turn came (the hub stood down right after starting it): nothing to run or plan.
+    if (this.stopped) return;
     const now = new Date(this.now());
     for (const t of [...this.triggers.values()]) {
       if (!t.enabled || this.stopped) continue;
@@ -138,6 +140,7 @@ export class TriggerEngine {
       });
     }
     for (const t of this.triggers.values()) {
+      if (this.stopped) return;
       // Due just now (within the grace period): keep it, the timer fires it as a normal run.
       const planned = t.state.nextRunAt ? Date.parse(t.state.nextRunAt) : NaN;
       if (t.enabled && planned <= now.getTime() && t.kind !== "watch") continue;

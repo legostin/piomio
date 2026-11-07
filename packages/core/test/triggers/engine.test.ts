@@ -162,6 +162,21 @@ describe("trigger engine", () => {
     e2.stop();
   });
 
+  it("a boot after stop() runs nothing and writes nothing (its turn came after the hub stood down)", async () => {
+    const now = Date.now();
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    kv.set("trigger:t_missed", base({ id: "t_missed", cron: "0 9 * * *", state: { nextRunAt: new Date(now - 3 * 86400_000).toISOString() } }));
+    kv.set("trigger:t_new", base({ id: "t_new", cron: "0 9 * * *", report: true }));
+    const f = fakeCtx(kv);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    e.stop();
+    const before = structuredClone([...kv.entries()]);
+    await e.boot();
+    expect(f.created()).toEqual([]);
+    expect([...kv.entries()]).toEqual(before);
+  });
+
   it("enforces the daily run limit", async () => {
     const kv = new Map<string, unknown>([["initialized", true]]);
     kv.set("trigger:t_lim", base({ id: "t_lim", maxRunsPerDay: 2, cron: "0 9 * * *" }));

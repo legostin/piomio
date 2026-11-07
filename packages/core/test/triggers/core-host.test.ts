@@ -11,7 +11,15 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 
 type Card = { enabled: boolean; settings: Record<string, unknown> } | undefined;
 
-function setup(card: Card | null = { enabled: true, settings: {} }, fetch?: () => any) {
+/** A promise that waits until it is let go. */
+function latch() {
+  let open!: () => void;
+  const wait = new Promise<void>((r) => (open = r));
+  return { wait, open };
+}
+
+/** `before`: awaited before a core call is answered (a latch holds it). */
+function setup(card: Card | null = { enabled: true, settings: {} }, fetch?: () => any, before?: (method: string) => Promise<void> | undefined) {
   const db = openDb(":memory:");
   const bus = new EventBus();
   const tools = new ToolRegistry();
@@ -33,6 +41,7 @@ function setup(card: Card | null = { enabled: true, settings: {} }, fetch?: () =
     },
     coreCall: async (pluginId, method, params) => {
       calls.push({ pluginId, method, params });
+      await before?.(method);
       if (method === "settings.get") return { timezone: "Europe/Moscow", defaultAgent: "assistant" };
       if (method === "agents.list") return [{ id: "assistant", name: "A" }];
       if (method === "tasks.create") return { id: "task_1" };
@@ -45,6 +54,13 @@ function setup(card: Card | null = { enabled: true, settings: {} }, fetch?: () =
 const call: ToolCallContext = { sessionId: "s", conversationId: "c", agentId: "assistant", callId: "x", tainted: false, background: false, workspace: "/tmp", machineId: "local" };
 const req = (over: Partial<TriggerHttpRequest>): TriggerHttpRequest => ({ method: "GET", path: "/triggers", query: {}, headers: {}, body: null, public: false, locale: "en", ...over });
 const triggerTools = (tools: ToolRegistry) => tools.list().filter((t) => t.name.startsWith("trigger_"));
+const until = async (fn: () => unknown, what: string, timeoutMs = 5000) => {
+  const end = Date.now() + timeoutMs;
+  while (!fn()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
 
 describe("the trigger engine's host in core", () => {
   it("runs on the plugin's storage, with its tools named trigger_* and owned by the Triggers card", async () => {
@@ -170,6 +186,67 @@ describe("the trigger engine's host in core", () => {
     expect(s.ct.engine).toBeDefined();
     expect(triggerTools(s.tools)).toHaveLength(5);
     s.ct.stop();
+  });
+
+  it("a stop while it starts cuts off what the start still does: no engine, no tools, no listeners, no writes", async () => {
+    const held = latch();
+    const s = setup(undefined, undefined, (m) => (m === "settings.get" ? held.wait : undefined));
+    const started = s.ct.start();
+    await until(() => s.calls.some((c) => c.method === "settings.get"), "the start to ask for the hub settings");
+    s.ct.stop();
+    const kv = pluginKv(s.db, "triggers");
+    const atStop = kv.list();
+    held.open();
+    // Stopped, it is not a failure to start.
+    await expect(started).resolves.toBeUndefined();
+    await new Promise((r) => setTimeout(r, 50)); // its boot would run on the next turn
+    expect(s.ct.engine).toBeUndefined();
+    expect(triggerTools(s.tools)).toEqual([]);
+    expect(s.settingsListeners.size).toBe(0);
+    expect(kv.list()).toEqual(atStop);
+  });
+
+  it("a stop right after a start leaves its boot nothing to write", async () => {
+    const s = setup();
+    const kv = pluginKv(s.db, "triggers");
+    kv.set("initialized", true);
+    // No next run yet: boot would plan one and save it.
+    kv.set("trigger:t_s", {
+      id: "t_s", kind: "schedule", name: "Brief", prompt: "Brief me.", agentId: "assistant", enabled: true, maxRunsPerDay: 24, cron: "0 9 * * *",
+      createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true, state: {},
+    });
+    await s.ct.start();
+    s.ct.stop();
+    const atStop = kv.list();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(kv.list()).toEqual(atStop);
+  });
+
+  it("a stop during a watch's page load: the check that finishes later starts no task and writes nothing", async () => {
+    const held = latch();
+    let loading = false;
+    const s = setup({ enabled: true, settings: { allowPrivateUrls: true } }, () => async () => {
+      loading = true;
+      await held.wait;
+      return new Response("<p>new price</p>", { status: 200, headers: { "content-type": "text/html" } });
+    });
+    const kv = pluginKv(s.db, "triggers");
+    kv.set("initialized", true);
+    kv.set("trigger:t_w", {
+      id: "t_w", kind: "watch", name: "Price", prompt: "Tell me.", agentId: "assistant", enabled: true, maxRunsPerDay: 24, url: "http://127.0.0.1:9/p", intervalMinutes: 60,
+      createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: false,
+      state: { lastHash: "old", lastValue: "old price", nextRunAt: "2099-01-01T00:00:00.000Z" },
+    });
+    await s.ct.start();
+    const check = s.ct.engine!.checkNow("t_w");
+    await until(() => loading, "the page load");
+    s.ct.stop();
+    const atStop = { kv: kv.list(), calls: s.calls.length };
+    held.open();
+    await check.catch(() => {});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(s.calls.slice(atStop.calls).map((c) => c.method)).toEqual([]);
+    expect(kv.list()).toEqual(atStop.kv);
   });
 
   it("a start that throws is not stuck: the next start runs", async () => {

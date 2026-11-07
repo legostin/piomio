@@ -39,7 +39,15 @@ interface Session {
   offs: Array<() => void>;
   toolNames: string[];
   handler?: (req: TriggerHttpRequest) => Promise<TriggerHttpResponse> | TriggerHttpResponse;
+  /**
+   * Released: what its engine still does (a page load in flight, a stale start, a boot on the next turn) goes nowhere,
+   * as it did when a stopped plugin's process was gone. Storage and core calls reject, UI events and logs are dropped.
+   */
+  closed: boolean;
 }
+
+/** What a released session's storage and core calls reject with (the plugin's closed RPC peer did the same). */
+const STOPPED = "the trigger engine was stopped";
 
 export class CoreTriggers {
   engine?: TriggerEngine;
@@ -66,7 +74,7 @@ export class CoreTriggers {
     if (this.starting && this.startGen === this.gen) return this.starting;
     const prev = this.starting;
     const gen = this.gen;
-    const s: Session = { offs: [], toolNames: [] };
+    const s: Session = { offs: [], toolNames: [], closed: false };
     const p: Promise<void> = (async () => {
       await prev?.catch(() => {});
       if (this.gen !== gen) return;
@@ -82,6 +90,8 @@ export class CoreTriggers {
       } catch (e) {
         this.release(s);
         if (this.session === s) this.session = undefined;
+        // Stopped while it started: its calls were cut off, which is no failure to start.
+        if (this.gen !== gen) return;
         throw e;
       }
     })();
@@ -117,6 +127,7 @@ export class CoreTriggers {
   }
 
   private release(s: Session): void {
+    s.closed = true;
     for (const off of s.offs.splice(0)) off();
     for (const name of s.toolNames.splice(0)) this.d.tools.unregister(name, TRIGGERS_ID);
     s.handler = undefined;
@@ -129,17 +140,27 @@ export class CoreTriggers {
     const say =
       (level: "warn" | "error") =>
       (...a: unknown[]) =>
-        console[level](`[piomio] triggers ${level}: ${a.map(String).join(" ")}`);
+        s.closed ? undefined : console[level](`[piomio] triggers ${level}: ${a.map(String).join(" ")}`);
+    /** Run `fn` while the session is open; a call that was in flight when it closed has its answer dropped. */
+    const open = async <T>(fn: () => T | Promise<T>, settle = false): Promise<T> => {
+      if (s.closed) throw new Error(STOPPED);
+      const out = await fn();
+      if (settle && s.closed) throw new Error(STOPPED);
+      return out;
+    };
+    /** A listener added after the release is taken back at once. */
+    const keep = (off: () => void) => void (s.closed ? off() : s.offs.push(off));
     const fetch = d.fetch?.();
     return {
       pluginId: TRIGGERS_ID,
       hubUrl: d.hubUrl,
       settings: { ...(d.card.get()?.settings ?? {}) },
-      onSettingsChange: (cb) => void s.offs.push(d.card.onSettings(cb)),
+      onSettingsChange: (cb) => keep(d.card.onSettings(cb)),
       i18n: { locale: hubLocale, t: (key, params, locale) => tFor(locale ?? hubLocale())(`triggers.${key}`, params) },
       log: { debug() {}, info() {}, warn: say("warn"), error: say("error") },
       tools: {
         register: (r) => {
+          if (s.closed) return;
           const { handler, name: short, ...spec } = r;
           const name = `${TOOL_PREFIX}_${short}`;
           // As the plugin runner did: a string is the text, a throw is an error result.
@@ -155,17 +176,17 @@ export class CoreTriggers {
           s.toolNames.push(name);
         },
       },
-      events: { on: (name, cb) => void s.offs.push(d.bus.on(name, cb)) },
-      http: { handle: (h) => void (s.handler = h) },
-      ui: { emit: (channel, payload) => void d.coreCall(TRIGGERS_ID, "ui.emit", { channel, payload }).catch(() => {}) },
+      events: { on: (name, cb) => keep(d.bus.on(name, cb)) },
+      http: { handle: (h) => void (s.closed || (s.handler = h)) },
+      ui: { emit: (channel, payload) => void (s.closed || d.coreCall(TRIGGERS_ID, "ui.emit", { channel, payload }).catch(() => {})) },
       storage: {
-        get: async (key) => (kv.get(key) ?? undefined) as any,
-        set: async (key, value) => kv.set(key, value),
-        delete: async (key) => kv.delete(key),
-        list: async (prefix) => kv.list(prefix),
+        get: (key) => open(() => (kv.get(key) ?? undefined) as any),
+        set: (key, value) => open(() => kv.set(key, value)),
+        delete: (key) => open(() => kv.delete(key)),
+        list: (prefix) => open(() => kv.list(prefix)),
       },
-      core: { call: (method, params) => d.coreCall(TRIGGERS_ID, method, params) as Promise<any> },
-      ...(fetch ? { fetch } : {}),
+      core: { call: (method, params) => open(() => d.coreCall(TRIGGERS_ID, method, params) as Promise<any>, true) },
+      ...(fetch ? { fetch: (url, init) => open(() => fetch(url, init)) } : {}),
     };
   }
 }
