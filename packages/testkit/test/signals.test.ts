@@ -37,6 +37,39 @@ describe("plugin signals", () => {
     expect(h.signals).toHaveLength(1);
   });
 
+  it("refuses what the hub refuses: data against its schema, a subscribe-mode type sent without its subscription", async () => {
+    await h.invokeText("tick", { type: "typed", n: 3 });
+    await until(() => h.logs.find((l) => l.includes("typed") && l.includes("does not match the declared schema")), "the schema refusal in the log");
+    await h.invokeText("tick", { type: "count", n: 4 });
+    await until(() => h.logs.find((l) => l.includes("count") && l.includes("subscribe-mode source")), "the subscription refusal in the log");
+    expect(h.signals.some((s) => s.type === "typed" || (s.type === "count" && !s.subscription))).toBe(false);
+  });
+
+  it("subscribes only as the hub would: a subscribe-mode type, with a config its schema takes", async () => {
+    await expect(h.subscribeSignal("count", { word: 5 })).rejects.toThrow(/\/word must be string/);
+    await expect(h.subscribeSignal("tick")).rejects.toThrow(/not a subscribe-mode source/);
+    await expect(h.subscribeSignal("nope")).rejects.toThrow(/not declared/);
+  });
+
+  it("will not start a plugin whose signal declaration the hub refuses, and says why", async () => {
+    await expect(startPlugin({ dir: join(import.meta.dirname, "fixtures", "refused-signal-plugin") })).rejects.toThrow(/refused-signals\.code is refused by the hub: its data schema does not compile: .*linear time/);
+  });
+
+  it("says in the plugin's log when a subscription waited for a provider that never came", async () => {
+    const other = await startPlugin({ dir, provideWaitMs: 200 });
+    try {
+      const id = await other.subscribeSignal("late");
+      await until(() => other.logs.find((l) => l.includes("late") && l.includes("no provider")), "the missing provider in the log");
+      // It is still taken once the provider comes.
+      await other.invokeText("provide_late");
+      await until(() => other.signals.find((s) => s.subscription === id), "the late provider's signal");
+    } finally {
+      await other.stop();
+    }
+    // Within the wait, a provider that comes says nothing (the shared harness waits the default 30 s).
+    expect(h.logs.some((l) => l.includes("no provider"))).toBe(false);
+  });
+
   it("starts a provider for each subscription, sends its signals by it, and stops it", async () => {
     const id = await h.subscribeSignal("count", { word: "hi" });
     const got = await until(() => h.signals.find((s) => s.subscription === id), "the subscription's signal");

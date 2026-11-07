@@ -85,6 +85,27 @@ interface SignalSub {
 }
 const signalSubs = new Map<string, SignalSub>();
 let signalLog: (level: string, msg: string) => void = (level, msg) => toStderr(`[${level}] ${msg}`);
+/**
+ * How long after activation a subscription may wait for its provider (a provide() that comes later is fine) before the
+ * plugin's log says none came: the hub takes such a subscription as made, so nothing else would say it does no work.
+ */
+let provideWaitMs = 30_000;
+let activatedAt = Date.now();
+/** Types already said to have no provider: once each. */
+const noProviderSaid = new Set<string>();
+
+/** After the wait, says in the log that subscription `id` still has no provider, unless one came or it was stopped. */
+function watchProvider(id: string, s: SignalSub): void {
+  const wait = Math.max(0, activatedAt + provideWaitMs - Date.now());
+  setTimeout(() => {
+    if (signalSubs.get(id) !== s || s.started || s.stopped || signalProviders.has(s.type) || noProviderSaid.has(s.type)) return;
+    noProviderSaid.add(s.type);
+    signalLog(
+      "warn",
+      `the hub subscribed to ${s.type} (subscription ${id}), but the plugin gave no provider for it ${Math.round(provideWaitMs / 1000)} s after it started: call ctx.signals.provide("${s.type}", { subscribe(sub, emit) { … } }) in activate; until then the source does nothing`,
+    );
+  }, wait).unref();
+}
 
 function sendSignal(type: string, data: unknown, o: SignalEmitOptions | undefined, subscription?: string): void {
   let text: string | undefined;
@@ -191,7 +212,9 @@ async function vaultGet(ref: string, opts: Record<string, unknown> | undefined):
   }
 }
 
-peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pluginDir: string; hubUrl: string; appRoot: string; settings: any; locale?: string; messages?: Catalog }) => {
+peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pluginDir: string; hubUrl: string; appRoot: string; settings: any; locale?: string; messages?: Catalog; provideWaitMs?: number }) => {
+  activatedAt = Date.now();
+  if (typeof p.provideWaitMs === "number" && Number.isFinite(p.provideWaitMs) && p.provideWaitMs >= 0) provideWaitMs = p.provideWaitMs;
   hubLocale = isLocale(p.locale) ? p.locale : DEFAULT_LOCALE;
   messages = p.messages ?? {};
   translators.clear();
@@ -335,6 +358,8 @@ peer.handle("signals.subscribe", async (p: { id: string; type: string; config?: 
   const s: SignalSub = { type: String(p.type ?? ""), config, started: false, stopped: false };
   signalSubs.set(id, s);
   await startSub(id, s);
+  // No provider yet: taken (one may be given later), but the log says so if none comes.
+  if (!s.started) watchProvider(id, s);
   return {};
 });
 

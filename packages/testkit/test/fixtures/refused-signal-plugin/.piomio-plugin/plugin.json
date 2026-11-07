@@ -1,0 +1,16 @@
+{
+  "id": "refused-signals",
+  "name": "Refused signals",
+  "server": "./server/index.ts",
+  "contributes": {
+    "signals": [
+      {
+        "type": "code",
+        "title": "Code",
+        "description": "A code whose pattern has a counted repeat over 16: the hub cannot run it in linear time.",
+        "data": { "type": "object", "properties": { "code": { "type": "string", "pattern": "^[A-Z0-9_-]{1,32}$" } } }
+      }
+    ]
+  },
+  "permissions": {}
+}

@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrainEvent, BrainSessionOptions, BrainTurn, CatalogEntryState, Locale, OutboundMessage, ProbeResult, ToolCallContext, ToolResult, ToolSpec } from "@piomio/shared";
 import { createRpcPeer, ndjsonTransport, readPluginLayout, type RpcPeer } from "@piomio/shared";
+import { checkedConfig, checkSignalEmit, refusedSignalDecls, signalDataProblem } from "@piomio/core/signal-check";
 
 const APP_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
 
@@ -26,6 +27,8 @@ export interface HarnessOptions {
   locale?: Locale;
   /** The plugin's storage (ctx.storage); pass the same map to a restarted plugin to keep it. */
   storage?: Map<string, unknown>;
+  /** How long after activation a subscription waits for its provider before the plugin's log says none came (default 30 s). */
+  provideWaitMs?: number;
 }
 
 export interface PluginHarness {
@@ -44,13 +47,19 @@ export interface PluginHarness {
   /** Ids of every vault.get that reached the "hub", in order. */
   vaultGets: string[];
   /**
-   * The signals the plugin sent (ctx.signals.emit, or a provider's emit with its subscription's id), in order. One of a
-   * type its manifest does not declare is refused, as the hub refuses it, and not recorded.
+   * The signals the plugin sent (ctx.signals.emit, or a provider's emit with its subscription's id), in order. What the
+   * hub refuses is refused here with the hub's checks (@piomio/core/signal-check) and not recorded: a type its manifest
+   * does not declare, a subscribe-mode type sent without an active subscription, a key or subject that is no string,
+   * data over 256 KB or 50 levels, or data its schema refuses. The plugin's log says why, as on the hub.
    */
   signals: HarnessSignal[];
   /** Subscriptions its provider failed after the plugin took them (a provider given later that threw), as the hub hears them. */
   signalFailures: Array<{ id: string; error: string }>;
-  /** Subscribe to one of its providers as the hub does for a trigger; resolves with the subscription's id once the plugin answered. */
+  /**
+   * Subscribe to one of its providers as the hub does for a trigger; resolves with the subscription's id once the plugin
+   * answered. Rejects, as the hub would not subscribe, for a type that is not declared or not subscribe-mode, or a config
+   * its config schema refuses.
+   */
   subscribeSignal(type: string, config?: Record<string, unknown>, id?: string): Promise<string>;
   /** Stop a subscription (no trigger needs it any more). */
   stopSignal(id: string): Promise<void>;
@@ -112,6 +121,12 @@ export function defaultContext(over: Partial<ToolCallContext> = {}): ToolCallCon
 export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
   const layout = readPluginLayout(resolve(o.dir));
   if (!layout.serverEntry) throw new Error(`plugin at ${o.dir} has no server entry`);
+  const pluginId = layout.manifest.id;
+  const decls = layout.manifest.contributes.signals ?? [];
+  // A declaration the hub would leave out (a schema that could take more than linear time, one that does not compile):
+  // the plugin's test fails here, with the hub's reason.
+  const refusedDecls = refusedSignalDecls(pluginId, decls);
+  if (refusedDecls.length) throw new Error(refusedDecls.map((r) => `signal type ${pluginId}.${r.type} is refused by the hub: ${r.why}`).join("\n"));
   const dataDir = o.dataDir ?? mkdtempSync(join(tmpdir(), `owl-plugin-${layout.manifest.id}-`));
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", join(APP_ROOT, "packages", "plugin-sdk", "src", "runner.ts"), layout.serverEntry], {
     cwd: layout.dir,
@@ -161,9 +176,17 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
   });
   peer.handle("register.http", () => ({}));
   const signals: HarnessSignal[] = [];
-  const declaredSignals = new Set((layout.manifest.contributes.signals ?? []).map((s) => s.type));
+  /** The subscriptions the "hub" holds now, with their types: a provider's signal comes only by one of them. */
+  const activeSubs = new Map<string, string>();
+  // As the hub checks a signal (plugins/host.ts, then signals/sources.ts with decl-check.ts), but always: the hub skips
+  // the data check while no trigger listens, a test wants to know.
   peer.handle("signals.emit", (p: HarnessSignal) => {
-    if (!declaredSignals.has(p.type)) throw new Error(`plugin ${layout.manifest.id} is not allowed: signal "${p.type}" is not declared in contributes.signals`);
+    const type = typeof p?.type === "string" ? p.type : "";
+    if (!decls.some((d) => d.type === type)) throw new Error(`plugin ${pluginId} is not allowed: signal "${type}" is not declared in contributes.signals`);
+    const shape = checkSignalEmit(pluginId, decls, p, { subscribed: (id, t) => activeSubs.get(id) === t });
+    if (!shape.ok) throw new Error(shape.error);
+    const problem = signalDataProblem(pluginId, type, shape.checked, p.data === undefined ? null : p.data);
+    if (problem) throw new Error(problem);
     signals.push({
       type: p.type,
       data: p.data,
@@ -174,7 +197,10 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     return {};
   });
   const signalFailures: Array<{ id: string; error: string }> = [];
-  peer.onNotification("signals.failed", (p: { id: string; error: string }) => signalFailures.push({ id: p.id, error: p.error }));
+  peer.onNotification("signals.failed", (p: { id: string; error: string }) => {
+    activeSubs.delete(p.id);
+    signalFailures.push({ id: p.id, error: p.error });
+  });
   let subscriptionCount = 0;
   peer.handle("events.subscribe", (p: { names: string[] }) => {
     p.names.forEach((n) => subscriptions.add(n));
@@ -229,6 +255,7 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
       settings: o.settings ?? {},
       locale: currentLocale,
       messages: layout.messages,
+      ...(o.provideWaitMs !== undefined ? { provideWaitMs: o.provideWaitMs } : {}),
     },
     { timeoutMs: 60_000 },
   ).catch((e) => {
@@ -252,10 +279,23 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     signals,
     signalFailures,
     async subscribeSignal(type, config = {}, id = `sub_test_${++subscriptionCount}`) {
-      await peer.request("signals.subscribe", { id, type, config }, { timeoutMs: 30_000 });
+      const decl = decls.find((d) => d.type === type);
+      if (!decl) throw new Error(`signal type "${type}" is not declared in contributes.signals`);
+      if (decl.mode !== "subscribe") throw new Error(`${pluginId}.${type} is not a subscribe-mode source: the hub subscribes only to those`);
+      const { problem } = checkedConfig(pluginId, decls, type, config);
+      if (problem) throw new Error(`${pluginId}.${type}: the hub would not subscribe: ${problem}`);
+      // Active before the plugin answers, as on the hub: a provider may emit while it subscribes.
+      activeSubs.set(id, type);
+      try {
+        await peer.request("signals.subscribe", { id, type, config }, { timeoutMs: 30_000 });
+      } catch (e) {
+        activeSubs.delete(id);
+        throw e;
+      }
       return id;
     },
     async stopSignal(id) {
+      activeSubs.delete(id);
       await peer.request("signals.stop", { id }, { timeoutMs: 10_000 });
     },
     get catalog() {
