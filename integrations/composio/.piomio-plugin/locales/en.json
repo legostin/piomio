@@ -3,7 +3,7 @@
   "description": "Slack, GitHub, Google, Microsoft 365, Jira, Zoom and about a thousand other apps through Composio, an outside service that signs in to them for you.",
   "integration.summary": "Signs in to Slack, GitHub, Google, Microsoft 365 and other apps for you, through its cloud",
   "integration.example": "Which apps can you connect through Composio?",
-  "via.about": "{name} goes through Composio, an outside service. Signing in and every request go through Composio's cloud: the account's keys are kept there, not on your hub, and Composio sees what the agent reads and sends. It needs your own Composio account (free up to 100,000 calls a month). For triggers on the apps' events, when your hub has a public https address, the hub registers a webhook in your Composio project (a webhook you set up there yourself is never changed); otherwise the events come over Composio's realtime channel, which Composio calls internal and may change.",
+  "via.about": "{name} goes through Composio, an outside service. Signing in and every request go through Composio's cloud: the account's keys are kept there, not on your hub, and Composio sees what the agent reads and sends. It needs your own Composio account (free up to 100,000 calls a month).",
   "signal.event.title": "An event in an app connected through Composio",
   "setup.key.title": "Composio API key",
   "setup.key.hint": "Sign up at platform.composio.dev (free), then Settings → API keys → New key, and paste it here. It stays in your hub's vault.",
