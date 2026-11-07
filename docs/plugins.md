@@ -132,7 +132,11 @@ ctx.signals.emit("alert", { level: "high", text }, { key: alertId, subject: "Dis
 ctx.signals.provide("rss_item", {
   subscribe(sub, emit) {
     // sub.id is the hub's; sub.config was checked against the declared config schema.
-    const timer = setInterval(async () => emit(await readNewItem(sub.config.url), { key: "item-id", subject: "Its title" }), 600_000);
+    const timer = setInterval(async () => {
+      // A failed read is skipped: no unhandled rejection, nothing emitted.
+      const item = await readNewItem(sub.config.url).catch(() => undefined);
+      if (item) emit(item, { key: item.id, subject: item.title });
+    }, 600_000);
     return { stop: () => clearInterval(timer) };
   },
 });

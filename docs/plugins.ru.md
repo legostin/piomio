@@ -132,7 +132,11 @@ ctx.signals.emit("alert", { level: "high", text }, { key: alertId, subject: "Д�
 ctx.signals.provide("rss_item", {
   subscribe(sub, emit) {
     // sub.id выдаёт хаб; sub.config уже проверен по объявленной схеме конфига.
-    const timer = setInterval(async () => emit(await readNewItem(sub.config.url), { key: "item-id", subject: "Заголовок" }), 600_000);
+    const timer = setInterval(async () => {
+      // Неудачное чтение пропускается: без необработанных ошибок и без сигнала.
+      const item = await readNewItem(sub.config.url).catch(() => undefined);
+      if (item) emit(item, { key: item.id, subject: item.title });
+    }, 600_000);
     return { stop: () => clearInterval(timer) };
   },
 });
