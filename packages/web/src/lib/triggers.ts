@@ -2,8 +2,7 @@
 // their runs came to (a run's stages, a filter, an error code). Pure: the Triggers section draws what this returns.
 
 import type { UiEvent } from "@piomio/shared";
-import catalogEn from "../i18n/en";
-import { formatDate, formatNumber, t, type MessageKey } from "../i18n";
+import { catalog, formatDate, formatNumber, t, type MessageKey } from "../i18n";
 import { formatDateTime, type Tone } from "./format";
 
 /** Where the hub serves triggers (core `/api/triggers/*`; `/api/plugins/triggers/http/triggers/*` is the old alias). */
@@ -137,9 +136,9 @@ export const KIND_HINT: Record<TriggerKind, MessageKey> = {
   signal: "triggers.kindHint.signal",
 };
 
-/** A catalog message by a key built at run time, or undefined when the catalog has none. */
+/** A catalog message by a key built at run time, or undefined when the catalog (English, the source of truth) has none. */
 function known(key: string, params?: ErrorParams): string | undefined {
-  return key in catalogEn ? t(key as MessageKey, params) : undefined;
+  return key in catalog.en ? t(key as MessageKey, params) : undefined;
 }
 
 /** Why a run happened ("scheduled", "manually"…); an unknown reason as it is. */

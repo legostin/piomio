@@ -44,8 +44,6 @@ interface TriggerSummary {
   nextRunAt?: string | null;
 }
 
-const TRIGGERS_URL = TRIGGERS_API;
-
 const FILTERS: Record<Filter, (s: TaskStatus) => boolean> = {
   all: () => true,
   active: (s) => ACTIVE_STATUSES.includes(s),
@@ -89,7 +87,7 @@ export function TasksPage() {
     ensureAgents();
     // A hub that does not run triggers (it does not lead) has nothing configured to list.
     api
-      .get<{ triggers: TriggerSummary[] }>(TRIGGERS_URL)
+      .get<{ triggers: TriggerSummary[] }>(TRIGGERS_API)
       .then((r) => setTriggers(r.triggers))
       .catch(() => setTriggers([]));
   }, []);
