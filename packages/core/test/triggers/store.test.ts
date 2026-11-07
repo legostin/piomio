@@ -188,6 +188,8 @@ describe.each([
       s.addNote({ agentId: "a1", triggerId: "busy", triggerName: "Busy", text: `b${i}`, signalIds: [], external: false });
     }
     expect(s.notes({ agentId: "a1", triggerId: "quiet", limit: 20 }).map((n) => n.text)).toEqual(["old one"]);
+    // By the name its notes keep, in any case: a trigger deleted since is found by it too.
+    expect(s.notes({ agentId: "a1", triggerName: "QUIET", limit: 20 }).map((n) => n.text)).toEqual(["old one"]);
   });
 
   it("leaves a malformed run list in storage, moves the good ones and says so", () => {

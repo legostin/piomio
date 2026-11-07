@@ -21,6 +21,8 @@ export interface NoteRow {
 export interface NoteQuery {
   agentId?: string;
   triggerId?: string;
+  /** A trigger's name as its notes keep it (one deleted since too), any case. */
+  triggerName?: string;
   since?: string;
   text?: string;
   limit?: number;
@@ -75,6 +77,7 @@ const bare = (r: StoredRun): TriggerRun => {
 const noteMatches = (n: NoteRow, q: NoteQuery) =>
   (!q.agentId || n.agentId === q.agentId) &&
   (!q.triggerId || n.triggerId === q.triggerId) &&
+  (!q.triggerName || n.triggerName.toLowerCase() === q.triggerName.toLowerCase()) &&
   (!q.since || n.at >= q.since) &&
   (!q.text || n.text.toLowerCase().includes(q.text.toLowerCase()));
 
@@ -172,8 +175,8 @@ export function sqlStore(db: Db, now: () => number = Date.now): TriggerStore {
       if (limit <= 0) return out;
       const sql = `select id, agent_id, trigger_id, at, external, data from signal_notes ${where.length ? `where ${where.join(" and ")}` : ""} order by at desc, rowid desc`;
       type Row = { id: string; agent_id: string; trigger_id: string; at: string; external: number; data: string };
-      // Without a text filter the database stops at the limit; with one the rows are read one by one until it is reached.
-      const rows: Iterable<Row> = q.text ? (db.prepare(sql).iterate(...args) as Iterable<Row>) : (db.prepare(`${sql} limit ?`).all(...args, limit) as Row[]);
+      // Without a text or name filter the database stops at the limit; with one the rows are read one by one until it is reached.
+      const rows: Iterable<Row> = q.text || q.triggerName ? (db.prepare(sql).iterate(...args) as Iterable<Row>) : (db.prepare(`${sql} limit ?`).all(...args, limit) as Row[]);
       for (const r of rows) {
         const n: NoteRow = {
           ...parse<Pick<NoteRow, "triggerName" | "text" | "signalIds">>(r.data),

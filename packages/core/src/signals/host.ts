@@ -107,8 +107,11 @@ export interface TriggerHost {
   };
   /** The journal of runs, the agents' notes and the scripts' state (store.ts). */
   store: TriggerStore;
-  /** A vault item's fields, read for `actor` (trigger:<id>); throws when it is missing or refused. */
-  vault?: { get(ref: string, actor: string): Promise<Record<string, string>> };
+  /**
+   * A vault item's fields, read for `actor` (trigger:<id>) on behalf of `agentId` (the trigger's agent: the item's scope
+   * decides); throws when it is missing or refused.
+   */
+  vault?: { get(ref: string, actor: string, agentId?: string): Promise<Record<string, string>> };
   core: { call<T = any>(method: CoreMethod, params?: unknown): Promise<T> };
   /** How the watch loads pages; unset: the global fetch. */
   fetch?: FetchLike;

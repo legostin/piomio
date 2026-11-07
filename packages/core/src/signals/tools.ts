@@ -510,16 +510,18 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     },
     handler: (input, call) => {
       const limit = Math.min(50, Math.max(1, Math.floor(Number(input?.limit) || 20)));
-      const want = typeof input?.trigger === "string" ? input.trigger.trim().toLowerCase() : "";
-      const rows = ctx.store
-        .notes({
-          agentId: call.agentId,
-          ...(typeof input?.since === "string" && input.since ? { since: input.since } : {}),
-          ...(typeof input?.text === "string" && input.text ? { text: input.text } : {}),
-          limit: want ? 200 : limit,
-        })
-        .filter((n) => !want || n.triggerId.toLowerCase() === want || n.triggerName.toLowerCase() === want)
-        .slice(0, limit);
+      const want = typeof input?.trigger === "string" ? input.trigger.trim() : "";
+      const q = {
+        agentId: call.agentId,
+        ...(typeof input?.since === "string" && input.since ? { since: input.since } : {}),
+        ...(typeof input?.text === "string" && input.text ? { text: input.text } : {}),
+        limit,
+      };
+      // A trigger by its id or its name (one deleted since too): its notes are looked up by that in the store, so
+      // however many the agent's other triggers kept, they are found.
+      const ids = [...new Set([want, ...e.list().filter((x) => x.id.toLowerCase() === want.toLowerCase() || x.name.toLowerCase() === want.toLowerCase()).map((x) => x.id)])];
+      const found = want ? [...ids.map((triggerId) => ctx.store.notes({ ...q, triggerId })), ctx.store.notes({ ...q, triggerName: want })].flat() : ctx.store.notes(q);
+      const rows = [...new Map(found.map((n) => [n.id, n])).values()].sort((a, z) => (a.at < z.at ? 1 : a.at > z.at ? -1 : 0)).slice(0, limit);
       if (!rows.length) return text("No notes.");
       return text(
         rows

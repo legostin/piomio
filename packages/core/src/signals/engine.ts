@@ -5,7 +5,7 @@ import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
 import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
 import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
 import type { RunReason, Signal, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
-import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
+import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, MAX_BRIEF, ValidationError } from "./validate.ts";
 import { pageReader } from "./extract.ts";
 import { builtinSignal, fitted, newRunId, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline } from "./pipeline.ts";
 import { testTrigger, type TestInput, type TestReport } from "./test-run.ts";
@@ -18,6 +18,8 @@ export const MAX_RUNS_KEPT = RECENT_RUNS_KEPT;
 const MAX_TIMER_MS = 60_000;
 const STORED_VALUE_LIMIT = 20_000;
 const CATCH_UP_GRACE_MS = 60_000;
+/** What feedback "less" adds to a quick check's brief (once). */
+const STRICTER = "The person asked for fewer: be stricter.";
 /** A one-time reminder its full queue refused is tried again after this long. */
 const ONCE_RETRY_MS = 60_000;
 /** The wall clock ran on this much more than the timers: the computer slept (other replicas take the lead after 8 s). */
@@ -806,6 +808,8 @@ export class TriggerEngine {
       } else if (value === "less") {
         if (t.kind === "watch") t.intervalMinutes = Math.min(7 * 24 * 60, (t.intervalMinutes ?? 60) * 2);
         if (t.kind === "heartbeat" && (t.times?.length ?? 0) > 1) t.times = dropSlot(t.times!, n?.createdAt, this.tz);
+        // A quick check hears it in its brief, once: the person's words for what is worth waking the agent for.
+        if (t.triage && !t.triage.brief.includes(STRICTER)) t.triage = { brief: `${t.triage.brief.slice(0, MAX_BRIEF - STRICTER.length - 1).trimEnd()}\n${STRICTER}` };
         t.state.nextRunAt = computeNextRun(t, this.tz, now)?.toISOString();
       }
       t.updatedAt = now.toISOString();
@@ -833,7 +837,8 @@ export class TriggerEngine {
       if (hit && hit.ref === signed.secretRef && hit.until > this.now()) key = hit.key;
       else {
         try {
-          key = (await this.ctx.vault!.get(signed.secretRef, `trigger:${t.id}`)).value ?? "";
+          // As the trigger's agent: a key the person kept for other agents is not read (the item's scope).
+          key = (await this.ctx.vault!.get(signed.secretRef, `trigger:${t.id}`, t.agentId)).value ?? "";
         } catch {
           key = "";
         }

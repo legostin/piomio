@@ -176,7 +176,7 @@ A run nobody watches ends in one of two ways.
 | notify | Worth interrupting you now |
 | ask | Needs your decision; comes as a question |
 
-Agents are told to be conservative and interrupt only when it really matters. Under a check's notification there are three buttons: **useful**, **less often** (a watch checks half as often, a review drops one of its times) and **turn off** (the schedule stops).
+Agents are told to be conservative and interrupt only when it really matters. Under a check's notification there are three buttons: **useful**, **less often** (a watch checks half as often, a review drops one of its times, and a trigger with a quick check is told once to be stricter) and **turn off** (the schedule stops).
 
 Below the **Acts** initiative, a background run can only read and suggest (see [Agents and the team](agents.md)).
 

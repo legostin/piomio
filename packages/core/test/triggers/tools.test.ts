@@ -239,6 +239,23 @@ describe("the trigger tools in the chat", () => {
     await h.invoke("delete", { id });
   });
 
+  it("finds a trigger's notes by its id or name, however many the agent's other triggers kept since", async () => {
+    const quiet = idOf(await h.invokeText("create", { name: "Quiet watch", prompt: "Look.", kind: "event" }));
+    const busy = idOf(await h.invokeText("create", { name: "Busy feed", prompt: "Look.", kind: "event" }));
+    h.store.addNote({ agentId: "assistant", triggerId: quiet, triggerName: "Quiet watch", text: "the one quiet note", signalIds: [], external: false });
+    for (let i = 0; i < 250; i++) h.store.addNote({ agentId: "assistant", triggerId: busy, triggerName: "Busy feed", text: `busy ${i}`, signalIds: [], external: false });
+    for (const trigger of [quiet, "quiet watch"]) {
+      const out = await h.invokeText("signals_recent", { trigger });
+      expect(out, trigger).toContain("the one quiet note");
+      expect(out, trigger).not.toContain("busy");
+    }
+    expect((await h.invokeText("signals_recent", { trigger: busy, limit: 3 })).split("\n")).toHaveLength(3);
+    // Another agent's trigger of the same name brings none of its notes.
+    expect(await h.invokeText("signals_recent", { trigger: "Quiet watch" }, { agentId: "scout" })).toBe("No notes.");
+    await h.invoke("delete", { id: quiet });
+    await h.invoke("delete", { id: busy });
+  });
+
   it("names a signed webhook's key by its vault reference, never as text", async () => {
     const out = await h.invokeText("create", { name: "GitHub", prompt: "Look at the push.", on: [{ type: "web.webhook", config: { verify: { kind: "github", secretRef: "vault://gh-hook" } } }] });
     const t = h.engine.get(idOf(out))!;
