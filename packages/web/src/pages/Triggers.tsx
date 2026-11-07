@@ -4,7 +4,7 @@
 // "New trigger" and "Change in the chat" open the agent's dialog with a short request; the form is the second way.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import {
   AlarmClock,
   Bot,
@@ -57,8 +57,8 @@ import {
   type TriggerView,
 } from "../lib/triggers";
 import { hubEvents } from "../state/app";
-import { askInChat } from "../state/ask";
-import { closePanel, openPanelItem, panel, panelBack } from "../state/panel";
+import { useAsk } from "../state/ask";
+import { openPanelItem, panel, panelBack } from "../state/panel";
 import { toast } from "../state/toast";
 import { t } from "../i18n";
 import { Badge, Button, CopyButton, cx, EmptyState, ErrorNote, Field, Input, Loading, Modal, Page, Select, Spinner, Textarea, Toggle } from "../components/ui";
@@ -94,15 +94,6 @@ function useTriggerList() {
   return { data, error, load };
 }
 
-/** Opens an agent's dialog (the default agent's without one) with `text` as the person's words; the panel steps aside where it covers the chat. */
-function useAsk() {
-  const [, navigate] = useLocation();
-  return (agentId: string | undefined, text: string) => {
-    if (window.matchMedia("(max-width: 1279px)").matches) closePanel();
-    askInChat(agentId, text, navigate).catch((e) => toast(errorText(e), "error"));
-  };
-}
-
 export function TriggersPage() {
   const p = useStore(panel);
   const list = useTriggerList();
@@ -131,7 +122,7 @@ function TriggerList({ data, error, load }: ListProps) {
       subtitle={data ? t("triggers.subtitle", { tz: data.timezone }) : undefined}
       actions={
         <>
-          <Button variant="primary" icon={<MessageCircleMore className="size-4" />} onClick={() => ask(undefined, t("triggers.ask.new"))}>
+          <Button variant="primary" icon={<MessageCircleMore className="size-4" />} onClick={() => ask(t("triggers.ask.new"))}>
             {t("triggers.new")}
           </Button>
           <Button variant="ghost" size="sm" disabled={!data} onClick={() => setForm(true)}>
@@ -281,7 +272,7 @@ function TriggerDetail({ tr, list, reload }: { tr: TriggerView; list: TriggersLi
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="primary" icon={<MessageCircleMore className="size-4" />} onClick={() => ask(agent ? tr.agentId : undefined, t("triggers.ask.change", { name: tr.name }))}>
+          <Button size="sm" variant="primary" icon={<MessageCircleMore className="size-4" />} onClick={() => ask(t("triggers.ask.change", { name: tr.name }), agent ? tr.agentId : undefined)}>
             {t("triggers.action.changeInChat")}
           </Button>
           <Button
@@ -736,7 +727,7 @@ function TriggerForm({ initial, list, onClose, onSaved }: { initial: TriggerView
           type="button"
           onClick={() => {
             onClose();
-            ask(editing && agents.some((a) => a.id === initial!.agentId) ? initial!.agentId : undefined, editing ? t("triggers.ask.change", { name: initial!.name }) : t("triggers.ask.new"));
+            ask(editing ? t("triggers.ask.change", { name: initial!.name }) : t("triggers.ask.new"), editing && agents.some((a) => a.id === initial!.agentId) ? initial!.agentId : undefined);
           }}
           className="flex items-start gap-2 self-start rounded-xl text-left text-xs leading-relaxed text-muted hover:text-fg"
         >
