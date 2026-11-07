@@ -34,13 +34,21 @@ export interface CoreTriggersDeps {
   fetch?: () => FetchLike;
 }
 
+/** What one start registered: released together, so a stop during a start takes back exactly that start's. */
+interface Session {
+  offs: Array<() => void>;
+  toolNames: string[];
+  handler?: (req: TriggerHttpRequest) => Promise<TriggerHttpResponse> | TriggerHttpResponse;
+}
+
 export class CoreTriggers {
   engine?: TriggerEngine;
   private d: CoreTriggersDeps;
   private starting?: Promise<void>;
-  private handler?: (req: TriggerHttpRequest) => Promise<TriggerHttpResponse> | TriggerHttpResponse;
-  private offs: Array<() => void> = [];
-  private toolNames: string[] = [];
+  /** Bumped by stop(): a start that finds it changed was stopped while it ran. */
+  private gen = 0;
+  private startGen = 0;
+  private session?: Session;
 
   constructor(d: CoreTriggersDeps) {
     this.d = d;
@@ -54,24 +62,45 @@ export class CoreTriggers {
   /** Start the engine when it should run and does not; a call while it starts waits for that start. */
   start(): Promise<void> {
     if (this.engine || !this.wanted()) return this.starting ?? Promise.resolve();
-    this.starting ??= (async () => {
+    // A start still running after a stop() is stale: the new one waits for it to take its registrations back.
+    if (this.starting && this.startGen === this.gen) return this.starting;
+    const prev = this.starting;
+    const gen = this.gen;
+    const s: Session = { offs: [], toolNames: [] };
+    const p: Promise<void> = (async () => {
+      await prev?.catch(() => {});
+      if (this.gen !== gen) return;
+      this.session = s;
       try {
-        this.engine = await startTriggers(this.host());
+        const engine = await startTriggers(this.host(s));
+        if (this.gen !== gen) {
+          engine.stop();
+          this.release(s);
+          return;
+        }
+        this.engine = engine;
       } catch (e) {
-        this.release();
+        this.release(s);
+        if (this.session === s) this.session = undefined;
         throw e;
-      } finally {
-        this.starting = undefined;
       }
     })();
-    return this.starting;
+    this.starting = p;
+    this.startGen = gen;
+    const clear = () => {
+      if (this.starting === p) this.starting = undefined;
+    };
+    p.then(clear, clear);
+    return p;
   }
 
-  /** Stop it: its timers, its tools, its bus and settings listeners, its HTTP. */
+  /** Stop it: its timers, its tools, its bus and settings listeners, its HTTP. A start in flight is stopped too. */
   stop(): void {
+    this.gen++;
     this.engine?.stop();
     this.engine = undefined;
-    this.release();
+    if (this.session) this.release(this.session);
+    this.session = undefined;
   }
 
   /** Start or stop it to match the card (the person turned Triggers on or off). */
@@ -82,17 +111,18 @@ export class CoreTriggers {
 
   /** Its HTTP API (/api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
   async http(req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
-    if (!this.handler) return { status: 404, body: { error: "not found" } };
-    return this.handler(req);
+    const handler = this.engine ? this.session?.handler : undefined;
+    if (!handler) return { status: 404, body: { error: "not found" } };
+    return handler(req);
   }
 
-  private release(): void {
-    for (const off of this.offs.splice(0)) off();
-    for (const name of this.toolNames.splice(0)) this.d.tools.unregister(name, "core");
-    this.handler = undefined;
+  private release(s: Session): void {
+    for (const off of s.offs.splice(0)) off();
+    for (const name of s.toolNames.splice(0)) this.d.tools.unregister(name, "core");
+    s.handler = undefined;
   }
 
-  private host(): TriggerHost {
+  private host(s: Session): TriggerHost {
     const d = this.d;
     const kv = pluginKv(d.db, TRIGGERS_ID);
     const log =
@@ -104,7 +134,7 @@ export class CoreTriggers {
       pluginId: TRIGGERS_ID,
       hubUrl: d.hubUrl,
       settings: { ...(d.card.get()?.settings ?? {}) },
-      onSettingsChange: (cb) => void this.offs.push(d.card.onSettings(cb)),
+      onSettingsChange: (cb) => void s.offs.push(d.card.onSettings(cb)),
       i18n: { locale: hubLocale, t: (key, params, locale) => tFor(locale ?? hubLocale())(`triggers.${key}`, params) },
       log: { debug() {}, info: log("info"), warn: log("warn"), error: log("error") },
       tools: {
@@ -120,11 +150,11 @@ export class CoreTriggers {
               return { content: [{ type: "text", text: `Error: ${e?.message ?? String(e)}` }], isError: true };
             }
           });
-          this.toolNames.push(name);
+          s.toolNames.push(name);
         },
       },
-      events: { on: (name, cb) => void this.offs.push(d.bus.on(name, cb)) },
-      http: { handle: (h) => void (this.handler = h) },
+      events: { on: (name, cb) => void s.offs.push(d.bus.on(name, cb)) },
+      http: { handle: (h) => void (s.handler = h) },
       ui: { emit: (channel, payload) => void d.coreCall(TRIGGERS_ID, "ui.emit", { channel, payload }).catch(() => {}) },
       storage: {
         get: async (key) => (kv.get(key) ?? undefined) as any,

@@ -9,7 +9,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 
 type Card = { enabled: boolean; settings: Record<string, unknown> } | undefined;
 
-function setup(card: Card | null = { enabled: true, settings: {} }) {
+function setup(card: Card | null = { enabled: true, settings: {} }, fetch?: () => any) {
   const db = openDb(":memory:");
   const bus = new EventBus();
   const tools = new ToolRegistry();
@@ -21,6 +21,7 @@ function setup(card: Card | null = { enabled: true, settings: {} }) {
     bus,
     tools,
     hubUrl: "http://127.0.0.1:8080",
+    ...(fetch ? { fetch } : {}),
     card: {
       get: () => current,
       onSettings: (cb) => {
@@ -124,6 +125,34 @@ describe("the trigger engine's host in core", () => {
     s.bus.emit("agent.removed", { agentId: "assistant" });
     await new Promise((r) => setTimeout(r, 50));
     expect(s.ct.engine!.list()).toHaveLength(0);
+    s.ct.stop();
+  });
+
+  it("a stop while it starts leaves nothing running", async () => {
+    const s = setup();
+    const started = s.ct.start();
+    s.ct.stop();
+    await started;
+    expect(s.ct.engine).toBeUndefined();
+    expect(triggerTools(s.tools)).toEqual([]);
+    expect(s.settingsListeners.size).toBe(0);
+    expect((await s.ct.http(req({}))).status).toBe(404);
+    await s.ct.start();
+    expect(s.ct.engine).toBeDefined();
+    expect(triggerTools(s.tools)).toHaveLength(5);
+    s.ct.stop();
+  });
+
+  it("a start that throws is not stuck: the next start runs", async () => {
+    let n = 0;
+    const s = setup(undefined, () => {
+      if (n++ === 0) throw new Error("no fetch yet");
+      return (async () => new Response("")) as any;
+    });
+    await expect(s.ct.start()).rejects.toThrow("no fetch yet");
+    expect(s.ct.engine).toBeUndefined();
+    await s.ct.start();
+    expect(s.ct.engine).toBeDefined();
     s.ct.stop();
   });
 });
