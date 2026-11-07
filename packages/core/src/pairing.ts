@@ -55,6 +55,15 @@ export function hubName(): string {
   return hostname().replace(/\.local$/i, "").slice(0, 60) || "Piomio";
 }
 
+/**
+ * This hub's own computer as people know it. On a server that runs the hub and piomio-node side by side, the node is
+ * folded into the hub's computer (machines.ts, same host identity) and its row is hidden, so the computer takes the
+ * name the person gave that node ("vps"), not the server's hostname. Otherwise the hostname.
+ */
+export function localComputerName(machines: ReadonlyArray<{ name: string; sameHost?: boolean }> = []): string {
+  return machines.find((m) => m.sameHost)?.name ?? hubName();
+}
+
 const isPrivate = (ip: string) => /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
 /** Tailscale and other CGNAT overlays: 100.64.0.0/10. */
 const isTailnet = (ip: string) => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);

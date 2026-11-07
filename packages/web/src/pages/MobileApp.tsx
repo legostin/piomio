@@ -117,6 +117,23 @@ function useNativeEvents(): void {
   );
 }
 
+/**
+ * The app keeps a page ready at /m/ (signed in, its scripts and lists loaded) and hands it the chat the person opens:
+ * the page switches to it in place instead of the app loading a new one.
+ */
+function useShowFromApp(): void {
+  const [, navigate] = useLocation();
+  useEffect(
+    () =>
+      native?.onEvent((ev) => {
+        if (ev.type === "show" && typeof ev.conversationId === "string" && ev.conversationId) {
+          navigate(`/m/chat/${encodeURIComponent(ev.conversationId)}`, { replace: true });
+        }
+      }),
+    [navigate],
+  );
+}
+
 function MobileChat({ conversationId }: { conversationId: string }) {
   const s = useStore(session);
   const convs = useStore(conversations);
@@ -182,12 +199,14 @@ export function MobileApp() {
   useOutsideLinks();
   useChatLinks();
   useNativeEvents();
+  useShowFromApp();
   useEffect(() => trackVisualViewport(), []);
   const [location] = useLocation();
   const id = mobileConversationId(location);
   useBecomes(id ?? undefined);
   useEffect(() => {
-    if (!id) signalReady("");
+    // No chat: a warm page the app keeps off screen, where animation frames may never run. Ready at once.
+    if (!id) native?.ready("").catch(() => {});
   }, [id]);
   // The live view sits in the shell (it follows the visual viewport), its corners measured from the shell's bottom.
   const [shell, setShell] = useState<HTMLDivElement | null>(null);

@@ -21,7 +21,7 @@ import { UpdateError } from "../self-update.ts";
 import { imageFileName, MediaError, parseImageUrl } from "../media.ts";
 import { entryRef, googleScopes, listCatalog, listIntegrations, logoFile } from "../integrations.ts";
 import { callbackParams } from "../connections.ts";
-import { hubName, machineHubUrl, qrSvg } from "../pairing.ts";
+import { machineHubUrl, qrSvg } from "../pairing.ts";
 import { attachmentFromPath, discardAttachment, formatSize, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveAttachment, type AttachmentPart } from "../attachments.ts";
 import { MAX_TRANSCRIBE_BYTES, TranscribeError } from "../transcribe.ts";
 import { heardPrefixes } from "../speech/interruption.ts";
@@ -53,7 +53,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     return {
       ...opts.bootstrap(req),
       version: cfg.version,
-      hubName: hubName(),
+      hubName: hub.machines.localName(),
       publicUrl: cfg.publicUrl,
       consoleUrl: cfg.consoleUrl,
       // The default agent's dialog: what "/" opens.
