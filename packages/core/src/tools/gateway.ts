@@ -3,7 +3,7 @@
 // hosts in the input → policy, no approval → invoke → redact → audit.
 
 import type { AgentDef, Approval, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
-import { hostMatches, hostOf, matchesAny, newId, parseBrainRef, renderTemplate, truncate } from "@piomio/shared";
+import { hostMatches, matchesAny, newId, parseBrainRef, renderTemplate, truncate } from "@piomio/shared";
 import type { Store, SessionRow } from "../store.ts";
 import type { ToolRegistry } from "./registry.ts";
 import type { HookRegistry } from "../hooks.ts";
@@ -88,6 +88,10 @@ export const TRIGGER_CLOSED_PREFIXES = ["browser_", "web_", "voice_", "hub_", "p
 const TRIGGER_INPUT_DEPTH = 8;
 /** An address's authority after "//" (or "\\", which URL parsers read the same way): up to its path, query or fragment. */
 const AUTHORITY = /[/\\]{2}([^\s/\\?#"'<>`]+)/g;
+/** A special scheme and the authority after it: the URL parser takes it with any slashes or backslashes, or none ("https:evil.example"). */
+const SCHEME_AUTHORITY = /\b(?:https?|wss?|ftp):[/\\]*([^\s/\\?#"'<>`]+)/gi;
+/** Keys whose value is an address for a trigger's tool: a bare host there ("evil.example/x", "10.0.0.5") counts too. */
+const ADDRESS_KEYS = /^(?:href|links?|address(?:es)?|endpoints?|src|hosts?|hostnames?|domains?|servers?|sites?|origins?)$|(?:url|uri)s?$/i;
 /** What clings to an address in prose ("(see https://x.example).") */
 const TRAILING = /[.,;:!?)\]}*_]+$/;
 
@@ -348,6 +352,15 @@ export class ToolGateway {
     // address is and however it is written. What nests too deep to read through is refused.
     const named = addressHosts(input);
     if (!named) return refuse(`Triggers pass a tool only input they can read through: ${name}'s input is nested deeper than ${TRIGGER_INPUT_DEPTH} levels`, "tool.denied", "too deep");
+    // A tool that reads outside content and is given an address is a web reader of its own (an MCP or Composio
+    // scraper), which may follow redirects anywhere: a script's web is pio.fetch, which checks every hop.
+    if (tool.source && named.length) {
+      return refuse(
+        `Tool ${name} reads outside content, and a trigger's script reaches the web with pio.fetch, not with ${name}: give it no address (pio.fetch checks every hop against the trigger's hosts)`,
+        "tool.denied",
+        "address to a source tool",
+      );
+    }
     const hosts = as.hosts ?? [];
     const off = named.find((h) => !hosts.some((p) => hostMatches(h, p)));
     if (off !== undefined) return refuse(`Triggers reach only their listed hosts: ${off} is not on this trigger's list, so ${name} cannot be given it`, "tool.denied", `host ${off}`);
@@ -476,43 +489,49 @@ export class ToolGateway {
 }
 
 /**
- * The hosts every address in a trigger's tool input names: "scheme://host" and "//host" in any string or key (also
- * percent-decoded, and with backslashes, which URL parsers read as slashes), and bare hosts in address fields.
+ * The hosts every address in a trigger's tool input names, as the WHATWG URL parser would read them: in any string or
+ * key, "//host" and a special scheme's "https:host" with any slashes or backslashes (tabs and newlines dropped, as the
+ * parser drops them; percent-decoded too), and in address fields (ADDRESS_KEYS, at any depth) a bare host.
  * Undefined when the input nests deeper than TRIGGER_INPUT_DEPTH.
  */
 function addressHosts(input: unknown): string[] | undefined {
   const hosts = new Set<string>();
+  const add = (h: string) => void (h && hosts.add(h));
   const scan = (text: string) => {
-    let s = text;
+    let s = text.replace(/[\t\n\r]/g, "");
     for (let i = 0; i < 3; i++) {
-      for (const m of s.matchAll(AUTHORITY)) {
-        const h = authorityHost(m[1]);
-        if (h) hosts.add(h);
-      }
-      let next: string;
-      try {
-        next = decodeURIComponent(s);
-      } catch {
-        break;
-      }
+      for (const m of s.matchAll(AUTHORITY)) add(authorityHost(m[1]));
+      for (const m of s.matchAll(SCHEME_AUTHORITY)) add(authorityHost(m[1]));
+      // Byte by byte, so a stray "%" elsewhere does not stop the decoding.
+      const next = s.replace(/%([0-9a-f]{2})/gi, (_, h: string) => String.fromCharCode(parseInt(h, 16))).replace(/[\t\n\r]/g, "");
       if (next === s) break;
       s = next;
     }
   };
-  const walk = (v: unknown, depth: number): boolean => {
-    if (typeof v === "string") scan(v);
-    else if (v && typeof v === "object") {
+  const walk = (v: unknown, depth: number, address: boolean): boolean => {
+    if (typeof v === "string") {
+      scan(v);
+      if (address) add(bareHost(v));
+    } else if (Array.isArray(v)) {
+      if (depth >= TRIGGER_INPUT_DEPTH) return false;
+      for (const x of v) if (!walk(x, depth + 1, address)) return false;
+    } else if (v && typeof v === "object") {
       if (depth >= TRIGGER_INPUT_DEPTH) return false;
       for (const [k, x] of Object.entries(v)) {
         scan(k);
-        if (!walk(x, depth + 1)) return false;
+        if (!walk(x, depth + 1, ADDRESS_KEYS.test(k))) return false;
       }
     }
     return true;
   };
-  if (!walk(input, 0)) return undefined;
-  for (const u of urlsIn(input)) hosts.add(hostOf(u) || u);
-  return [...hosts];
+  return walk(input, 0, false) ? [...hosts] : undefined;
+}
+
+/** The host of an address field's value written without a scheme ("evil.example/x", "10.0.0.5:8080"); "" for text with spaces. */
+function bareHost(value: string): string {
+  const t = value.replace(/[\t\n\r]/g, "").trim().replace(/^[/\\]+/, "");
+  if (!t || /\s/.test(t) || /^(?:https?|wss?|ftp):/i.test(t)) return "";
+  return authorityHost(t.split(/[/\\?#]/)[0]);
 }
 
 /** The host of an address's authority ("user@host:port" and what clings to it in prose dropped); "" when there is none. */

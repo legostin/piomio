@@ -48,6 +48,8 @@ export interface PioDeps {
   callRead: (name: string, input: unknown) => Promise<{ result: ToolResult; source: boolean }>;
   /** proxiedGet with the run's own egress token, whose allowlist is the trigger's hosts. */
   fetch: FetchLike;
+  /** The run's input is outside content (an external signal): the run starts external. */
+  external?: boolean;
   /** The person allowed private network addresses (the Triggers card's allowPrivateUrls). */
   allowPrivate: boolean;
   quick: QuickModel;
@@ -95,7 +97,7 @@ export function pioFor(d: PioDeps): PioRun {
   const hosts = d.trigger.script?.hosts ?? [];
   const ended = new AbortController();
   const inflight = new Set<Promise<unknown>>();
-  let external = false;
+  let external = d.external ?? false;
   let tokens = 0;
   let toolsOut = 0;
   let closed = false;

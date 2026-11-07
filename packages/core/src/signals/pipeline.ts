@@ -610,6 +610,7 @@ export class TriggerPipeline {
       fetch: net.fetch,
       release: net.release,
       allowPrivate: this.e.settings.allowPrivateUrls,
+      external: signals.some((s) => s.external),
       quick: this.s.quick,
       triageBudget: () => (p.dry ? this.triageLeft(t) > 0 : this.takeTriage(t)),
       store: p.dry ? dryStore(this.store) : this.store,
