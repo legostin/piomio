@@ -268,6 +268,32 @@ describe("trigger engine", () => {
     e.stop();
   });
 
+  it("asks a trigger's quick check to be stricter, once, when the person wants fewer", async () => {
+    const kv = new Map<string, unknown>([["initialized", true]]);
+    const hook = (id: string, brief: string) => base({ id, kind: "event", cron: undefined, secret: "s", triage: { brief }, triagePerDay: 10 });
+    kv.set("trigger:t_q", hook("t_q", "failed deploys on main"));
+    kv.set("trigger:t_full", hook("t_full", "a".repeat(2000)));
+    kv.set("trigger:t_plain", base({ id: "t_plain", kind: "event", cron: undefined, secret: "s" }));
+    const f = fakeCtx(kv);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    const line = "The person asked for fewer: be stricter.";
+    await e.onFeedback({ id: "n1", triggerId: "t_q", feedback: "less" });
+    expect(e.get("t_q")!.triage!.brief).toBe(`failed deploys on main\n${line}`);
+    expect((kv.get("trigger:t_q") as Trigger).triage!.brief).toBe(`failed deploys on main\n${line}`);
+    await e.onFeedback({ id: "n2", triggerId: "t_q", feedback: "less" });
+    expect(e.get("t_q")!.triage!.brief).toBe(`failed deploys on main\n${line}`);
+    // A brief at its limit makes room for the line.
+    await e.onFeedback({ id: "n3", triggerId: "t_full", feedback: "less" });
+    const full = e.get("t_full")!.triage!.brief;
+    expect(full.length).toBeLessThanOrEqual(2000);
+    expect(full.endsWith(`\n${line}`)).toBe(true);
+    // No quick check: nothing to make stricter.
+    await e.onFeedback({ id: "n4", triggerId: "t_plain", feedback: "less" });
+    expect(e.get("t_plain")!.triage).toBeUndefined();
+    e.stop();
+  });
+
   it("skips a scheduled run while the previous task is still running", async () => {
     const kv = new Map<string, unknown>([["initialized", true]]);
     kv.set("trigger:t_busy", base({ id: "t_busy", cron: "* * * * *", state: { lastTaskId: "task_busy", nextRunAt: new Date(Date.now() - 10).toISOString() } }));

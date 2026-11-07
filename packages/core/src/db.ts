@@ -153,7 +153,8 @@ const MIGRATIONS: string[] = [
   create index if not exists signal_notes_by_agent on signal_notes(agent_id, at);
   create table if not exists trigger_state(trigger_id text not null, key text not null, value text not null, primary key(trigger_id, key));
   `,
-  `create index if not exists signal_notes_by_at on signal_notes(at);`,
+  `create index if not exists signal_notes_by_at on signal_notes(at);
+  create index if not exists signal_notes_by_trigger on signal_notes(trigger_id, at);`,
 ];
 
 /**

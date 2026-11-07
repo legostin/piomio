@@ -155,25 +155,25 @@ A trigger without a check wakes its agent every time, as before. A trigger can a
 
 ### A script that only reads
 
-The agent can write a short script for the trigger. The script reads and decides; it never acts. It can use the agent's tools that only read (mail, a calendar, a search), open the sites listed on the trigger, ask a quick model, and remember a few values between runs. It can't send, post, buy, delete or change anything anywhere: whatever needs doing waits for the agent. Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
+The agent can write a short script for the trigger. The script reads and decides; it changes nothing in the hub. It can use the agent's tools that only read (mail, a calendar, a search), reach the sites listed on the trigger, ask a quick model, and remember a few values between runs. A run that fails or is cut short keeps none of what it meant to remember, so the next one starts from the same place. It has no tools that send, post, buy, delete or change anything: whatever needs doing waits for the agent. It reaches only the sites you approved, and it may send requests there, including POST (searches and API queries often take one). Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
 
-The sites a script may open are part of the trigger. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
+The sites a script may reach are part of the trigger, and the card that asks about a new one says the script may send requests there. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
 
 ### A quick check in your words
 
-Say what matters and what doesn't: "only failed deploys", "letters from clients and invoices, not newsletters". A quick model reads what came in, what the script found and the trigger's last notes, and chooses wake, note or drop. It is a bare session on a brain signed in on the hub's computer, on its cheapest model, with no tools: text inside what came in can at most change its choice. Each trigger has 200 quick checks a day unless you ask for more. When no quick model can answer, the agent is woken as before while the day's runs last, and after that a note is kept, so nothing is lost.
+Say what matters and what doesn't: "only failed deploys", "letters from clients and invoices, not newsletters". A quick model reads what came in, what the script found and the trigger's last notes, and chooses wake, note or drop. It is a bare session on a brain signed in on the hub's computer, on its cheapest model, with no tools: text inside what came in can at most change its choice. Each trigger has 200 quick checks a day unless you ask for more; its script's own questions to the quick model count toward them too. When no quick model can answer, the agent is woken as before while the day's runs last, and after that a note is kept, so nothing is lost.
 
 ### Notes
 
-Before its next reply, in a chat or a task, the agent sees a short list of what its triggers noted since it last looked. A note made from outside content (a page, a webhook, an email) shows there only as a count, never its text, so a stranger's words never land in every chat. The agent reads such notes in full when they matter, and treats what it read the way it treats a web page (see [After outside content](approvals.md#after-outside-content)); so does a task woken by a check that read outside content. Notes are kept for 30 days.
+Before its next reply, in a chat or a task, the agent sees a short list of what its triggers noted since it last looked. A note made from outside content (a page, a webhook, an email) shows there only as a count, never its text, so a stranger's words never land in every chat. The agent reads such notes in full when they matter, and treats what it read the way it treats a web page (see [After outside content](approvals.md#after-outside-content)); so does a task woken by a check that read outside content. Notes are kept for 30 days, at most the newest 500 of each trigger.
 
 ### Webhooks signed by the sender
 
-A webhook can check the sender's signature instead of a secret in the request: GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`), or any service that signs with HMAC-SHA256. Say "make this webhook check GitHub's signature". The assistant asks for the signing secret on a secure card in the chat; it goes straight into the vault, and the agent never sees it. Set the same secret in the sender's webhook settings. A webhook with a check is answered at once and checked right after, and a delivery the sender repeats is handled once.
+A webhook can check the sender's signature instead of a secret in the request: GitHub (`X-Hub-Signature-256`), Stripe (`Stripe-Signature`), or any service that signs with HMAC-SHA256. Say "make this webhook check GitHub's signature". The assistant asks for the signing secret on a secure card in the chat; it goes straight into the vault, and the agent never sees it. Set the same secret in the sender's webhook settings. A webhook with a check is answered at once and checked right after. A delivery the sender repeats is handled once when the sender names its deliveries, as GitHub does; Stripe and services that only sign with HMAC don't, so the check itself has to notice a repeat (the agent writes it to).
 
 ### Ask the agent to test it
 
-Before it tells you a trigger works, the agent tests it: on a sample, on the trigger's last real events, or on examples it writes. A test runs the whole check and shows what each step decided, with nothing carried out: no task, no note. You can ask for one too: "test the deploy trigger on its last five events". And you can ask "why didn't it wake me for that email?": the agent reads the trigger's history, where each run says what the script and the quick check decided and why.
+Before it tells you a trigger works, the agent tests it: on a sample, on the trigger's last real events, or on examples it writes. A test runs the whole check and shows what each step decided, with nothing carried out: no task, no note. You can ask for one too: "test the deploy trigger on its last five events". And you can ask "why didn't it wake me for that email?": the agent reads the trigger's history, where each run says what the script and the quick check decided and why. The history keeps a trigger's last 20 runs however old they are, and up to 200 from the last 14 days.
 
 ## What a background run tells you
 
@@ -190,7 +190,7 @@ A run nobody watches ends in one of two ways.
 | notify | Worth interrupting you now |
 | ask | Needs your decision; comes as a question |
 
-Agents are told to be conservative and interrupt only when it really matters. Under a check's notification there are three buttons: **useful**, **less often** (a watch checks half as often, a review drops one of its times) and **turn off** (the schedule stops).
+Agents are told to be conservative and interrupt only when it really matters. Under a check's notification there are three buttons: **useful**, **less often** (a watch checks half as often, a review drops one of its times, and a trigger with a quick check is told once to be stricter) and **turn off** (the schedule stops).
 
 Below the **Acts** initiative, a background run can only read and suggest (see [Agents and the team](agents.md)).
 

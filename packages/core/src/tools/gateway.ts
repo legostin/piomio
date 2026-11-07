@@ -98,17 +98,37 @@ const ADDRESS_KEYS =
   /^(?:href|links?|address(?:es)?|endpoints?|src|hosts?|hostnames?|domains?|servers?|sites?|websites?|origins?|ips?|locations?|targets?|destinations?|pages?|resources?)$|(?:url|uri)s?$/i;
 /** Address keys whose number is a page number, an id or a count far more often than an IPv4 address. */
 const COUNT_KEYS = /^(?:pages?|resources?|targets?)$/i;
-/** For a source tool, naming a host anywhere in its input: a host name's shape (Unicode labels too), a dotted IPv4, a bracketed IPv6. */
-const HOST_SHAPES = [/(?:[\p{L}\p{N}-]+\.)+\p{L}[\p{L}\p{N}-]+/gu, /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, /\[[0-9a-f.]*:[0-9a-f:.]*\]/gi];
+/**
+ * For a source tool, naming a host anywhere in its input: a host name's shape (hostShapes: Unicode labels too), a
+ * dotted IPv4, a bracketed IPv6. Every pattern here runs in linear time on what a script hands in (up to 1 MB a value).
+ */
+const IP_SHAPES = [/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, /\[[0-9a-f.]*:[0-9a-f:.]*\]/gi];
+/** Runs of the characters a host name is made of (letters, digits, "-" and "."): hostShapes reads each one. */
+const HOST_RUN = /[\p{L}\p{N}.-]+/gu;
+const STARTS_WITH_LETTER = /^\p{L}/u;
+/**
+ * A source tool's input is read word by word for host names: a longer word (no whitespace in it) is refused rather than
+ * read, as input nested too deep is.
+ */
+const TRIGGER_WORD_MAX = 2000;
+/**
+ * A host with its port at most (a DNS name is at most 253 characters), and one of its labels between dots at most (63
+ * in DNS): an input naming a longer one is refused.
+ */
+const HOST_MAX = 260;
+const LABEL_MAX = 63;
+/** A port at the end of an authority. */
+const PORT = /:\d*$/;
 /**
  * A word that is an e-mail address as a mail search writes it ("from:boss@corp.com", "<ann@corp.com>,"): a mailbox, not
  * a host to fetch, so a script may search the person's mail by sender. Only outside address fields: no scheme, nothing
  * after the host (a "/" or ":" makes it an address).
  */
 const EMAIL = /^[\p{L}\p{N}._%+-]+@(?:[\p{L}\p{N}-]+\.)+\p{L}[\p{L}\p{N}-]+$/u;
-const isEmail = (word: string) => EMAIL.test(word.replace(/^[\p{L}_-]+:/u, "").replace(/^[(<"']+/, "").replace(/[)>"',.;]+$/, ""));
-/** What clings to an address in prose ("(see https://x.example).") */
-const TRAILING = /[.,;:!?)\]}*_]+$/;
+const isEmail = (word: string) => EMAIL.test(stripEnd(word.replace(/^[\p{L}_-]+:/u, "").replace(/^[(<"']+/, ""), ")>\"',.;"));
+/** What clings to an address in prose ("(see https://x.example)."); without "]" when the address is an IPv6 one. */
+const TRAILING = ".,;:!?)]}*_";
+const TRAILING_IPV6 = ".,;:!?)}*_";
 
 export class ToolGateway {
   d: GatewayDeps;
@@ -352,6 +372,13 @@ export class ToolGateway {
         "closed family",
       );
     }
+    if (SHOW_TOOLS.includes(name)) {
+      return refuse(
+        `Tool ${name} is closed to triggers: it shows things in a chat, and a trigger's script has no chat. The script reads what it needs and returns a verdict; the agent it wakes shows the person what matters.`,
+        "tool.denied",
+        "shows in a chat",
+      );
+    }
     if (tool.forTriggers === false) return refuse(`Tool ${name} is not for triggers: it acts or spends though it only reads, so a trigger's script cannot call it`, "tool.denied", "not for triggers");
     if (!this.listed(tool, agent, s, true)) return refuse(unavailable, "tool.denied", "not available");
     if (tool.effect !== "read") return refuse(`Triggers only read: ${name} changes things (effect ${tool.effect}), so a trigger's script cannot call it`, "tool.denied", `effect ${tool.effect}`);
@@ -364,22 +391,29 @@ export class ToolGateway {
     if (hooked.blocked) return refuse(`Blocked: ${hooked.blocked}`, "tool.blocked", hooked.blocked);
     const input = hooked.payload.input;
     // An address in what a tool is given may carry data out: only the hosts the person sees on the card, wherever the
-    // address is and however it is written. What nests too deep to read through is refused.
-    const named = addressHosts(input, !!tool.source);
-    if (!named) return refuse(`Triggers pass a tool only input they can read through: ${name}'s input is nested deeper than ${TRIGGER_INPUT_DEPTH} levels`, "tool.denied", "too deep");
-    // A tool that reads outside content and is given a host is a web reader of its own (an MCP or Composio scraper),
-    // which may follow redirects anywhere: a script's web is pio.fetch, which checks every hop. Listed or not.
-    if (tool.source && named.length) {
+    // address is and however it is written. A tool that reads outside content and is given a host is a web reader of
+    // its own (an MCP or Composio scraper), which may follow redirects anywhere: a script's web is pio.fetch, which
+    // checks every hop, so such a tool is given no host, listed or not. The first host that decides it is enough; what
+    // is too deep or too long to read through is refused.
+    const hosts = as.hosts ?? [];
+    const read = addressHosts(input, !!tool.source, (h) => !!tool.source || !hosts.some((p) => hostMatches(h, p)));
+    if ("unreadable" in read) {
+      const why = {
+        deep: `${name}'s input is nested deeper than ${TRIGGER_INPUT_DEPTH} levels`,
+        word: `${name} reads outside content, and its input has a word of over ${TRIGGER_WORD_MAX} characters with no space in it (line breaks and tabs do not count, as in a web address), too long to check for host names: shorten it or put spaces in it`,
+        host: `${name}'s input has an address whose host is longer than any host name (over ${HOST_MAX} characters, or over ${LABEL_MAX} between two dots)`,
+      }[read.unreadable];
+      return refuse(`Triggers pass a tool only input they can read through: ${why}`, "tool.denied", read.unreadable === "deep" ? "too deep" : `too long (${read.unreadable})`);
+    }
+    if (read.host !== undefined && tool.source) {
       return refuse(
-        `Tool ${name} reads outside content and its input names a host (${named[0]}): a trigger's script reaches the web with pio.fetch, not with ${name}, so remove host names from the input (a plain query works) and fetch addresses with pio.fetch, which checks every hop against the trigger's hosts`,
+        `Tool ${name} reads outside content and its input names a host (${read.host}): a trigger's script reaches the web with pio.fetch, not with ${name}, so remove host names from the input (a plain query works; a word shaped like a host name counts too, a file name such as report.pdf among them) and fetch addresses with pio.fetch, which checks every hop against the trigger's hosts`,
         "tool.denied",
-        `host ${named[0]} to a source tool`,
+        `host ${read.host} to a source tool`,
       );
     }
-    const hosts = as.hosts ?? [];
-    const off = named.find((h) => !hosts.some((p) => hostMatches(h, p)));
-    if (off !== undefined) {
-      return refuse(`Triggers reach only their listed hosts: ${off} is not on this trigger's list, so ${name} cannot be given it: remove it from the input, or add the host to the trigger's list`, "tool.denied", `host ${off}`);
+    if (read.host !== undefined) {
+      return refuse(`Triggers reach only their listed hosts: ${read.host} is not on this trigger's list, so ${name} cannot be given it: remove it from the input, or add the host to the trigger's list`, "tool.denied", `host ${read.host}`);
     }
     const policy = decide(
       { tool, input, agentId: as.agentId, tainted: false, background: true, initiative: agent.initiative, profile: agent.policyProfile },
@@ -510,42 +544,110 @@ export class ToolGateway {
  * key: "//host" and a special scheme's "https:host" with any slashes or backslashes. In an address field (ADDRESS_KEYS)
  * and all under it: the first word as a bare host, a number as an IPv4 address. For a source tool (`source`), any word
  * shaped like a host name or an IP address, anywhere, but an e-mail address outside address fields (EMAIL). Every string is read as the parser and a decoder would: tabs and
- * newlines dropped, percent-decoded, ideographic full stops as dots. Undefined when the input nests deeper than
- * TRIGGER_INPUT_DEPTH.
+ * newlines dropped, percent-decoded, ideographic full stops as dots. Read until the first host `decides` (for a source
+ * tool any host, else one off the trigger's list): `host` is that one, unset when none does. `unreadable` when the
+ * input nests deeper than TRIGGER_INPUT_DEPTH ("deep"), a source tool's has a word longer than TRIGGER_WORD_MAX
+ * ("word"), or an address names a host longer than any host name ("host"). Linear in the input's size.
  */
-function addressHosts(input: unknown, source: boolean): string[] | undefined {
-  const hosts = new Set<string>();
-  const add = (h: string) => void (h && hosts.add(h));
+function addressHosts(input: unknown, source: boolean, decides: (host: string) => boolean): { host?: string } | { unreadable: Unreadable["why"] } {
+  // An authority already read (the same address again, or in another reading) is not parsed again.
+  const parsed = new Map<string, string>();
+  const add = (raw: string) => {
+    let h = parsed.get(raw);
+    if (h === undefined) parsed.set(raw, (h = authorityHost(raw)));
+    if (h && decides(h)) throw new Decided(h);
+  };
   const scan = (text: string, address: boolean) => {
     for (const s of readings(text)) {
-      for (const m of s.matchAll(AUTHORITY)) add(authorityHost(m[1]));
-      for (const m of s.matchAll(SCHEME_AUTHORITY)) add(authorityHost(m[1]));
+      for (const m of s.matchAll(AUTHORITY)) add(m[1]);
+      for (const m of s.matchAll(SCHEME_AUTHORITY)) add(m[1]);
       if (!source) continue;
       for (const word of s.split(/\s+/)) {
+        if (word.length > TRIGGER_WORD_MAX) throw new Unreadable("word");
         if (!address && isEmail(word)) continue;
-        for (const shape of HOST_SHAPES) for (const m of word.matchAll(shape)) add(authorityHost(m[0]));
+        for (const h of hostShapes(word)) add(h);
+        for (const shape of IP_SHAPES) for (const m of word.matchAll(shape)) add(m[0]);
       }
     }
   };
-  const walk = (v: unknown, depth: number, address: boolean, key: string): boolean => {
+  const walk = (v: unknown, depth: number, address: boolean, key: string): void => {
     if (typeof v === "string") {
       scan(v, address);
-      if (address) for (const s of readings(v)) add(bareHost(s));
+      if (address) for (const s of readings(v)) add(bareAuthority(s));
     } else if (typeof v === "number") {
-      if (address && !COUNT_KEYS.test(key)) add(authorityHost(String(v)));
+      if (address && !COUNT_KEYS.test(key)) add(String(v));
     } else if (Array.isArray(v)) {
-      if (depth >= TRIGGER_INPUT_DEPTH) return false;
-      for (const x of v) if (!walk(x, depth + 1, address, key)) return false;
+      if (depth >= TRIGGER_INPUT_DEPTH) throw new Unreadable("deep");
+      for (const x of v) walk(x, depth + 1, address, key);
     } else if (v && typeof v === "object") {
-      if (depth >= TRIGGER_INPUT_DEPTH) return false;
+      if (depth >= TRIGGER_INPUT_DEPTH) throw new Unreadable("deep");
       for (const [k, x] of Object.entries(v)) {
         scan(k, address);
-        if (!walk(x, depth + 1, address || ADDRESS_KEYS.test(k), k)) return false;
+        walk(x, depth + 1, address || ADDRESS_KEYS.test(k), k);
       }
     }
-    return true;
   };
-  return walk(input, 0, false, "") ? [...hosts] : undefined;
+  try {
+    walk(input, 0, false, "");
+  } catch (e) {
+    if (e instanceof Unreadable) return { unreadable: e.why };
+    if (e instanceof Decided) return { host: e.host };
+    throw e;
+  }
+  return {};
+}
+
+/** A trigger's tool input the gateway cannot read through for addresses (addressHosts). */
+class Unreadable {
+  why: "deep" | "word" | "host";
+  constructor(why: Unreadable["why"]) {
+    this.why = why;
+  }
+}
+
+/** The first host in a trigger's tool input that decides the call (addressHosts). */
+class Decided {
+  host: string;
+  constructor(host: string) {
+    this.host = host;
+  }
+}
+
+/** `s` without the characters of `chars` at its end: what `[…]+$` strips, found from the end in linear time. */
+function stripEnd(s: string, chars: string): string {
+  let end = s.length;
+  while (end > 0 && chars.includes(s[end - 1])) end--;
+  return s.slice(0, end);
+}
+
+/**
+ * The host names in a word, as `/(?:[\p{L}\p{N}-]+\.)+\p{L}[\p{L}\p{N}-]+/gu` finds them, in one pass (that pattern, as a
+ * regular expression, takes quadratic time on a long word): in each run of letters, digits, "-" and ".", a chain of
+ * non-empty labels ending in the last of them that starts with a letter and has two characters at least.
+ */
+function hostShapes(word: string): string[] {
+  const out: string[] = [];
+  for (const run of word.matchAll(HOST_RUN)) {
+    const labels = run[0].split(".");
+    let start = 0;
+    while (start < labels.length) {
+      if (!labels[start]) {
+        start++;
+        continue;
+      }
+      let end = start;
+      let last = -1;
+      while (end + 1 < labels.length && labels[end + 1]) {
+        const label = labels[++end];
+        if (STARTS_WITH_LETTER.test(label) && label.length > (label.codePointAt(0)! > 0xffff ? 2 : 1)) last = end;
+      }
+      if (last > start) {
+        out.push(labels.slice(start, last + 1).join("."));
+        start = last + 1;
+      } else start = end + 1;
+    }
+  }
+  return out;
 }
 
 /** A string as the URL parser and a decoder would read it: tabs and newlines dropped, ideographic full stops as dots, then percent-decoded (byte by byte, so a stray "%" does not stop it), up to three times. */
@@ -560,17 +662,23 @@ function readings(text: string): string[] {
   return out;
 }
 
-/** The host of an address field's value written without a scheme: its first word ("evil.example/x (mirror)", "10.0.0.5:8080"). */
-function bareHost(value: string): string {
+/** The authority of an address field's value written without a scheme: its first word ("evil.example/x (mirror)", "10.0.0.5:8080"). */
+function bareAuthority(value: string): string {
   const first = value.trim().split(/\s+/)[0].replace(/^[/\\]+/, "");
   if (!first || /^(?:https?|wss?|ftp):/i.test(first)) return "";
-  return authorityHost(first.split(/[/\\?#]/)[0]);
+  return first.split(/[/\\?#]/)[0];
 }
 
-/** The host of an address's authority ("user@host:port" and what clings to it in prose dropped); "" when there is none. */
+/**
+ * The host of an address's authority ("user@host:port" and what clings to it in prose dropped); "" when there is none.
+ * One longer than any host name (HOST_MAX, or LABEL_MAX between two dots) is not parsed, since the parser's punycode
+ * is quadratic in a label: the input is unreadable.
+ */
 function authorityHost(raw: string): string {
-  const a = raw.slice(raw.lastIndexOf("@") + 1).replace(raw.includes("[") ? /[.,;:!?)}*_]+$/ : TRAILING, "");
+  const a = stripEnd(raw.slice(raw.lastIndexOf("@") + 1), raw.includes("[") ? TRAILING_IPV6 : TRAILING);
   if (!a) return "";
+  if (a.length > HOST_MAX) throw new Unreadable("host");
+  if (!a.startsWith("[") && a.replace(PORT, "").split(".").some((label) => label.length > LABEL_MAX)) throw new Unreadable("host");
   try {
     return new URL(`http://${a}`).hostname.toLowerCase().replace(/^\[|\]$/g, "");
   } catch {

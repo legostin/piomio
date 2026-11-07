@@ -260,6 +260,62 @@ describe("ToolGateway.callRead", () => {
     }
   });
 
+  it("reads 200 KB of adversarial input in linear time on every path, and refuses what is too long to read through", async () => {
+    const h = hub();
+    h.tool("fetch_fetch", "read", { source: true });
+    h.tool("ci_status", "read");
+    const listed = { ...as, hosts: ["api.example.com", "*.example.com"] };
+    const K = 200 * 1024;
+    /** `unit` repeated into a word of 2000 characters, and such words, spaced, filling K. */
+    const word = (unit: string) => unit.repeat(Math.ceil(2000 / unit.length)).slice(0, 2000);
+    const spaced = (w: string) => Array.from({ length: Math.floor(K / (w.length + 1)) }, () => w).join(" ");
+    // Distinct non-ASCII letters: the URL parser's punycode is quadratic in them.
+    let cjk = "";
+    for (let i = 0; cjk.length < K; i++) cjk += String.fromCodePoint(0x4e00 + (i % 20000));
+    const cases: Array<[string, unknown]> = [
+      ["a dot-less word", { q: "a".repeat(K) }],
+      ["dots, then a letter", { q: `${".".repeat(K)}a` }],
+      ["// and dots, then a letter", { q: `//${".".repeat(K)}a` }],
+      ["a scheme and dots, then a letter", { q: `https:${".".repeat(K)}a` }],
+      ["an address field of dots", { url: `${".".repeat(K)}a` }],
+      ["an e-mail address with dots after it", { q: `a@b.co${".".repeat(K)}a` }],
+      ["labels of one letter", { q: "a.".repeat(K / 2) }],
+      ["a host of distinct non-ASCII letters", { q: `//${cjk}` }],
+      ["an address field of distinct non-ASCII letters", { url: cjk }],
+      ["many long non-ASCII hosts", { q: spaced(`//${cjk.slice(0, 250)}`) }],
+      // Each one parsed: listed (a wildcard), and none like another.
+      ["many listed non-ASCII hosts", { q: Array.from({ length: Math.floor(K / 210) }, (_, n) => `//${[0, 1, 2].map((i) => cjk.slice((n * 3 + i) % 3000 * 63, ((n * 3 + i) % 3000) * 63 + 63)).join(".")}.example.com`).join(" ") }],
+      ["words of long labels and digits", { q: spaced(word(`${"a".repeat(62)}.1`)) }],
+      ["words of a.-.", { q: spaced(word("a.-.")) }],
+      ["words of dots", { q: `${spaced(word("."))}a` }],
+      ["words of e-mail shapes", { q: spaced(word("a@b.")) }],
+      ["a key of // and dots", { [`//${".".repeat(K)}a`]: 1 }],
+    ];
+    for (const name of ["fetch_fetch", "ci_status"]) {
+      for (const [what, input] of cases) {
+        // The faster of two: a first call may wait for the collector.
+        let ms = Infinity;
+        for (let i = 0; i < 2; i++) {
+          const t0 = performance.now();
+          await h.gateway.callRead(listed, name, input);
+          ms = Math.min(ms, performance.now() - t0);
+        }
+        // Linear stays in milliseconds even on a small CI runner; the quadratic version took seconds on 40K.
+        expect(ms, `${name}: ${what}`).toBeLessThan(500);
+      }
+    }
+    // A source tool is not given a word too long to check for host names; no tool is given a host longer than one.
+    const long = await h.gateway.callRead(listed, "fetch_fetch", { q: "a".repeat(2001) });
+    expect(textOf(long)).toMatch(/a word of over 2000 characters with no space in it/);
+    expect((await h.gateway.callRead(listed, "fetch_fetch", { q: "a".repeat(2000) })).isError).toBeFalsy();
+    for (const url of [`https://${"a".repeat(64)}.example.com/`, `https://${"a.".repeat(140)}example.com/`]) {
+      const host = await h.gateway.callRead(listed, "ci_status", { url });
+      expect(textOf(host), url).toMatch(/an address whose host is longer than any host name/);
+    }
+    expect((await h.gateway.callRead(listed, "ci_status", { url: `https://${"a".repeat(63)}.example.com/` })).isError).toBeFalsy();
+    expect((await h.gateway.callRead(listed, "ci_status", { q: "a".repeat(K) })).isError).toBeFalsy();
+  });
+
   it("an address field is an address whatever it holds: its first word, a number (an IPv4), what nests under it", async () => {
     const h = hub();
     h.tool("ci_status", "read");
@@ -323,11 +379,15 @@ describe("ToolGateway.callRead", () => {
     h.tool("mail_search", "read");
     h.tool("show_choices", "read");
     h.tool("notion_live", "read", { availability: "interactive" });
-    for (const name of ["mail_search", "show_choices", "notion_live", "no_such_tool"]) {
+    for (const name of ["mail_search", "notion_live", "no_such_tool"]) {
       const r = await h.gateway.callRead(as, name, {});
       expect(textOf(r), name).toBe(`Tool ${name} is not available to this trigger's agent`);
       expect(r.isError).toBe(true);
     }
+    // What draws in a chat is on the list but closed: a trigger's script has no chat to show it in.
+    const show = await h.gateway.callRead(as, "show_choices", {});
+    expect(show.isError).toBe(true);
+    expect(textOf(show)).toMatch(/^Tool show_choices is closed to triggers: it shows things in a chat/);
     expect((await h.gateway.callRead({ agentId: "gone", triggerId: "t1" }, "notion_search", {})).isError).toBe(true);
     expect((await h.gateway.callRead(as, "notion_search", {})).isError).toBeFalsy();
     expect(h.calls.map((c) => c.name)).toEqual(["notion_search"]);

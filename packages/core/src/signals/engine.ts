@@ -1,22 +1,27 @@
 // Trigger engine (in core since the unified triggers, phase 1): persistence, timers, firing tasks, watch polling, webhooks, feedback.
 
-import { randomBytes } from "node:crypto";
 import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
 import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
 import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
 import type { RunReason, Signal, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
-import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
+import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, MAX_BRIEF, ValidationError } from "./validate.ts";
 import { pageReader } from "./extract.ts";
-import { builtinSignal, fitted, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline } from "./pipeline.ts";
+import { builtinSignal, fitted, newRunId, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline } from "./pipeline.ts";
 import { testTrigger, type TestInput, type TestReport } from "./test-run.ts";
+import { RECENT_RUNS_KEPT } from "./store.ts";
 import { verifyWebhook } from "./webhook-verify.ts";
 import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
-export const MAX_RUNS_KEPT = 20;
+/** The runs the page and the tools show by default; the journal keeps at least these whatever their age (store.ts). */
+export const MAX_RUNS_KEPT = RECENT_RUNS_KEPT;
 const MAX_TIMER_MS = 60_000;
 const STORED_VALUE_LIMIT = 20_000;
 const CATCH_UP_GRACE_MS = 60_000;
+/** What feedback "less" adds to a quick check's brief (once). */
+const STRICTER = "The person asked for fewer: be stricter.";
+/** A one-time reminder its full queue refused is tried again after this long. */
+const ONCE_RETRY_MS = 60_000;
 /** The wall clock ran on this much more than the timers: the computer slept (other replicas take the lead after 8 s). */
 const ASLEEP_MS = 5_000;
 /** After a wake, the replica that led meanwhile may lead a little longer: it checks every 2 s, then stands down. */
@@ -38,6 +43,8 @@ export function readEngineSettings(s: Record<string, any> = {}): EngineSettings 
 }
 
 export class NotFoundError extends TriggerError {}
+/** The trigger's queue has no room for a run now (pipeline.ts): the caller may try again later. */
+export class QueueFullError extends TriggerError {}
 
 /** How a firing goes: the daily limit, a busy previous run, and what the pipeline adds to it. */
 export interface FireOptions {
@@ -51,6 +58,11 @@ export interface FireOptions {
   journal?: Pick<TriggerRun, "signals" | "stages" | "outcome" | "external">;
   /** The run's signals in full, kept with it in the journal. */
   signalData?: Signal[];
+  /**
+   * The pipeline's script state, kept in the same step as the journal line when the run did not fail (a stop before it
+   * keeps neither, and the retry starts from the state as it was).
+   */
+  commit?: () => void;
 }
 
 /** A trigger whose firings go through the pipeline (pipeline.ts); any other fires exactly as it always did. */
@@ -73,6 +85,8 @@ function setLastError(s: TriggerState, e?: { message?: string; code?: string; pa
   s.lastError = e?.message;
   s.lastErrorCode = e?.code;
   s.lastErrorParams = e?.params;
+  // The engine's own errors (a page load, a task that could not start) carry nothing from outside.
+  delete s.lastErrorExternal;
 }
 
 function header(headers: Record<string, string> | undefined, name: string): string | undefined {
@@ -196,8 +210,20 @@ export class TriggerEngine {
     for (const c of pipedCatchUps) {
       const cur = this.triggers.get(c.id);
       if (!cur || this.stopped) continue;
-      this.pipeline.accept(cur, [this.tickSignal(c.missedAt, "catch-up")], "catch-up", { force: c.once, immediate: c.once });
+      const intake = this.pipeline.accept(cur, [this.tickSignal(c.missedAt, "catch-up")], "catch-up", { force: c.once, immediate: c.once });
+      // A reminder refused by a full queue is not done: it is tried again in a minute.
+      if (c.once && intake.held === "full") await this.withLock(cur.id, () => this.onceLater(cur));
     }
+  }
+
+  /** A one-time reminder its full queue refused (the journal has a line for it): due again in a minute, not done. */
+  private async onceLater(t: Trigger): Promise<void> {
+    delete t.state.done;
+    t.enabled = true;
+    t.state.nextRunAt = new Date(this.now() + ONCE_RETRY_MS).toISOString();
+    await this.save(t);
+    this.emit(t.id);
+    this.arm();
   }
 
   stop(): void {
@@ -416,8 +442,12 @@ export class TriggerEngine {
       }
       case "once":
         // A one-time reminder has nothing to wait for: it goes on now, with whatever a batch gathered.
-        if (piped(t)) await this.pipeline.deliver(t, [this.tickSignal(slot, "once")], "once", { force: true, immediate: true, locked: true });
-        else await this.fire(t, "once", {}, { force: true });
+        if (piped(t)) {
+          const intake = this.pipeline.accept(t, [this.tickSignal(slot, "once")], "once", { force: true, immediate: true, locked: true });
+          // Too many runs wait (the journal says so): it stays due, and is tried again in a minute.
+          if (intake.held === "full") return this.onceLater(t);
+          await intake.done;
+        } else await this.fire(t, "once", {}, { force: true });
         t.state.done = true;
         t.enabled = false;
         t.state.nextRunAt = undefined;
@@ -452,7 +482,7 @@ export class TriggerEngine {
     const now = new Date(this.now());
     const today = localDate(now, this.tz);
     const rt = t.state.runsToday?.date === today ? { ...t.state.runsToday } : { date: today, count: 0 };
-    const run: TriggerRun = { id: opts.runId ?? `r_${randomBytes(4).toString("hex")}`, at: now.toISOString(), reason, status: "started", ...opts.journal };
+    const run: TriggerRun = { id: opts.runId ?? newRunId(), at: now.toISOString(), reason, status: "started", ...opts.journal };
     if (!opts.force && rt.count >= t.maxRunsPerDay) {
       run.status = "skipped";
       run.detail = `Daily run limit (${t.maxRunsPerDay}) reached`;
@@ -502,6 +532,7 @@ export class TriggerEngine {
     t.state.lastStatus = run.status === "started" ? "ok" : run.status;
     setLastError(t.state, run.status === "started" ? undefined : { message: run.detail, code: run.code, params: run.params });
     await this.save(t);
+    if (run.status !== "error") opts.commit?.();
     await this.addRun(t.id, run, opts.signalData);
     this.emit(t.id);
     if (run.status !== "started") this.ctx.log.info(`trigger ${t.id} ${run.status}: ${run.detail}`);
@@ -571,7 +602,7 @@ export class TriggerEngine {
       setLastError(t.state, err);
       await this.save(t);
       if (!repeated) {
-        const run: TriggerRun = { id: `r_${randomBytes(4).toString("hex")}`, at: now.toISOString(), reason: "change", status: "error", detail: err.message };
+        const run: TriggerRun = { id: newRunId(), at: now.toISOString(), reason: "change", status: "error", detail: err.message };
         if (err.code) Object.assign(run, { code: err.code, params: err.params });
         await this.addRun(t.id, run);
       }
@@ -737,7 +768,9 @@ export class TriggerEngine {
       if (piped(t)) {
         // Now, whatever the batch: a run now always leaves a run (a watch's last known value goes into its goal).
         const manual = builtinSignal("manual", {}, { at: new Date(this.now()), external: false });
-        const run = await this.pipeline.deliver(t, [manual], "manual", { force: opts.force, immediate: true, locked: true, ...(currentValue !== undefined ? { currentValue } : {}) });
+        const intake = this.pipeline.accept(t, [manual], "manual", { force: opts.force, immediate: true, locked: true, ...(currentValue !== undefined ? { currentValue } : {}) });
+        if (intake.held === "full") throw new QueueFullError("queueFull", `Trigger ${id} was not run: too many runs are waiting for it (its queue is full); try again once they are done`, { id });
+        const run = await intake.done;
         if (!run) throw new Error(`trigger ${id}: the run left no journal line`);
         return run;
       }
@@ -793,6 +826,8 @@ export class TriggerEngine {
       } else if (value === "less") {
         if (t.kind === "watch") t.intervalMinutes = Math.min(7 * 24 * 60, (t.intervalMinutes ?? 60) * 2);
         if (t.kind === "heartbeat" && (t.times?.length ?? 0) > 1) t.times = dropSlot(t.times!, n?.createdAt, this.tz);
+        // A quick check hears it in its brief, once: the person's words for what is worth waking the agent for.
+        if (t.triage && !t.triage.brief.includes(STRICTER)) t.triage = { brief: `${t.triage.brief.slice(0, MAX_BRIEF - STRICTER.length - 1).trimEnd()}\n${STRICTER}` };
         t.state.nextRunAt = computeNextRun(t, this.tz, now)?.toISOString();
       }
       t.updatedAt = now.toISOString();
@@ -821,7 +856,8 @@ export class TriggerEngine {
       if (hit && hit.ref === signed.secretRef && hit.until > this.now()) key = hit.key;
       else {
         try {
-          key = (await this.ctx.vault!.get(signed.secretRef, `trigger:${t.id}`)).value ?? "";
+          // As the trigger's agent: a key the person kept for other agents is not read (the item's scope).
+          key = (await this.ctx.vault!.get(signed.secretRef, `trigger:${t.id}`, t.agentId)).value ?? "";
         } catch {
           key = "";
         }

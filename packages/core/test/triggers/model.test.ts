@@ -1,9 +1,11 @@
 // The trigger model's signal fields: subscriptions, script, triage, batch, and the built-in source mapping.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { format } from "@piomio/shared";
 import { coreCatalog } from "../../src/i18n.ts";
-import type { Trigger } from "../../src/signals/types.ts";
+import { TRIGGER_KINDS, type Trigger } from "../../src/signals/types.ts";
 import { whenText } from "../../src/signals/when.ts";
 import { applyUpdate, buildTrigger, normalizeOn } from "../../src/signals/validate.ts";
 
@@ -80,6 +82,15 @@ describe("normalizeOn", () => {
     bad("cronAndTimes", () => normalizeOn({ ...base, cron: "0 9 * * *", on: [{ type: "time.cron", config: { times: ["09:00"] } }] }));
   });
 
+  it("refuses cron with weekdays: they would turn it into a 10:00 and 18:00 review and drop the cron", () => {
+    const base = { name: "n", prompt: "p" };
+    bad("cronAndWeekdays", () => normalizeOn({ ...base, on: [{ type: "time.cron", config: { cron: "0 9 * * *", weekdays: [1, 2] } }] }));
+    bad("cronAndWeekdays", () => normalizeOn({ ...base, weekdays: [1], on: [{ type: "time.cron", config: { cron: "0 9 * * *" } }] }));
+    bad("cronAndWeekdays", () => normalizeOn({ ...base, cron: "0 9 * * *", on: [{ type: "time.cron", config: { weekdays: [1] } }] }));
+    bad("cronAndWeekdays", () => normalizeOn({ ...base, kind: "schedule", on: [{ type: "time.cron", config: { cron: "0 9 * * 1-5", weekdays: [1] } }] }));
+    expect(normalizeOn({ ...base, on: [{ type: "time.cron", config: { cron: "0 9 * * 1-5" } }] })).toMatchObject({ kind: "schedule", cron: "0 9 * * 1-5" });
+  });
+
   it("validates verify and keeps it to webhooks", () => {
     const hook = (verify: unknown) => () => buildTrigger({ kind: "event", name: "n", prompt: "p", verify } as never, opts);
     expect(hook({ kind: "stripe", secretRef: "vault://s", header: "Stripe-Signature" })).not.toThrow();
@@ -90,9 +101,22 @@ describe("normalizeOn", () => {
     bad("verifyEventOnly", () => signal({ verify: { kind: "secret" } }));
   });
 
-  it("stores triagePerDay only with triage", () => {
+  it("stores triagePerDay with a quick check or a script: it bounds pio.llm.ask too", () => {
     expect(signal({ triagePerDay: 50 }).triagePerDay).toBeUndefined();
     expect(signal({ triage: { brief: "b" }, triagePerDay: 50 }).triagePerDay).toBe(50);
+    expect(signal({ script: { code: "x" }, triagePerDay: 50 }).triagePerDay).toBe(50);
+    // A script alone takes the default without storing it.
+    expect(signal({ script: { code: "x" } }).triagePerDay).toBeUndefined();
+    expect(applyUpdate(signal({ script: { code: "x" } }), { triagePerDay: 30 }, upd).triagePerDay).toBe(30);
+    // The quick check goes and the script stays, or the other way round: the limit stays.
+    const both = signal({ script: { code: "x" }, triage: { brief: "b" }, triagePerDay: 40 });
+    expect(applyUpdate(both, { triage: null }, upd).triagePerDay).toBe(40);
+    expect(applyUpdate(both, { script: null }, upd).triagePerDay).toBe(40);
+    expect(applyUpdate(both, { triage: null, script: null }, upd).triagePerDay).toBeUndefined();
+    // null takes the default back: stored with a quick check, not without one.
+    expect(applyUpdate(both, { triagePerDay: null }, upd).triagePerDay).toBe(200);
+    expect(applyUpdate(applyUpdate(both, { triage: null }, upd), { triagePerDay: null }, upd).triagePerDay).toBeUndefined();
+    expect(applyUpdate(signal(), { triagePerDay: 30 }, upd).triagePerDay).toBeUndefined();
   });
 
   it("builds a trigger from a normalized built-in source", () => {
@@ -160,5 +184,21 @@ describe("old triggers", () => {
     expect(n).toEqual({ ...old, name: "s2", updatedAt: n.updatedAt });
     expect(n.on).toBeUndefined();
     expect(n.script).toBeUndefined();
+  });
+});
+
+describe("the Triggers page's words", () => {
+  const catalog = (lang: string) =>
+    JSON.parse(readFileSync(join(import.meta.dirname, "../../../../plugins/triggers/.piomio-plugin/locales", `${lang}.json`), "utf8")) as Record<string, string>;
+  it("names every kind, the outcomes that start nothing and the codes the pipeline writes, and labels a check's own words", () => {
+    for (const lang of ["en", "ru"]) {
+      const c = catalog(lang);
+      for (const kind of TRIGGER_KINDS) {
+        expect(c[`ui.kind.${kind}`], `${lang} ui.kind.${kind}`).toBeTruthy();
+        expect(c[`ui.kindHint.${kind}`], `${lang} ui.kindHint.${kind}`).toBeTruthy();
+      }
+      for (const key of ["ui.run.note", "ui.run.drop", "ui.card.noted", "ui.card.dropped", "error.queueFull"]) expect(c[key], `${lang} ${key}`).toBeTruthy();
+      expect(c["ui.run.asWritten"], lang).toContain("{text}");
+    }
   });
 });

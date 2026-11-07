@@ -54,6 +54,8 @@ const MAX_ERROR_CHARS = 2000;
  * runs out inside the WASM, which takes about 32 times QuickJS's limit; 16 MB is twice that for 256 KB.
  */
 const WORKER_STACK_MB = 16;
+/** Node's experimental-feature warning (stripTypeScriptTypes), off in the workers. */
+const QUIET_WORKER = "--disable-warning=ExperimentalWarning";
 
 interface Job {
   code: string;
@@ -143,7 +145,17 @@ export class ScriptSandbox {
   }
 
   private spawn(): Worker {
-    const w = new Worker(this.script, { resourceLimits: { maxOldGenerationSizeMb: 128, stackSizeMb: this.stackMb } });
+    // The worker reads TypeScript with node:module's stripTypeScriptTypes, which warns once in every new worker that it is
+    // experimental: not on the hub's console each time a worker starts. The worker takes the hub's options as it would
+    // by default, but those a thread cannot take (--max-old-space-size, --title): then it goes without them.
+    const resourceLimits = { maxOldGenerationSizeMb: 128, stackSizeMb: this.stackMb };
+    let w: Worker;
+    try {
+      w = new Worker(this.script, { resourceLimits, execArgv: [...process.execArgv, QUIET_WORKER] });
+    } catch (e) {
+      if ((e as { code?: string }).code !== "ERR_WORKER_INVALID_EXEC_ARGV") throw e;
+      w = new Worker(this.script, { resourceLimits, execArgv: [QUIET_WORKER] });
+    }
     w.unref();
     w.on("message", (m: FromSandbox) => this.message(w, m));
     w.on("error", (e) => this.lost(w, `the script sandbox failed: ${e.message || String(e)}`));

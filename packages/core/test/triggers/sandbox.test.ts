@@ -1,6 +1,12 @@
 // Trigger scripts run in QuickJS on a worker thread: their verdicts, the pio calls that reach the hub, the limits, and the
 // hub's own thread left free while a script spins.
 
+import { execFile } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseVerdict, runScript, SCRIPT_LIMITS, ScriptSandbox, scriptSandbox, type HostCall, type SandboxLimits, type ScriptResult } from "../../src/signals/sandbox.ts";
 
@@ -29,6 +35,28 @@ describe("trigger scripts in the sandbox", () => {
     expect(r.logs).toEqual([]);
     expect(r.calls).toBe(0);
     expect(r.ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("starts its workers without Node's warning about the TypeScript stripper on the hub's console", async () => {
+    // A hub of its own: vitest's processes hide such warnings, the hub's do not.
+    const dir = mkdtempSync(join(tmpdir(), "piomio-sandbox-warn-"));
+    const file = join(dir, "run.mjs");
+    const sandbox = pathToFileURL(join(import.meta.dirname, "../../src/signals/sandbox.ts")).href;
+    writeFileSync(
+      file,
+      `import { ScriptSandbox } from ${JSON.stringify(sandbox)};
+       const s = new ScriptSandbox();
+       const r = await s.run("export default (x: any): any => ({ note: 'typed' })", { signal: {}, now: {} }, async () => undefined);
+       await new Promise((r) => setTimeout(r, 300));
+       s.stop();
+       console.log(JSON.stringify(r.verdict));`,
+    );
+    // Run with an option a thread cannot take too: the workers go without it.
+    for (const flags of [[], ["--max-old-space-size=512"]]) {
+      const { stdout, stderr } = await promisify(execFile)(process.execPath, [...flags, file], { timeout: 15_000 });
+      expect(JSON.parse(stdout), flags.join(" ")).toEqual({ note: "typed" });
+      expect(stderr, flags.join(" ")).not.toMatch(/stripTypeScriptTypes/);
+    }
   });
 
   it("takes TypeScript", async () => {

@@ -55,6 +55,11 @@ export interface TriggerState {
   lastError?: string;
   lastErrorCode?: string;
   lastErrorParams?: ErrorParams;
+  /**
+   * The last error came from a script run that had read outside content (TriggerRun.external): its text may carry that
+   * content, so the tools and the notification show a fixed line instead, and trigger_runs shows it marked.
+   */
+  lastErrorExternal?: boolean;
   lastTaskId?: string;
   /** Runs started today (local date in the user's timezone). */
   runsToday?: { date: string; count: number };

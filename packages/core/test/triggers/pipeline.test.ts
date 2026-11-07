@@ -119,6 +119,8 @@ function setup(
   } as unknown as TriggerHost;
   const start = async () => {
     const e = new TriggerEngine(ctx, { now: () => clock.now });
+    // Runs queued before a start wait for what another leader wrote (pipeline settleMs); these tests have none, so they go on at once.
+    e.pipeline.settleMs = 0;
     await e.start();
     return e;
   };
@@ -614,15 +616,136 @@ describe("the trigger pipeline", () => {
     e.stop();
 
     const g = setup({
-      triggers: [hook({ script: script(`export default async (s, pio) => { const n = (await pio.state.get("n")) ?? 0; await pio.state.set("n", n + 1); if (n === 0) throw new Error("first try fails"); return { note: "second try" } }`) })],
+      triggers: [hook({ script: script(`export default async (s, pio) => { if (s.data.payload.try === 1) throw new Error("first try fails"); return { note: "second try" } }`) })],
     });
     const e2 = await g.start();
-    await send(e2, { n: 1 }, { "x-github-delivery": "d-2" });
+    await send(e2, { try: 1 }, { "x-github-delivery": "d-2" });
     expect((await e2.runs("t_hook"))[0]).toMatchObject({ status: "error" });
     // The sender's retry of a run that failed is carried out.
-    expect((await send(e2, { n: 1 }, { "x-github-delivery": "d-2" })).body).toEqual({ ok: true, signalId: expect.any(String) });
+    expect((await send(e2, { try: 2 }, { "x-github-delivery": "d-2" })).body).toEqual({ ok: true, signalId: expect.any(String) });
     expect(g.store.notes({ triggerId: "t_hook" }).map((n) => n.text)).toEqual(["second try"]);
     e2.stop();
+  });
+
+  it("keeps a run's state writes only with its outcome: after a stop the retry sees the state as it was, and wakes", async () => {
+    // A poll: the last value seen is kept, and only a change is looked at.
+    const poll = `export default async (s, pio) => { const v = s.data.payload.v; if ((await pio.state.get("v")) === v) return { drop: "unchanged" }; await pio.state.set("v", v); return { triage: { v } } }`;
+    const f = setup({ triggers: [hook({ script: script(poll), triage: { brief: "x" }, triagePerDay: 10 })], answer: "hang" });
+    const e = await f.start();
+    await post(e, { v: 1 });
+    await vi.waitFor(() => expect(f.asked).toHaveLength(1));
+    e.stop();
+    // Stopped while the quick model thought: the script's write went with the run.
+    expect(f.store.stateGet("t_hook", "v")).toBeUndefined();
+    expect(f.store.stateGet("t_hook", "__ext:v")).toBeUndefined();
+    const again = setup({ kv: f.kv, clock: f.clock, answer: { decision: "wake", why: "changed", summary: "v is 1 now" } });
+    const e2 = await again.start();
+    await e2.boot();
+    await e2.pipeline.idle();
+    expect(again.created()).toHaveLength(1);
+    expect(again.created()[0].params.goal).toContain("v is 1 now");
+    // Kept with the wake, marked: it came from a webhook.
+    expect(f.store.stateGet("t_hook", "v")).toBe(1);
+    expect(f.store.stateGet("t_hook", "__ext:v")).toBe(true);
+    // The next delivery of the same value is dropped as unchanged.
+    await send(e2, { v: 1 });
+    expect((await e2.runs("t_hook"))[0]).toMatchObject({ outcome: "drop" });
+    expect(again.created()).toHaveLength(1);
+    e2.stop();
+  });
+
+  it("names runs with 8 random bytes, the pipeline's and the engine's alike", async () => {
+    const f = setup({ triggers: [hook({ script: script(`export default () => ({ note: "n" })`) }), base({ id: "t_s", cron: "0 10 * * *" })] });
+    const e = await f.start();
+    await send(e, { n: 1 });
+    expect((await e.runs("t_hook"))[0].id).toMatch(/^r_[0-9a-f]{16}$/);
+    expect((await e.runNow("t_s")).id).toMatch(/^r_[0-9a-f]{16}$/);
+    e.stop();
+  });
+
+  it("leaves a trace when its queue is full: a journal line, a 429, a reminder kept for later and a clear error for run now", async () => {
+    const f = setup({ triggers: [hook({ script: script(`export default () => ({ note: "n" })`) }), base({ id: "t_once", kind: "once", cron: undefined, at: new Date(START + 60_000).toISOString(), script: script(`export default () => ({ wake: "now" })`) })] });
+    const e = await f.start();
+    await e.boot();
+    // The engine's own state is all but full: no run fits in the queue.
+    for (const id of ["t_hook", "t_once"]) f.store.stateSet(id, "__pad", "x".repeat(4 * 1024 * 1024 - 60));
+    expect((await post(e, { n: 1 })).status).toBe(429);
+    expect((await post(e, { n: 2 })).status).toBe(429);
+    const [line] = await e.runs("t_hook");
+    expect(line).toMatchObject({ status: "skipped", code: "queueFull", outcome: "drop", external: true, signals: [{ type: "web.webhook" }] });
+    // One line a minute, not one per refused signal.
+    expect(await e.runs("t_hook")).toHaveLength(1);
+    await expect(e.runNow("t_hook")).rejects.toMatchObject({ code: "queueFull", message: expect.stringMatching(/too many runs are waiting/) });
+    // A reminder due now is kept for a minute later, not marked done.
+    f.clock.now = START + 61_000;
+    await (e as any).runDue("t_once");
+    const once = e.get("t_once")!;
+    expect(once.enabled).toBe(true);
+    expect(once.state.done).toBeFalsy();
+    expect(Date.parse(once.state.nextRunAt!)).toBe(f.clock.now + 60_000);
+    expect((await e.runs("t_once"))[0]).toMatchObject({ status: "skipped", code: "queueFull", reason: "once" });
+    expect(f.created()).toEqual([]);
+    // Room again: it goes on at its new time.
+    f.store.stateDelete("t_once", "__pad");
+    f.clock.now += 60_000;
+    await (e as any).runDue("t_once");
+    expect(f.created()).toHaveLength(1);
+    expect(e.get("t_once")).toMatchObject({ enabled: false, state: { done: true } });
+    e.stop();
+  });
+
+  it("waits once on taking the lead before carrying out runs queued under another leader", async () => {
+    const note = { decision: "note", why: "ok", summary: "Seen" };
+    const queued = (runId: string) => [{ runId, reason: "webhook", signals: [sig(1, { type: "web.webhook" })] }];
+    const f = setup({ triggers: [hook({ triage: { brief: "x" }, triagePerDay: 10 })], answer: note });
+    f.store.stateSet("t_hook", "__queue", queued("r_old"));
+    const e = await f.start();
+    e.pipeline.settleMs = 150;
+    await e.boot();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(f.quick.ask).not.toHaveBeenCalled();
+    // What the old leader wrote arrives meanwhile: the run was carried out there.
+    f.store.addRun("t_hook", { id: "r_old", at: new Date(START).toISOString(), reason: "webhook", status: "started", outcome: "note" });
+    await e.pipeline.idle();
+    expect(f.quick.ask).not.toHaveBeenCalled();
+    expect(await e.runs("t_hook")).toHaveLength(1);
+    expect(f.store.stateGet("t_hook", "__queue")).toBeUndefined();
+    e.stop();
+    // Nobody carried it out: after the wait it runs, once.
+    f.store.stateSet("t_hook", "__queue", queued("r_new"));
+    const e2 = await f.start();
+    e2.pipeline.settleMs = 50;
+    await e2.boot();
+    await e2.pipeline.idle();
+    expect(f.quick.ask).toHaveBeenCalledTimes(1);
+    expect((await e2.runs("t_hook")).map((r) => r.id)).toEqual(["r_new", "r_old"]);
+    e2.stop();
+  });
+
+  it("drops a malformed queued run with a journal line, and carries out the rest", async () => {
+    const f = setup({ triggers: [hook({ triage: { brief: "x" }, triagePerDay: 10 })], answer: { decision: "note", why: "ok", summary: "Seen" } });
+    f.store.stateSet("t_hook", "__queue", [{ runId: "r_bad", reason: "webhook", signals: [1, null] }, { nope: true }, { runId: "r_ok", reason: "webhook", signals: [sig(1, { type: "web.webhook" })] }]);
+    const e = await f.start();
+    e.pipeline.settleMs = 0;
+    await e.boot();
+    await e.pipeline.idle();
+    const runs = await e.runs("t_hook");
+    expect(runs.find((r) => r.id === "r_ok")).toMatchObject({ outcome: "note" });
+    expect(runs.find((r) => r.id !== "r_ok")).toMatchObject({ status: "error", detail: expect.stringContaining("2 queued run(s) could not be read") });
+    expect(f.store.stateGet("t_hook", "__queue")).toBeUndefined();
+    e.stop();
+  });
+
+  it("drops a failed run's state writes, so the next run starts from the same state", async () => {
+    const f = setup({ triggers: [hook({ script: script(`export default async (s, pio) => { await pio.state.set("seen", (await pio.state.get("seen") ?? 0) + 1); if (s.data.payload.fail) throw new Error("boom"); return { note: "seen " + await pio.state.get("seen") } }`) })] });
+    const e = await f.start();
+    await send(e, { fail: true });
+    expect((await e.runs("t_hook"))[0]).toMatchObject({ status: "error" });
+    expect(f.store.stateGet("t_hook", "seen")).toBeUndefined();
+    await send(e, { fail: false });
+    expect(f.store.notes({ triggerId: "t_hook" }).map((n) => n.text)).toEqual(["seen 1"]);
+    expect(f.store.stateGet("t_hook", "seen")).toBe(1);
+    e.stop();
   });
 
   it("tells the person once after five failed runs in a row, and again only after a good run", async () => {
@@ -631,18 +754,28 @@ describe("the trigger pipeline", () => {
     for (let n = 1; n <= 6; n++) expect((await send(e, { fail: true, n })).status).toBe(202);
     expect(f.notified()).toHaveLength(1);
     expect(f.notified()[0].params).toMatchObject({ level: "notify", title: 'notify.failing {"name":"Hook"}', triggerId: "t_hook", agentId: "assistant" });
-    // The body in the person's language, the error in it as it is.
-    expect(f.notified()[0].params.body).toMatch(/^notify\.failingBody \{"error":".*boom 5/);
+    // A webhook's run read outside content: its error, which may carry it, stays out of the notification (the Inbox and
+    // the digest's agent read it), and out of the trigger's state as shown to agents.
+    expect(f.notified()[0].params.body).toBe("notify.failingBodyOutside");
     const runs = await e.runs("t_hook");
-    expect(runs[0]).toMatchObject({ status: "error", detail: expect.stringContaining("boom 6") });
+    expect(runs[0]).toMatchObject({ status: "error", detail: expect.stringContaining("boom 6"), external: true });
     expect(runs[0].stages?.[0]).toMatchObject({ stage: "script", error: expect.stringContaining("boom 6") });
-    expect(e.get("t_hook")!.state).toMatchObject({ errorsInRow: 6, lastStatus: "error" });
+    expect(e.get("t_hook")!.state).toMatchObject({ errorsInRow: 6, lastStatus: "error", lastErrorExternal: true });
     expect(f.created()).toEqual([]);
     await send(e, { n: 7 });
     expect(e.get("t_hook")!.state).toMatchObject({ errorsInRow: 0, lastStatus: "ok" });
+    expect(e.get("t_hook")!.state.lastErrorExternal).toBeUndefined();
     for (let n = 8; n <= 12; n++) await send(e, { fail: true, n });
     expect(f.notified()).toHaveLength(2);
     e.stop();
+
+    // A run that read nothing from outside: the body has its error, in the person's language around it.
+    const g = setup({ triggers: [base({ id: "t_sig", kind: "signal", on: [{ type: "demo.item" }], script: script(`export default (s) => { throw new Error("bad item " + s.data.n) }`) })] });
+    const e2 = await g.start();
+    for (let n = 1; n <= 5; n++) await e2.pipeline.deliver(e2.get("t_sig")!, [sig(n)], "manual");
+    expect(g.notified()).toHaveLength(1);
+    expect(g.notified()[0].params.body).toMatch(/^notify\.failingBody \{"error":".*bad item 5/);
+    e2.stop();
   });
 
   it("keeps the same error in a row as one journal line, counted", async () => {

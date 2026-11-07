@@ -4,7 +4,7 @@
 
 import type { TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import type { Locale } from "@piomio/shared";
-import { NotFoundError, type TriggerEngine } from "./engine.ts";
+import { NotFoundError, QueueFullError, type TriggerEngine } from "./engine.ts";
 import type { ErrorParams, TriggerError } from "./errors.ts";
 import { describeSchedule } from "./schedule.ts";
 import type { Trigger, TriggerInput } from "./types.ts";
@@ -79,6 +79,7 @@ export async function handleHttp(e: TriggerEngine, req: TriggerHttpRequest): Pro
   } catch (err: any) {
     if (err instanceof ValidationError) return failure(e, req, err, 400);
     if (err instanceof NotFoundError) return failure(e, req, err, 404);
+    if (err instanceof QueueFullError) return failure(e, req, err, 429);
     return ok({ error: err?.message ?? String(err) }, 500);
   }
 }

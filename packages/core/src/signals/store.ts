@@ -21,6 +21,8 @@ export interface NoteRow {
 export interface NoteQuery {
   agentId?: string;
   triggerId?: string;
+  /** A trigger's name as its notes keep it (one deleted since too), any case. */
+  triggerName?: string;
   since?: string;
   text?: string;
   limit?: number;
@@ -31,25 +33,35 @@ export interface TriggerStore {
   runs(triggerId: string, limit?: number): TriggerRun[];
   /** One run of the trigger's journal by its id (a primary-key lookup). */
   run(triggerId: string, runId: string): TriggerRun | undefined;
-  /** Prunes that trigger's journal to 200 runs / 14 days. */
+  /** Prunes that trigger's journal to 200 runs; past its newest 20, runs older than 14 days go. */
   addRun(triggerId: string, run: TriggerRun & { signalData?: Signal[] }): void;
   /** A signal kept with one of the journal's runs. */
   signal(id: string): Signal | undefined;
   recentSignals(triggerId: string, n: number): Signal[];
   dropRuns(triggerId: string): void;
-  /** Prunes notes older than 30 days. */
+  /** Prunes notes older than 30 days, and the trigger's past its newest 500. */
   addNote(n: Omit<NoteRow, "id" | "at">): NoteRow;
+  /** Newest first, at most `limit` (50 by default), read no further than that. */
   notes(q: NoteQuery): NoteRow[];
   stateGet(triggerId: string, key: string): unknown;
-  /** Throws RangeError when the trigger's state would pass 1 MB (its "__" keys, the engine's own: 4 MB apart). */
+  /**
+   * Throws RangeError when the trigger's state would pass its cap: 1 MB for the script's keys and the marks beside them
+   * ("__ext:"), 4 MB for the engine's own ("__" keys).
+   */
   stateSet(triggerId: string, key: string, value: unknown): void;
   stateDelete(triggerId: string, key: string): void;
   dropState(triggerId: string): void;
+  /** The bytes (key and value) the trigger's keys of one budget take (stateBudget), those in `except` left out. */
+  stateBytes(triggerId: string, budget: StateBudget, except?: string[]): number;
 }
 
 export const MAX_JOURNAL_RUNS = 200;
+/** A trigger's newest runs, kept whatever their age (as many as the old plugin kept: engine.ts MAX_RUNS_KEPT). */
+export const RECENT_RUNS_KEPT = 20;
 export const JOURNAL_DAYS = 14;
 export const NOTE_DAYS = 30;
+/** A trigger's notes, at most: the newest. */
+export const MAX_NOTES_PER_TRIGGER = 500;
 export const MAX_STATE_BYTES = 1024 * 1024;
 const DAY_MS = 86_400_000;
 const DEFAULT_NOTE_LIMIT = 50;
@@ -65,20 +77,29 @@ const bare = (r: StoredRun): TriggerRun => {
 const noteMatches = (n: NoteRow, q: NoteQuery) =>
   (!q.agentId || n.agentId === q.agentId) &&
   (!q.triggerId || n.triggerId === q.triggerId) &&
+  (!q.triggerName || n.triggerName.toLowerCase() === q.triggerName.toLowerCase()) &&
   (!q.since || n.at >= q.since) &&
   (!q.text || n.text.toLowerCase().includes(q.text.toLowerCase()));
 
-/** Keys starting with "__" are the engine's own (a pending batch, outside-content marks): kept apart from the script's 1 MB. */
-const engineKey = (key: string) => key.startsWith("__");
+/**
+ * Which cap a state key counts against: the engine's own keys ("__": a pending batch, the queue, seen delivery keys)
+ * have 4 MB; the script's keys and the outside-content marks beside them ("__ext:<key>", which grow with them) share 1 MB.
+ */
+export type StateBudget = "script" | "engine";
+/** The engine's mark beside a state key whose value a run set after reading outside content (pio.ts). */
+export const EXT_PREFIX = "__ext:";
+export const stateBudget = (key: string): StateBudget => (key.startsWith("__") && !key.startsWith(EXT_PREFIX) ? "engine" : "script");
 export const MAX_ENGINE_STATE_BYTES = 4 * 1024 * 1024;
+/** The SQL test of a key's budget: 1 for the engine's, 0 for the script's (stateBudget). */
+const ENGINE_KEY_SQL = `(substr(key, 1, 2) = '__' and substr(key, 1, ${EXT_PREFIX.length}) <> '${EXT_PREFIX}')`;
 
 /**
  * The value's JSON, or a RangeError when the trigger's state would pass its cap: 1 MB for the script's keys, 4 MB for
- * the engine's. `others`: the bytes in the trigger's other keys of the same kind.
+ * the engine's. `others`: the bytes in the trigger's other keys of the same budget.
  */
-function checkState(others: number, key: string, value: unknown): string {
+export function checkState(others: number, key: string, value: unknown): string {
   const text = JSON.stringify(value ?? null);
-  const engine = engineKey(key);
+  const engine = stateBudget(key) === "engine";
   if (others + Buffer.byteLength(key) + Buffer.byteLength(text) > (engine ? MAX_ENGINE_STATE_BYTES : MAX_STATE_BYTES)) {
     throw new RangeError(engine ? "the trigger engine's own state is limited to 4 MB" : "trigger state is limited to 1 MB");
   }
@@ -91,6 +112,14 @@ export function sqlStore(db: Db, now: () => number = Date.now): TriggerStore {
     (db.prepare("select data from trigger_runs where trigger_id = ? order by at desc, rowid desc limit ?").all(triggerId, limit) as Array<{ data: string }>).map((r) =>
       parse<StoredRun>(r.data),
     );
+  const stateBytes = (triggerId: string, budget: StateBudget, except: string[] = []): number =>
+    (
+      db
+        .prepare(
+          `select coalesce(sum(length(cast(key as blob)) + length(cast(value as blob))), 0) as n from trigger_state where trigger_id = ? and ${ENGINE_KEY_SQL} = ? and key not in (select value from json_each(?))`,
+        )
+        .get(triggerId, budget === "engine" ? 1 : 0, JSON.stringify(except)) as { n: number }
+    ).n;
   return {
     runs: (triggerId, limit = MAX_JOURNAL_RUNS) => storedRuns(triggerId, limit).map(bare),
     run(triggerId, runId) {
@@ -99,12 +128,10 @@ export function sqlStore(db: Db, now: () => number = Date.now): TriggerStore {
     },
     addRun(triggerId, run) {
       db.prepare("insert or replace into trigger_runs(id, trigger_id, at, data) values (?,?,?,?)").run(run.id, triggerId, run.at, JSON.stringify(run));
-      db.prepare("delete from trigger_runs where trigger_id = ? and at < ?").run(triggerId, iso(now() - JOURNAL_DAYS * DAY_MS));
-      db.prepare("delete from trigger_runs where trigger_id = ? and id not in (select id from trigger_runs where trigger_id = ? order by at desc, rowid desc limit ?)").run(
-        triggerId,
-        triggerId,
-        MAX_JOURNAL_RUNS,
-      );
+      const newest = "select id from trigger_runs where trigger_id = ? order by at desc, rowid desc limit ?";
+      // Past its newest 20, a run older than 14 days goes: a trigger that runs once a week keeps its history.
+      db.prepare(`delete from trigger_runs where trigger_id = ? and at < ? and id not in (${newest})`).run(triggerId, iso(now() - JOURNAL_DAYS * DAY_MS), triggerId, RECENT_RUNS_KEPT);
+      db.prepare(`delete from trigger_runs where trigger_id = ? and id not in (${newest})`).run(triggerId, triggerId, MAX_JOURNAL_RUNS);
     },
     signal(id) {
       // A cheap text prefilter; the match itself is on the parsed signal.
@@ -130,19 +157,26 @@ export function sqlStore(db: Db, now: () => number = Date.now): TriggerStore {
       const { id, at, agentId, triggerId, external, ...rest } = row;
       db.prepare("insert into signal_notes(id, agent_id, trigger_id, at, external, data) values (?,?,?,?,?,?)").run(id, agentId, triggerId, at, external ? 1 : 0, JSON.stringify(rest));
       db.prepare("delete from signal_notes where at < ?").run(iso(now() - NOTE_DAYS * DAY_MS));
+      db.prepare("delete from signal_notes where trigger_id = ? and id not in (select id from signal_notes where trigger_id = ? order by at desc, rowid desc limit ?)").run(
+        triggerId,
+        triggerId,
+        MAX_NOTES_PER_TRIGGER,
+      );
       return row;
     },
     notes(q) {
       const where: string[] = [];
-      const args: string[] = [];
+      const args: Array<string | number> = [];
       if (q.agentId) (where.push("agent_id = ?"), args.push(q.agentId));
       if (q.triggerId) (where.push("trigger_id = ?"), args.push(q.triggerId));
       if (q.since) (where.push("at >= ?"), args.push(q.since));
-      const rows = db
-        .prepare(`select id, agent_id, trigger_id, at, external, data from signal_notes ${where.length ? `where ${where.join(" and ")}` : ""} order by at desc, rowid desc`)
-        .all(...args) as Array<{ id: string; agent_id: string; trigger_id: string; at: string; external: number; data: string }>;
-      const out: NoteRow[] = [];
       const limit = q.limit ?? DEFAULT_NOTE_LIMIT;
+      const out: NoteRow[] = [];
+      if (limit <= 0) return out;
+      const sql = `select id, agent_id, trigger_id, at, external, data from signal_notes ${where.length ? `where ${where.join(" and ")}` : ""} order by at desc, rowid desc`;
+      type Row = { id: string; agent_id: string; trigger_id: string; at: string; external: number; data: string };
+      // Without a text or name filter the database stops at the limit; with one the rows are read one by one until it is reached.
+      const rows: Iterable<Row> = q.text || q.triggerName ? (db.prepare(sql).iterate(...args) as Iterable<Row>) : (db.prepare(`${sql} limit ?`).all(...args, limit) as Row[]);
       for (const r of rows) {
         const n: NoteRow = {
           ...parse<Pick<NoteRow, "triggerName" | "text" | "signalIds">>(r.data),
@@ -163,18 +197,12 @@ export function sqlStore(db: Db, now: () => number = Date.now): TriggerStore {
       return r ? parse(r.value) : undefined;
     },
     stateSet(triggerId, key, value) {
-      const others = (
-        db
-          .prepare(
-            "select coalesce(sum(length(cast(key as blob)) + length(cast(value as blob))), 0) as n from trigger_state where trigger_id = ? and key <> ? and (substr(key, 1, 2) = '__') = ?",
-          )
-          .get(triggerId, key, engineKey(key) ? 1 : 0) as { n: number }
-      ).n;
-      const text = checkState(others, key, value);
+      const text = checkState(stateBytes(triggerId, stateBudget(key), [key]), key, value);
       db.prepare("insert into trigger_state(trigger_id, key, value) values (?,?,?) on conflict(trigger_id, key) do update set value = excluded.value").run(triggerId, key, text);
     },
     stateDelete: (triggerId, key) => void db.prepare("delete from trigger_state where trigger_id = ? and key = ?").run(triggerId, key),
     dropState: (triggerId) => void db.prepare("delete from trigger_state where trigger_id = ?").run(triggerId),
+    stateBytes,
   };
 }
 
@@ -182,6 +210,11 @@ export function memoryStore(now: () => number = Date.now): TriggerStore {
   const runs = new Map<string, StoredRun[]>(); // oldest first, in the order added
   let notes: NoteRow[] = [];
   const state = new Map<string, Map<string, string>>();
+  const stateBytes = (triggerId: string, budget: StateBudget, except: string[] = []): number => {
+    let n = 0;
+    for (const [k, v] of state.get(triggerId) ?? []) if (stateBudget(k) === budget && !except.includes(k)) n += Buffer.byteLength(k) + Buffer.byteLength(v);
+    return n;
+  };
   const newestFirst = <T extends { at: string }>(list: T[]): T[] =>
     list
       .map((item, i) => ({ item, i }))
@@ -200,7 +233,13 @@ export function memoryStore(now: () => number = Date.now): TriggerStore {
       const list = (runs.get(triggerId) ?? []).filter((r) => r.id !== run.id);
       list.push(structuredClone(run));
       const cutoff = iso(now() - JOURNAL_DAYS * DAY_MS);
-      runs.set(triggerId, newestFirst(list.filter((r) => r.at >= cutoff)).slice(0, MAX_JOURNAL_RUNS).reverse());
+      runs.set(
+        triggerId,
+        newestFirst(list)
+          .filter((r, i) => i < RECENT_RUNS_KEPT || r.at >= cutoff)
+          .slice(0, MAX_JOURNAL_RUNS)
+          .reverse(),
+      );
     },
     signal(id) {
       for (const list of runs.values()) {
@@ -221,6 +260,11 @@ export function memoryStore(now: () => number = Date.now): TriggerStore {
       const row: NoteRow = { ...structuredClone(n), id: noteId(), at: iso(now()) };
       const cutoff = iso(now() - NOTE_DAYS * DAY_MS);
       notes = [...notes.filter((x) => x.at >= cutoff), row];
+      const mine = newestFirst(notes.filter((x) => x.triggerId === row.triggerId));
+      if (mine.length > MAX_NOTES_PER_TRIGGER) {
+        const gone = new Set(mine.slice(MAX_NOTES_PER_TRIGGER));
+        notes = notes.filter((x) => !gone.has(x));
+      }
       return structuredClone(row);
     },
     notes: (q) =>
@@ -234,13 +278,12 @@ export function memoryStore(now: () => number = Date.now): TriggerStore {
     },
     stateSet(triggerId, key, value) {
       const m = state.get(triggerId) ?? new Map<string, string>();
-      let others = 0;
-      for (const [k, v] of m) if (k !== key && engineKey(k) === engineKey(key)) others += Buffer.byteLength(k) + Buffer.byteLength(v);
-      m.set(key, checkState(others, key, value));
+      m.set(key, checkState(stateBytes(triggerId, stateBudget(key), [key]), key, value));
       state.set(triggerId, m);
     },
     stateDelete: (triggerId, key) => void state.get(triggerId)?.delete(key),
     dropState: (triggerId) => void state.delete(triggerId),
+    stateBytes,
   };
 }
 

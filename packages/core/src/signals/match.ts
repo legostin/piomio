@@ -71,10 +71,6 @@ export function pathGet(value: unknown, path: string): unknown {
   return cur;
 }
 
-/**
- * True when a pattern can backtrack catastrophically: a repeated group whose body holds a repeating
- * quantifier or an alternation, or a backreference. A conservative scan, not a full parser.
- */
 // A compiled filter regex: `fold` means the value is lowercased before testing (the `i` flag,
 // emulated because the linear engine refuses it).
 type Compiled = { re: RegExp; fold: boolean } | string;

@@ -39,13 +39,55 @@ describe.each([
     expect(s.run("t1", "nope")).toBeUndefined();
   });
 
-  it("prunes runs older than 14 days on the next add", () => {
+  it("keeps a trigger's newest 20 runs whatever their age, and prunes the older ones past 14 days on the next add", () => {
     let now = T0;
     const s = make(() => now);
-    s.addRun("t1", run("old", now));
+    for (let i = 0; i < 25; i++) s.addRun("t1", run(`old${i}`, T0 + i * 1000));
     now = T0 + 15 * DAY;
     s.addRun("t1", run("new", now));
-    expect(s.runs("t1", 10).map((r) => r.id)).toEqual(["new"]);
+    expect(s.runs("t1", 50).map((r) => r.id)).toEqual(["new", ...Array.from({ length: 19 }, (_, i) => `old${24 - i}`)]);
+    // A trigger that rarely runs keeps its last 20, however old.
+    for (let i = 0; i < 5; i++) s.addRun("t2", run(`w${i}`, T0 - (5 - i) * 7 * DAY));
+    expect(s.runs("t2").map((r) => r.id)).toEqual(["w4", "w3", "w2", "w1", "w0"]);
+  });
+
+  it("keeps a weekly schedule's 20 old runs when they move in from the plugin's storage", () => {
+    const now = T0;
+    const s = make(() => now);
+    const kv = pluginKv(openDb(":memory:"), "triggers");
+    // Newest first, a week apart: all but the newest two are older than 14 days.
+    kv.set("runs:weekly", Array.from({ length: 20 }, (_, i) => run(`wk${i}`, T0 - i * 7 * DAY)));
+    expect(migrateRunLists(kv, s)).toBe(20);
+    expect(s.runs("weekly").length).toBe(20);
+    s.addRun("weekly", run("next", T0 + 1000));
+    expect(s.runs("weekly").map((r) => r.id)).toEqual(["next", ...Array.from({ length: 19 }, (_, i) => `wk${i}`)]);
+  });
+
+  it("keeps at most 500 notes per trigger, the newest", () => {
+    let now = T0;
+    const s = make(() => now);
+    for (let i = 0; i < 510; i++) {
+      now = T0 + i * 1000;
+      s.addNote({ agentId: "a1", triggerId: "t1", triggerName: "Busy", text: `n${i}`, signalIds: [], external: false });
+    }
+    s.addNote({ agentId: "a1", triggerId: "t2", triggerName: "Quiet", text: "q", signalIds: [], external: false });
+    const busy = s.notes({ triggerId: "t1", limit: 1000 });
+    expect(busy.length).toBe(500);
+    expect(busy[0].text).toBe("n509");
+    expect(busy[499].text).toBe("n10");
+    expect(s.notes({ triggerId: "t2" }).map((n) => n.text)).toEqual(["q"]);
+  });
+
+  it("counts the outside-content marks (__ext:) against the script's 1 MB, not the engine's 4 MB", () => {
+    const s = make(() => T0);
+    s.stateSet("t1", "k", "k".repeat(1_000_000));
+    expect(() => s.stateSet("t1", "__ext:k2", "x".repeat(100_000))).toThrow("trigger state is limited to 1 MB");
+    // The engine's own keys still have their 4 MB.
+    s.stateSet("t1", "__queue", "q".repeat(3_000_000));
+    s.stateSet("t1", "__ext:k", true);
+    expect(s.stateBytes("t1", "script")).toBe(Buffer.byteLength("k") + Buffer.byteLength(JSON.stringify("k".repeat(1_000_000))) + Buffer.byteLength("__ext:k") + 4);
+    expect(s.stateBytes("t1", "script", ["k"])).toBe(Buffer.byteLength("__ext:k") + 4);
+    expect(s.stateBytes("t1", "engine")).toBe(Buffer.byteLength("__queue") + Buffer.byteLength(JSON.stringify("q".repeat(3_000_000))));
   });
 
   it("finds a stored signal and lists the recent ones without leaking them into runs", () => {
@@ -137,6 +179,19 @@ describe.each([
     expect(s.stateGet("t1", "b")).toBe("y".repeat(300_000));
   });
 
+  it("finds notes by trigger id, newest first, whatever the agent's other triggers kept", () => {
+    let now = T0;
+    const s = make(() => now);
+    s.addNote({ agentId: "a1", triggerId: "quiet", triggerName: "Quiet", text: "old one", signalIds: [], external: false });
+    for (let i = 0; i < 250; i++) {
+      now = T0 + (i + 1) * 1000;
+      s.addNote({ agentId: "a1", triggerId: "busy", triggerName: "Busy", text: `b${i}`, signalIds: [], external: false });
+    }
+    expect(s.notes({ agentId: "a1", triggerId: "quiet", limit: 20 }).map((n) => n.text)).toEqual(["old one"]);
+    // By the name its notes keep, in any case: a trigger deleted since is found by it too.
+    expect(s.notes({ agentId: "a1", triggerName: "QUIET", limit: 20 }).map((n) => n.text)).toEqual(["old one"]);
+  });
+
   it("leaves a malformed run list in storage, moves the good ones and says so", () => {
     const kv = pluginKv(openDb(":memory:"), "triggers");
     const s = make(() => T0);
@@ -149,5 +204,48 @@ describe.each([
     expect(s.runs("bad")).toEqual([]);
     expect(kv.list("runs:").map((r) => r.key)).toEqual(["runs:bad", "runs:odd"]);
     expect(warned.length).toBe(2);
+  });
+});
+
+describe("trigger store (sql) reading notes", () => {
+  /** A database whose note reads are watched: the rows each `all()` brought, and whether `iterate()` was used. */
+  function watched() {
+    const db = openDb(":memory:");
+    const reads: Array<{ how: "all" | "iterate"; rows?: number }> = [];
+    const prepare = db.prepare.bind(db);
+    (db as any).prepare = (sql: string) => {
+      const st = prepare(sql);
+      if (!/from signal_notes/.test(sql) || !/^\s*select/i.test(sql)) return st;
+      return {
+        all: (...a: any[]) => {
+          const rows = st.all(...a);
+          reads.push({ how: "all", rows: rows.length });
+          return rows;
+        },
+        iterate: (...a: any[]) => {
+          reads.push({ how: "iterate" });
+          return st.iterate(...a);
+        },
+        get: (...a: any[]) => st.get(...a),
+        run: (...a: any[]) => st.run(...a),
+      };
+    };
+    return { db, reads };
+  }
+
+  it("brings only the rows asked for: a SQL limit, or rows read one by one with a text filter", () => {
+    const { db, reads } = watched();
+    let now = T0;
+    const s = sqlStore(db, () => now);
+    for (let i = 0; i < 300; i++) {
+      now = T0 + i * 1000;
+      s.addNote({ agentId: "a1", triggerId: `t${i % 3}`, triggerName: "T", text: i === 5 ? "the needle" : `n${i}`, signalIds: [], external: false });
+    }
+    reads.length = 0;
+    expect(s.notes({ agentId: "a1", limit: 5 }).map((n) => n.text)).toEqual(["n299", "n298", "n297", "n296", "n295"]);
+    expect(reads).toEqual([{ how: "all", rows: 5 }]);
+    reads.length = 0;
+    expect(s.notes({ agentId: "a1", text: "NEEDLE", limit: 5 }).map((n) => n.text)).toEqual(["the needle"]);
+    expect(reads).toEqual([{ how: "iterate" }]);
   });
 });

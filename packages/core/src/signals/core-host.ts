@@ -54,8 +54,8 @@ export interface CoreTriggersDeps {
    * trigger:<id>, allowlist the trigger's hosts, no session context), revoked when the run ends. Unset: no fetches.
    */
   egress?: { proxy: Pick<EgressProxy, "issueToken" | "revoke">; port: number };
-  /** The vault: a webhook's signing secret is read from it (`vault.access`, actor trigger:<id>). Unset: signed webhooks answer 503. */
-  vault?: { access(ref: string, req: { actor: string }): Record<string, string> };
+  /** The vault: a webhook's signing secret is read from it (`vault.access`, actor trigger:<id>, for its agent). Unset: signed webhooks answer 503. */
+  vault?: { access(ref: string, req: { actor: string; agentId?: string }): Record<string, string> };
   /**
    * The signal sources beyond core's own (sources.ts): trigger_sources lists them, the engine syncs their plugin
    * subscriptions. They start with the engine and stop with it. Unset: only core's four.
@@ -224,6 +224,7 @@ export class CoreTriggers {
       stateSet: guard(inner.stateSet),
       stateDelete: guard(inner.stateDelete),
       dropState: guard(inner.dropState),
+      stateBytes: guard(inner.stateBytes),
     };
   }
 
@@ -317,7 +318,7 @@ export class CoreTriggers {
         list: (prefix) => open(() => kv.list(prefix)),
       },
       store,
-      ...(d.vault ? { vault: { get: (ref: string, actor: string) => open(async () => d.vault!.access(ref, { actor })) } } : {}),
+      ...(d.vault ? { vault: { get: (ref: string, actor: string, agentId?: string) => open(async () => d.vault!.access(ref, { actor, ...(agentId ? { agentId } : {}) })) } } : {}),
       core: { call: (method, params) => open(() => d.coreCall(TRIGGERS_ID, method, params) as Promise<any>, true) },
       ...(fetch ? { fetch: (url, init) => open(() => fetch(url, init)) } : {}),
       pipeline,

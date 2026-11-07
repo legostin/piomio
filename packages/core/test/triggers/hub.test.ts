@@ -131,6 +131,12 @@ describe("the hub's trigger engine", () => {
     const goneId = ((gone.body as any).trigger?.id ?? (gone.body as any).id) as string;
     const r2 = await fetch(`${base}/hooks/triggers/${goneId}`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": sig("hookkey") }, body: raw });
     expect(r2.status).toBe(503);
+    // A key the person kept for another agent is not read for this trigger's agent (the item's scope).
+    hub.vault.upsert({ id: "gh-other", type: "secret", name: "Other agent's key", fields: { value: "hookkey" }, scope: { agents: ["someone-else"] } });
+    const scoped = await hub.triggers.http({ method: "POST", path: "/triggers", query: {}, headers: {}, public: false, locale: "en", body: { kind: "event", name: "GH3", prompt: "Look.", verify: { kind: "github", secretRef: "vault://gh-other" } } });
+    const scopedId = ((scoped.body as any).trigger?.id ?? (scoped.body as any).id) as string;
+    const r3 = await fetch(`${base}/hooks/triggers/${scopedId}`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": sig("hookkey") }, body: raw });
+    expect(r3.status).toBe(503);
     hub.vault.seal();
   });
 
