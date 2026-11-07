@@ -1314,6 +1314,7 @@ export default {
   "triggers.detail.skill": "Skill “{skill}”",
   "triggers.detail.secret": "Secret (x-piomio-secret header)",
   "triggers.detail.signature": "Checks the {name} signature ({header} header)",
+  "triggers.detail.errorExternal": "This error came from a run that read something from outside (a page, a webhook, a letter): its words may carry that text.",
   "triggers.detail.show": "Show",
   "triggers.detail.hide": "Hide",
   "triggers.detail.on": "On",

@@ -8,6 +8,7 @@ import {
   describeMatch,
   errorMessage,
   formatMs,
+  lastErrorLine,
   parseTimes,
   reasonText,
   runBadge,
@@ -99,6 +100,13 @@ describe("triggers in the web UI", () => {
     expect(builtinSource("signal")).toBeUndefined();
     expect(sourceLabel("hub.task.finished")).toBe("When a task finishes");
     expect(sourceLabel("composio.gmail_new_message")).toBeUndefined();
+  });
+
+  it("words the last error and marks it when it came from outside content", () => {
+    expect(lastErrorLine({ lastErrorText: null, state: {} })).toBeUndefined();
+    expect(lastErrorLine({ lastErrorText: "Daily run limit (5) reached", state: { lastErrorCode: "dailyLimit" } })).toEqual({ text: "Daily run limit (5) reached", external: false });
+    expect(lastErrorLine({ lastErrorText: "script threw", state: {} })).toEqual({ text: "As the check wrote it: script threw", external: false });
+    expect(lastErrorLine({ lastErrorText: "script threw: Dear customer", state: { lastErrorExternal: true } })).toEqual({ text: "As the check wrote it: script threw: Dear customer", external: true });
   });
 
   it("says which signature a signed webhook needs, and shows the shared secret only when that is what the hub checks", () => {

@@ -76,6 +76,8 @@ export interface TriggerView {
     lastRunAt?: string;
     lastStatus?: "ok" | "error" | "skipped";
     lastErrorCode?: string;
+    /** The last error came from a run that read outside content (TriggerRun.external): its text may carry that content. */
+    lastErrorExternal?: boolean;
     lastCheckedAt?: string;
     lastValue?: string;
     done?: boolean;
@@ -162,6 +164,15 @@ export function errorMessage(code: string | undefined, params: ErrorParams | und
   const text = code ? known(`triggers.error.${code}`, params) : undefined;
   if (text) return text;
   return fallback ? t("triggers.run.asWritten", { text: fallback }) : "";
+}
+
+/**
+ * A trigger's last error for its page: the hub's text (a code's catalog message as is, the engine's or the check's own
+ * words labelled), and whether the run it came from read outside content, so the page marks it as the journal does.
+ */
+export function lastErrorLine(tr: Pick<TriggerView, "lastErrorText" | "state">): { text: string; external: boolean } | undefined {
+  if (!tr.lastErrorText) return undefined;
+  return { text: tr.state.lastErrorCode ? tr.lastErrorText : t("triggers.run.asWritten", { text: tr.lastErrorText }), external: tr.state.lastErrorExternal === true };
 }
 
 /** A run's badge: what came of it when it started nothing (a note, a drop), else how it went. */

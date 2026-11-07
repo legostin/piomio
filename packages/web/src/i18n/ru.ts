@@ -1314,6 +1314,7 @@ export default {
   "triggers.detail.skill": "Скилл «{skill}»",
   "triggers.detail.secret": "Секрет (заголовок x-piomio-secret)",
   "triggers.detail.signature": "Проверяет подпись {name} (заголовок {header})",
+  "triggers.detail.errorExternal": "Эта ошибка — из запуска, который читал что-то извне (страницу, вебхук, письмо): в её тексте может быть прочитанное.",
   "triggers.detail.show": "Показать",
   "triggers.detail.hide": "Скрыть",
   "triggers.detail.on": "Включён",

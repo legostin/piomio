@@ -9,7 +9,7 @@ import { AlarmClock, CalendarClock, ChevronRight, Eye, HeartPulse, MessageCircle
 import { api, errorText } from "../lib/api";
 import { relativeTime } from "../lib/format";
 import { useStore } from "../lib/store";
-import { changedTrigger, checkText, formatAt, KIND_LABEL, runNowText, statusBadge, triggerUrl, TRIGGERS_API, type TriggerKind, type TriggerRun, type TriggersList, type TriggerView } from "../lib/triggers";
+import { changedTrigger, checkText, formatAt, KIND_LABEL, lastErrorLine, runNowText, statusBadge, triggerUrl, TRIGGERS_API, type TriggerKind, type TriggerRun, type TriggersList, type TriggerView } from "../lib/triggers";
 import { hubEvents } from "../state/app";
 import { useAsk } from "../state/ask";
 import { openPanelItem, panel, panelBack } from "../state/panel";
@@ -18,7 +18,7 @@ import { t } from "../i18n";
 import { Badge, Button, cx, EmptyState, ErrorNote, Loading, Modal, Page, Spinner, Toggle } from "../components/ui";
 import { Journal } from "./triggers/Journal";
 import { Pipeline } from "./triggers/Pipeline";
-import { Section } from "./triggers/parts";
+import { ExternalMark, Section } from "./triggers/parts";
 import { TriggerForm } from "./triggers/TriggerForm";
 
 const KIND_ICON: Record<TriggerKind, LucideIcon> = {
@@ -164,8 +164,7 @@ function TriggerDetail({ tr, list, reload }: { tr: TriggerView; list: TriggersLi
   const agent = list.agents.find((a) => a.id === tr.agentId);
   const agentName = agent?.name ?? tr.agentId;
   const badge = statusBadge(tr) ?? { label: t("triggers.status.active"), tone: "success" as const };
-  // The engine's and the check's own words (an error with no code) are shown as written, labelled.
-  const lastError = tr.lastErrorText ? (tr.state.lastErrorCode ? tr.lastErrorText : t("triggers.run.asWritten", { text: tr.lastErrorText })) : "";
+  const lastError = lastErrorLine(tr);
   const waits = tr.kind === "event" || tr.kind === "signal";
 
   const act = async <T,>(key: NonNullable<typeof busy>, fn: () => Promise<T>, done?: (r: T) => void) => {
@@ -200,7 +199,10 @@ function TriggerDetail({ tr, list, reload }: { tr: TriggerView; list: TriggersLi
       {lastError && (
         <div className="flex items-start gap-2 rounded-xl bg-danger-soft px-3 py-2 text-xs text-danger">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0 break-words">{lastError}</span>
+          <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5">
+            <span className="max-w-full break-words">{lastError.text}</span>
+            {lastError.external && <ExternalMark hint={t("triggers.detail.errorExternal")} />}
+          </div>
         </div>
       )}
 
