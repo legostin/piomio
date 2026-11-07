@@ -4,7 +4,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, cpSync, rmSync, renameSync, statSync, readFileSync } from "node:fs";
 import { join, dirname, basename, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import type { Catalog, CatalogEntryState, CoreMethod, Locale, MessagePart, PiomioManifest, PluginLayout, PluginPermissions, ToolCallContext, ToolDescriptor, ToolResult, ToolSpec } from "@piomio/shared";
+import type { Catalog, CatalogEntryState, CoreMethod, Locale, MessagePart, PiomioManifest, PluginLayout, PluginPermissions, SignalDecl, ToolCallContext, ToolDescriptor, ToolResult, ToolSpec } from "@piomio/shared";
 import { createRpcPeer, ndjsonTransport, readPluginLayout, toolPrefixOf, nowIso, ENTRY_ID_RE, type RpcPeer } from "@piomio/shared";
 import { json, type Db } from "../db.ts";
 import { hubLocale, localizePluginValue, LocalizedError, tFor } from "../i18n.ts";
@@ -102,7 +102,20 @@ export interface HostDeps {
   attachPart?: (conversationId: string, part: MessagePart) => void;
   /** A plugin reported its catalog entries (ctx.catalog.update): what they were before and are now. */
   onCatalogUpdated?: (pluginId: string, before: CatalogEntryState[], after: CatalogEntryState[]) => void;
+  /**
+   * The signal sources registry (signals/sources.ts): what plugins emit goes to it (refused with an English error the
+   * plugin logs), and it hears when a plugin starts (its subscriptions are made again) and stops.
+   */
+  signals?: {
+    fromPlugin(pluginId: string, m: { type: string; data: unknown; key?: string; subject?: string; subscription?: string }): { ok: true } | { ok: false; error: string };
+    pluginUp(pluginId: string): Promise<void>;
+    pluginDown(pluginId: string): void;
+  };
 }
+
+/** How long a plugin has to answer the hub's subscribe to one of its signal providers, and a stop. */
+const SIGNAL_SUBSCRIBE_TIMEOUT_MS = 30_000;
+const SIGNAL_STOP_TIMEOUT_MS = 10_000;
 
 /** Entries one plugin may report, at most. */
 const MAX_CATALOG_ENTRIES = 200;
@@ -362,6 +375,9 @@ export class PluginHost {
       rec.status = "running";
       rec.lastError = undefined;
       this.d.audit.append("core", "plugin.start", id);
+      // Its signal providers get the subscriptions the enabled triggers need (again, after a restart).
+      if (rec.layout.manifest.contributes.signals?.length && this.d.signals)
+        void this.d.signals.pluginUp(id).catch((e) => this.log(rec, "warn", `signal subscriptions failed: ${e?.message ?? e}`));
     } catch (e: any) {
       rec.status = "error";
       rec.lastError = e.message;
@@ -431,6 +447,8 @@ export class PluginHost {
     this.httpPlugins.delete(id);
     this.uiMessageTargets.delete(id);
     this.d.egress.revokeOwner(`plugin:${id}`);
+    // Its providers' subscriptions went with its process.
+    this.d.signals?.pluginDown(id);
     const before = this.catalogs.get(id);
     this.catalogs.delete(id);
     if (before?.length) this.d.onCatalogUpdated?.(id, before, []);
@@ -534,6 +552,30 @@ export class PluginHost {
       return {};
     });
 
+    // A signal (ctx.signals.emit, or a provider's emit by its subscription). An undeclared type is denied, audited once
+    // per type (a plugin may emit often); the registry checks the rest and routes it. Known secrets are taken out there.
+    const deniedSignals = new Set<string>();
+    peer.handle("signals.emit", (p: { type?: unknown; data?: unknown; key?: unknown; subject?: unknown; subscription?: unknown }) => {
+      const type = typeof p?.type === "string" ? p.type.slice(0, 64) : "";
+      if (!(m.contributes.signals ?? []).some((s) => s.type === type)) {
+        const what = `signal "${type}" is not declared in contributes.signals`;
+        if (deniedSignals.size < 50 && !deniedSignals.has(type)) {
+          deniedSignals.add(type);
+          this.d.audit.append(`plugin:${id}`, "plugin.permission-denied", what);
+        }
+        throw new Error(`plugin ${id} is not allowed: ${what}`);
+      }
+      const r = this.d.signals?.fromPlugin(id, {
+        type,
+        data: p.data,
+        ...(p.key !== undefined ? { key: p.key as string } : {}),
+        ...(p.subject !== undefined ? { subject: p.subject as string } : {}),
+        ...(p.subscription !== undefined ? { subscription: String(p.subscription) } : {}),
+      }) ?? { ok: true };
+      if (!r.ok) throw new Error(r.error);
+      return {};
+    });
+
     peer.handle("events.subscribe", (p: { names: BusEventName[] }) => {
       for (const name of p.names) {
         const unsub = this.d.bus.on(name, (payload) => {
@@ -595,6 +637,35 @@ export class PluginHost {
       if (ctx?.conversationId) this.d.attachPart?.(ctx.conversationId, { type: "widget", plugin: rec.id, kind, data });
     }
     return Object.keys(meta).length ? { ...result, _meta: meta } : { content: result.content, ...(result.isError ? { isError: true } : {}) };
+  }
+
+  // ---------- Signal sources ----------
+
+  /** The signals each enabled plugin the hub loads declares (contributes.signals), and whether it runs. */
+  signalSources(): Array<{ pluginId: string; decls: SignalDecl[]; running: boolean; title(key: string, locale?: Locale): string }> {
+    const filter = this.d.config.plugins;
+    return this.list()
+      .filter((r) => r.enabled && r.layout?.manifest.contributes.signals?.length && (filter === "all" || (Array.isArray(filter) && filter.includes(r.id))))
+      .map((r) => ({
+        pluginId: r.id,
+        decls: r.layout!.manifest.contributes.signals,
+        running: r.status === "running" && this.running.has(r.id),
+        title: (key: string, locale?: Locale) => localizePluginValue(r.layout, key, locale ?? hubLocale()),
+      }));
+  }
+
+  /** Start one of a running plugin's providers for a subscription (its id is the hub's). */
+  async signalSubscribe(id: string, subscription: string, type: string, config: Record<string, unknown>): Promise<void> {
+    const r = this.running.get(id);
+    if (!r || r.peer.closed) throw new Error(`plugin ${id} is not running`);
+    await r.peer.request("signals.subscribe", { id: subscription, type, config }, { timeoutMs: SIGNAL_SUBSCRIBE_TIMEOUT_MS });
+  }
+
+  /** Stop a subscription; nothing to do when the plugin no longer runs (it went with the process). */
+  async signalStop(id: string, subscription: string): Promise<void> {
+    const r = this.running.get(id);
+    if (!r || r.peer.closed || r.stopping) return;
+    await r.peer.request("signals.stop", { id: subscription }, { timeoutMs: SIGNAL_STOP_TIMEOUT_MS });
   }
 
   // ---------- Catalog entries ----------

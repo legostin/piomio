@@ -96,7 +96,15 @@ const REASONS: Record<RunReason, string> = {
   webhook: "incoming webhook",
   heartbeat: "periodic proactive review",
   manual: "started manually by the user",
+  signal: "a signal arrived",
 };
+
+/** The reason line: a signal's names the sources it came from (the part of each type before its first dot). */
+function reasonText(c: FireContext): string {
+  if (c.reason !== "signal") return REASONS[c.reason];
+  const sources = [...new Set((c.pipeline?.signals ?? []).map((s) => oneLine(s.type.split(".")[0], 64)).filter(Boolean))];
+  return sources.length ? `${REASONS.signal} from ${sources.slice(0, 5).join(", ")}${sources.length > 5 ? ` and ${sources.length - 5} more` : ""}` : REASONS.signal;
+}
 
 export function renderPrompt(t: Trigger, c: FireContext): string {
   const when = formatLocal(c.now, c.tz);
@@ -112,7 +120,7 @@ export function renderPrompt(t: Trigger, c: FireContext): string {
     "Trigger context (added by Piomio):",
     `- Trigger: "${t.name}" (kind: ${t.kind}, id: ${t.id})`,
     `- Fired at: ${when}, timezone ${c.tz}`,
-    `- Reason: ${REASONS[c.reason]}`,
+    `- Reason: ${reasonText(c)}`,
   ];
   if (t.machineName) lines.push(`- Computer: ${t.machineName} (the trigger runs on it)`);
   if (c.missedAt) lines.push(`- Missed run was planned for ${formatLocal(c.missedAt, c.tz)}; this is a single catch-up run.`);

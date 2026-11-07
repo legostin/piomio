@@ -17,8 +17,11 @@ import type { TriggerEngine } from "./engine.ts";
 import type { FetchLike, PipelineServices, TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { startTriggers } from "./index.ts";
 import { proxiedGet } from "./net.ts";
+import type { DeliverOptions } from "./pipeline.ts";
 import { gatewayReads } from "./pio.ts";
+import type { SignalSources } from "./sources.ts";
 import { migrateRunLists, sqlStore, type NoteQuery, type NoteRow, type TriggerStore } from "./store.ts";
+import type { RunReason, Signal, TriggerRun } from "./types.ts";
 
 /** The Triggers card's id: its storage, its webhook addresses (/hooks/triggers/…) and its UI events carry it. */
 export const TRIGGERS_ID = "triggers";
@@ -53,6 +56,11 @@ export interface CoreTriggersDeps {
   egress?: { proxy: Pick<EgressProxy, "issueToken" | "revoke">; port: number };
   /** The vault: a webhook's signing secret is read from it (`vault.access`, actor trigger:<id>). Unset: signed webhooks answer 503. */
   vault?: { access(ref: string, req: { actor: string }): Record<string, string> };
+  /**
+   * The signal sources beyond core's own (sources.ts): trigger_sources lists them, the engine syncs their plugin
+   * subscriptions. They start with the engine and stop with it. Unset: only core's four.
+   */
+  sources?: Pick<SignalSources, "list" | "sync" | "start" | "stop">;
 }
 
 /** What one start registered: released together, so a stop during a start takes back exactly that start's. */
@@ -119,6 +127,8 @@ export class CoreTriggers {
           return;
         }
         this.engine = engine;
+        // Before the engine's boot (on the next turn), which syncs the subscriptions again.
+        this.d.sources?.start();
       } catch (e) {
         this.release(s);
         if (this.session === s) this.session = undefined;
@@ -139,6 +149,8 @@ export class CoreTriggers {
   /** Stop it: its timers, its tools, its bus and settings listeners, its HTTP. A start in flight is stopped too. */
   stop(): void {
     this.gen++;
+    // Its sources first: no plugin subscription and no signal outlives the engine.
+    this.d.sources?.stop();
     this.engine?.stop();
     this.engine = undefined;
     if (this.session) this.release(this.session);
@@ -160,6 +172,19 @@ export class CoreTriggers {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Signals from a source (sources.ts) for one trigger, into the pipeline's arrival-time intake (match, dedup, flood
+   * count, then the trigger's queue or batch): undefined while the engine does not run, or the trigger is gone or off.
+   */
+  async deliver(triggerId: string, signals: Signal[], reason: RunReason, o: Pick<DeliverOptions, "via"> = {}): Promise<TriggerRun | undefined> {
+    const e = this.engine;
+    const s = this.session;
+    if (!e || !s || s.closed) return undefined;
+    const t = e.get(triggerId);
+    if (!t?.enabled) return undefined;
+    return e.pipeline.deliver(t, signals, reason, o.via ? { via: o.via } : {});
   }
 
   /** Its HTTP API (/api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
@@ -296,6 +321,8 @@ export class CoreTriggers {
       core: { call: (method, params) => open(() => d.coreCall(TRIGGERS_ID, method, params) as Promise<any>, true) },
       ...(fetch ? { fetch: (url, init) => open(() => fetch(url, init)) } : {}),
       pipeline,
+      // Listed in the hub language (trigger_sources is for the model); a sync once the session closed does nothing.
+      ...(d.sources ? { sources: { list: () => d.sources!.list(hubLocale()), sync: () => (s.closed ? Promise.resolve() : d.sources!.sync()) } } : {}),
     };
   }
 }

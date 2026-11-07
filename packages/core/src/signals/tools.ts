@@ -378,7 +378,7 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
   ctx.tools.register({
     name: "sources",
     description:
-      "The signal sources a trigger can listen to now: core's own time.cron, time.at, web.page and web.webhook, and the others the hub has. Each with what it is, its config (in trigger_create's on), and a sample of the signals it brings (their type and data are what a script and a quick check see).",
+      "The signal sources a trigger can listen to now: core's own time.cron, time.at, web.page and web.webhook, and the others the hub has. Each with what it is, its config (in trigger_create's on), and a sample of the signals it brings (their type and data are what a script and a quick check see). A source with mode subscribe works for each config a trigger gives it; online: false means its plugin does not run now.",
     effect: "read",
     inputSchema: { type: "object", properties: {} },
     handler: () => {
@@ -395,6 +395,7 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
         .map((s) => ({
           type: s.type,
           description: s.description,
+          ...(s.mode === "subscribe" ? { mode: "subscribe" } : {}),
           ...(s.config !== undefined ? { config: JSON.stringify(s.config) } : {}),
           signal: { type: s.type, source: s.source ?? s.type.split(".")[0], ...(s.sample !== undefined ? { data: s.sample } : {}), external: s.external ?? true },
           ...(s.online === false ? { online: false } : {}),

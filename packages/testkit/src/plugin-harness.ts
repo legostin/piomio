@@ -43,6 +43,15 @@ export interface PluginHarness {
   coreCalls: Array<{ method: string; params: any }>;
   /** Ids of every vault.get that reached the "hub", in order. */
   vaultGets: string[];
+  /**
+   * The signals the plugin sent (ctx.signals.emit, or a provider's emit with its subscription's id), in order. One of a
+   * type its manifest does not declare is refused, as the hub refuses it, and not recorded.
+   */
+  signals: HarnessSignal[];
+  /** Subscribe to one of its providers as the hub does for a trigger; resolves with the subscription's id once the plugin answered. */
+  subscribeSignal(type: string, config?: Record<string, unknown>, id?: string): Promise<string>;
+  /** Stop a subscription (no trigger needs it any more). */
+  stopSignal(id: string): Promise<void>;
   /** The plugin's last report of its catalog entries (ctx.catalog.update), and every report in order. */
   catalog: CatalogEntryState[];
   catalogReports: CatalogEntryState[][];
@@ -73,6 +82,15 @@ export interface PluginHarness {
   brainInterrupt(sessionId: string): Promise<void>;
   brainClose(sessionId: string): Promise<void>;
   stop(): Promise<void>;
+}
+
+/** A signal as the plugin sent it (the type as declared, without the plugin's id). */
+export interface HarnessSignal {
+  type: string;
+  data: unknown;
+  key?: string;
+  subject?: string;
+  subscription?: string;
 }
 
 export function defaultContext(over: Partial<ToolCallContext> = {}): ToolCallContext {
@@ -140,6 +158,20 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     return {};
   });
   peer.handle("register.http", () => ({}));
+  const signals: HarnessSignal[] = [];
+  const declaredSignals = new Set((layout.manifest.contributes.signals ?? []).map((s) => s.type));
+  peer.handle("signals.emit", (p: HarnessSignal) => {
+    if (!declaredSignals.has(p.type)) throw new Error(`plugin ${layout.manifest.id} is not allowed: signal "${p.type}" is not declared in contributes.signals`);
+    signals.push({
+      type: p.type,
+      data: p.data,
+      ...(p.key !== undefined ? { key: p.key } : {}),
+      ...(p.subject !== undefined ? { subject: p.subject } : {}),
+      ...(p.subscription !== undefined ? { subscription: p.subscription } : {}),
+    });
+    return {};
+  });
+  let subscriptionCount = 0;
   peer.handle("events.subscribe", (p: { names: string[] }) => {
     p.names.forEach((n) => subscriptions.add(n));
     return {};
@@ -213,6 +245,14 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     logs,
     coreCalls,
     vaultGets,
+    signals,
+    async subscribeSignal(type, config = {}, id = `sub_test_${++subscriptionCount}`) {
+      await peer.request("signals.subscribe", { id, type, config }, { timeoutMs: 30_000 });
+      return id;
+    },
+    async stopSignal(id) {
+      await peer.request("signals.stop", { id }, { timeoutMs: 10_000 });
+    },
     get catalog() {
       return catalogReports.at(-1) ?? [];
     },

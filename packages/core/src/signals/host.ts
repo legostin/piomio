@@ -50,6 +50,8 @@ export interface TriggerSourceInfo {
   type: string;
   description: string;
   source?: string;
+  /** subscribe: it works only while a trigger subscribes, for each config (sources.ts); unset: broadcast. */
+  mode?: "broadcast" | "subscribe";
   config?: unknown;
   sample?: unknown;
   external?: boolean;
@@ -114,6 +116,9 @@ export interface TriggerHost {
   fetch?: FetchLike;
   /** What scripts and quick checks reach (pipeline.ts); unset: none of it is available. */
   pipeline?: PipelineServices;
-  /** Signal sources beyond core's own (phase 3 registers them); unset: only core's four. */
-  sources?: { list(): TriggerSourceInfo[] };
+  /**
+   * Signal sources beyond core's own (sources.ts: plugins' and the hub's); unset: only core's four. `sync` brings the
+   * plugins' live subscriptions in line with the enabled triggers' `on`, after each change to them and at boot.
+   */
+  sources?: { list(): TriggerSourceInfo[]; sync?(): Promise<void> };
 }

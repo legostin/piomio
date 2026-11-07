@@ -41,7 +41,8 @@ export interface StageRecord {
   tokens?: number;
 }
 
-export type RunReason = "schedule" | "catch-up" | "once" | "change" | "webhook" | "heartbeat" | "manual";
+/** Why a trigger ran; "signal": a signal from a plugin's source (sources.ts) arrived. */
+export type RunReason = "schedule" | "catch-up" | "once" | "change" | "webhook" | "heartbeat" | "manual" | "signal";
 
 export interface TriggerState {
   /** Next planned firing (ISO). Persisted so missed runs can be detected after a restart. */

@@ -1,0 +1,21 @@
+{
+  "id": "pinger",
+  "name": "Pinger",
+  "server": "./server/index.ts",
+  "contributes": {
+    "tools": true,
+    "signals": [
+      {
+        "type": "ping",
+        "mode": "subscribe",
+        "title": "%signal.ping%",
+        "description": "A ping, sent once for each subscription.",
+        "config": { "type": "object", "properties": { "word": { "type": "string" } } },
+        "data": { "type": "object", "properties": { "word": { "type": "string" }, "n": { "type": "number" } }, "required": ["word"] },
+        "sample": { "word": "ping", "n": 1 }
+      },
+      { "type": "pong", "title": "%signal.pong%", "description": "A pong, sent when the pinger_emit tool says so.", "external": false }
+    ]
+  },
+  "permissions": {}
+}

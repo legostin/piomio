@@ -23,6 +23,8 @@ export interface TriggerHarnessOptions {
   pipeline?: PipelineServices;
   /** Signal sources beyond core's own (trigger_sources, trigger_test's samples). */
   sources?: TriggerSourceInfo[];
+  /** Called each time the engine syncs its sources' subscriptions (with `sources` given). */
+  onSourcesSync?: () => void;
 }
 
 /** A registered tool as the harness keeps it: its spec, effectOf and describe (the handler is behind invoke). */
@@ -94,7 +96,7 @@ export async function startTriggerHarness(o: TriggerHarnessOptions = {}): Promis
     store,
     ...(o.vault ? { vault: { get: (ref: string, actor: string) => o.vault!(ref, actor) } } : {}),
     ...(o.pipeline ? { pipeline: o.pipeline } : {}),
-    ...(o.sources ? { sources: { list: () => o.sources! } } : {}),
+    ...(o.sources ? { sources: { list: () => o.sources!, sync: async () => o.onSourcesSync?.() } } : {}),
     core: {
       call: async (method, params) => {
         coreCalls.push({ method, params });

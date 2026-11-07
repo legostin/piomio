@@ -80,6 +80,7 @@
   "ui.reason.webhook": "вебхук",
   "ui.reason.heartbeat": "обзор",
   "ui.reason.manual": "вручную",
+  "ui.reason.signal": "сигнал",
   "ui.status.done": "выполнен",
   "ui.status.off": "выключен",
   "ui.status.error": "ошибка",

@@ -189,6 +189,8 @@ export class TriggerEngine {
     }
     this.booted = true;
     this.arm();
+    // Plugins' sources are subscribed for the triggers that listen to them.
+    this.syncSources();
     // Runs queued and batches still open when the hub stopped (or another replica led) go on.
     await this.pipeline.resume();
     for (const c of pipedCatchUps) {
@@ -208,6 +210,16 @@ export class TriggerEngine {
 
   updateSettings(raw: Record<string, any>): void {
     this.settings = readEngineSettings(raw);
+  }
+
+  /**
+   * The plugins' live subscriptions follow the enabled triggers' `on` (sources.ts): after a trigger is made, changed,
+   * turned on or off, deleted, adopted from storage, and at boot. In the background: a slow plugin holds up no tool call.
+   */
+  private syncSources(): void {
+    const sync = this.ctx.sources?.sync;
+    if (this.stopped || !sync) return;
+    void sync.call(this.ctx.sources).catch((e: any) => this.ctx.log.warn(`signal sources: ${e?.message ?? e}`));
   }
 
   async refreshCoreSettings(): Promise<void> {
@@ -372,10 +384,12 @@ export class TriggerEngine {
     if (!stored?.id) {
       this.triggers.delete(id);
       this.emit(id);
+      this.syncSources();
       return undefined;
     }
     const t = { ...stored, state: stored.state ?? {} };
     this.triggers.set(id, t);
+    this.syncSources();
     return t;
   }
 
@@ -409,6 +423,7 @@ export class TriggerEngine {
         t.state.nextRunAt = undefined;
         await this.save(t);
         this.emit(t.id);
+        this.syncSources();
         return;
       case "watch":
         await this.check(t);
@@ -668,6 +683,7 @@ export class TriggerEngine {
     await this.save(t);
     this.emit(t.id);
     this.arm();
+    this.syncSources();
     return t;
   }
 
@@ -684,6 +700,7 @@ export class TriggerEngine {
       await this.save(next);
       this.emit(id);
       this.arm();
+      this.syncSources();
       return next;
     });
   }
@@ -699,6 +716,7 @@ export class TriggerEngine {
       this.pipeline.forget(id);
       this.emit(id);
       this.arm();
+      this.syncSources();
       return t;
     });
   }
@@ -781,6 +799,7 @@ export class TriggerEngine {
       await this.save(t);
       this.emit(id);
       this.arm();
+      if (value === "off") this.syncSources();
     });
   }
 
