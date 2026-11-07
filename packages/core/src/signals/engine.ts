@@ -1,7 +1,7 @@
-// Trigger engine: persistence, timers, firing tasks, watch polling, webhooks, feedback.
+// Trigger engine (in core since the unified triggers, phase 1): persistence, timers, firing tasks, watch polling, webhooks, feedback.
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import type { PluginContext, PluginHttpRequest, PluginHttpResponse } from "@piomio/plugin-sdk";
+import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
 import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
 import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
@@ -61,7 +61,7 @@ function defaultTimezone(): string {
 }
 
 export class TriggerEngine {
-  ctx: PluginContext;
+  ctx: TriggerHost;
   settings: EngineSettings;
   triggers = new Map<string, Trigger>();
   tz = defaultTimezone();
@@ -82,7 +82,7 @@ export class TriggerEngine {
   /** When a tick last found the computer had slept (ms). */
   private wokeAt = -Infinity;
 
-  constructor(ctx: PluginContext, opts: { now?: () => number } = {}) {
+  constructor(ctx: TriggerHost, opts: { now?: () => number } = {}) {
     this.ctx = ctx;
     this.settings = readEngineSettings(ctx.settings);
     this.now = opts.now ?? Date.now;
@@ -695,7 +695,7 @@ export class TriggerEngine {
 
   // ---------- webhooks ----------
 
-  async webhook(req: PluginHttpRequest): Promise<PluginHttpResponse> {
+  async webhook(req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
     const m = /^\/([A-Za-z0-9_-]{1,64})\/?$/.exec(req.path);
     const t = m ? this.triggers.get(m[1]) : undefined;
     if (!t || t.kind !== "event" || !t.secret) return { status: 404, body: { error: "not found" } };

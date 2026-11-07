@@ -3,11 +3,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
-import { startPlugin, type PluginHarness } from "@piomio/testkit";
-import { defaultReport } from "../server/schedule.ts";
-
-const dir = join(import.meta.dirname, "..");
+import { startTriggerHarness as startPlugin, type TriggerHarness as PluginHarness } from "./harness.ts";
+import { defaultReport } from "../../src/signals/schedule.ts";
 
 const until = async <T>(fn: () => T | Promise<T>, timeoutMs = 8000): Promise<NonNullable<T>> => {
   const end = Date.now() + timeoutMs;
@@ -41,7 +38,6 @@ describe("triggers plugin", () => {
     siteUrl = `http://127.0.0.1:${(site.address() as AddressInfo).port}/tickets`;
 
     h = await startPlugin({
-      dir,
       settings: { allowPrivateUrls: true },
       core: (method, p) => {
         switch (method) {
@@ -315,7 +311,6 @@ describe("triggers plugin in Russian", () => {
 
   beforeAll(async () => {
     h = await startPlugin({
-      dir,
       locale: "ru",
       core: (method) => {
         if (method === "settings.get") return { timezone: "Europe/Moscow", defaultAgent: "assistant" };

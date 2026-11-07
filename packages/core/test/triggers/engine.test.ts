@@ -1,9 +1,9 @@
 // In-process engine tests with a fake plugin context (persistence across "restarts", catch-up, limits, feedback).
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PluginContext } from "@piomio/plugin-sdk";
-import { TriggerEngine } from "../server/engine.ts";
-import type { Trigger } from "../server/types.ts";
+import type { TriggerHost } from "../../src/signals/host.ts";
+import { TriggerEngine } from "../../src/signals/engine.ts";
+import type { Trigger } from "../../src/signals/types.ts";
 
 function fakeCtx(kv = new Map<string, unknown>(), tz = "Europe/Moscow") {
   const calls: Array<{ method: string; params: any }> = [];
@@ -36,7 +36,7 @@ function fakeCtx(kv = new Map<string, unknown>(), tz = "Europe/Moscow") {
         return {};
       },
     },
-  } as unknown as PluginContext;
+  } as unknown as TriggerHost;
   return { ctx, kv, calls, created: () => calls.filter((c) => c.method === "tasks.create"), notified: () => calls.filter((c) => c.method === "notify") };
 }
 

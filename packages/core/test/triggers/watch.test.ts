@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { assertFetchable, evalJsonPath, extractValue, isPrivateAddress, lineDiff, parseJsonPath } from "../server/watch.ts";
-import { renderPrompt, truncateBytes } from "../server/prompt.ts";
-import { buildTrigger } from "../server/validate.ts";
+import { assertFetchable, evalJsonPath, extractValue, isPrivateAddress, lineDiff, parseJsonPath } from "../../src/signals/watch.ts";
+import { renderPrompt, truncateBytes } from "../../src/signals/prompt.ts";
+import { buildTrigger } from "../../src/signals/validate.ts";
 
 describe("watch value extraction", () => {
   it("parses and evaluates JSON paths", () => {

@@ -1,6 +1,6 @@
 // Agent tools: create / list / update / delete / run_now (exposed as trigger_<name>).
 
-import type { PluginContext } from "@piomio/plugin-sdk";
+import type { TriggerHost } from "./host.ts";
 import type { JsonSchema, ToolResult } from "@piomio/shared";
 import { NotFoundError, type TriggerEngine } from "./engine.ts";
 import { describeSchedule, formatLocal } from "./schedule.ts";
@@ -98,7 +98,7 @@ async function guarded(fn: () => Promise<ToolResult>): Promise<ToolResult> {
   }
 }
 
-export function registerTools(ctx: PluginContext, e: TriggerEngine): void {
+export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
   ctx.tools.register({
     name: "create",
     description:

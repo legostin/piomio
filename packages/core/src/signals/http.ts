@@ -2,7 +2,7 @@
 // Errors shown by the UI carry the catalog message in the reader's language plus the code and params;
 // webhook responses go to other programs and stay in English.
 
-import type { PluginHttpRequest, PluginHttpResponse } from "@piomio/plugin-sdk";
+import type { TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import type { Locale } from "@piomio/shared";
 import { NotFoundError, type TriggerEngine } from "./engine.ts";
 import type { ErrorParams, TriggerError } from "./errors.ts";
@@ -25,12 +25,12 @@ export function view(e: TriggerEngine, t: Trigger, locale: Locale = e.ctx.i18n.l
   };
 }
 
-const ok = (body: unknown, status = 200): PluginHttpResponse => ({ status, body });
-const failure = (e: TriggerEngine, req: PluginHttpRequest, err: TriggerError, status: number): PluginHttpResponse =>
+const ok = (body: unknown, status = 200): TriggerHttpResponse => ({ status, body });
+const failure = (e: TriggerEngine, req: TriggerHttpRequest, err: TriggerError, status: number): TriggerHttpResponse =>
   ok({ error: e.ctx.i18n.t(`error.${err.code}`, err.params, req.locale), code: err.code, params: err.params }, status);
-const body = (req: PluginHttpRequest): TriggerInput => (req.body && typeof req.body === "object" ? (req.body as TriggerInput) : {});
+const body = (req: TriggerHttpRequest): TriggerInput => (req.body && typeof req.body === "object" ? (req.body as TriggerInput) : {});
 
-export async function handleHttp(e: TriggerEngine, req: PluginHttpRequest): Promise<PluginHttpResponse> {
+export async function handleHttp(e: TriggerEngine, req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
   if (req.public) return e.webhook(req);
   const method = req.method.toUpperCase();
   const path = req.path.replace(/\/+$/, "") || "/";

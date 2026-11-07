@@ -1,16 +1,11 @@
 {
   "id": "triggers",
   "name": "%name%",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "%description%",
   "builtin": true,
-  "server": "./server/index.ts",
   "ui": "./ui/dist/index.js",
-  "toolPrefix": "trigger",
   "contributes": {
-    "tools": true,
-    "http": true,
-    "triggers": ["schedule", "once", "watch", "event", "heartbeat"],
     "settings": {
       "type": "object",
       "properties": {
@@ -32,8 +27,6 @@
   },
   "integration": {"category": "assistant", "icon": "alarm-clock", "connect": "none", "summary": "%integration.summary%", "example": "%integration.example%"},
   "permissions": {
-    "network": ["*"],
-    "core": ["tasks.create", "tasks.list", "agents.list", "machines.list", "settings.get", "notify", "ui.emit"],
     "ui": ["route"]
   }
 }
