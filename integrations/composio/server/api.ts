@@ -16,12 +16,16 @@ export type ComposioErrorKind = "key" | "limit" | "rate" | "down" | "other";
 export class ComposioError extends Error {
   status: number;
   kind: ComposioErrorKind;
-  constructor(status: number, message: string) {
+  /** `kind` defaults to what the status says. */
+  constructor(status: number, message: string, kind?: ComposioErrorKind) {
     super(message);
     this.status = status;
-    this.kind = status === 401 ? "key" : status === 402 ? "limit" : status === 429 ? "rate" : status === 0 || status >= 500 ? "down" : "other";
+    this.kind = kind ?? (status === 401 ? "key" : status === 402 ? "limit" : status === 429 ? "rate" : status === 0 || status >= 500 ? "down" : "other");
   }
 }
+
+/** A success answer without what it should hold: Composio answered, so it is the request's problem, not an outage. */
+const malformed = (message: string) => new ComposioError(502, message, "other");
 
 /** An app of Composio's (a toolkit). `managed`: Composio signs in to it with its own OAuth app. */
 export interface Toolkit {
@@ -79,6 +83,8 @@ export interface ComposioApi {
   getWebhookSubscription(id: string): Promise<WebhookSubscription>;
   /** Composio's internal realtime channel (Pusher) for projects without a public address. Undocumented, may change. */
   realtimeCredentials(): Promise<RealtimeCredentials>;
+  /** The private channel's authorisation for one socket (Pusher's `auth`), asked for as pusher-js does. */
+  realtimeAuth(socketId: string, channel: string): Promise<string>;
 }
 
 /** What a trigger type listens to: its settings (`config`, a JSON schema) and the shape of its events (`payload`). */
@@ -176,13 +182,19 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
   const root = base.replace(/\/+$/, "");
   // The internal SDK endpoints live under /api/v3, whatever version the rest of the calls use.
   const internalRoot = root.replace(/\/api\/v3(\.\d+)?$/, "/api/v3");
+  /** A request; a URLSearchParams body goes as a form, any other as JSON. */
   async function call(method: string, path: string, body?: unknown, from = root): Promise<{ status: number; json: any }> {
+    const form = body instanceof URLSearchParams;
     let res: Response;
     try {
       res = await fetch(`${from}${path}`, {
         method,
-        headers: { "x-api-key": await key(), accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}) },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        headers: {
+          "x-api-key": await key(),
+          accept: "application/json",
+          ...(body !== undefined ? { "content-type": form ? "application/x-www-form-urlencoded" : "application/json" } : {}),
+        },
+        ...(body !== undefined ? { body: form ? body.toString() : JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(30_000),
       });
     } catch (e: any) {
@@ -226,14 +238,14 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
     async createAuthConfig(slug) {
       const r = await req("POST", "/auth_configs", { toolkit: { slug }, auth_config: { type: "use_composio_managed_auth" } });
       const id = str(r?.auth_config?.id) || str(r?.id);
-      if (!id) throw new ComposioError(500, "Composio created no auth config");
+      if (!id) throw malformed("Composio created no auth config");
       return id;
     },
     async link(authConfigId, userId) {
       const r = await req("POST", "/connected_accounts/link", { auth_config_id: authConfigId, user_id: userId });
       const url = str(r?.redirect_url);
       const accountId = str(r?.connected_account_id);
-      if (!url || !accountId) throw new ComposioError(500, "Composio gave no sign-in link");
+      if (!url || !accountId) throw malformed("Composio gave no sign-in link");
       return { url, accountId, ...(str(r?.expires_at) ? { expiresAt: str(r.expires_at) } : {}) };
     },
     async account(id) {
@@ -260,6 +272,7 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
       return { ok: r?.successful !== false && !r?.error, data: r?.data ?? null, ...(r?.error ? { error: typeof r.error === "string" ? r.error : JSON.stringify(r.error) } : {}) };
     },
     async listTriggerTypes(toolkits) {
+      if (!toolkits.length) return [];
       return (await pages("/triggers_types", { toolkit_slugs: toolkits.join(","), toolkit_versions: "latest" })).map(triggerTypeOf).filter((t) => t.slug);
     },
     async getTriggerType(slug) {
@@ -274,7 +287,7 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
         ...(opts.pollingInterval ? { polling_interval: opts.pollingInterval } : {}),
       });
       const id = str(json?.trigger_id);
-      if (!id) throw new ComposioError(500, "Composio created no trigger");
+      if (!id) throw malformed("Composio created no trigger");
       return { id, type: str(json?.type), fallbackReason: str(json?.fallback_reason) || null, pollingInterval: typeof json?.polling_interval === "number" ? json.polling_interval : null, created: status === 201 };
     },
     async listActiveTriggers(filters = {}) {
@@ -293,18 +306,24 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
       await req("PATCH", `/trigger_instances/manage/${encodeURIComponent(id)}`, { status: enabled ? "enable" : "disable" });
     },
     async deleteTrigger(id) {
-      await req("DELETE", `/trigger_instances/manage/${encodeURIComponent(id)}`);
+      try {
+        await req("DELETE", `/trigger_instances/manage/${encodeURIComponent(id)}`);
+      } catch (e) {
+        if (!(e instanceof ComposioError && e.status === 404)) throw e;
+      }
     },
     async createWebhookSubscription(url) {
       try {
         const r = subscriptionOf(await req("POST", "/webhook_subscriptions", { webhook_url: url, enabled_events: [TRIGGER_EVENT], version: "V3" }));
-        if (!r.id) throw new ComposioError(500, "Composio created no webhook subscription");
+        if (!r.id) throw malformed("Composio created no webhook subscription");
         return r;
       } catch (e) {
         if (!(e instanceof ComposioError && e.status === 409)) throw e;
       }
-      // One subscription per project: take the existing one over instead of making a second.
-      const existing = (await pages("/webhook_subscriptions", {}))[0];
+      // One subscription per project: take the existing one over instead of making a second (the one for trigger
+      // messages when there are several).
+      const list = await pages("/webhook_subscriptions", {});
+      const existing = list.find((w) => Array.isArray(w?.enabled_events) && w.enabled_events.includes(TRIGGER_EVENT)) ?? list[0];
       const id = str(existing?.id);
       if (!id) throw new ComposioError(409, "Composio says a webhook subscription exists but lists none");
       await req("PATCH", `/webhook_subscriptions/${encodeURIComponent(id)}`, { webhook_url: url, enabled_events: [TRIGGER_EVENT] });
@@ -316,8 +335,14 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
     async realtimeCredentials() {
       const r = await req("GET", "/internal/sdk/realtime/credentials", undefined, internalRoot);
       const c = { pusherKey: str(r?.pusher_key), projectId: str(r?.project_id), cluster: str(r?.pusher_cluster) };
-      if (!c.pusherKey || !c.projectId || !c.cluster) throw new ComposioError(500, "Composio gave no realtime credentials");
+      if (!c.pusherKey || !c.projectId || !c.cluster) throw malformed("Composio gave no realtime credentials");
       return c;
+    },
+    async realtimeAuth(socketId, channel) {
+      const r = await req("POST", "/internal/sdk/realtime/auth", new URLSearchParams({ socket_id: socketId, channel_name: channel }), internalRoot);
+      const auth = str(r?.auth);
+      if (!auth) throw malformed("Composio gave no channel authorisation");
+      return auth;
     },
   };
 }

@@ -6,11 +6,11 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { composioApi, ComposioError, type ComposioApi } from "../server/api.ts";
 
-type Call = { method: string; path: string; query: URLSearchParams; body: any; key: string | undefined };
+type Call = { method: string; path: string; query: URLSearchParams; body: any; raw: string; type: string | undefined; key: string | undefined };
 let calls: Call[];
 let server: Server;
 let api: ComposioApi;
-const state = { subscriptionExists: false, upsertStatus: 201, oldUrl: "https://old.example/h" };
+const state = { subscriptionExists: false, upsertStatus: 201, oldUrl: "https://old.example/h", malformed: false };
 
 const types = Array.from({ length: 3 }, (_, i) => ({
   slug: `GMAIL_T${i}`, name: `T${i}`, description: `d${i}`, instructions: "i", version: "1", types: ["poll"], toolkit: { slug: "gmail" },
@@ -23,8 +23,8 @@ beforeAll(async () => {
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
       const u = new URL(req.url!, "http://x");
-      const body = raw ? JSON.parse(raw) : undefined;
-      calls.push({ method: req.method!, path: u.pathname, query: u.searchParams, body, key: req.headers["x-api-key"] as string | undefined });
+      const body = raw && req.headers["content-type"]?.startsWith("application/json") ? JSON.parse(raw) : undefined;
+      calls.push({ method: req.method!, path: u.pathname, query: u.searchParams, body, raw, type: req.headers["content-type"], key: req.headers["x-api-key"] as string | undefined });
       const send = (status: number, v: unknown) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(v));
       const p = u.pathname;
       if (req.method === "GET" && p === "/api/v3.1/triggers_types") {
@@ -34,7 +34,7 @@ beforeAll(async () => {
       }
       if (req.method === "GET" && p === "/api/v3.1/triggers_types/GMAIL_T0") return send(200, types[0]);
       if (req.method === "GET" && p.startsWith("/api/v3.1/triggers_types/")) return send(404, { error: { message: "no such trigger type" } });
-      if (req.method === "POST" && p === "/api/v3.1/trigger_instances/GMAIL_T0/upsert") return send(state.upsertStatus, { trigger_id: "ti_1", type: "poll", fallback_reason: null, polling_interval: 2 });
+      if (req.method === "POST" && p === "/api/v3.1/trigger_instances/GMAIL_T0/upsert") return send(state.upsertStatus, state.malformed ? { ok: true } : { trigger_id: "ti_1", type: "poll", fallback_reason: null, polling_interval: 2 });
       if (req.method === "GET" && p === "/api/v3.1/trigger_instances/active") {
         return u.searchParams.get("cursor") === "c2"
           ? send(200, { items: [{ id: "ti_2", trigger_name: "GMAIL_T1", trigger_config: {}, connected_account_id: "ca_1", disabled_at: "2026-01-01T00:00:00Z" }], next_cursor: null })
@@ -42,18 +42,31 @@ beforeAll(async () => {
       }
       if (req.method === "PATCH" && p === "/api/v3.1/trigger_instances/manage/ti_1") return send(200, { status: "success" });
       if (req.method === "DELETE" && p === "/api/v3.1/trigger_instances/manage/ti_1") return send(200, { status: "success" });
+      if (req.method === "DELETE" && p === "/api/v3.1/trigger_instances/manage/ti_gone") return send(404, { error: { message: "no such trigger" } });
       if (req.method === "POST" && p === "/api/v3.1/webhook_subscriptions") {
         return state.subscriptionExists
           ? send(409, { error: { message: "already exists" } })
           : send(201, { id: "whs_1", webhook_url: body.webhook_url, secret: "sec_new", enabled_events: body.enabled_events });
       }
-      if (req.method === "GET" && p === "/api/v3.1/webhook_subscriptions") return send(200, { items: [{ id: "whs_old", webhook_url: "https://old.example/h" }], next_cursor: null });
+      if (req.method === "GET" && p === "/api/v3.1/webhook_subscriptions")
+        return send(200, {
+          items: [
+            { id: "whs_other", webhook_url: "https://other.example/h", enabled_events: ["composio.connected_account.expired"] },
+            { id: "whs_old", webhook_url: "https://old.example/h", enabled_events: ["composio.trigger.message"] },
+          ],
+          next_cursor: null,
+        });
       if (req.method === "PATCH" && p === "/api/v3.1/webhook_subscriptions/whs_old") {
         state.oldUrl = body.webhook_url;
         return send(200, { id: "whs_old", webhook_url: body.webhook_url, enabled_events: body.enabled_events });
       }
       if (req.method === "GET" && p === "/api/v3.1/webhook_subscriptions/whs_old") return send(200, { id: "whs_old", webhook_url: state.oldUrl, secret: "sec_old", enabled_events: ["composio.trigger.message"] });
-      if (req.method === "GET" && p === "/api/v3/internal/sdk/realtime/credentials") return send(200, { pusher_key: "k", project_id: "pr_1", pusher_cluster: "mt1" });
+      if (req.method === "GET" && p === "/api/v3/internal/sdk/realtime/credentials")
+        return send(200, state.malformed ? { pusher_key: "k" } : { pusher_key: "k", project_id: "pr_1", pusher_cluster: "mt1" });
+      if (req.method === "POST" && p === "/api/v3/internal/sdk/realtime/auth") {
+        const form = new URLSearchParams(raw);
+        return send(200, { auth: `k:${form.get("socket_id")}:${form.get("channel_name")}` });
+      }
       send(404, { error: { message: `unexpected ${req.method} ${p}` } });
     });
   });
@@ -66,10 +79,13 @@ beforeEach(() => {
   state.subscriptionExists = false;
   state.upsertStatus = 201;
   state.oldUrl = "https://old.example/h";
+  state.malformed = false;
 });
 
 describe("trigger types", () => {
   it("lists the types of the given apps, following next_cursor", async () => {
+    expect(await api.listTriggerTypes([])).toEqual([]);
+    expect(calls).toEqual([]);
     const all = await api.listTriggerTypes(["gmail", "slack"]);
     expect(all.map((t) => t.slug)).toEqual(["GMAIL_T0", "GMAIL_T1", "GMAIL_T2"]);
     expect(calls[0]!.query.get("toolkit_slugs")).toBe("gmail,slack");
@@ -104,14 +120,16 @@ describe("trigger instances", () => {
     expect(calls[0]!.query.get("limit")).toBe("50");
   });
 
-  it("enables, disables and deletes", async () => {
+  it("enables, disables and deletes; one already gone is deleted", async () => {
     await api.setTriggerEnabled("ti_1", false);
     await api.setTriggerEnabled("ti_1", true);
     await api.deleteTrigger("ti_1");
+    await api.deleteTrigger("ti_gone");
     expect(calls.map((c) => [c.method, c.path, c.body])).toEqual([
       ["PATCH", "/api/v3.1/trigger_instances/manage/ti_1", { status: "disable" }],
       ["PATCH", "/api/v3.1/trigger_instances/manage/ti_1", { status: "enable" }],
       ["DELETE", "/api/v3.1/trigger_instances/manage/ti_1", undefined],
+      ["DELETE", "/api/v3.1/trigger_instances/manage/ti_gone", undefined],
     ]);
   });
 });
@@ -123,7 +141,7 @@ describe("webhook subscriptions", () => {
     expect(calls[0]!.body).toEqual({ webhook_url: "https://hub.example/hooks/composio/events", enabled_events: ["composio.trigger.message"], version: "V3" });
   });
 
-  it("on 409 finds the existing subscription, points it at the new URL and returns its secret", async () => {
+  it("on 409 finds the existing subscription for trigger messages, points it at the new URL and returns its secret", async () => {
     state.subscriptionExists = true;
     const r = await api.createWebhookSubscription("https://hub.example/h");
     expect(r).toEqual({ id: "whs_old", url: "https://hub.example/h", secret: "sec_old" });
@@ -147,10 +165,21 @@ describe("realtime credentials", () => {
     expect(calls[0]!.path).toBe("/api/v3/internal/sdk/realtime/credentials");
     expect(calls[0]!.key).toBe("good");
   });
+
+  it("authorise the private channel with a form like pusher-js sends", async () => {
+    expect(await api.realtimeAuth("123.456", "private-pr_1_triggers")).toBe("k:123.456:private-pr_1_triggers");
+    expect(calls[0]).toMatchObject({ method: "POST", path: "/api/v3/internal/sdk/realtime/auth", key: "good", type: "application/x-www-form-urlencoded", raw: "socket_id=123.456&channel_name=private-pr_1_triggers" });
+  });
 });
 
 describe("errors", () => {
   it("surface as ComposioError", async () => {
-    await expect(api.deleteTrigger("ti_zzz")).rejects.toBeInstanceOf(ComposioError);
+    await expect(api.setTriggerEnabled("ti_zzz", true)).rejects.toBeInstanceOf(ComposioError);
+  });
+
+  it("a 2xx answer without what it should hold is the request's problem, not an outage", async () => {
+    state.malformed = true;
+    await expect(api.upsertTriggerInstance("GMAIL_T0", { config: {} })).rejects.toMatchObject({ kind: "other" });
+    await expect(api.realtimeCredentials()).rejects.toMatchObject({ kind: "other" });
   });
 });
