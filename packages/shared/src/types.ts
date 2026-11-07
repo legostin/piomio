@@ -915,7 +915,11 @@ export interface BrainSessionOptions {
     denyRead: string[];
     allowRead: string[];
     allowWrite?: string[];
-    permissionTool: string;
+    /**
+     * Unset: nothing goes past the sandbox; what it does not let through is refused on this computer. A hub replica's
+     * own daemon (core own-node.ts) asks nobody: the leader would judge such a request by its own computer's paths.
+     */
+    permissionTool?: string;
     /** Local sandbox routes these hosts to the authenticated hub proxy. ["*"] lets the hub ask about new hosts. */
     network?: { allowedDomains: string[] };
   };

@@ -111,8 +111,8 @@ describe.skipIf(process.platform === "win32")("a replica's computer while anothe
     expect(a.computers().some((c) => c.id === vpsMachine)).toBe(false);
     expect(a.machines.canonical(vpsMachine)).toBe(vpsId);
     expect(a.resolveComputer(vpsMachine)).toBe(vpsId);
-    // Its brains are the leader's to use, on that computer.
-    await until(() => a.brains.list().some((b) => b.ref.endsWith(`@${vpsMachine}`)), "the standby computer's brains at the leader");
+    // It said hello to the leader as a machine (its brains are what that computer has signed in: none on a CI runner).
+    await until(() => a.machines.get(vpsMachine)?.info?.hostname, "the standby computer's hello at the leader");
 
     // The leader's own daemon is on the leader's computer: folded into it, not a computer of its own.
     const macMachine = await until(() => a.ownNode.ownId(), "the leader's own pairing");

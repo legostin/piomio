@@ -13,7 +13,6 @@ import { createNodeDaemon, defaultPolicy, generateKey, loadConfig, loadKey, save
 import { newId, nowIso } from "@piomio/shared";
 import type { Hub } from "./app.ts";
 import { confinement } from "./native-permissions.ts";
-import { NATIVE_PERMISSION_TOOL } from "./tools/native-permission.ts";
 import { localComputerName } from "./pairing.ts";
 
 /** How soon the daemon tries again after the hub refused it (its row has yet to reach the leader, or a key changed). */
@@ -168,9 +167,10 @@ export class OwnNode {
         log,
         userPath: this.hub.userPath,
         files: false,
-        // As confined as this hub's own brains here: its data folder (vault, conversations) and the person's private
-        // stores stay closed, and whatever the sandbox does not let through asks the hub (native-permissions.ts).
-        confine: (workspace) => (this.hub.config.sandboxBrains ? { ...confinement(this.hub.config.dataDir, workspace), permissionTool: NATIVE_PERMISSION_TOOL } : undefined),
+        // In this computer's sandbox, as this hub's own brains here: its data folder (vault, conversations) and the
+        // person's private stores stay closed. Nothing goes past it: the leader would judge such a request by its own
+        // computer's paths, so no permission tool. Kimi has no sandbox of its own: this computer's policy answers it.
+        confine: (workspace, brainId) => (this.hub.config.sandboxBrains && brainId !== "kimi" ? confinement(this.hub.config.dataDir, workspace) : undefined),
         onFatal: (message) => {
           // Refused: its row may not have reached the leader yet. Try again later, unless the person removed it.
           log(message);
