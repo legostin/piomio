@@ -2,7 +2,7 @@
 // Gives the session runner one interface regardless of where the brain runs.
 
 import type { BrainEvent, BrainLoginUpdate, BrainSessionOptions, BrainTurn, ProbeResult, BrainRef } from "@piomio/shared";
-import { formatBrainRef, parseBrainRef, type RpcPeer } from "@piomio/shared";
+import { formatBrainRef, parseBrainRef, RpcCodes, RpcError, type RpcPeer } from "@piomio/shared";
 import { LocalizedError, t } from "./i18n.ts";
 
 export interface BrainHandle {
@@ -55,25 +55,36 @@ export class BrainRegistry {
 
   registerPluginBrain(brainId: string, label: string, pluginId: string, peer: RpcPeer, variants: string[] = [], login = false): void {
     this.pluginBrains.set(brainId, { label, pluginId, peer, variants, login });
+    // Another process now (the plugin restarted): what the old one said no longer holds.
+    this.forgetProbes((r) => r.machineId === "local" && r.brainId === brainId);
     this.attachRouter(peer);
     this.onChange?.();
   }
 
   unregisterPlugin(pluginId: string): void {
-    for (const [id, b] of this.pluginBrains) if (b.pluginId === pluginId) this.pluginBrains.delete(id);
+    for (const [id, b] of this.pluginBrains) {
+      if (b.pluginId !== pluginId) continue;
+      this.pluginBrains.delete(id);
+      this.forgetProbes((r) => r.machineId === "local" && r.brainId === id);
+    }
     this.onChange?.();
   }
 
   registerMachine(machineId: string, name: string, peer: RpcPeer, brains: Array<{ id: string; label: string }>): void {
     this.machineHosts.set(machineId, { name, peer, brains: new Map(brains.map((b) => [b.id, b.label])) });
+    this.invalidateMachine(machineId);
     this.attachRouter(peer);
     this.onChange?.();
   }
 
   unregisterMachine(machineId: string): void {
     this.machineHosts.delete(machineId);
-    for (const k of [...this.probeCache.keys()]) if (k.endsWith(`@${machineId}`)) this.probeCache.delete(k);
+    this.invalidateMachine(machineId);
     this.onChange?.();
+  }
+
+  private forgetProbes(match: (ref: BrainRef) => boolean): void {
+    for (const k of [...this.probeCache.keys()]) if (match(parseBrainRef(k))) this.probeCache.delete(k);
   }
 
   private attachRouter(peer: RpcPeer): void {
@@ -92,14 +103,15 @@ export class BrainRegistry {
 
   // ---------- lookup ----------
 
+  /** Where a brain runs now: undefined while it is not connected (its host gone, or its connection closed). */
   private resolve(ref: BrainRef): { peer: RpcPeer; label: string; host: string } | undefined {
     if (ref.machineId === "local") {
       const b = this.pluginBrains.get(ref.brainId);
-      return b ? { peer: b.peer, label: b.label, host: `plugin:${b.pluginId}` } : undefined;
+      return b && !b.peer.closed ? { peer: b.peer, label: b.label, host: `plugin:${b.pluginId}` } : undefined;
     }
     const m = this.machineHosts.get(ref.machineId);
     const label = m?.brains.get(ref.brainId);
-    return m && label ? { peer: m.peer, label: `${label} @ ${m.name}`, host: `machine:${ref.machineId}` } : undefined;
+    return m && label && !m.peer.closed ? { peer: m.peer, label: `${label} @ ${m.name}`, host: `machine:${ref.machineId}` } : undefined;
   }
 
   has(refStr: string): boolean {
@@ -147,11 +159,14 @@ export class BrainRegistry {
     const cached = this.probeCache.get(key);
     if (cached && Date.now() - Date.parse(cached.checkedAt) < maxAgeMs) return cached;
     const r = this.resolve(ref);
-    if (!r) return { available: false, authenticated: false, detail: t("brain.notConnected") };
+    if (!r) return { available: false, authenticated: false, detail: t("brain.notConnected"), unreachable: true };
     let result: ProbeResult;
     try {
       result = await r.peer.request<ProbeResult>("brain.probe", { brainId: ref.brainId, variant: ref.variant }, { timeoutMs: 20_000 });
     } catch (e: any) {
+      // Its host did not answer (the connection closed, the plugin hangs): not connected for now. Not kept, so the next
+      // look asks again rather than repeat this for a minute after the host is back.
+      if (e instanceof RpcError && (e.code === RpcCodes.Closed || e.code === RpcCodes.Timeout)) return { available: false, authenticated: false, detail: t("brain.notConnected"), unreachable: true };
       result = { available: false, authenticated: false, detail: e.message };
     }
     this.probeCache.set(key, { ...result, checkedAt: new Date().toISOString() });

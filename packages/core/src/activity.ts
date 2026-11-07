@@ -94,8 +94,8 @@ export class MachineActivityFeed {
     ];
   }
 
-  /** A turn started streaming into message `id` on the brain `brainRef`. */
-  start(id: string, t: { brainRef: string; agentId: string; conversationId: string; taskId?: string; title?: string }): void {
+  /** A turn started streaming into message `id` on the brain `brainRef` (or waits for it: `step` "offline"). */
+  start(id: string, t: { brainRef: string; agentId: string; conversationId: string; taskId?: string; title?: string; step?: WorkStep }): void {
     const ref = parseBrainRef(t.brainRef);
     this.turns.set(id, {
       machineId: ref.machineId,
@@ -104,7 +104,7 @@ export class MachineActivityFeed {
       ...(t.taskId ? { taskId: t.taskId } : {}),
       ...(t.title ? { title: t.title } : {}),
       brainId: ref.brainId,
-      step: "thinking",
+      step: t.step ?? "thinking",
       startedAt: nowIso(),
     });
     this.changed();
