@@ -569,7 +569,7 @@ export class Hub {
       roots: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
       here: () => this.here(),
       auto: this.auto,
-      ownedReadRoots: (ctx) => this.machines.canonical(ctx.machineId ?? "local") === this.here() ? ownedWorkspaces(this.workspaceRoots(), ctx.agentId, this.workspaceKeys(ctx.agentId)) : [],
+      ownedFolders: (ctx) => this.machines.canonical(ctx.machineId ?? "local") === this.here() ? ownedWorkspaces(this.workspaceRoots(), ctx.agentId, this.workspaceKeys(ctx.agentId)) : [],
       ownedFiles: (action, ctx) => this.ownsFiles(action, ctx),
       machineName: (id) => this.runner.computerName(id),
       egress: this.egressGuard,

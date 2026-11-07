@@ -321,10 +321,11 @@ function roughWords(line: string, env: ShellEnv): string[] {
 }
 
 /**
- * The first of `denied` a command names (outside `exempt`), however it is written: `~`, `$HOME`, quotes, escapes.
- * Letter case does not count (macOS disks ignore it).
+ * The first of `denied` a command names (outside `exempt`, folders or a check of the path named), however it is
+ * written: `~`, `$HOME`, quotes, escapes. Letter case does not count (macOS disks ignore it).
  */
-export function deniedPathIn(line: string, denied: string[], exempt: string[], env: ShellEnv): string | undefined {
+export function deniedPathIn(line: string, denied: string[], exempt: string[] | ((path: string) => boolean), env: ShellEnv): string | undefined {
+  const open = typeof exempt === "function" ? exempt : (path: string) => exempt.some((e) => inside(path.toLowerCase(), e.toLowerCase()));
   const words = (commandParts(line, env) ?? [roughWords(line, env)]).flat();
   for (const w of words) {
     const low = w.toLowerCase();
@@ -333,8 +334,7 @@ export function deniedPathIn(line: string, denied: string[], exempt: string[], e
       for (let at = low.indexOf(dl); at >= 0; at = low.indexOf(dl, at + 1)) {
         const next = low[at + dl.length];
         if (next !== undefined && next !== "/") continue;
-        const path = w.slice(at);
-        if (!exempt.some((e) => inside(path.toLowerCase(), e.toLowerCase()))) return d;
+        if (!open(w.slice(at))) return d;
       }
     }
   }

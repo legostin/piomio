@@ -6,6 +6,7 @@
 // has to say yes, the hub shows the same approval card as for an external action and waits for it.
 import type { ApprovalAsk, ToolResult } from "@piomio/shared";
 import { parseBrainRef, truncate } from "@piomio/shared";
+import { homedir } from "node:os";
 import type { ToolRegistry } from "./registry.ts";
 import type { ApprovalService } from "../approvals.ts";
 import type { RuleStore } from "../policy/rules.ts";
@@ -18,7 +19,7 @@ import type { AutoAction, AutoMode } from "../policy/auto.ts";
 import type { EgressGiven, EgressGuard } from "../policy/egress.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
-import { classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
+import { classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, realOr, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
 import { shownCommand } from "../policy/commands.ts";
 import { foldersOn, localFolderPaths } from "../agent-folders.ts";
 
@@ -42,7 +43,9 @@ export interface NativePermissionDeps {
   here?: () => string;
   /** Auto mode: decides what would ask the person, when the settings say so. */
   auto?: AutoMode;
-  ownedReadRoots?: (ctx: import("@piomio/shared").ToolCallContext) => string[];
+  /** The agent's own dialog and task folders on the hub's computer, as real paths (NativeScope.owned). */
+  ownedFolders?: (ctx: import("@piomio/shared").ToolCallContext) => string[];
+  /** Ordinary file work only in the agent's own folders: needs no vote where the hub's rules have not refused it. */
   ownedFiles?: (action: AutoAction, ctx: import("@piomio/shared").ToolCallContext) => Promise<boolean>;
   /** A machine's name for the reviewer ("local" is this hub's). */
   machineName?: (id: string) => string;
@@ -124,7 +127,8 @@ export function registerNativePermission(d: NativePermissionDeps): void {
   /** Folders a yes opened for reading, by session: the rest of a repository is read without asking again. */
   const opened = new Map<string, Set<string>>();
   const open = (sessionId: string, a: NativeAction) => {
-    const dir = a.kind === "read" ? grantFolder(a.path) : undefined;
+    // The folder where the file really is: a link never opens more (the whole home) than the read did.
+    const dir = a.kind === "read" ? grantFolder(realOr(a.path), realOr(homedir())) : undefined;
     if (dir) opened.set(sessionId, (opened.get(sessionId) ?? new Set()).add(dir));
   };
   d.registry.register(
@@ -150,12 +154,14 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       // no-network front desk retains its existing handling.
       const action = classify(tool, input, ctx.workspace, !!ctx.taskId);
       const { denyRead } = confinement(d.dataDir, ctx.workspace);
-      const readRoots = [...(d.ownedReadRoots?.(ctx) ?? []), ...(opened.get(ctx.sessionId) ?? [])];
+      const readRoots = [...(opened.get(ctx.sessionId) ?? [])];
+      const owned = d.ownedFolders?.(ctx) ?? [];
       // Its project folders on the hub's computer are its own too (agent-folders.ts); a paired computer's policy decides there.
       const machine = ctx.machineId ?? "local";
       const folders = machine === "local" ? localFolderPaths(foldersOn(d.agents.get(ctx.agentId)?.folders, machine, d.here?.() ?? "local"), { dataDir: d.dataDir }) : [];
-      let decided = decideNative(action, { workspace: ctx.workspace, roots: [...d.roots(), ...folders], readRoots, denied: denyRead });
-      if (await d.ownedFiles?.(autoAction(action, input, decided.reason), ctx)) {
+      let decided = decideNative(action, { workspace: ctx.workspace, roots: [...d.roots(), ...folders], readRoots, owned, denied: denyRead });
+      // The hub's own refusal stands: its rules already leave the agent's own folders open, so ownership never lifts it.
+      if (decided.decision !== "deny" && (await d.ownedFiles?.(autoAction(action, input, decided.reason), ctx))) {
         // Ask mode still asks for a write outside this session; ordinary auto work needs no model vote.
         decided = { decision: d.settings.get().approvalMode === "ask" && decided.decision !== "allow" ? "ask" : "allow", reason: "ordinary file work in the agent's own dialogs and tasks" };
       }

@@ -7,7 +7,7 @@
 // other command outside the sandbox, network from a command, and anything unknown wait for a yes: auto mode's
 // (policy/auto.ts) or the person's on an approval card, like an external action. Outside the home (system files,
 // tools) reading is fine. The person's credentials and the hub's own data (conversations, the vault, other agents'
-// folders) are never theirs to read, and a command that names them is refused.
+// folders) are never theirs to read, whatever links a path goes through, and a command that names them is refused.
 import { realPath } from "@piomio/shared/agent-workspaces";
 import { existsSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -35,6 +35,11 @@ export interface NativeScope {
   roots?: string[];
   /** Folders it may read but not write: its agent's whole folder, folders the person or auto mode opened this session. */
   readRoots?: string[];
+  /**
+   * The agent's own dialog and task folders, from the hub's records (agent-workspaces.ts): it reads them, and the hub's
+   * data rule does not refuse a write there, but a write is not its session's own (the caller decides it).
+   */
+  owned?: string[];
   /** Folders no tool of the brain may read or write, whatever the person says (see `confinement`). */
   denied?: string[];
   home?: string;
@@ -137,6 +142,20 @@ export function commandRule(command: string): { op: "eq" | "glob"; value: string
   return { op: "glob", value: `${words[0]}${sub} *` };
 }
 
+/** Where a path really is (realPath); as written when that cannot be told (a dangling link, no permission). */
+export function realOr(p: string): string {
+  try {
+    return realPath(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/** Folders as written and as they really are. */
+function forms(dirs: string[]): string[] {
+  return [...new Set(dirs.flatMap((d) => [resolve(d), realOr(d)]))];
+}
+
 /** The temp folders a command may use (macOS keeps them under /private). */
 function temps(): string[] {
   const t = tmpdir();
@@ -149,14 +168,22 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
     catch { return { decision: "deny", reason: "cannot resolve the real file path" }; }
   }
   const home = scope.home ?? homedir();
-  const own = [scope.workspace, claudeProjectDir(scope.workspace, home), ...(scope.roots ?? []), ...temps()];
+  // A path is judged by where it really is, and a folder counts both as written and as it really is: a link anywhere
+  // in it (macOS's /var → /private/var, a data dir or home behind a link) changes nothing.
+  const homes = forms([home]);
+  const own = forms([scope.workspace, claudeProjectDir(scope.workspace, home), ...(scope.roots ?? []), ...temps()]);
+  const reads = forms([...(scope.readRoots ?? []), ...(scope.owned ?? [])]);
   const mine = (p: string) => own.some((d) => within(p, d));
-  const readable = (p: string) => (scope.readRoots ?? []).some((d) => within(p, d));
-  // Only the agent's own folders open a denied one (the hub's data may well sit in a temp folder); its agent's other
-  // folders only for reading.
-  const exempt = [scope.workspace, ...(scope.roots ?? [])];
-  const exemptRead = [...exempt, ...(scope.readRoots ?? [])];
-  const denied = (p: string, open: string[]) => !open.some((d) => within(p, d)) && (scope.denied ?? []).some((d) => within(p, d));
+  const readable = (p: string) => reads.some((d) => within(p, d));
+  // Only the agent's own folders inside a denied one open that part of it (the hub's data may well sit in a temp
+  // folder, and it holds the agents' folders); its agent's other folders only for reading. A folder that holds a denied
+  // one (say a folder the person opened) never opens it.
+  const exempt = forms([scope.workspace, ...(scope.roots ?? []), ...(scope.owned ?? [])]);
+  const exemptRead = [...exempt, ...reads];
+  const deny = forms(scope.denied ?? []);
+  /** Denied folders that are links (or lie behind one): as written, and where they really are. */
+  const links = (scope.denied ?? []).map((x) => [resolve(x), realOr(x)] as const).filter(([s, r]) => s !== r);
+  const denied = (p: string, open: string[]) => deny.some((x) => within(p, x) && !open.some((d) => d !== x && within(d, x) && within(p, d)));
   if (a.kind === "read" && denied(a.path, exemptRead)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
   if (a.kind === "write" && denied(a.path, exempt)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
   switch (a.kind) {
@@ -169,14 +196,18 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
     case "read":
       if (mine(a.path) || readable(a.path)) return { decision: "allow", reason: "inside the agent's folder" };
       // System files and tools are fine to read; the person's home is theirs.
-      if (!within(a.path, home)) return { decision: "allow", reason: "outside the person's home" };
+      if (!homes.some((h) => within(a.path, h))) return { decision: "allow", reason: "outside the person's home" };
       return { decision: "ask", reason: "reads the person's files outside the agent's folder" };
     case "write":
       if (mine(a.path)) return { decision: "allow", reason: "inside the agent's folder" };
       return { decision: "ask", reason: "writes outside the agent's folder" };
     case "command": {
       const env = { home, tmp: tmpdir() };
-      if (deniedPathIn(a.command, scope.denied ?? [], exemptRead, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
+      // A path it names inside a denied folder is judged both where it really is and as written (only that folder's own
+      // link resolved): a link inside the hub's data never makes a path there fine.
+      const written = (path: string) => links.reduce((p, [s, r]) => (within(p, s) ? join(r, relative(s, p)) : p), resolve(path));
+      const fine = (path: string) => !denied(written(path), exemptRead) && !denied(realOr(path), exemptRead);
+      if (deniedPathIn(a.command, deny, fine, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
       const words = commandParts(a.command, env)?.flat() ?? [];
       for (const word of words) {
         if (word.startsWith("-")) continue;
