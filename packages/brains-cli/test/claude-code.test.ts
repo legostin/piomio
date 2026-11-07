@@ -506,6 +506,13 @@ describe("confined brains (BrainSessionOptions.confine)", () => {
       ]),
     );
     expect(started.args.some((a: string) => a.startsWith("sandbox_mode=") || a.startsWith("sandbox_workspace_write"))).toBe(false);
+    // Confined with nobody to ask (a hub replica's own daemon): the same profile, and nothing goes past it.
+    const quiet = join(mkdtempSync(join(tmpdir(), "owl-cx-args-")), "args.jsonl");
+    const { permissionTool: _none, ...unasked } = confine;
+    await collect((await codex.createSession(opts({ confine: unasked, env: { FAKE_ARGS_FILE: quiet } }))).send({ text: "hi" }));
+    const alone = JSON.parse(readFileSync(quiet, "utf8").trim().split("\n")[0]);
+    expect(alone.approvalPolicy).toBe("never");
+    expect(alone.args).toEqual(expect.arrayContaining(['approval_policy="never"', 'default_permissions="piomio"', "permissions.piomio.network.enabled=false"]));
     // A Codex that ran without the profile would see the whole computer: no turn then.
     const ev = await collect((await codex.createSession(opts({ confine, env: { FAKE_CODEX_SANDBOX: "dangerFullAccess" } }))).send({ text: "hi" }));
     expect(ev.find((e) => e.type === "error")).toMatchObject({ fatal: true, message: expect.stringMatching(/permission profile/) });

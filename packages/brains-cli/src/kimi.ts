@@ -349,6 +349,8 @@ class KimiSession implements BrainSessionImpl {
     const input = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
     const confine = this.o.confine;
     if (confine) {
+      // Confined with nobody to ask (BrainSessionOptions.confine.permissionTool): what it asks about stays undone.
+      if (!confine.permissionTool) return pick(false);
       const a = await askHub(this.o.mcp, confine.permissionTool, `kimi.${tool}`, input);
       if (!a.allow && a.message) this.told.push(a.message);
       return pick(a.allow);

@@ -399,7 +399,7 @@ describe("group chats (storage)", () => {
     old.close();
 
     const db = openDb(file);
-    expect(db.prepare("select v from schema_version").get()).toEqual({ v: 29 });
+    expect(db.prepare("select v from schema_version").get()).toEqual({ v: 30 });
     expect(db.prepare("select count(*) as n from devices").get()).toEqual({ n: 0 });
     expect(new Store(db, new EventBus()).getConversation("g1")?.members).toEqual(["assistant", "scout"]);
     db.close();

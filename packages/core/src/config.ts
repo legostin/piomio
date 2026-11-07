@@ -58,6 +58,11 @@ export interface Config {
    */
   sandboxBrains: boolean;
   /**
+   * A hub replica among others pairs its own computer as a machine and serves it while another replica leads
+   * (own-node.ts). Always on for a hub; tests that build clusters turn it off (no environment variable).
+   */
+  ownNode: boolean;
+  /**
    * Model access through plain API keys (PIOMIO_API_KEYS=1): the API brain (plugins/brain-api), key mode of machines'
    * CLI brains and Codex with an OpenAI key. Off by default: agents think with the plans the person signs in to.
    */
@@ -164,6 +169,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     consoleDist: join(appRoot, "packages", "console", "dist"),
     installClis: env.PIOMIO_INSTALL_CLIS === "1",
     sandboxBrains: env.PIOMIO_SANDBOX_BRAINS !== "0" && process.platform === "darwin",
+    ownNode: true,
     apiKeys: env.PIOMIO_API_KEYS === "1",
     pio: env.PIOMIO_PIO === "1",
     brainHome: "",

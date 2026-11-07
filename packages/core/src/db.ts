@@ -146,6 +146,9 @@ const MIGRATIONS: string[] = [
   // Older rows (and rows an older replica writes) have none and count from created_at.
   `alter table messages add column updated_at text;
   create index messages_conv_changed on messages(conversation_id, coalesce(updated_at, created_at));`,
+  // The machine that serves a hub replica's computer while another replica leads (own-node.ts): its own daemon, or
+  // a piomio-node it verified on the same host. Agents bound to that computer think there whoever leads.
+  `alter table replicas add column machine_id text;`,
 ];
 
 /**

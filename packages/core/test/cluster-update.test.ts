@@ -51,7 +51,7 @@ async function machine(name: string): Promise<Machine> {
 }
 
 async function boot(m: Machine, version?: string): Promise<Hub> {
-  const config = loadConfig(m.env, { dataDir: m.dir, builtinPluginsDir: join(fixtures, "plugins"), builtinAgentsDir: join(fixtures, "agents") });
+  const config = loadConfig(m.env, { dataDir: m.dir, builtinPluginsDir: join(fixtures, "plugins"), builtinAgentsDir: join(fixtures, "agents"), ownNode: false });
   if (version) config.version = version;
   m.hub = new Hub(config);
   await m.hub.start();

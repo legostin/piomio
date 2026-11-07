@@ -41,8 +41,11 @@ function useComputers(): Computer[] | undefined {
   return list;
 }
 
+/** The computer a binding names: by its id, or by a machine that serves it (another replica's, own-node.ts). */
+const computerOf = (id: string, computers: Computer[] | undefined) => computers?.find((c) => c.id === id || c.aliases?.includes(id));
+
 /** The names of the computers an agent is bound to, for people. */
-const computerNames = (ids: string[], computers: Computer[] | undefined) => ids.map((id) => computers?.find((c) => c.id === id)?.name ?? id).join(", ");
+const computerNames = (ids: string[], computers: Computer[] | undefined) => ids.map((id) => computerOf(id, computers)?.name ?? id).join(", ");
 
 export function AgentsPage() {
   const list = useStore(agents);
@@ -266,8 +269,14 @@ function BrainsEditor({ value, onChange }: { value: string[]; onChange: (v: stri
 /** A brain's name without the computer it runs on ("Claude Code @ LEGOSTIN-PC" → "Claude Code"). */
 const withoutHost = (label: string) => label.replace(/ @ .+$/, "");
 
-/** The brain refs of a computer: the hub's own comes first in GET /api/computers and names its brains "@local". */
-const refMachine = (id: string, computers: Computer[]) => (id === computers[0]?.id ? "local" : id);
+/**
+ * The machines in a computer's brain refs: the hub's own comes first in GET /api/computers and names its brains
+ * "@local"; a computer's aliases are the machines that serve it (a piomio-node beside the hub, another replica's).
+ */
+const refMachines = (c: Computer, computers: Computer[]) => new Set([c === computers[0] ? "local" : c.id, ...(c.aliases ?? [])]);
+
+/** A brain's kind without the machine it runs on ("claude-code@mach_x" → "claude-code"), to show each once per computer. */
+const brainKind = (ref: string) => normalizeBrainRef(ref).split("@")[0];
 
 const chip = (on: boolean) =>
   cx(
@@ -278,23 +287,31 @@ const chip = (on: boolean) =>
 /**
  * Where the agent thinks: anywhere (the first ready brain of an ordered list), or a computer and a brain on it, to
  * which it is then bound (AgentDef.machines): only there, and while that computer is off its chat says so.
- * Another replica of the hub shows only when chosen.
+ * Another replica of the hub that has no machine serving its computer (nothing runs there now) shows only when chosen.
  */
 function WhereItThinks({ value, onChange }: { value: { brains: string[]; machines: string[] }; onChange: (v: { brains: string[]; machines: string[] }) => void }) {
   const list = useStore(brains);
   useEffect(() => ensureBrains(), []);
   const computers = useComputers();
   if (!computers) return <Loading />;
-  const chosen = value.machines[0];
+  // The binding may name a computer by a machine that serves it: the chip is the computer's.
+  const chosen = value.machines[0] && (computerOf(value.machines[0], computers)?.id ?? value.machines[0]);
   const shown: Computer[] = [
-    ...computers.filter((c) => !c.standby || value.machines.includes(c.id)),
-    ...value.machines.filter((id) => !computers.some((c) => c.id === id)).map((id) => ({ id, name: id, online: false })),
+    ...computers.filter((c) => !c.standby || c.id === chosen),
+    ...value.machines.filter((id) => !computerOf(id, computers)).map((id) => ({ id, name: id, online: false })),
   ];
-  const brainsOn = (id: string) => (list ?? []).filter((b) => brainMachine(b.ref) === refMachine(id, computers));
+  /** The computer's brains, each kind once: a ready one first, the hub's own "@local" before a machine's beside it. */
+  const brainsOn = (id: string) => {
+    const c = computers.find((x) => x.id === id);
+    const refs = c ? refMachines(c, computers) : new Set([id]);
+    const rank = (b: NonNullable<typeof list>[number]) => (brainReady(b) ? 0 : 2) + (brainMachine(b.ref) === "local" ? 0 : 1);
+    const on = (list ?? []).filter((b) => refs.has(brainMachine(b.ref))).sort((a, b) => rank(a) - rank(b));
+    return on.filter((b, i) => on.findIndex((x) => brainKind(x.ref) === brainKind(b.ref)) === i);
+  };
   const pick = (id: string | undefined) => {
     if (!id) return onChange({ brains: value.brains, machines: [] });
     const there = brainsOn(id);
-    const kept = value.brains.find((r) => brainMachine(r) === refMachine(id, computers));
+    const kept = value.brains.find((r) => there.some((b) => normalizeBrainRef(b.ref) === normalizeBrainRef(r)));
     const first = kept ?? there.find(brainReady)?.ref ?? there[0]?.ref;
     onChange({ machines: [id], brains: first ? [first] : [] });
   };
@@ -319,10 +336,11 @@ function WhereItThinks({ value, onChange }: { value: { brains: string[]; machine
         <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t("agents.brainThere")}>
           <CornerDownRight className="size-4 text-muted" aria-hidden />
           {there.map((b) => {
-            const on = !!value.brains[0] && normalizeBrainRef(value.brains[0]) === normalizeBrainRef(b.ref);
+            // A bound agent's brain is that kind on its computer, whichever machine serves it now.
+            const on = !!value.brains[0] && brainKind(value.brains[0]) === brainKind(b.ref);
             const st = brainStatus(b);
             return (
-              <button key={b.ref} type="button" aria-pressed={on} onClick={() => onChange({ machines: [chosen], brains: [b.ref] })} className={chip(on)} title={b.probe?.detail}>
+              <button key={b.ref} type="button" aria-pressed={on} onClick={() => onChange({ machines: [chosen!], brains: [b.ref] })} className={chip(on)} title={b.probe?.detail}>
                 {withoutHost(b.label)}
                 {!brainReady(b) && <Badge tone={st.tone}>{st.label}</Badge>}
               </button>

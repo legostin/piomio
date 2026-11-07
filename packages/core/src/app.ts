@@ -60,6 +60,7 @@ import { DesktopTickets } from "./desktop-login.ts";
 import { MachineHub } from "./machines.ts";
 import { MachineSetups } from "./machine-setup.ts";
 import { Cluster } from "./cluster.ts";
+import { OwnNode } from "./own-node.ts";
 import { MachineActivityFeed } from "./activity.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { InviteRegistry } from "./invites.ts";
@@ -153,6 +154,8 @@ export class Hub {
   setups: MachineSetups;
   /** This hub's place among its replicas (cluster.ts); a hub of one always leads. */
   cluster: Cluster;
+  /** This computer as a machine of the cluster while another replica leads (own-node.ts). */
+  ownNode: OwnNode;
   /** The realtime sockets this replica serves from its own bus: they follow the lead (server/realtime.ts). */
   readonly realtime = new RealtimeSockets();
   /** What every machine is doing now, for the machines block (activity.ts). */
@@ -276,6 +279,7 @@ export class Hub {
     this.setups = new MachineSetups({ db: this.db, bus: this.bus, audit: this.audit, vault: () => this.vault, apiKeys: () => this.config.apiKeys });
     this.machines = new MachineHub({ db: this.db, bus: this.bus, brains: this.brains, audit: this.audit, invites: this.invites, setups: this.setups });
     this.cluster = new Cluster(this);
+    this.ownNode = new OwnNode(this);
     this.machines.cluster = this.cluster;
     this.machines.version = config.version;
     this.machines.here = () => ({ id: this.here(), name: this.machines.localName() });
@@ -901,22 +905,37 @@ export class Hub {
     return this.cluster.identity?.id ?? "local";
   }
 
-  /** Another replica's name (the replicas table travels to every replica). */
+  /**
+   * Another replica's computer by name (the replicas table travels to every replica): its serving machine's, as the
+   * computers list shows it (own-node.ts), else the replica's own.
+   */
   private replicaName(id: string): string | undefined {
-    return (this.db.prepare("select name from replicas where id = ? and revoked = 0").get(id) as { name: string } | undefined)?.name;
+    const r = this.db
+      .prepare("select r.name, m.name as machine from replicas r left join machines m on m.id = r.machine_id and m.revoked = 0 where r.id = ? and r.revoked = 0")
+      .get(id) as { name: string; machine: string | null } | undefined;
+    return r ? (r.machine ?? r.name) : undefined;
   }
 
   /**
-   * The computers an agent may be bound to: this hub's own first, the paired machines, then the hub's other replicas
-   * (on standby: nothing runs there while this one leads).
+   * The computers an agent may be bound to: this hub's own first, the paired machines, then the hub's other replicas.
+   * A replica's computer is served by its machine while this one leads (own-node.ts: replicas.machine_id), under the
+   * replica's id whoever leads; one without such a machine is on standby: nothing runs there while this one leads.
    */
   computers(): Computer[] {
     const here = this.here();
-    const replicas = this.db.prepare("select id, name from replicas where revoked = 0 and id != ? order by priority").all(here) as Array<{ id: string; name: string }>;
+    const replicas = this.db.prepare("select id, name, machine_id from replicas where revoked = 0 order by priority").all() as Array<{ id: string; name: string; machine_id: string | null }>;
+    const served = new Set(replicas.flatMap((r) => (r.machine_id ? [r.machine_id] : [])));
+    const machines = this.machines.list().filter((m) => !m.sameHost);
+    const ownMachine = replicas.find((r) => r.id === here)?.machine_id;
     return [
-      { id: here, aliases: this.machines.aliases(), name: this.machines.localName(), online: true },
-      ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online" })),
-      ...replicas.map((r) => ({ id: r.id, name: r.name, online: false, standby: true })),
+      { id: here, aliases: [...new Set([...this.machines.aliases(), ...(ownMachine ? [ownMachine] : [])])], name: this.machines.localName(), online: true },
+      ...machines.filter((m) => !served.has(m.id)).map((m) => ({ id: m.id, name: m.name, online: m.status === "online" })),
+      ...replicas
+        .filter((r) => r.id !== here)
+        .map((r) => {
+          const m = r.machine_id ? machines.find((x) => x.id === r.machine_id) : undefined;
+          return m ? { id: r.id, aliases: [m.id], name: m.name, online: m.status === "online" } : { id: r.id, name: r.name, online: false, standby: true };
+        }),
     ];
   }
 
@@ -928,7 +947,7 @@ export class Hub {
     const executor = this.machines.find(idOrName);
     if (executor?.sameHost) return this.here();
     const list = this.computers();
-    return (list.find((c) => c.id.toLowerCase() === key) ?? list.find((c) => c.name.toLowerCase() === key))?.id;
+    return (list.find((c) => c.id.toLowerCase() === key || c.aliases?.some((a) => a.toLowerCase() === key)) ?? list.find((c) => c.name.toLowerCase() === key))?.id;
   }
 
   /** A draft from the chat joins the team under a fresh id derived from its name; it never replaces an existing agent. */
@@ -1328,6 +1347,7 @@ export class Hub {
     for (const t of this.timers) clearInterval(t);
     this.updates.stop();
     await this.cluster.stop();
+    await this.ownNode.stop();
     this.notifier.stop();
     this.feeds.stop();
     this.setup.stop();
