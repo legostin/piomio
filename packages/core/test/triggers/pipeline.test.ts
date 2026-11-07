@@ -614,15 +614,54 @@ describe("the trigger pipeline", () => {
     e.stop();
 
     const g = setup({
-      triggers: [hook({ script: script(`export default async (s, pio) => { const n = (await pio.state.get("n")) ?? 0; await pio.state.set("n", n + 1); if (n === 0) throw new Error("first try fails"); return { note: "second try" } }`) })],
+      triggers: [hook({ script: script(`export default async (s, pio) => { if (s.data.payload.try === 1) throw new Error("first try fails"); return { note: "second try" } }`) })],
     });
     const e2 = await g.start();
-    await send(e2, { n: 1 }, { "x-github-delivery": "d-2" });
+    await send(e2, { try: 1 }, { "x-github-delivery": "d-2" });
     expect((await e2.runs("t_hook"))[0]).toMatchObject({ status: "error" });
     // The sender's retry of a run that failed is carried out.
-    expect((await send(e2, { n: 1 }, { "x-github-delivery": "d-2" })).body).toEqual({ ok: true, signalId: expect.any(String) });
+    expect((await send(e2, { try: 2 }, { "x-github-delivery": "d-2" })).body).toEqual({ ok: true, signalId: expect.any(String) });
     expect(g.store.notes({ triggerId: "t_hook" }).map((n) => n.text)).toEqual(["second try"]);
     e2.stop();
+  });
+
+  it("keeps a run's state writes only with its outcome: after a stop the retry sees the state as it was, and wakes", async () => {
+    // A poll: the last value seen is kept, and only a change is looked at.
+    const poll = `export default async (s, pio) => { const v = s.data.payload.v; if ((await pio.state.get("v")) === v) return { drop: "unchanged" }; await pio.state.set("v", v); return { triage: { v } } }`;
+    const f = setup({ triggers: [hook({ script: script(poll), triage: { brief: "x" }, triagePerDay: 10 })], answer: "hang" });
+    const e = await f.start();
+    await post(e, { v: 1 });
+    await vi.waitFor(() => expect(f.asked).toHaveLength(1));
+    e.stop();
+    // Stopped while the quick model thought: the script's write went with the run.
+    expect(f.store.stateGet("t_hook", "v")).toBeUndefined();
+    expect(f.store.stateGet("t_hook", "__ext:v")).toBeUndefined();
+    const again = setup({ kv: f.kv, clock: f.clock, answer: { decision: "wake", why: "changed", summary: "v is 1 now" } });
+    const e2 = await again.start();
+    await e2.boot();
+    await e2.pipeline.idle();
+    expect(again.created()).toHaveLength(1);
+    expect(again.created()[0].params.goal).toContain("v is 1 now");
+    // Kept with the wake, marked: it came from a webhook.
+    expect(f.store.stateGet("t_hook", "v")).toBe(1);
+    expect(f.store.stateGet("t_hook", "__ext:v")).toBe(true);
+    // The next delivery of the same value is dropped as unchanged.
+    await send(e2, { v: 1 });
+    expect((await e2.runs("t_hook"))[0]).toMatchObject({ outcome: "drop" });
+    expect(again.created()).toHaveLength(1);
+    e2.stop();
+  });
+
+  it("drops a failed run's state writes, so the next run starts from the same state", async () => {
+    const f = setup({ triggers: [hook({ script: script(`export default async (s, pio) => { await pio.state.set("seen", (await pio.state.get("seen") ?? 0) + 1); if (s.data.payload.fail) throw new Error("boom"); return { note: "seen " + await pio.state.get("seen") } }`) })] });
+    const e = await f.start();
+    await send(e, { fail: true });
+    expect((await e.runs("t_hook"))[0]).toMatchObject({ status: "error" });
+    expect(f.store.stateGet("t_hook", "seen")).toBeUndefined();
+    await send(e, { fail: false });
+    expect(f.store.notes({ triggerId: "t_hook" }).map((n) => n.text)).toEqual(["seen 1"]);
+    expect(f.store.stateGet("t_hook", "seen")).toBe(1);
+    e.stop();
   });
 
   it("tells the person once after five failed runs in a row, and again only after a good run", async () => {
@@ -631,18 +670,28 @@ describe("the trigger pipeline", () => {
     for (let n = 1; n <= 6; n++) expect((await send(e, { fail: true, n })).status).toBe(202);
     expect(f.notified()).toHaveLength(1);
     expect(f.notified()[0].params).toMatchObject({ level: "notify", title: 'notify.failing {"name":"Hook"}', triggerId: "t_hook", agentId: "assistant" });
-    // The body in the person's language, the error in it as it is.
-    expect(f.notified()[0].params.body).toMatch(/^notify\.failingBody \{"error":".*boom 5/);
+    // A webhook's run read outside content: its error, which may carry it, stays out of the notification (the Inbox and
+    // the digest's agent read it), and out of the trigger's state as shown to agents.
+    expect(f.notified()[0].params.body).toBe("notify.failingBodyOutside");
     const runs = await e.runs("t_hook");
-    expect(runs[0]).toMatchObject({ status: "error", detail: expect.stringContaining("boom 6") });
+    expect(runs[0]).toMatchObject({ status: "error", detail: expect.stringContaining("boom 6"), external: true });
     expect(runs[0].stages?.[0]).toMatchObject({ stage: "script", error: expect.stringContaining("boom 6") });
-    expect(e.get("t_hook")!.state).toMatchObject({ errorsInRow: 6, lastStatus: "error" });
+    expect(e.get("t_hook")!.state).toMatchObject({ errorsInRow: 6, lastStatus: "error", lastErrorExternal: true });
     expect(f.created()).toEqual([]);
     await send(e, { n: 7 });
     expect(e.get("t_hook")!.state).toMatchObject({ errorsInRow: 0, lastStatus: "ok" });
+    expect(e.get("t_hook")!.state.lastErrorExternal).toBeUndefined();
     for (let n = 8; n <= 12; n++) await send(e, { fail: true, n });
     expect(f.notified()).toHaveLength(2);
     e.stop();
+
+    // A run that read nothing from outside: the body has its error, in the person's language around it.
+    const g = setup({ triggers: [base({ id: "t_sig", kind: "signal", on: [{ type: "demo.item" }], script: script(`export default (s) => { throw new Error("bad item " + s.data.n) }`) })] });
+    const e2 = await g.start();
+    for (let n = 1; n <= 5; n++) await e2.pipeline.deliver(e2.get("t_sig")!, [sig(n)], "manual");
+    expect(g.notified()).toHaveLength(1);
+    expect(g.notified()[0].params.body).toMatch(/^notify\.failingBody \{"error":".*bad item 5/);
+    e2.stop();
   });
 
   it("keeps the same error in a row as one journal line, counted", async () => {

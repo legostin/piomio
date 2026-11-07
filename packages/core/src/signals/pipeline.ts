@@ -20,7 +20,7 @@ import { pioFor } from "./pio.ts";
 import { truncateBytes } from "./prompt.ts";
 import { runScript, SCRIPT_LIMITS, type ScriptResult } from "./sandbox.ts";
 import { localDate } from "./schedule.ts";
-import { MAX_STATE_BYTES, type NoteRow, type TriggerStore } from "./store.ts";
+import { checkState, stateBudget, type NoteRow, type StateBudget, type TriggerStore } from "./store.ts";
 import { triage } from "./triage.ts";
 import type { Outcome, RunReason, Signal, StageRecord, Trigger, TriggerRun } from "./types.ts";
 import { DEFAULT_TRIAGE_PER_DAY, MAX_BATCH_SIGNALS } from "./validate.ts";
@@ -233,6 +233,8 @@ interface Pass {
   force?: boolean;
   /** A test run's: set when the script or the quick check read outside content beyond the signals (DryRun.read). */
   read?: boolean;
+  /** The script's state writes in this pass, committed with its outcome (none for a test run). */
+  state: StateOverlay;
 }
 
 /** What the stages decided, before the outcome is carried out; `why` goes on the outcome's journal line. */
@@ -276,30 +278,76 @@ function describe(signals: Signal[], lead: string): string {
   return `${lead}: ${head}${signals.length > 5 ? `; and ${signals.length - 5} more` : ""}`;
 }
 
-/** The store as a test run's script sees it: its state writes stay in the run, the rest is read as it is. */
-function dryStore(store: TriggerStore): TriggerStore {
-  const local = new Map<string, string | undefined>();
-  const at = (id: string, k: string) => `${id}\u0000${k}`;
-  return {
+/** A run's script state, held until its outcome is written (stateOverlay). */
+interface StateOverlay {
+  /** The store as the run's script sees it. */
+  store: TriggerStore;
+  /** The run's state writes go to the store; a test run's never do. */
+  commit(): void;
+}
+
+/**
+ * The store as a run's script sees it: its state writes stay in the run, its reads see them, the rest is read as it is.
+ * They reach the store only with the run's outcome (`commit`, in the same synchronous step as its journal line), so a
+ * stop or a failure leaves the trigger's state as it was and a retry starts from it. Each write is held to the store's
+ * cap as it would be once committed. `dry` (a test run): nothing is committed, and no note or journal line is made.
+ */
+function stateOverlay(store: TriggerStore, dry = false): StateOverlay {
+  const local = new Map<string, Map<string, string | undefined>>();
+  const mine = (id: string) => {
+    let m = local.get(id);
+    if (!m) local.set(id, (m = new Map()));
+    return m;
+  };
+  const size = (k: string, v: string | undefined) => (v === undefined ? 0 : Buffer.byteLength(k) + Buffer.byteLength(v));
+  /** The bytes a budget would take once committed, the keys in `except` left out. */
+  const bytes = (id: string, budget: StateBudget, except: string[] = []): number => {
+    const m = local.get(id) ?? new Map<string, string | undefined>();
+    const held = [...m.keys()].filter((k) => stateBudget(k) === budget);
+    let n = store.stateBytes(id, budget, [...except, ...held]);
+    for (const k of held) if (!except.includes(k)) n += size(k, m.get(k));
+    return n;
+  };
+  const view: TriggerStore = {
     ...store,
-    addRun() {},
-    dropRuns() {},
-    dropState() {},
-    addNote() {
-      throw new Error("a test run keeps no notes");
-    },
+    ...(dry
+      ? {
+          addRun() {},
+          dropRuns() {},
+          dropState() {},
+          addNote() {
+            throw new Error("a test run keeps no notes");
+          },
+        }
+      : {}),
     stateGet(id, k) {
-      if (!local.has(at(id, k))) return store.stateGet(id, k);
-      const v = local.get(at(id, k));
+      const m = local.get(id);
+      if (!m?.has(k)) return store.stateGet(id, k);
+      const v = m.get(k);
       return v === undefined ? undefined : JSON.parse(v);
     },
     stateSet(id, k, value) {
-      const text = JSON.stringify(value ?? null);
-      if (Buffer.byteLength(text) > MAX_STATE_BYTES) throw new RangeError("trigger state is limited to 1 MB");
-      local.set(at(id, k), text);
+      mine(id).set(k, checkState(bytes(id, stateBudget(k), [k]), k, value));
     },
     stateDelete(id, k) {
-      local.set(at(id, k), undefined);
+      mine(id).set(k, undefined);
+    },
+    stateBytes: bytes,
+  };
+  return {
+    store: view,
+    commit() {
+      if (dry) return;
+      for (const [id, m] of local) {
+        // Deletes first, then what shrinks, then what grows: no step passes the cap the end state is within.
+        const writes = [...m].map(([k, v]) => {
+          const now = store.stateGet(id, k);
+          return { k, v, delta: size(k, v) - (now === undefined ? 0 : size(k, JSON.stringify(now))) };
+        });
+        for (const w of writes) if (w.v === undefined) store.stateDelete(id, w.k);
+        for (const w of writes.filter((x) => x.v !== undefined).sort((a, z) => a.delta - z.delta)) store.stateSet(id, w.k, JSON.parse(w.v!));
+      }
+      local.clear();
     },
   };
 }
@@ -437,7 +485,7 @@ export class TriggerPipeline {
     }
     if (!kept.length) return { stages, outcome: "drop", external: signals.some((s) => s.external), read: false };
     const asked = t.state.triageToday;
-    const pass: Pass = { dry: true };
+    const pass: Pass = { dry: true, state: stateOverlay(this.store, true) };
     const { why: _why, unavailable: _u, ...j } = await this.judge(t, kept, pass);
     // Its quick-model questions count against the day's, as a real run's do.
     if (t.state.triageToday !== asked) await this.e.save(t);
@@ -819,10 +867,17 @@ export class TriggerPipeline {
 
   // ---------- a run ----------
 
+  /**
+   * One queued run: the stages, then its outcome. The script's state writes are kept only with an outcome carried out
+   * (a note, a drop, a wake that started or became a note), in the same step as its journal line: a stop before that
+   * keeps nothing, and a run that failed (the script's error, the sandbox unavailable, a wake that could not start)
+   * keeps none of them either, so the next run, or a retry, starts from the state as it was.
+   */
   private async run(t: Trigger, w: Work): Promise<TriggerRun> {
     const at = new Date(this.e.now()).toISOString();
     const signals = w.signals;
-    const j = await this.judge(t, signals, { dry: false, force: w.force });
+    const pass: Pass = { dry: false, force: w.force, state: stateOverlay(this.store) };
+    const j = await this.judge(t, signals, pass);
     // Stopped meanwhile: nothing is written, the run stays queued for the next start.
     if (this.stopped) throw new Error(STOPPED);
     // A trigger that does not batch, given several (a flood batched them): its script's first argument was one signal.
@@ -848,22 +903,35 @@ export class TriggerPipeline {
         t,
         w.reason,
         { pipeline, ...(missedAt ? { missedAt } : {}), ...(w.currentValue !== undefined ? { currentValue: w.currentValue } : {}) },
-        { runId: w.runId, force: w.force, skipIfBusy: w.skipIfBusy, tainted: j.external, journal: { ...journal, outcome }, signalData },
+        { runId: w.runId, force: w.force, skipIfBusy: w.skipIfBusy, tainted: j.external, journal: { ...journal, outcome }, signalData, commit: () => this.commitState(t, pass) },
       );
       // The day's wakes are used up, or the last one still runs: what came in is kept as a note, not lost.
       if (run.status === "skipped" && run.code && SKIPPED_WAKES.has(run.code)) return this.wakeAsNote(t, run, j, signals, signalData);
       return run;
     }
     const run: TriggerRun = { id: w.runId, at, reason: w.reason, status: "started", ...journal, outcome };
-    // The note and its journal line together, before anything is awaited: a stop cannot leave one without the other.
+    // The script's state, the note and its journal line together, before anything is awaited: a stop cannot leave one
+    // without the others.
+    this.commitState(t, pass);
     if (outcome === "note") run.noteId = this.addNote(t, j.summary?.trim() || describe(signals, "Signals"), signals, j.external);
     this.journal(t.id, run, signalData);
     t.state.lastRunAt = at;
     t.state.lastStatus = "ok";
     t.state.lastError = t.state.lastErrorCode = t.state.lastErrorParams = undefined;
+    delete t.state.lastErrorExternal;
     await this.e.save(t);
     this.e.emit(t.id);
     return run;
+  }
+
+  /** The run's script state into the store; one that does not fit any more (state kept before its cap) is logged, the outcome stands. */
+  private commitState(t: Trigger, pass: Pass): void {
+    try {
+      pass.state.commit();
+    } catch (e) {
+      if (!(e instanceof RangeError)) throw e;
+      this.e.ctx.log.warn(`trigger ${t.id}: its script's state was not kept in full: ${e.message}`);
+    }
   }
 
   private addNote(t: Trigger, text: string, signals: Signal[], external: boolean): string {
@@ -905,6 +973,8 @@ export class TriggerPipeline {
     t.state.lastStatus = "skipped";
     t.state.lastError = why;
     t.state.lastErrorCode = t.state.lastErrorParams = undefined;
+    // The sandbox's own words.
+    delete t.state.lastErrorExternal;
     await this.e.save(t);
     this.e.emit(t.id);
     return run;
@@ -925,10 +995,13 @@ export class TriggerPipeline {
     t.state.lastStatus = "error";
     t.state.lastError = error;
     t.state.lastErrorCode = t.state.lastErrorParams = undefined;
+    // A run that read outside content may have put it in its error: the tools and the notification show a fixed line.
+    if (journal.external) t.state.lastErrorExternal = true;
+    else delete t.state.lastErrorExternal;
     await this.e.save(t);
     this.e.emit(t.id);
     this.e.ctx.log.info(`trigger ${t.id} error: ${error}`);
-    if (t.state.errorsInRow === FAILING_AFTER) await this.tellFailing(t, error);
+    if (t.state.errorsInRow === FAILING_AFTER) await this.tellFailing(t, error, !!journal.external);
     return run;
   }
 
@@ -954,14 +1027,15 @@ export class TriggerPipeline {
     return run;
   }
 
-  private async tellFailing(t: Trigger, error: string): Promise<void> {
+  /** `external`: the run had read outside content, which its error may carry: the Inbox and the digest's agent read the notification, so it says where to look instead. */
+  private async tellFailing(t: Trigger, error: string, external: boolean): Promise<void> {
     const i18n = this.e.ctx.i18n;
     try {
       // In the person's language; the script's error itself (English, no code) as it is.
       await this.e.ctx.core.call("notify", {
         level: "notify",
         title: i18n.t("notify.failing", { name: t.name }),
-        body: i18n.t("notify.failingBody", { error }),
+        body: external ? i18n.t("notify.failingBodyOutside") : i18n.t("notify.failingBody", { error }),
         triggerId: t.id,
         agentId: t.agentId,
       });
@@ -1045,7 +1119,8 @@ export class TriggerPipeline {
       // gives back the quick check it took (pio takes one before each question).
       quick: this.refunding(t, this.bounded()),
       triageBudget: () => this.takeTriage(t),
-      store: p.dry ? dryStore(this.store) : this.store,
+      // Its state writes stay in the pass until the run's outcome is written (stateOverlay); a test run's never leave it.
+      store: p.state.store,
     });
     let r: ScriptResult;
     try {

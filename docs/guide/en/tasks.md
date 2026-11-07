@@ -141,7 +141,7 @@ A trigger without a check wakes its agent every time, as before. A trigger can a
 
 ### A script that only reads
 
-The agent can write a short script for the trigger. The script reads and decides; it never acts. It can use the agent's tools that only read (mail, a calendar, a search), open the sites listed on the trigger, ask a quick model, and remember a few values between runs. It can't send, post, buy, delete or change anything anywhere: whatever needs doing waits for the agent. Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
+The agent can write a short script for the trigger. The script reads and decides; it never acts. It can use the agent's tools that only read (mail, a calendar, a search), open the sites listed on the trigger, ask a quick model, and remember a few values between runs. A run that fails or is cut short keeps none of what it meant to remember, so the next one starts from the same place. It can't send, post, buy, delete or change anything anywhere: whatever needs doing waits for the agent. Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
 
 The sites a script may open are part of the trigger. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
 

@@ -53,6 +53,11 @@ export interface FireOptions {
   journal?: Pick<TriggerRun, "signals" | "stages" | "outcome" | "external">;
   /** The run's signals in full, kept with it in the journal. */
   signalData?: Signal[];
+  /**
+   * The pipeline's script state, kept in the same step as the journal line when the run did not fail (a stop before it
+   * keeps neither, and the retry starts from the state as it was).
+   */
+  commit?: () => void;
 }
 
 /** A trigger whose firings go through the pipeline (pipeline.ts); any other fires exactly as it always did. */
@@ -75,6 +80,8 @@ function setLastError(s: TriggerState, e?: { message?: string; code?: string; pa
   s.lastError = e?.message;
   s.lastErrorCode = e?.code;
   s.lastErrorParams = e?.params;
+  // The engine's own errors (a page load, a task that could not start) carry nothing from outside.
+  delete s.lastErrorExternal;
 }
 
 function header(headers: Record<string, string> | undefined, name: string): string | undefined {
@@ -489,6 +496,7 @@ export class TriggerEngine {
     t.state.lastStatus = run.status === "started" ? "ok" : run.status;
     setLastError(t.state, run.status === "started" ? undefined : { message: run.detail, code: run.code, params: run.params });
     await this.save(t);
+    if (run.status !== "error") opts.commit?.();
     await this.addRun(t.id, run, opts.signalData);
     this.emit(t.id);
     if (run.status !== "started") this.ctx.log.info(`trigger ${t.id} ${run.status}: ${run.detail}`);
