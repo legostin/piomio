@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createTcp, type AddressInfo } from "node:net";
 import { proxiedGet } from "../../src/signals/net.ts";
 import { fetchPage } from "../../src/signals/watch.ts";
 
@@ -64,5 +64,21 @@ describe("watch page loads", () => {
     await expect(
       fetchPage("https://example.com/x", { allowPrivate: true, timeoutMs: 1000, fetch: async () => Promise.reject(abort) }),
     ).rejects.toMatchObject({ code: "fetchTimeout" });
+  });
+
+  it("rejects, rather than crashing, when a server answers with a status a Response cannot carry", async () => {
+    const odd = createTcp((sock) => {
+      sock.on("error", () => {});
+      sock.end("HTTP/1.1 999 Weird\r\nContent-Length: 2\r\n\r\nhi");
+    });
+    await new Promise<void>((r) => odd.listen(0, "127.0.0.1", r));
+    try {
+      const url = `http://127.0.0.1:${(odd.address() as AddressInfo).port}/`;
+      const get = proxiedGet(`http://tok123:x@127.0.0.1:${proxyPort}`);
+      await expect(get(url, {})).rejects.toThrow(/999/);
+      await expect(fetchPage(url, { allowPrivate: true, timeoutMs: 1000, fetch: get })).rejects.toMatchObject({ code: "fetchFailed" });
+    } finally {
+      odd.close();
+    }
   });
 });
