@@ -1,13 +1,14 @@
-// Trigger engine: persistence, timers, firing tasks, watch polling, webhooks, feedback.
+// Trigger engine (in core since the unified triggers, phase 1): persistence, timers, firing tasks, watch polling, webhooks, feedback.
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import type { PluginContext, PluginHttpRequest, PluginHttpResponse } from "@piomio/plugin-sdk";
+import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
 import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
 import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
 import type { RunReason, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
-import { extractValue, fetchPage, hashValue, lineDiff } from "./watch.ts";
+import { pageReader } from "./extract.ts";
+import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
 export const MAX_RUNS_KEPT = 20;
 const MAX_TIMER_MS = 60_000;
@@ -61,7 +62,7 @@ function defaultTimezone(): string {
 }
 
 export class TriggerEngine {
-  ctx: PluginContext;
+  ctx: TriggerHost;
   settings: EngineSettings;
   triggers = new Map<string, Trigger>();
   tz = defaultTimezone();
@@ -82,7 +83,7 @@ export class TriggerEngine {
   /** When a tick last found the computer had slept (ms). */
   private wokeAt = -Infinity;
 
-  constructor(ctx: PluginContext, opts: { now?: () => number } = {}) {
+  constructor(ctx: TriggerHost, opts: { now?: () => number } = {}) {
     this.ctx = ctx;
     this.settings = readEngineSettings(ctx.settings);
     this.now = opts.now ?? Date.now;
@@ -118,6 +119,8 @@ export class TriggerEngine {
 
   /** Run at most one catch-up per trigger for runs missed while the hub was down, then arm the timer. */
   async boot(): Promise<void> {
+    // Stopped before its turn came (the hub stood down right after starting it): nothing to run or plan.
+    if (this.stopped) return;
     const now = new Date(this.now());
     for (const t of [...this.triggers.values()]) {
       if (!t.enabled || this.stopped) continue;
@@ -138,6 +141,7 @@ export class TriggerEngine {
       });
     }
     for (const t of this.triggers.values()) {
+      if (this.stopped) return;
       // Due just now (within the grace period): keep it, the timer fires it as a normal run.
       const planned = t.state.nextRunAt ? Date.parse(t.state.nextRunAt) : NaN;
       if (t.enabled && planned <= now.getTime() && t.kind !== "watch") continue;
@@ -472,8 +476,9 @@ export class TriggerEngine {
     t.state.nextRunAt = t.enabled ? new Date(now.getTime() + (t.intervalMinutes ?? 60) * 60_000).toISOString() : undefined;
     let value: string;
     try {
-      const page = await fetchPage(t.url!, { allowPrivate: this.settings.allowPrivateUrls, timeoutMs: this.settings.watchTimeoutSec * 1000 });
-      value = extractValue(page.body, page.contentType, { selector: t.selector, jsonPath: t.jsonPath });
+      const page = await fetchPage(t.url!, { allowPrivate: this.settings.allowPrivateUrls, timeoutMs: this.settings.watchTimeoutSec * 1000, fetch: this.ctx.fetch });
+      // Off the hub's thread: a hostile page cannot hold it (extract.ts).
+      value = await pageReader.read(page.body, page.contentType, { selector: t.selector, jsonPath: t.jsonPath });
     } catch (e) {
       const err = errorFields(e);
       const repeated = t.state.lastStatus === "error" && t.state.lastError === err.message;
@@ -695,7 +700,7 @@ export class TriggerEngine {
 
   // ---------- webhooks ----------
 
-  async webhook(req: PluginHttpRequest): Promise<PluginHttpResponse> {
+  async webhook(req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
     const m = /^\/([A-Za-z0-9_-]{1,64})\/?$/.exec(req.path);
     const t = m ? this.triggers.get(m[1]) : undefined;
     if (!t || t.kind !== "event" || !t.secret) return { status: 404, body: { error: "not found" } };

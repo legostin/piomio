@@ -1,13 +1,11 @@
 // End-to-end through the SDK runner: tools, HTTP API, webhooks, watch polling, once firing, feedback.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
-import { startPlugin, type PluginHarness } from "@piomio/testkit";
-import { defaultReport } from "../server/schedule.ts";
-
-const dir = join(import.meta.dirname, "..");
+import { startTriggerHarness as startPlugin, type TriggerHarness as PluginHarness } from "./harness.ts";
+import { pageReader } from "../../src/signals/extract.ts";
+import { defaultReport } from "../../src/signals/schedule.ts";
 
 const until = async <T>(fn: () => T | Promise<T>, timeoutMs = 8000): Promise<NonNullable<T>> => {
   const end = Date.now() + timeoutMs;
@@ -33,6 +31,12 @@ describe("triggers plugin", () => {
 
   beforeAll(async () => {
     site = createServer((req, res) => {
+      // Thousands of unclosed tags: parsing it on the hub's thread would hold the hub for a long while.
+      if (req.url === "/hostile") {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end("<div>".repeat(100_000));
+        return;
+      }
       hits++;
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(`<html><body><h1>Билеты</h1><span class="price">${price}</span><script>var n=${Math.random()}</script></body></html>`);
@@ -41,7 +45,6 @@ describe("triggers plugin", () => {
     siteUrl = `http://127.0.0.1:${(site.address() as AddressInfo).port}/tickets`;
 
     h = await startPlugin({
-      dir,
       settings: { allowPrivateUrls: true },
       core: (method, p) => {
         switch (method) {
@@ -210,6 +213,36 @@ describe("triggers plugin", () => {
     expect((await get(id)).state.lastValue).toBe("990 ₽");
   });
 
+  it("a page too heavy to read ends its check with an error, and the hub's thread stays free", async () => {
+    // The reader's limit is 10 s; a shorter one keeps the test quick.
+    const read = pageReader.read.bind(pageReader);
+    const spy = vi.spyOn(pageReader, "read").mockImplementation((body, type, opts) => read(body, type, opts, 500));
+    let gap = 0;
+    let last = Date.now();
+    const timer = setInterval(() => {
+      gap = Math.max(gap, Date.now() - last);
+      last = Date.now();
+    }, 10);
+    try {
+      const out = await h.invokeText("create", { kind: "watch", name: "Тяжёлая", prompt: "p", url: siteUrl.replace("/tickets", "/hostile"), intervalMinutes: 60 });
+      const id = idOf(out);
+      const checked = await until(async () => {
+        const x = await get(id);
+        return x.state.lastErrorCode ? x : undefined;
+      });
+      expect(checked.state).toMatchObject({ lastStatus: "error", lastErrorCode: "extractTimeout", lastErrorParams: { seconds: 1 } });
+      expect(checked.lastErrorText).toBe("Reading the page took longer than 1 second: it is too large or too deeply nested");
+      const runs = ((await h.http({ path: `/triggers/${id}/runs` })).body as any).runs;
+      expect(runs[0]).toMatchObject({ reason: "change", status: "error", code: "extractTimeout" });
+      expect(createdFor(id)).toHaveLength(0);
+      expect(gap).toBeLessThan(1000);
+      await h.http({ method: "DELETE", path: `/triggers/${id}` });
+    } finally {
+      clearInterval(timer);
+      spy.mockRestore();
+    }
+  });
+
   it("accepts webhooks only with the right secret", async () => {
     const out = await h.invokeText("create", { kind: "event", name: "Деплой", prompt: "Summarize the deploy and notify on failure." });
     const id = idOf(out);
@@ -315,7 +348,6 @@ describe("triggers plugin in Russian", () => {
 
   beforeAll(async () => {
     h = await startPlugin({
-      dir,
       locale: "ru",
       core: (method) => {
         if (method === "settings.get") return { timezone: "Europe/Moscow", defaultAgent: "assistant" };

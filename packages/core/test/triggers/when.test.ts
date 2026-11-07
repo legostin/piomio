@@ -1,16 +1,15 @@
-// When a trigger runs, in words, with the plugin's own catalogs.
+// When a trigger runs, in words, with core's catalogs.
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { format, type Locale } from "@piomio/shared";
-import type { Trigger } from "../server/types.ts";
-import { cronText, whenText } from "../server/when.ts";
+import { coreCatalog } from "../../src/i18n.ts";
+import type { Trigger } from "../../src/signals/types.ts";
+import { cronText, whenText } from "../../src/signals/when.ts";
 
-const catalog = (l: Locale) => JSON.parse(readFileSync(join(import.meta.dirname, "..", ".piomio-plugin", "locales", `${l}.json`), "utf8")) as Record<string, string>;
+const catalog = (l: Locale) => coreCatalog[l] as Record<string, string>;
 const tr = (l: Locale) => {
   const c = catalog(l);
-  return (key: string, params?: Record<string, string | number>) => format(c[key] ?? key, params, l);
+  return (key: string, params?: Record<string, string | number>) => format(c[`triggers.${key}`] ?? key, params, l);
 };
 
 describe("when a trigger runs, in words", () => {

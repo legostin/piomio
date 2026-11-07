@@ -1,11 +1,7 @@
 {
   "name": "@piomio/plugin-triggers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Proactivity for Piomio: schedules, one-off reminders, page watches, webhooks, heartbeat reviews",
-  "dependencies": {
-    "croner": "^10.0.1",
-    "node-html-parser": "^9.0.4"
-  }
+  "description": "The Triggers page and its settings; the engine runs in core (packages/core/src/signals)"
 }

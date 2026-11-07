@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { computeNextRun, cronError, cronNext, formatLocal, heartbeatNext, localDate, parseDateTime } from "../server/schedule.ts";
-import { dropSlot } from "../server/engine.ts";
-import { buildTrigger } from "../server/validate.ts";
-import type { Trigger } from "../server/types.ts";
+import { computeNextRun, cronError, cronNext, formatLocal, heartbeatNext, localDate, parseDateTime } from "../../src/signals/schedule.ts";
+import { dropSlot } from "../../src/signals/engine.ts";
+import { buildTrigger } from "../../src/signals/validate.ts";
+import type { Trigger } from "../../src/signals/types.ts";
 
 const iso = (d: Date | null) => d?.toISOString();
 
