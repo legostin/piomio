@@ -522,6 +522,7 @@ export default {
   "triggers.error.fetchFailed": "Не удалось загрузить {url}: {reason}",
   "triggers.error.httpStatus": "{url} ответил {status}",
   "triggers.error.tooManyRedirects": "Слишком много перенаправлений: {url}",
+  "triggers.error.extractTimeout": "Страница разбиралась дольше {seconds, plural, one {# секунды} few {# секунд} many {# секунд} other {# секунды}}: она слишком большая или слишком глубоко вложенная",
   "triggers.error.dailyLimit": "Дневной лимит запусков ({max}) исчерпан",
   "triggers.error.previousRunning": "Предыдущий запуск ещё не завершён",
   "triggers.error.agentArchived": "Агент в архиве",

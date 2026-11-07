@@ -7,7 +7,8 @@ import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prom
 import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
 import type { RunReason, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, ValidationError } from "./validate.ts";
-import { extractValue, fetchPage, hashValue, lineDiff } from "./watch.ts";
+import { pageReader } from "./extract.ts";
+import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
 export const MAX_RUNS_KEPT = 20;
 const MAX_TIMER_MS = 60_000;
@@ -476,7 +477,8 @@ export class TriggerEngine {
     let value: string;
     try {
       const page = await fetchPage(t.url!, { allowPrivate: this.settings.allowPrivateUrls, timeoutMs: this.settings.watchTimeoutSec * 1000, fetch: this.ctx.fetch });
-      value = extractValue(page.body, page.contentType, { selector: t.selector, jsonPath: t.jsonPath });
+      // Off the hub's thread: a hostile page cannot hold it (extract.ts).
+      value = await pageReader.read(page.body, page.contentType, { selector: t.selector, jsonPath: t.jsonPath });
     } catch (e) {
       const err = errorFields(e);
       const repeated = t.state.lastStatus === "error" && t.state.lastError === err.message;

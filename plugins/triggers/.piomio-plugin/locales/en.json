@@ -46,6 +46,7 @@
   "error.fetchFailed": "Could not load {url}: {reason}",
   "error.httpStatus": "{url} responded with {status}",
   "error.tooManyRedirects": "Too many redirects: {url}",
+  "error.extractTimeout": "Reading the page took longer than {seconds, plural, one {# second} other {# seconds}}: it is too large or too deeply nested",
   "error.dailyLimit": "Daily run limit ({max}) reached",
   "error.previousRunning": "The previous run has not finished yet",
   "error.agentArchived": "The agent is in the archive",

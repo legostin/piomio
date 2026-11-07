@@ -46,6 +46,7 @@
   "error.fetchFailed": "Не удалось загрузить {url}: {reason}",
   "error.httpStatus": "{url} ответил {status}",
   "error.tooManyRedirects": "Слишком много перенаправлений: {url}",
+  "error.extractTimeout": "Страница разбиралась дольше {seconds, plural, one {# секунды} few {# секунд} many {# секунд} other {# секунды}}: она слишком большая или слишком глубоко вложенная",
   "error.dailyLimit": "Дневной лимит запусков ({max}) исчерпан",
   "error.previousRunning": "Предыдущий запуск ещё не завершён",
   "error.agentArchived": "Агент в архиве",
