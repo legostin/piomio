@@ -244,7 +244,7 @@ export class CoreTriggers {
     return e.pipeline.deliver(t, signals, reason, o.via ? { via: o.via } : {});
   }
 
-  /** Its HTTP API (/api/triggers/*, and the plugin's /api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
+  /** Its HTTP API (/api/triggers/*, and the old plugin's address /api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
   async http(req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
     const handler = this.engine ? this.session?.handler : undefined;
     if (!handler) return { status: 404, body: { error: "not found" } };
@@ -351,7 +351,7 @@ export class CoreTriggers {
           const { handler, name: short, fullName, effectOf, describe, ...spec } = r;
           const name = fullName ?? `${TOOL_PREFIX}_${short}`;
           // As the plugin runner did: a string is the text, a throw is an error result.
-          // Owned by the card, as the plugin's were: "always allow", the catalog's uses and its tool list go by the owner.
+          // Owned by "triggers", as the plugin's were: "always allow" and the uses counted go by the owner.
           // A call's own effect (a new script host is an outside action) and its card's text go to the registry as a
           // core tool's do.
           d.tools.register(
