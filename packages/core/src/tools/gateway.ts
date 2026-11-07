@@ -100,6 +100,13 @@ const ADDRESS_KEYS =
 const COUNT_KEYS = /^(?:pages?|resources?|targets?)$/i;
 /** For a source tool, naming a host anywhere in its input: a host name's shape (Unicode labels too), a dotted IPv4, a bracketed IPv6. */
 const HOST_SHAPES = [/(?:[\p{L}\p{N}-]+\.)+\p{L}[\p{L}\p{N}-]+/gu, /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, /\[[0-9a-f.]*:[0-9a-f:.]*\]/gi];
+/**
+ * A word that is an e-mail address as a mail search writes it ("from:boss@corp.com", "<ann@corp.com>,"): a mailbox, not
+ * a host to fetch, so a script may search the person's mail by sender. Only outside address fields: no scheme, nothing
+ * after the host (a "/" or ":" makes it an address).
+ */
+const EMAIL = /^[\p{L}\p{N}._%+-]+@(?:[\p{L}\p{N}-]+\.)+\p{L}[\p{L}\p{N}-]+$/u;
+const isEmail = (word: string) => EMAIL.test(word.replace(/^[\p{L}_-]+:/u, "").replace(/^[(<"']+/, "").replace(/[)>"',.;]+$/, ""));
 /** What clings to an address in prose ("(see https://x.example).") */
 const TRAILING = /[.,;:!?)\]}*_]+$/;
 
@@ -502,23 +509,27 @@ export class ToolGateway {
  * The hosts every address in a trigger's tool input names, as the WHATWG URL parser would read them. In any string or
  * key: "//host" and a special scheme's "https:host" with any slashes or backslashes. In an address field (ADDRESS_KEYS)
  * and all under it: the first word as a bare host, a number as an IPv4 address. For a source tool (`source`), any word
- * shaped like a host name or an IP address, anywhere. Every string is read as the parser and a decoder would: tabs and
+ * shaped like a host name or an IP address, anywhere, but an e-mail address outside address fields (EMAIL). Every string is read as the parser and a decoder would: tabs and
  * newlines dropped, percent-decoded, ideographic full stops as dots. Undefined when the input nests deeper than
  * TRIGGER_INPUT_DEPTH.
  */
 function addressHosts(input: unknown, source: boolean): string[] | undefined {
   const hosts = new Set<string>();
   const add = (h: string) => void (h && hosts.add(h));
-  const scan = (text: string) => {
+  const scan = (text: string, address: boolean) => {
     for (const s of readings(text)) {
       for (const m of s.matchAll(AUTHORITY)) add(authorityHost(m[1]));
       for (const m of s.matchAll(SCHEME_AUTHORITY)) add(authorityHost(m[1]));
-      if (source) for (const shape of HOST_SHAPES) for (const m of s.matchAll(shape)) add(authorityHost(m[0]));
+      if (!source) continue;
+      for (const word of s.split(/\s+/)) {
+        if (!address && isEmail(word)) continue;
+        for (const shape of HOST_SHAPES) for (const m of word.matchAll(shape)) add(authorityHost(m[0]));
+      }
     }
   };
   const walk = (v: unknown, depth: number, address: boolean, key: string): boolean => {
     if (typeof v === "string") {
-      scan(v);
+      scan(v, address);
       if (address) for (const s of readings(v)) add(bareHost(s));
     } else if (typeof v === "number") {
       if (address && !COUNT_KEYS.test(key)) add(authorityHost(String(v)));
@@ -528,7 +539,7 @@ function addressHosts(input: unknown, source: boolean): string[] | undefined {
     } else if (v && typeof v === "object") {
       if (depth >= TRIGGER_INPUT_DEPTH) return false;
       for (const [k, x] of Object.entries(v)) {
-        scan(k);
+        scan(k, address);
         if (!walk(x, depth + 1, address || ADDRESS_KEYS.test(k), k)) return false;
       }
     }

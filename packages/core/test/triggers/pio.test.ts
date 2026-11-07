@@ -233,6 +233,33 @@ describe("ToolGateway.callRead", () => {
     }
   });
 
+  it("a source tool may search mail by sender: an e-mail address in a text field is no host, in an address field it is", async () => {
+    const h = hub();
+    h.tool("GMAIL_FETCH_EMAILS", "read", { source: true });
+    const listed = { ...as, hosts: ["api.example.com"] };
+    const fine: unknown[] = [
+      { query: "from:boss@corp.com newer_than:1d" },
+      { from: "boss@corp.com", subject: "Invoice" },
+      { q: "to:(ann@corp.com) OR cc:<bob@corp.co.uk>," },
+      { ["boss@corp.com"]: true },
+    ];
+    for (const input of fine) expect((await h.gateway.callRead(listed, "GMAIL_FETCH_EMAILS", input)).isError, JSON.stringify(input)).toBeFalsy();
+    const refused: unknown[] = [
+      { url: "boss@evil.com" },
+      { query: "see https://evil.com" },
+      { query: "https:boss@evil.com" },
+      { query: "//boss@evil.com" },
+      { query: "boss@evil.com/x" },
+      { query: "boss@evil.com:8080" },
+      { query: "from:boss@corp.com evil.com" },
+    ];
+    for (const input of refused) {
+      const r = await h.gateway.callRead(listed, "GMAIL_FETCH_EMAILS", input);
+      expect(r.isError, JSON.stringify(input)).toBe(true);
+      expect(textOf(r), JSON.stringify(input)).toMatch(/evil\.com/);
+    }
+  });
+
   it("an address field is an address whatever it holds: its first word, a number (an IPv4), what nests under it", async () => {
     const h = hub();
     h.tool("ci_status", "read");
