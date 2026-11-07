@@ -48,6 +48,7 @@ const msgFrom = (r: any): Message => ({
   channel: r.channel ?? undefined,
   ...(r.quiet ? { quiet: true } : {}),
   createdAt: r.created_at,
+  updatedAt: r.updated_at ?? r.created_at,
 });
 
 const taskFrom = (r: any): Task => ({
@@ -286,10 +287,11 @@ export class Store {
   // ---------- messages ----------
 
   addMessage(m: Omit<Message, "id" | "createdAt"> & { id?: string }): Message {
-    const msg: Message = { ...m, id: m.id ?? newId("m_"), createdAt: nowIso() };
+    const at = nowIso();
+    const msg: Message = { ...m, id: m.id ?? newId("m_"), createdAt: at, updatedAt: at };
     this.db
-      .prepare("insert into messages(id, conversation_id, role, parts, status, agent_id, task_id, brain_ref, model, effort, channel, quiet, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(msg.id, msg.conversationId, msg.role, JSON.stringify(msg.parts), msg.status, msg.agentId ?? null, msg.taskId ?? null, msg.brainRef ?? null, msg.model ?? null, msg.effort ?? null, msg.channel ?? null, msg.quiet ? 1 : 0, msg.createdAt);
+      .prepare("insert into messages(id, conversation_id, role, parts, status, agent_id, task_id, brain_ref, model, effort, channel, quiet, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(msg.id, msg.conversationId, msg.role, JSON.stringify(msg.parts), msg.status, msg.agentId ?? null, msg.taskId ?? null, msg.brainRef ?? null, msg.model ?? null, msg.effort ?? null, msg.channel ?? null, msg.quiet ? 1 : 0, msg.createdAt, at);
     this.touchConversation(msg.conversationId);
     this.bus.emit("message.created", msg);
     return msg;
@@ -301,6 +303,7 @@ export class Store {
     if (patch.status) this.db.prepare("update messages set status = ? where id = ?").run(patch.status, id);
     if (patch.brainRef) this.db.prepare("update messages set brain_ref = ? where id = ?").run(patch.brainRef, id);
     if (patch.model) this.db.prepare("update messages set model = ? where id = ?").run(patch.model, id);
+    this.db.prepare("update messages set updated_at = ? where id = ?").run(nowIso(), id);
     const m = this.getMessage(id);
     if (m && emit) this.bus.emit("message.updated", m);
     return m;
@@ -319,11 +322,19 @@ export class Store {
     return r ? msgFrom(r) : undefined;
   }
 
-  listMessages(conversationId: string, opts: { limit?: number; before?: string } = {}): Message[] {
+  /**
+   * The newest `limit` messages, oldest first: those before `before` (an older page), or those that changed after
+   * `since` (what a device that kept the dialog has not seen; `limit` of them means there may be more).
+   */
+  listMessages(conversationId: string, opts: { limit?: number; before?: string; since?: string } = {}): Message[] {
     const limit = opts.limit ?? 200;
     const rows = opts.before
       ? this.db.prepare("select * from messages where conversation_id = ? and created_at < ? order by created_at desc limit ?").all(conversationId, opts.before, limit)
-      : this.db.prepare("select * from messages where conversation_id = ? order by created_at desc limit ?").all(conversationId, limit);
+      : opts.since
+        ? this.db
+            .prepare("select * from messages where conversation_id = ? and coalesce(updated_at, created_at) > ? order by created_at desc limit ?")
+            .all(conversationId, opts.since, limit)
+        : this.db.prepare("select * from messages where conversation_id = ? order by created_at desc limit ?").all(conversationId, limit);
     return rows.map(msgFrom).reverse();
   }
 

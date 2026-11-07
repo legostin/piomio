@@ -456,6 +456,8 @@ export class Cluster {
     }
     await this.decide();
     if (this.leads()) this.askToUnlock();
+    // A standby that reaches its leader (again): phones and windows it served while it had none reconnect there.
+    else this.hub.realtime.closeMoved();
     this.emitState();
   }
 

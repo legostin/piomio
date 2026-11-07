@@ -171,14 +171,21 @@ function pipesOn(link: RpcPeer): Map<string, WebSocket> {
   return sockets;
 }
 
+/** Would pipeToLeader take a socket for `app` now: this replica stands by and can reach the leader. */
+export function canPipeToLeader(hub: Hub, app: LinkApp = "device"): boolean {
+  const target = hub.cluster.leaderTarget();
+  if (!target || (app !== "device" && !target.link)) return false;
+  return !!(target.link || target.url);
+}
+
 /**
  * The app's WebSocket (or a machine's /node/ws, or the web UI's /api/ws with the `session` checked here: `app: "main"`;
  * the console's with its session: `app: "console"`) on a standby: one to the leader, messages both ways. True when it
  * took the socket.
  */
 export function pipeToLeader(hub: Hub, socket: WebSocket, req: FastifyRequest, app: LinkApp = "device", session?: AuthSession): boolean {
-  const target = hub.cluster.leaderTarget();
-  if (!target || (app !== "device" && !target.link)) return false;
+  if (!canPipeToLeader(hub, app)) return false;
+  const target = hub.cluster.leaderTarget()!;
   const headers0: Record<string, string> = {};
   for (const k of ["authorization", "cookie", "user-agent", "accept-language"]) if (typeof req.headers[k] === "string") headers0[k] = req.headers[k] as string;
   if (target.link) {
@@ -210,10 +217,10 @@ export function pipeToLeader(hub: Hub, socket: WebSocket, req: FastifyRequest, a
     );
     return true;
   }
-  if (!target.url) return false;
+  const leaderUrl = target.url!;
   const fingerprint = hub.deviceTls().fingerprint;
-  const url = new URL(req.url, target.url.replace(/^http/, "ws"));
-  const headers: Record<string, string> = { ...headers0, origin: target.url };
+  const url = new URL(req.url, leaderUrl.replace(/^http/, "ws"));
+  const headers: Record<string, string> = { ...headers0, origin: leaderUrl };
   const up = new WebSocket(url, { headers, rejectUnauthorized: false, agent: pinnedAgent, handshakeTimeout: 10_000 });
   up.on("upgrade", (res) => {
     const s = res.socket as TLSSocket;

@@ -90,3 +90,55 @@ function dedupe(list: Message[]): Message[] {
 export function isStreaming(messages: Message[]): boolean {
   return messages.some((m) => m.status === "streaming");
 }
+
+/** When the message last changed (older hubs send no updatedAt). */
+export function changedAt(m: Message): string {
+  return m.updatedAt ?? m.createdAt;
+}
+
+/** The newest change among `list`, or `mark` when nothing in it is newer: a dialog's mark after a fetch. */
+export function newestChange(list: Message[], mark?: string): string | undefined {
+  let out = mark;
+  for (const m of list) if (!out || changedAt(m) > out) out = changedAt(m);
+  return out;
+}
+
+/**
+ * Where to ask from: a little before the mark, so a change written by a replica whose clock runs behind still comes
+ * (what comes twice merges).
+ */
+export function askSince(mark: string, slackMs = 120_000): string {
+  const t = Date.parse(mark);
+  return Number.isFinite(t) ? new Date(t - slackMs).toISOString() : mark;
+}
+
+/**
+ * What changed since the mark (GET …/messages?since=) merged into what the page shows: changed messages replace
+ * theirs (a streaming one with more text here stays), new ones join, and one older than everything shown stays out
+ * (the page would show it alone above a gap; scrolling up loads it).
+ */
+export function mergeChanges(local: Message[], changed: Message[]): Message[] {
+  if (!changed.length) return local;
+  let out = local;
+  const oldest = local[0]?.createdAt;
+  for (const c of changed) {
+    const l = out.find((m) => m.id === c.id);
+    if (l && c.status === "streaming" && l.status === "streaming" && textLength(l) > textLength(c)) continue;
+    if (!l && !c.quiet && oldest && c.createdAt < oldest) continue;
+    out = upsertMessage(out, c);
+  }
+  return out;
+}
+
+/**
+ * The latest page from the hub against what the page had: when the page is full and shares nothing with what was
+ * here, the older messages here would sit above a gap, so only those newer than the page (live ones) stay.
+ */
+export function joinLatest(local: Message[], fetched: Message[], page: number): { messages: Message[]; gap: boolean } {
+  const newest = fetched[fetched.length - 1]?.createdAt;
+  // What was here up to the page's newest message (later ones came over the socket meanwhile).
+  const before = newest ? local.filter((m) => m.createdAt <= newest) : [];
+  const gap = fetched.length >= page && before.length > 0 && !before.some((m) => m.createdAt >= fetched[0].createdAt);
+  if (!gap) return { messages: mergeFetched(local, fetched), gap };
+  return { messages: mergeFetched(local.filter((m) => m.createdAt > newest!), fetched), gap };
+}
