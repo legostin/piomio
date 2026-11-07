@@ -499,6 +499,8 @@ export interface Message {
    */
   quiet?: boolean;
   createdAt: ISODate;
+  /** When it last changed (its text, status, a card's answer): a device that kept the dialog asks for what changed after it. */
+  updatedAt?: ISODate;
 }
 
 /** What a setup chat makes ("New channel", "Add agent"). */

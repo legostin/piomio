@@ -86,6 +86,7 @@ import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
 import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
+import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
 import type { FastifyInstance } from "fastify";
 
@@ -152,6 +153,8 @@ export class Hub {
   setups: MachineSetups;
   /** This hub's place among its replicas (cluster.ts); a hub of one always leads. */
   cluster: Cluster;
+  /** The realtime sockets this replica serves from its own bus: they follow the lead (server/realtime.ts). */
+  readonly realtime = new RealtimeSockets();
   /** What every machine is doing now, for the machines block (activity.ts). */
   activity: MachineActivityFeed;
   /** Updates on the person's button: this hub's on a server install, and the machines' (self-update.ts). */
@@ -1242,6 +1245,8 @@ export class Hub {
     await this.mcpClients.closeAll();
     // Machines that reached this replica while it led reconnect, and land on the leader (directly or over the link).
     this.machines.closeAll();
+    // So do the phones and windows: this replica's bus has nothing more to tell them.
+    this.realtime.closeAll();
   }
 
   async start(opts: { listen?: boolean } = {}): Promise<void> {

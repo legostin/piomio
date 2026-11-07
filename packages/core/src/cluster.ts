@@ -469,6 +469,8 @@ export class Cluster {
       // Replicas behind this one: their Update, how one asked for goes, the chat's offer (self-update.ts).
       this.hub.updates?.replicasChanged();
     }
+    // A standby that reaches its leader (again): phones and windows it served while it had none reconnect there.
+    else this.hub.realtime.closeMoved();
     this.emitState();
   }
 
