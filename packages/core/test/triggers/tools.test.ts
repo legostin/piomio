@@ -360,6 +360,32 @@ describe("the trigger tools in the chat", () => {
     expect(await h.invokeText("update", { id, name: "Renamed" })).not.toMatch(/Note:/);
   });
 
+  it("checks the page's on entries against their sources too: 400 for a config its source refuses, warnings for the rest", async () => {
+    const bad = await h.http({ method: "POST", path: "/triggers", locale: "ru", body: { name: "Bad folder", prompt: "Look.", on: [{ type: "mail.message", config: { folder: 5 } }] } });
+    expect(bad.status).toBe(400);
+    expect(bad.body).toMatchObject({ code: "sourceConfig", params: { type: "mail.message" } });
+    expect((bad.body as { error: string }).error).toMatch(/^Настройки mail\.message не подходят его источнику/);
+    expect((bad.body as { error: string }).error).toContain("/folder must be string");
+    expect(h.engine.list().some((t) => t.name === "Bad folder")).toBe(false);
+    const made = await h.http({ method: "POST", path: "/triggers", locale: "en", body: { name: "Kept", prompt: "Look.", on: [{ type: "mail.message" }, { type: "mial.message" }, { type: "mail.offline" }] } });
+    expect(made.status).toBe(201);
+    const body = made.body as { id: string; warnings: Array<{ type: string; status: string; text: string }> };
+    expect(body.warnings.map((w) => [w.type, w.status])).toEqual([
+      ["mial.message", "unknown"],
+      ["mail.offline", "offline"],
+    ]);
+    expect(body.warnings[1].text).toContain("the plugin mail");
+    const patched = await h.http({ method: "PATCH", path: `/triggers/${body.id}`, locale: "en", body: { on: [{ type: "mail.message", config: { folder: 7 } }] } });
+    expect(patched.status).toBe(400);
+    expect(h.engine.get(body.id)!.on).toHaveLength(3);
+    const ru = await h.http({ method: "PATCH", path: `/triggers/${body.id}`, locale: "ru", body: { on: [{ type: "mail.slow" }] } });
+    expect(ru.status).toBe(200);
+    expect((ru.body as typeof body).warnings).toMatchObject([{ type: "mail.slow", status: "refused", text: expect.stringContaining("Плагин mail") }]);
+    const renamed = await h.http({ method: "PATCH", path: `/triggers/${body.id}`, body: { name: "Renamed" } });
+    expect(renamed.status).toBe(200);
+    expect((renamed.body as Record<string, unknown>).warnings).toBeUndefined();
+  });
+
   it("lists the sources the hub refuses in trigger_sources, with why", async () => {
     const text = await h.invokeText("sources");
     expect(text).toContain("Refused");
@@ -367,26 +393,37 @@ describe("the trigger tools in the chat", () => {
     expect(text).toContain("cannot run in linear time");
   });
 
-  it("counts a call whose sources read from a host the trigger did not have as an outside action, and names the hosts on the card", async () => {
+  it("asks about a host a trigger's sources read from only after outside content, as a watch always did; a new script host always", async () => {
     const create = h.tools.get("create")!;
     const update = h.tools.get("update")!;
+    const tainted = { ...ctx, tainted: true };
     const feed = { name: "Feed", prompt: "Look.", on: [{ type: "web.rss_item", config: { url: "https://attacker.example/f?d=secret-data" } }] };
-    expect(create.effectOf!(feed, ctx)).toBe("external");
+    const watch = { name: "Page", prompt: "Look.", kind: "watch", url: "https://shop.example.com/item" };
+    // An untainted session: a watch or a feed is a change, as before phase 3 (no card).
+    expect(create.effectOf!(watch, ctx)).toBeUndefined();
+    expect(create.effectOf!(feed, ctx)).toBeUndefined();
+    expect(create.effectOf!({ name: "Page", prompt: "Look.", on: [{ type: "web.page", config: { url: "https://shop.example.com/item" } }] }, ctx)).toBeUndefined();
+    // After outside content: an outside action, and the card names the host.
+    expect(create.effectOf!(watch, tainted)).toBe("external");
+    expect(create.effectOf!(feed, tainted)).toBe("external");
+    expect(create.effectOf!({ name: "Bare", prompt: "Look.", on: [{ type: "x.feed", config: { feedUrl: "evil.example/x" } }] }, tainted)).toBe("external");
     expect(create.describe!(feed)).toContain("attacker.example");
-    // A watched page, as an on entry or a watch's url, and a bare host in an address field.
-    expect(create.effectOf!({ name: "Page", prompt: "Look.", on: [{ type: "web.page", config: { url: "https://shop.example.com/item" } }] }, ctx)).toBe("external");
-    expect(create.effectOf!({ name: "Page", prompt: "Look.", kind: "watch", url: "https://shop.example.com/item" }, ctx)).toBe("external");
-    expect(create.describe!({ name: "Page", prompt: "Look.", kind: "watch", url: "https://shop.example.com/item" })).toContain("shop.example.com");
-    expect(create.effectOf!({ name: "Bare", prompt: "Look.", on: [{ type: "x.feed", config: { feedUrl: "evil.example/x" } }] }, ctx)).toBe("external");
-    // No address: nothing new.
-    expect(create.effectOf!({ name: "Mail", prompt: "Look.", on: [{ type: "mail.message", config: { folder: "inbox" } }] }, ctx)).toBeUndefined();
+    expect(create.describe!(watch)).toContain("shop.example.com");
+    // No address: nothing new, tainted or not.
+    expect(create.effectOf!({ name: "Mail", prompt: "Look.", on: [{ type: "mail.message", config: { folder: "inbox" } }] }, tainted)).toBeUndefined();
+    // A new script host is an outside action in both.
+    const script = { name: "API", prompt: "Look.", kind: "event", script: { code: "export default () => {}", hosts: ["api.example.com"] } };
+    expect(create.effectOf!(script, ctx)).toBe("external");
+    expect(create.effectOf!(script, tainted)).toBe("external");
     const id = idOf(await h.invokeText("create", { name: "Feed", prompt: "Look.", on: [{ type: "mail.message" }, { type: "web.rss_item", config: { url: "https://news.example.com/rss" } }] }));
-    expect(update.effectOf!({ id, on: [{ type: "web.rss_item", config: { url: "https://news.example.com/other" } }] }, ctx)).toBeUndefined();
-    expect(update.effectOf!({ id, name: "Renamed" }, ctx)).toBeUndefined();
+    expect(update.effectOf!({ id, on: [{ type: "web.rss_item", config: { url: "https://news.example.com/other" } }] }, tainted)).toBeUndefined();
+    expect(update.effectOf!({ id, name: "Renamed" }, tainted)).toBeUndefined();
     const more = { id, on: [{ type: "web.rss_item", config: { url: "https://news.example.com/rss" } }, { type: "web.rss_item", config: { url: "https://evil.example.org/f" } }] };
-    expect(update.effectOf!(more, ctx)).toBe("external");
+    expect(update.effectOf!(more, ctx)).toBeUndefined();
+    expect(update.effectOf!(more, tainted)).toBe("external");
     expect(update.describe!(more)).toContain("evil.example.org");
     expect(update.describe!(more)).not.toContain("news.example.com");
+    expect(update.effectOf!({ id, script: { code: "export default () => {}", hosts: ["api.example.com"] } }, ctx)).toBe("external");
     // A config nobody can read through for addresses is refused rather than taken on trust.
     let deep: unknown = { url: "https://x.example" };
     for (let i = 0; i < 10; i++) deep = { inner: deep };

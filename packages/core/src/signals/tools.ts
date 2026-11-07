@@ -11,7 +11,7 @@ import { NotFoundError, QueueFullError, type TriggerEngine } from "./engine.ts";
 import { describeSchedule, formatLocal } from "./schedule.ts";
 import type { TestReport } from "./test-run.ts";
 import { TRIGGER_KINDS, type StageRecord, type Trigger, type TriggerInput, type TriggerRun } from "./types.ts";
-import { DEFAULT_TRIAGE_PER_DAY, hostPattern, normalizeOn, ValidationError } from "./validate.ts";
+import { checkSources, DEFAULT_TRIAGE_PER_DAY, hostPattern, normalizeOn, ValidationError } from "./validate.ts";
 
 const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] });
 const error = (t: string): ToolResult => ({ content: [{ type: "text", text: t }], isError: true });
@@ -318,23 +318,23 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
   };
   /**
    * The registry's word on each of a call's `on` entries (other sources only, after normalizeOn): a config its source
-   * refuses is an error; a type no source brings now, a plugin that does not run, a refused declaration are kept with a
-   * note, since a plugin may be off for now.
+   * refuses throws (validate.ts checkSources); a type no source brings now, a plugin that does not run, a refused
+   * declaration are kept with a note, since a plugin may be off for now.
    */
-  const checkOn = (on: unknown): { error?: string; notes: string[] } => {
-    const notes: string[] = [];
-    if (!Array.isArray(on) || !ctx.sources?.check) return { notes };
-    for (const entry of on) {
-      if (!isObject(entry) || typeof entry.type !== "string") continue;
-      const type = entry.type;
-      const r = ctx.sources.check(type, isObject(entry.config) ? entry.config : {});
-      if (r.status === "config") return { error: `The config of ${type} does not fit its source (plugin ${r.source}): ${r.problem}. Its config schema is in trigger_sources.`, notes };
-      if (r.status === "unknown") notes.push(`Note: no source brings ${type} now (its plugin may be off or not installed; see trigger_sources): the trigger is kept and hears it once a source of that type runs.`);
-      if (r.status === "offline") notes.push(`Note: ${type} comes from the plugin ${r.source}, which does not run now: the trigger hears it once the plugin runs again.`);
-      if (r.status === "refused") notes.push(`Note: the plugin ${r.source} declares ${type}, but the hub refuses that declaration (${r.why}): it brings no signal until the plugin is fixed.`);
-    }
-    return { notes };
-  };
+  const checkOn = (on: unknown): string[] =>
+    checkSources(ctx.sources?.check ? (type, config) => ctx.sources!.check!(type, config) : undefined, on).map((n) =>
+      n.status === "unknown"
+        ? `Note: no source brings ${n.type} now (its plugin may be off or not installed; see trigger_sources): the trigger is kept and hears it once a source of that type runs.`
+        : n.status === "offline"
+          ? `Note: ${n.type} comes from the plugin ${n.source}, which does not run now: the trigger hears it once the plugin runs again.`
+          : `Note: the plugin ${n.source} declares ${n.type}, but the hub refuses that declaration (${n.why}): it brings no signal until the plugin is fixed.`,
+    );
+  /**
+   * A host the call's sources would read from that the trigger did not have is an outside action only after outside
+   * content (a tainted session), as creating a watch always was: the address goes to that host, which a page read in the
+   * session could have chosen. In a session that read nothing from outside it stays a change.
+   */
+  const newSourceHosts = (i: unknown, call: { tainted?: boolean } | undefined, cur?: Trigger): boolean => !!call?.tainted && addedSourceHosts(i, cur).length > 0;
 
   ctx.tools.register({
     name: "create",
@@ -350,9 +350,9 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     effect: "local-write",
     // A trigger outlives the session: after outside content (a page could ask for one) the person says yes on a card.
     askWhenTainted: true,
-    // Its script reaching a host, or its sources reading from one (a feed, a watched page: the address goes there), is
-    // reach the person has not given: an outside action, decided as one.
-    effectOf: (i): ToolEffect | undefined => (addedHosts(i?.script, []).length || addedSourceHosts(i).length ? "external" : undefined),
+    // Its script reaching a host is reach the person has not given: an outside action, decided as one. Its sources
+    // reading from a new host (a feed, a watched page: the address goes there) is one after outside content.
+    effectOf: (i, call): ToolEffect | undefined => (addedHosts(i?.script, []).length || newSourceHosts(i, call) ? "external" : undefined),
     describe: (i) => {
       const hosts = addedHosts(i?.script, []);
       const params = { name: nameIn(i), what: clip(oneLine(String(i?.prompt ?? "")), 200) };
@@ -368,10 +368,9 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
         const bad = unreadable(input);
         if (bad) return bad;
         const fields = normalizeOn(pick(input), { create: true });
-        const checked = checkOn(fields.on);
-        if (checked.error) return error(checked.error);
+        const notes = checkOn(fields.on);
         const created = await e.create(fields, { createdBy: `agent:${call.agentId}`, defaultAgent: call.agentId });
-        return text([describeCreated(e, created, "Created"), ...checked.notes].join("\n"));
+        return text([describeCreated(e, created, "Created"), ...notes].join("\n"));
       }),
   });
 
@@ -396,10 +395,10 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
     effect: "local-write",
     // As for create: after outside content the person says yes.
     askWhenTainted: true,
-    // A host the script did not have, or one its sources did not read from, is new reach: an outside action.
-    effectOf: (i): ToolEffect | undefined => {
+    // A host the script did not have is new reach: an outside action; one its sources did not read from, after outside content.
+    effectOf: (i, call): ToolEffect | undefined => {
       const cur = stored(i?.id);
-      return cur && (addedHosts(i?.script, cur.script?.hosts ?? []).length || addedSourceHosts(i, cur).length) ? "external" : undefined;
+      return cur && (addedHosts(i?.script, cur.script?.hosts ?? []).length || newSourceHosts(i, call, cur)) ? "external" : undefined;
     },
     describe: (i) => {
       const cur = stored(i?.id);
@@ -417,10 +416,9 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
         const bad = unreadable(input);
         if (bad) return bad;
         const fields = normalizeOn(pick({ ...input, kind: undefined }));
-        const checked = checkOn(fields.on);
-        if (checked.error) return error(checked.error);
+        const notes = checkOn(fields.on);
         const changed = await e.update(String(input?.id ?? ""), fields);
-        return text([describeCreated(e, changed, "Updated"), ...checked.notes].join("\n"));
+        return text([describeCreated(e, changed, "Updated"), ...notes].join("\n"));
       }),
   });
 

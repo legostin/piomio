@@ -115,6 +115,27 @@ describe("the hub's trigger engine", () => {
     }
   });
 
+  it("makes a watch at once in a session that read nothing from outside, and asks on a card naming its host after outside content", async () => {
+    const was = hub.settings.get();
+    hub.settings.update({ approvalMode: "ask", approvalInlineWaitSec: 0.2 });
+    try {
+      const conv = hub.store.agentConversation("assistant").id;
+      const textOf = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((c) => c.text ?? "").join("\n");
+      const watch = (name: string) => ({ kind: "watch", name, prompt: "Look at the price.", url: "https://shop.example.invalid/item", enabled: false });
+      const plain = hub.store.createSession({ conversationId: conv, agentId: "assistant", brainRef: "fake@local", background: false }).row.id;
+      expect(textOf(await hub.gateway.call(plain, "trigger_create", watch("Plain watch")))).toContain("Created trigger");
+      const read = hub.store.createSession({ conversationId: conv, agentId: "assistant", brainRef: "fake@local", background: false, tainted: true }).row.id;
+      const asked = await hub.gateway.call(read, "trigger_create", watch("Tainted watch"));
+      expect(asked._meta?.status).toBe("awaiting_approval");
+      const card = hub.approvals.get(String(asked._meta?.approvalId))!;
+      expect(card).toMatchObject({ tool: "trigger_create", effect: "external" });
+      expect(card.summary).toContain("shop.example.invalid");
+      expect(hub.triggers.engine!.list().some((t) => t.name === "Tainted watch")).toBe(false);
+    } finally {
+      hub.settings.update({ approvalMode: was.approvalMode, approvalInlineWaitSec: was.approvalInlineWaitSec });
+    }
+  });
+
   it("marks hub.task.finished as outside content when the task's session read a source tool, though the task was started plain", async () => {
     const created = await hub.tools.get("trigger_create")!.invoke(
       { name: "Finished tasks", prompt: "Look at the result.", on: [{ type: "hub.task.finished" }], script: { code: "export default (s) => ({ note: 'finished ' + s.data.taskId })" } },
