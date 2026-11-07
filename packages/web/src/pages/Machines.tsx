@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { Check, Laptop, Link2, Pencil, Server, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Check, Laptop, Link2, Pencil, Server, SlidersHorizontal, Star, Trash2, X } from "lucide-react";
 import type { Machine, MachineSetupView, ReplicaState } from "@piomio/shared";
 import { askInChat } from "../state/ask";
 import { api, errorText } from "../lib/api";
@@ -52,7 +52,7 @@ export function MachinesPage() {
     >
       {error && <ErrorNote onRetry={() => void load()}>{error}</ErrorNote>}
       {!list && !error && <Loading />}
-      {replicas.length > 1 && <ClusterLine replicas={replicas} />}
+      {replicas.length > 1 && <ClusterLine replicas={replicas} onChanged={setReplicas} />}
       {list && list.length === 0 && <EmptyState icon="laptop" title={t("machines.empty")} hint={t("machines.emptyHint")} />}
       <div className="grid gap-3 md:grid-cols-2">
         {list?.map((m) => (
@@ -93,17 +93,39 @@ export function MachinesPage() {
   );
 }
 
-/** Where the hub itself lives: one quiet line, who leads now. */
-function ClusterLine({ replicas }: { replicas: ReplicaState[] }) {
+/**
+ * Where the hub itself lives: one quiet line, who leads now and which replica is the primary (a filled star). The
+ * others' outlined star makes that one the primary: the same as "keep the hub on …" in the chat.
+ */
+function ClusterLine({ replicas, onChanged }: { replicas: ReplicaState[]; onChanged: (next: ReplicaState[]) => void }) {
+  const makePrimary = async (r: ReplicaState) => {
+    try {
+      onChanged(await api.post<ReplicaState[]>("/api/cluster/primary", { replica: r.id }));
+      toast(t("cluster.primarySet", { name: r.name }), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-surface px-4 py-2.5 text-sm shadow-card">
       <Server className="size-4 text-muted" />
       <span className="text-muted">{t("cluster.title")}</span>
       {replicas.map((r) => (
-        <Badge key={r.id} tone={!r.online ? "neutral" : r.role === "leader" ? "success" : "info"} dot>
-          {r.name} · {!r.online ? t("cluster.offline") : r.role === "leader" ? t("cluster.leader") : t("cluster.standby")}
-          {r.online && r.sealed ? ` · ${t("cluster.sealed")}` : ""}
-        </Badge>
+        <span key={r.id} className="inline-flex items-center gap-0.5">
+          <Badge tone={!r.online ? "neutral" : r.role === "leader" ? "success" : "info"} dot>
+            {r.name} · {!r.online ? t("cluster.offline") : r.role === "leader" ? t("cluster.leader") : t("cluster.standby")}
+            {r.online && r.sealed ? ` · ${t("cluster.sealed")}` : ""}
+          </Badge>
+          {r.primary ? (
+            <span role="img" aria-label={t("cluster.primary")} title={t("cluster.primary")} className="mx-1 inline-flex">
+              <Star className="size-3.5 fill-current text-accent-text" />
+            </span>
+          ) : (
+            <IconButton label={t("cluster.makePrimary", { name: r.name })} onClick={() => void makePrimary(r)} className="size-7">
+              <Star className="size-3.5" />
+            </IconButton>
+          )}
+        </span>
       ))}
     </div>
   );

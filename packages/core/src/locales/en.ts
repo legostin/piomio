@@ -211,6 +211,8 @@ export default {
   "cluster.unlockApproval": "Hand the vault's key to the hub replica {replica}",
   "cluster.standby": "The hub is moving to {leader}: try again in a moment",
   "cluster.tooLarge": "A request this big ({max} or more) can't be passed on to the replica that leads",
+  "cluster.none": "This hub runs on one machine: it has no replicas to choose from",
+  "cluster.noReplica": "No replica {replica}",
   "machine.badPairingCode": "The invite has expired or was already used. Ask for a new link in the chat",
   "machine.badPublicKey": "Invalid public key",
   "machine.notFound": "No such computer",

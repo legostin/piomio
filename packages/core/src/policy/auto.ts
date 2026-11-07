@@ -34,6 +34,7 @@ export interface AutoWhere {
   agentId: string;
   workspace: string;
   machine: string;
+  machineId?: string;
   /** The session's brain ("codex"): it reviews its own agent's actions when it can. */
   brain?: string;
 }
@@ -53,12 +54,16 @@ export interface AutoContext {
   calls: { name: string; input: unknown }[];
   /** The access the person gave this agent (access/map.ts accessView): the computers, folders and services it works with. */
   access?: string;
+  /** Verified against metadata and real paths on the target executor. */
+  ownedFiles?: boolean;
+  /** A compound file operation still needs review, even with verified ownership of all paths. */
+  ownedFileOperation?: boolean;
 }
 
 export interface AutoModeDeps {
   /** The reviewer now, or undefined when no brain can review. */
   reviewer: () => Reviewer | undefined;
-  context: (w: AutoWhere) => AutoContext | Promise<AutoContext>;
+  context: (w: AutoWhere, action?: AutoAction) => AutoContext | Promise<AutoContext>;
   dataDir: string;
   /** The person's language, for the reason they read. */
   language: () => string;
@@ -117,7 +122,7 @@ PERSON (the person decides it themselves) when it:
 - publishes: pushes to main or master, makes a release or a tag, deploys, publishes a package, posts publicly;
 - pays, orders, books or subscribes to anything.
 ALLOW otherwise, in particular:
-- local work in the agent's folder, the temp folders and the person's projects the request is about;
+- ordinary file work in the agent's own dialogs and tasks (all belong to the same agent, including earlier tasks), the temp folders and the person's projects the request is about;
 - reading and ordinary work on the computers and folders the agent's access lists, when it serves the request;
 - reading files and the web (GET requests whose address holds nothing of the person's, git fetch, API reads), searching, following links to read what the person asked about;
 - installing what a project declares (npm ci, pip install -r), running its tests, builds and scripts;
@@ -148,6 +153,7 @@ export function reviewPrompt(a: AutoAction, w: AutoWhere, ctx: AutoContext, stag
     `Where: machine ${w.machine}; the agent's folder ${w.workspace}; the hub's data folder ${o.dataDir} is off limits except the agent's own folder inside it.`,
     "",
     ...(ctx.access ? ["The access the person gave this agent (the hub's own record, not the agent's words):", fenced("ACCESS", truncate(ctx.access, 4000)), ""] : []),
+    ...(ctx.ownedFileOperation ? ["The hub verified every parsed file path against this agent's task/dialog ownership and real filesystem paths. They belong to the agent, including earlier tasks. Review the whole action; a compound command is not automatically allowed.", ""] : []),
     "The person's own messages, oldest first (what they asked for):",
     fenced("PERSON", person.length ? person.join("\n---\n") : "(none in the last hours)"),
     ...(ctx.goal ? ["", "The task's goal, written by another agent from the person's request (not the person's own words):", fenced("GOAL", truncate(ctx.goal, 3000))] : []),
@@ -228,12 +234,14 @@ export class AutoMode {
   private async review(a: AutoAction, w: AutoWhere): Promise<AutoVerdict> {
     const always = alwaysPerson(a);
     if (always) return { decision: "person", reason: always };
-    const reviewer = this.d.reviewer();
-    if (!reviewer) return { decision: "person", reason: "no brain can review it" };
+
     const o = { dataDir: this.d.dataDir, language: this.d.language() };
     const ms = this.d.timeoutMs ?? TIMEOUT_MS;
     try {
-      const ctx = await this.d.context(w);
+      const ctx = await this.d.context(w, a);
+      if (ctx.ownedFiles) return { decision: "allow", stage: 1 };
+      const reviewer = this.d.reviewer();
+      if (!reviewer) return { decision: "person", reason: "no brain can review it" };
       const first = parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 1, o), 1, w.brain), ms), 1);
       if (first?.decision === "allow") return first;
       return parseVerdict(await within(reviewer(reviewPrompt(a, w, ctx, 2, o), 2, w.brain), ms), 2) ?? { decision: "person", reason: "the review gave no clear answer" };

@@ -1,5 +1,7 @@
 // Machine mesh, hub side: pairing codes, Ed25519 challenge auth over WebSocket, remote brains and machine_* tools.
 
+import { hostIdentity, type HostIdentity } from "@piomio/shared/host-identity";
+import type { WorkspaceFileOperation } from "@piomio/shared/agent-workspaces";
 import { randomBytes } from "node:crypto";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import type { Machine, MachineInfo, MachineUsage, ToolResult } from "@piomio/shared";
@@ -108,13 +110,26 @@ export class MachineHub {
   here?: () => { id: string; name: string };
   /** This hub's version: machine_list says which computers run an older Piomio. */
   version?: string;
+  private host?: HostIdentity;
+  private sameHost = new Set<string>();
+  /** Resolve a verified executor alias without changing any stored task or brain reference. */
+  canonical(id: string): string {
+    const here = this.here?.().id ?? "local";
+    return id === "local" || id === here || this.sameHost.has(id) ? here : id;
+  }
+  aliases(): string[] { return [...this.sameHost]; }
+  async ownsFiles(id: string, agentId: string, keys: string[], files: WorkspaceFileOperation): Promise<boolean> {
+    try { return await this.call<boolean>(id, "workspace.owns", { agentId, keys, ...files }, 5_000); } catch { return false; }
+  }
   private peers = new Map<string, RpcPeer>();
   private fileTimers = new Map<string, NodeJS.Timeout>();
   /** When each machine's connection was last heard from (pings, hellos). */
   private heard = new Map<string, number>();
 
   constructor(d: { db: Db; bus: EventBus; brains: BrainRegistry; audit: AuditLog; invites?: InviteRegistry; setups?: MachineSetups }) {
+    try { this.host = hostIdentity(); } catch { /* Identity unification is optional for old installations. */ }
     this.db = d.db;
+    if (this.host) for (const row of this.db.prepare("select machine_id from machine_hosts where host_id = ?").all(this.host.id) as { machine_id: string }[]) this.sameHost.add(row.machine_id);
     this.bus = d.bus;
     this.brains = d.brains;
     this.audit = d.audit;
@@ -226,12 +241,12 @@ export class MachineHub {
   }
 
   list(): Machine[] {
-    return (this.db.prepare("select * from machines where revoked = 0 order by created_at").all() as any[]).map((r) => fromRow(r, this.peers.has(r.id)));
+    return (this.db.prepare("select * from machines where revoked = 0 order by created_at").all() as any[]).map((r) => ({ ...fromRow(r, this.peers.has(r.id)), ...(this.sameHost.has(r.id) ? { sameHost: true } : {}) }));
   }
 
   get(id: string): Machine | undefined {
     const r = this.db.prepare("select * from machines where id = ? and revoked = 0").get(id);
-    return r ? fromRow(r, this.peers.has(id)) : undefined;
+    return r ? { ...fromRow(r, this.peers.has(id)), ...(this.sameHost.has(id) ? { sameHost: true } : {}) } : undefined;
   }
 
   /** Accepts a machine id or a (case-insensitive) name. */
@@ -251,6 +266,8 @@ export class MachineHub {
   }
 
   revoke(id: string): void {
+    this.sameHost.delete(id);
+    this.db.prepare("delete from machine_hosts where machine_id = ?").run(id);
     this.db.prepare("update machines set revoked = 1 where id = ?").run(id);
     this.peers.get(id)?.close();
     this.audit.append("user", "machine.revoke", id);
@@ -290,12 +307,12 @@ export class MachineHub {
       }
       authed = true;
       clearTimeout(timer);
-      this.online(row.id, ws);
+      this.online(row.id, ws, this.host?.verifies(nonce, msg.hostProof) ?? false);
     };
     ws.on("message", onFirst);
   }
 
-  private online(id: string, ws: WsLike): void {
+  private online(id: string, ws: WsLike, sameHost = false): void {
     // A machine may reach this hub twice (directly and through another replica): a live connection stays, the new
     // one is refused and retries later; a quiet one (half-open after a network change) is replaced.
     const prev = this.peers.get(id);
@@ -308,6 +325,14 @@ export class MachineHub {
     // The auth message handler stays attached but ignores frames after auth; RPC gets its own listener.
     const peer = createRpcPeer(wsTransport(ws));
     this.peers.set(id, peer);
+    if (sameHost && this.host) {
+      this.sameHost.add(id);
+      this.db.prepare("insert or replace into machine_hosts(machine_id,host_id) values (?,?)").run(id, this.host.id);
+      this.audit.append(`machine:${id}`, "machine.identity", id, { computer: this.canonical(id) });
+    } else {
+      this.sameHost.delete(id);
+      this.db.prepare("delete from machine_hosts where machine_id = ?").run(id);
+    }
     ws.send(JSON.stringify({ type: "ok", machineId: id }));
     this.db.prepare("update machines set last_seen_at = ? where id = ?").run(nowIso(), id);
     this.audit.append(`machine:${id}`, "machine.online", id);
@@ -386,7 +411,7 @@ export class MachineHub {
     const info = m?.info;
     if (!m || !info?.commands || /win(?:dows|32|_nt)/i.test(info.os)) return undefined;
     const bound = this.boundTo?.(ctx.agentId);
-    if (bound?.length && !bound.includes(m.id)) return undefined;
+    if (bound?.length && !bound.some((id) => this.canonical(id) === this.canonical(m.id))) return undefined;
     if (typeof i.cwd === "string" && i.cwd && !pathAllowed(i.cwd, info.allowedDirs)) return undefined;
     return readOnlyRemoteCommand(i.command) ? "read" : undefined;
   }
@@ -446,7 +471,7 @@ export class MachineHub {
     registry.register(
       { name: "machine_list", owner: "core", effect: "read", description: "List the user's connected computers: status, OS, brains (subscriptions) and allowed directories.", inputSchema: { type: "object", properties: {} } },
       wrap(async () => {
-        const ms = this.list();
+        const ms = this.list().filter((m) => !m.sameHost);
         const h = this.here?.();
         const hereLine = h ? `- ${h.name} (${h.id}) — this hub's own computer: agents running there use their own shell; work goes there with machine "${h.id}"` : "";
         if (!ms.length) return text([hereLine, "No other machines are paired. The user can connect a computer on the Machines page."].filter(Boolean).join("\n"));

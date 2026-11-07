@@ -43,7 +43,9 @@ import { thinkingView } from "./thinking.ts";
 import { registerPageTools } from "./tools/page-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
-import { AutoMode, type AutoContext, type AutoWhere } from "./policy/auto.ts";
+import { ownedWorkspaces, ownsWorkspacePaths } from "@piomio/shared/agent-workspaces";
+import { ordinaryFilePaths } from "./access/owned-files.ts";
+import { AutoMode, type AutoAction, type AutoContext, type AutoWhere } from "./policy/auto.ts";
 import { accessView, buildAccessMap, serviceOf, type AccessMap } from "./access/map.ts";
 import { EgressGuard } from "./policy/egress.ts";
 import { Pictures } from "./policy/pictures.ts";
@@ -240,7 +242,7 @@ export class Hub {
     // The reviewer runs on this computer's own Claude Code, through the egress proxy like any brain.
     this.auto = new AutoMode({
       reviewer: brainReviewer({ brains: this.brains, dataDir: config.dataDir, env: () => this.reviewerEnv(), log: (m) => console.log(m) }),
-      context: (w) => this.autoContext(w),
+      context: (w, a) => this.autoContext(w, a),
       dataDir: config.dataDir,
       language: () => this.settings.get().language,
       audit: this.audit,
@@ -368,6 +370,7 @@ export class Hub {
       claudePluginDirs: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
       machineName: (id) => this.machines.name(id) ?? this.replicaName(id),
       machines: () => this.machines.list(),
+      canonicalMachine: (id) => this.machines.canonical(id),
       groupArchived: (id) => this.groupsState.isArchived(id),
       here: () => this.here(),
       gpus: () => this.gpus,
@@ -566,6 +569,8 @@ export class Hub {
       roots: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
       here: () => this.here(),
       auto: this.auto,
+      ownedReadRoots: (ctx) => this.machines.canonical(ctx.machineId ?? "local") === this.here() ? ownedWorkspaces(this.workspaceRoots(), ctx.agentId, this.workspaceKeys(ctx.agentId)) : [],
+      ownedFiles: (action, ctx) => this.ownsFiles(action, ctx),
       machineName: (id) => this.runner.computerName(id),
       egress: this.egressGuard,
       given: (s) => this.gateway.egressGiven(s),
@@ -762,7 +767,7 @@ export class Hub {
 
   /** How an agent thinks for each kind of work, on the brains here (thinking.ts). */
   thinkingView(agent: AgentDef): Promise<ThinkingView> {
-    return thinkingView(this.brains, this.db, agent, this.here());
+    return thinkingView(this.brains, this.db, agent, this.here(), (id) => this.machines.canonical(id));
   }
 
   saveAgent(agent: AgentDef, actor: string): AgentDef {
@@ -823,7 +828,7 @@ export class Hub {
    * What auto mode's reviewer reads besides the action: the person's own recent words where the session works, the
    * task's goal, and the agent's earlier calls there (never their results).
    */
-  private async autoContext(w: AutoWhere): Promise<AutoContext> {
+  private async autoContext(w: AutoWhere, action?: AutoAction): Promise<AutoContext> {
     const person = this.gateway.personWords({ conversationId: w.conversationId, taskId: w.taskId }).texts;
     const goal = w.taskId ? this.store.getTask(w.taskId)?.goal : undefined;
     const calls = this.store
@@ -832,7 +837,34 @@ export class Hub {
       .flatMap((m) => m.parts.flatMap((p) => (p.type === "tool_call" ? [{ name: p.name, input: this.vault.redactor.value(p.input) }] : [])));
     // The agent's access: a review never fails for want of it.
     const access = await this.accessMap(w.agentId, w.sessionId).then((m) => accessView(m, { reviewer: true }), () => undefined);
-    return { person, ...(goal ? { goal } : {}), calls: calls.slice(-20), ...(access ? { access } : {}) };
+    const ownedFiles = action ? await this.ownsFiles(action, w) : false;
+    const ownedFileOperation = ownedFiles || (action ? await this.ownsFiles(action, w, true) : false);
+    return { person, ownedFiles, ownedFileOperation, ...(goal ? { goal } : {}), calls: calls.slice(-20), ...(access ? { access } : {}) };
+  }
+
+  private workspaceRoots(): string[] {
+    return [join(this.config.dataDir, "workspaces"), ...this.machines.list().filter((m) => m.sameHost).flatMap((m) => m.info?.workspacesRoot ? [m.info.workspacesRoot] : [])];
+  }
+
+  private workspaceKeys(agentId: string): string[] {
+    const dialogs = this.db.prepare("select id, task_id from conversations where agent_id = ?").all(agentId) as { id: string; task_id: string | null }[];
+    const tasks = this.db.prepare("select id, feed_id from tasks where agent_id = ?").all(agentId) as { id: string; feed_id: string | null }[];
+    return [...dialogs.map((r) => r.task_id ?? r.id), ...tasks.map((r) => r.feed_id ? `feed-${r.feed_id}` : r.id)];
+  }
+
+  /** Ownership comes from task/dialog rows, never from a path or the requesting agent's prose. */
+  private async ownsFiles(action: AutoAction, where: { agentId: string; workspace: string; machineId?: string }, allowCompound = false): Promise<boolean> {
+    const files = ordinaryFilePaths(action, where.workspace);
+    if (!files || (files.review && !allowCompound)) return false;
+    const input = (action.input ?? {}) as Record<string, unknown>;
+    const target = typeof input.machine === "string" ? this.machines.find(input.machine)?.id ?? (this.resolveComputer(input.machine) === this.here() ? "local" : undefined) : where.machineId ?? "local";
+    if (!target) return false;
+    if ((action.kind === "command" || action.tool === "machine_exec") && /win(?:dows|32|_nt)/i.test(this.machines.get(target)?.info?.os ?? "")) return false;
+    const agent = this.agents.get(where.agentId);
+    if (!agent || (agent.machines?.length && !agent.machines.some((id) => this.machines.canonical(id) === this.machines.canonical(target)))) return false;
+    const keys = this.workspaceKeys(where.agentId);
+    if (this.machines.canonical(target) !== this.here()) return this.machines.ownsFiles(target, where.agentId, keys, files);
+    return ownsWorkspacePaths(this.workspaceRoots(), where.agentId, keys, files.paths, files.copies);
   }
 
   /**
@@ -875,8 +907,8 @@ export class Hub {
     const here = this.here();
     const replicas = this.db.prepare("select id, name from replicas where revoked = 0 and id != ? order by priority").all(here) as Array<{ id: string; name: string }>;
     return [
-      { id: here, name: hubName(), online: true },
-      ...this.machines.list().map((m) => ({ id: m.id, name: m.name, online: m.status === "online" })),
+      { id: here, aliases: this.machines.aliases(), name: hubName(), online: true },
+      ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online" })),
       ...replicas.map((r) => ({ id: r.id, name: r.name, online: false, standby: true })),
     ];
   }
@@ -886,6 +918,8 @@ export class Hub {
     const key = idOrName.trim().toLowerCase();
     if (!key) return undefined;
     if (key === "local") return this.here();
+    const executor = this.machines.find(idOrName);
+    if (executor?.sameHost) return this.here();
     const list = this.computers();
     return (list.find((c) => c.id.toLowerCase() === key) ?? list.find((c) => c.name.toLowerCase() === key))?.id;
   }

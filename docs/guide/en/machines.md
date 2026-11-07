@@ -114,11 +114,11 @@ A command there that only looks at the computer or the repository (`pwd`, `ls`, 
 
 ## Who works where right now
 
-Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, or "needs you" while it waits for your approval. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.
+Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, "needs you" while it waits for your approval, or "waiting for connection" while its brain is not connected for now. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.
 
 ## Agents bound to computers
 
-By default an agent works on any computer. To keep one to a computer, pick it under **Where it thinks** in the agent's settings, then a brain on it, or say "let Ada work only on my laptop, with Codex"; the assistant asks with buttons which computer and which brain. A bound agent thinks only with those computers' brains and never moves elsewhere: while none of them is online, its chat says so and your message waits for you to send it again. "Let Ada work anywhere again" undoes it.
+By default an agent works on any computer. To keep one to a computer, pick it under **Where it thinks** in the agent's settings, then a brain on it, or say "let Ada work only on my laptop, with Codex"; the assistant asks with buttons which computer and which brain. A bound agent thinks only with those computers' brains and never moves elsewhere: while none of them is online, its chat waits for one with a passing line and answers once it is back (after half an hour it says so, and you send the message again). "Let Ada work anywhere again" undoes it.
 
 When the assistant hands work to a teammate, it also picks the computer, and asks you only when the choice isn't clear. A task placed on a computer runs on that computer's brain.
 
@@ -147,12 +147,13 @@ A hub can live on more than one of your computers, so it keeps working while one
 
 How it behaves:
 
-- **Who leads.** The computer the hub started on leads while it's online. If the leader goes quiet for about eight seconds, the next replica takes over, and gives the lead back once the first is back and caught up (after five minutes awake, if it had been asleep). **Settings** → **Machines** shows it in one line, **The hub lives on**: each replica with **leads**, **standby**, **away** or **vault locked**.
+- **Who leads.** The **primary** replica leads while it's online: at first the computer the hub started on. If the leader goes quiet for about eight seconds, the next replica takes over, and gives the lead back once the primary is back and caught up (after five minutes awake, if it had been asleep). **Settings** → **Machines** shows it in one line, **The hub lives on**: each replica with **leads**, **standby**, **away** or **vault locked**, and a star on the primary.
+- **The primary.** Say "keep the hub on the vps" (or tap the outlined star next to a replica in that line) and that replica becomes the primary: the lead moves there within a minute or two, once the running replies are done, and stays while it's up. A laptop that sleeps, wakes and drops off no longer takes the lead from a server that stays up; it leads only while the primary is away. In the addresses the hub gives phones, the leader's comes first, then the primary's.
 - **What the leader does.** Tasks, channels, digests and plugins run on the leader only. The web UI and the desktop app work on any replica: a standby checks that it's you, then passes what you do and what you open on to the leader, so a change takes effect at once and replies come in live. Phones and machines that reach a standby are passed on to the leader too. While a standby can't reach the leader, its web UI shows its own copy, a few seconds behind, and changes wait ("The hub is moving to …: try again in a moment").
 - **What is shared.** Chats, tasks, approvals and rules, settings, agents, skills, channels, pages, working folders, phones and machines, your password and passkeys, memory facts and the vault, still encrypted. Each replica keeps its own audit log, and brains sign in on each computer separately.
 - **The vault.** When a replica's vault is locked (after a restart, say), the leader asks you, with an approval card, to hand it the vault's key, which the replica keeps in memory only. Allowing it always for that replica skips the card next time.
 
-"How is the cluster?" shows the replicas; "remove the replica vps" takes one out for good (with your approval). `PIOMIO_REPLICA_NAME` names a replica, `PIOMIO_NODE_URLS` says where machines reach it ([Settings and environment variables](settings.md)).
+"How is the cluster?" shows the replicas and which is the primary; "remove the replica vps" takes one out for good (with your approval). `PIOMIO_REPLICA_NAME` names a replica, `PIOMIO_NODE_URLS` says where machines reach it ([Settings and environment variables](settings.md)).
 
 ## Updates
 
