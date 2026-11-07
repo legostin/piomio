@@ -70,6 +70,14 @@ export async function registerReplicaRoutes(app: FastifyInstance, hub: Hub): Pro
       return { ok: true };
     });
 
+    // The leader asks this replica to update itself to its version (cluster.ts serveUpdate; over the link as a rule).
+    r.post("/api/replica/update", async (req, reply) => {
+      const s = signed(req, reply);
+      if (!s) return reply;
+      const a = await hub.cluster.serveUpdate(s.from, s.body);
+      return reply.code(a.status).send(a.body);
+    });
+
     r.post("/api/replica/join", async (req, reply) => {
       let body: any;
       try {

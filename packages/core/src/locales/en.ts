@@ -427,6 +427,8 @@ export default {
   "update.offline": "The machine is offline.",
   "update.notSelf": "This machine updates with its desktop app.",
   "update.noBundle": "The hub has no machine program to send: build it with npm run build.",
+  "update.replicaOld": "This replica runs a Piomio from before replicas updated from the leader: update it once on that computer (the installer again, or Install update in the app's menu).",
+  "update.noRelease": "The release {version} has nothing for that computer yet: try again once the release is complete.",
   "cli.auditOk": "Audit log intact: {count, plural, one {# entry} other {# entries}}",
   "cli.auditBroken": "The chain is broken at entry {seq}",
   // the hub's own commands (commands.ts): what the composer lists and how the hub answers

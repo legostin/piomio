@@ -10,6 +10,7 @@ Piomio never updates behind your back. When a new release is out, you see an **U
 | The desktop app | **Update** in the sidebar, the assistant's offer, or the icon's menu |
 | A server installed with `install.sh` | **Update** in the sidebar, the assistant's offer, or `install.sh` again |
 | A computer joined with `install.sh` or `piomio-node` | **Update** on its row, from your hub |
+| A replica of your hub on another computer | **Update** on its row, from the replica that leads |
 | A Mac or PC joined through the desktop app | The app's own menu |
 | From source | `git pull`, `npm install`, `npm run build` |
 
@@ -69,6 +70,8 @@ The hub sends its own build of the daemon. The computer checks it, keeps the old
 A `piomio-node.mjs` from before this feature doesn't report its version, so the hub can't offer it an update. Download it again once from your hub.
 
 A Mac or PC joined through the desktop app (**Connect to my Piomio**) doesn't get **Update** on its row: the app updates it, from its own icon menu, as above. More in [Machines and other computers](machines.md).
+
+A replica of your hub (the hub on several computers) that runs an older version than the replica that leads shows **Update** on its row too, and the assistant offers it in the chat once. The leader only asks: the replica downloads that release from GitHub itself, checks its signature and updates as above (a server with the way back, the desktop app with its own update). One on Piomio 0.2.42 or older has to be updated once on its computer first. More in [Machines and other computers](machines.md#updates).
 
 ## From source
 

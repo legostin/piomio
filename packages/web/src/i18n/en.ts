@@ -754,6 +754,7 @@ export default {
   "cluster.primary": "The primary machine: the hub stays here whenever it is up",
   "cluster.makePrimary": "Make {name} the primary machine: the hub stays there whenever it is up",
   "cluster.primarySet": "{name} is the primary machine now",
+  "cluster.olderThere": "Piomio {version} there, older than this hub's, and it can't be updated from here: update it once on that computer (the installer again on a server, Install update in the app's menu)",
   "machines.revoke": "Disconnect",
   "machines.revokeTitle": "Disconnect “{name}”?",
   "machines.revokeText": "The machine's key will be revoked and the daemon won't be able to connect anymore. To bring the machine back, pair it again.",

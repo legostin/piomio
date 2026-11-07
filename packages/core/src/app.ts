@@ -294,10 +294,13 @@ export class Hub {
       restart: () => void process.kill(process.pid, "SIGTERM"),
       machine: (id) => {
         const m = this.machines.get(id);
-        return m ? { info: m.info, online: m.status === "online" } : undefined;
+        return m ? { name: m.name, info: m.info, online: m.status === "online" } : undefined;
       },
       sendNode: (id, update) => this.machines.sendUpdate(id, update),
       appUpdateNode: (id) => this.machines.appUpdate(id),
+      // Standby replicas behind this hub update themselves when asked over their link (cluster.ts).
+      replicas: () => this.cluster.replicaPeers(),
+      askReplica: (id, version) => this.cluster.askUpdate(id, version),
     });
     this.activity.updates = this.updates;
     this.bus.on("machine.updated", (m: { id?: string; info?: MachineInfo } | undefined) => m?.id && this.updates.machineChanged(m.id, m.info));
