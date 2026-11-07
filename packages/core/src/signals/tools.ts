@@ -466,7 +466,7 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
           const id = input.signal.trim();
           const mine = e.ctx.store.runs(trig.id).some((r) => r.signals?.some((s) => s.id === id));
           const sig = mine ? e.ctx.store.signal(id) : undefined;
-          if (!sig) return error(`No signal ${id} in the journal of trigger ${trig.id} (it keeps 200 runs or 14 days, and a run's signals up to 1 MB of data).`);
+          if (!sig) return error(`No signal ${id} in the journal of trigger ${trig.id} (it keeps a trigger's newest 200 runs, those past its newest 20 for 14 days, and a run's signals up to 1 MB of data).`);
           const head = `Signal ${sig.id} of trigger ${trig.id} "${trig.name}", as it came in.${sig.external ? ` ${UNTRUSTED}` : ""}`;
           const body = `${head}\n${JSON.stringify(sig, null, 1)}`;
           return sig.external ? outside(body) : text(body);

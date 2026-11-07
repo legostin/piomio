@@ -13,7 +13,7 @@ import type { FetchLike } from "./host.ts";
 import { truncateBytes } from "./prompt.ts";
 import type { HostCall } from "./sandbox.ts";
 import { formatLocal } from "./schedule.ts";
-import type { TriggerStore } from "./store.ts";
+import { EXT_PREFIX, type TriggerStore } from "./store.ts";
 import { firstJsonObject } from "./triage.ts";
 import type { Trigger } from "./types.ts";
 import { assertFetchable } from "./watch.ts";
@@ -34,7 +34,7 @@ const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 /** The web's own ports: an address naming another is refused. */
 const WEB_PORTS = new Set(["", "80", "443"]);
 /** The engine's mark beside a state key whose value was set by a run that had read outside content. */
-const markOf = (key: string) => `__ext:${key}`;
+const markOf = (key: string) => `${EXT_PREFIX}${key}`;
 /** Headers a script does not set: the connection's own, and the proxy's (its token is the run's). */
 const CONNECTION_HEADERS = new Set(["host", "connection", "keep-alive", "proxy-authorization", "proxy-connection", "transfer-encoding", "content-length", "te", "trailer", "upgrade"]);
 const ENDED = "the script's run has ended";

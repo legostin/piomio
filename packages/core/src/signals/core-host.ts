@@ -199,6 +199,7 @@ export class CoreTriggers {
       stateSet: guard(inner.stateSet),
       stateDelete: guard(inner.stateDelete),
       dropState: guard(inner.dropState),
+      stateBytes: guard(inner.stateBytes),
     };
   }
 

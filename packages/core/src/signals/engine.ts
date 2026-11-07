@@ -10,10 +10,12 @@ import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, V
 import { pageReader } from "./extract.ts";
 import { builtinSignal, fitted, NO_SERVICES, SIGNAL_DATA_MAX, TriggerPipeline } from "./pipeline.ts";
 import { testTrigger, type TestInput, type TestReport } from "./test-run.ts";
+import { RECENT_RUNS_KEPT } from "./store.ts";
 import { verifyWebhook } from "./webhook-verify.ts";
 import { fetchPage, hashValue, lineDiff } from "./watch.ts";
 
-export const MAX_RUNS_KEPT = 20;
+/** The runs the page and the tools show by default; the journal keeps at least these whatever their age (store.ts). */
+export const MAX_RUNS_KEPT = RECENT_RUNS_KEPT;
 const MAX_TIMER_MS = 60_000;
 const STORED_VALUE_LIMIT = 20_000;
 const CATCH_UP_GRACE_MS = 60_000;

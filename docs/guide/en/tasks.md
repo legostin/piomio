@@ -151,7 +151,7 @@ Say what matters and what doesn't: "only failed deploys", "letters from clients 
 
 ### Notes
 
-Before its next reply, in a chat or a task, the agent sees a short list of what its triggers noted since it last looked. A note made from outside content (a page, a webhook, an email) shows there only as a count, never its text, so a stranger's words never land in every chat. The agent reads such notes in full when they matter, and treats what it read the way it treats a web page (see [After outside content](approvals.md#after-outside-content)); so does a task woken by a check that read outside content. Notes are kept for 30 days.
+Before its next reply, in a chat or a task, the agent sees a short list of what its triggers noted since it last looked. A note made from outside content (a page, a webhook, an email) shows there only as a count, never its text, so a stranger's words never land in every chat. The agent reads such notes in full when they matter, and treats what it read the way it treats a web page (see [After outside content](approvals.md#after-outside-content)); so does a task woken by a check that read outside content. Notes are kept for 30 days, at most the newest 500 of each trigger.
 
 ### Webhooks signed by the sender
 
@@ -159,7 +159,7 @@ A webhook can check the sender's signature instead of a secret in the request: G
 
 ### Ask the agent to test it
 
-Before it tells you a trigger works, the agent tests it: on a sample, on the trigger's last real events, or on examples it writes. A test runs the whole check and shows what each step decided, with nothing carried out: no task, no note. You can ask for one too: "test the deploy trigger on its last five events". And you can ask "why didn't it wake me for that email?": the agent reads the trigger's history, where each run says what the script and the quick check decided and why.
+Before it tells you a trigger works, the agent tests it: on a sample, on the trigger's last real events, or on examples it writes. A test runs the whole check and shows what each step decided, with nothing carried out: no task, no note. You can ask for one too: "test the deploy trigger on its last five events". And you can ask "why didn't it wake me for that email?": the agent reads the trigger's history, where each run says what the script and the quick check decided and why. The history keeps a trigger's last 20 runs however old they are, and up to 200 from the last 14 days.
 
 ## What a background run tells you
 
