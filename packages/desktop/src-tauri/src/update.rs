@@ -80,25 +80,30 @@ pub fn on_menu(app: &AppHandle) {
   }
 }
 
-/// The hub's Update button (packages/core/src/self-update.ts runs the app with `--install-update`): installs what is
-/// ready, else checks, downloads and installs it. When there is nothing to install or the check fails, the hub hears
-/// it on its stdin (`update-failed <why>`), so its button comes back and the person is told.
+/// The hub's Update button (packages/core/src/self-update.ts runs the app with `--install-update`): checks first, so a
+/// newer release replaces one downloaded earlier (the leading replica asks a replica for at least its own version),
+/// then installs the newest. When there is nothing to install, or the check fails with nothing downloaded, the hub
+/// hears it on its stdin (`update-failed <why>`), so its button comes back and the person is told.
 pub fn install_now(app: &AppHandle) {
   let app = app.clone();
   std::thread::spawn(move || {
     let st = app.state::<AppState>();
     loop {
-      if st.updates.ready.lock().unwrap().is_some() {
-        return install(&app);
-      }
       let why = match tauri::async_runtime::block_on(check(&app, true)) {
-        Checked::Ready => continue,
+        // The latest release is downloaded: just now, or it already was.
+        Checked::Ready => return install(&app),
         Checked::Busy => {
           std::thread::sleep(Duration::from_secs(1));
           continue;
         }
         Checked::Nothing => "the latest release has no newer version for this computer".to_string(),
-        Checked::Failed(e) => e,
+        Checked::Failed(e) => {
+          // No answer from the releases: what was downloaded earlier still installs.
+          if st.updates.ready.lock().unwrap().is_some() {
+            return install(&app);
+          }
+          e
+        }
       };
       st.supervisor.send_line(&format!("update-failed {}", why.replace(['\r', '\n'], " ")));
       return;

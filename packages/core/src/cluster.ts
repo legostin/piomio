@@ -30,6 +30,7 @@ import { LocalizedError, t } from "./i18n.ts";
 import type { Hub } from "./app.ts";
 import { ruleMatches } from "./policy/engine.ts";
 import { dialLink, linkPeer, serveLink, type LinkAnswer, type LinkCall } from "./replica-link.ts";
+import { UpdateError, type ReplicaPeer, type SelfUpdateState, type UpdateKind, type UpdateRefusal } from "./self-update.ts";
 
 /** piomio.db tables every replica shares (the rest stays per replica: audit's hash chain, pairing codes). */
 export const MAIN_TABLES: ReplTable[] = [
@@ -117,6 +118,10 @@ interface Hello {
   webUi?: boolean;
   /** Its security console takes the console calls a standby checked and sends over the link, the same way. */
   console?: boolean;
+  /** How it updates itself when the leader asks (replica.update); unset: a Piomio from before it could be asked. */
+  updates?: UpdateKind;
+  /** Its own update: the version it installs now, or the last one that failed and why. */
+  update?: SelfUpdateState;
 }
 
 interface Peer extends Replica {
@@ -126,6 +131,8 @@ interface Peer extends Replica {
   lastSeen: number;
   url?: string;
   hello?: Hello;
+  /** When the last hello that answered was asked for. */
+  helloAt: number;
   pulling: Record<DbName, boolean>;
   /** The last pull from it found nothing more. */
   current: Record<DbName, number>;
@@ -381,7 +388,7 @@ export class Cluster {
       const base = rowToReplica(r);
       const p = this.peers.get(r.id);
       if (p) Object.assign(p, base);
-      else this.peers.set(r.id, { ...base, online: false, lastSeen: 0, pulling: { main: false, vault: false }, current: { main: 0, vault: 0 }, filesAt: 0, filesBusy: false });
+      else this.peers.set(r.id, { ...base, online: false, lastSeen: 0, helloAt: 0, pulling: { main: false, vault: false }, current: { main: 0, vault: 0 }, filesAt: 0, filesBusy: false });
     }
     for (const id of [...this.peers.keys()]) if (!seen.has(id)) this.peers.delete(id);
   }
@@ -440,8 +447,10 @@ export class Cluster {
     for (const p of this.peers.values()) this.dial(p);
     await Promise.all(
       [...this.peers.values()].map(async (p) => {
+        const asked = Date.now();
         try {
           p.hello = await this.callJson<Hello>(p, "GET", "/api/replica/hello", undefined, 3_000);
+          p.helloAt = asked;
           p.online = true;
           p.lastSeen = Date.now();
         } catch {
@@ -455,7 +464,11 @@ export class Cluster {
       if (!p.filesBusy && Date.now() - p.filesAt > FILES_EVERY_MS) void this.syncFiles(p);
     }
     await this.decide();
-    if (this.leads()) this.askToUnlock();
+    if (this.leads()) {
+      this.askToUnlock();
+      // Replicas behind this one: their Update, how one asked for goes, the chat's offer (self-update.ts).
+      this.hub.updates?.replicasChanged();
+    }
     // A standby that reaches its leader (again): phones and windows it served while it had none reconnect there.
     else this.hub.realtime.closeMoved();
     this.emitState();
@@ -604,6 +617,8 @@ export class Cluster {
       case "/api/replica/vault-key":
         this.receiveKey(from, String(b.key ?? ""));
         return { status: 200, body: { ok: true } };
+      case "/api/replica/update":
+        return this.serveUpdate(from, b);
       default:
         return { status: 404, body: { error: `no ${c.path}` } };
     }
@@ -785,6 +800,62 @@ export class Cluster {
     return p.name;
   }
 
+  // ---------- updates of the replicas ----------
+
+  /**
+   * Another replica (the leader) asks this one to update itself to its version (replica.update). This hub fetches and
+   * checks that release itself (self-update.ts updateTo), never an older one: the leader sends no code. Answers once
+   * the update is under way; the hellos then say how it goes.
+   */
+  async serveUpdate(from: string, body: { version?: unknown }): Promise<LinkAnswer> {
+    const version = String(body?.version ?? "");
+    try {
+      const r = await this.hub.updates.updateTo(version);
+      this.hub.audit.append(`replica:${from}`, "replica.update", this.identity?.id ?? "", { from: this.hub.config.version, to: r.version });
+      return { status: 200, body: r };
+    } catch (e: any) {
+      if (e instanceof UpdateError) return { status: 409, body: { reason: e.reason, ...(e.version ? { version: e.version } : {}) } };
+      return { status: 500, body: { error: String(e?.message ?? e) } };
+    }
+  }
+
+  /** Asks a replica to update itself to `version` (self-update.ts askReplica); its refusal comes back as an UpdateError. */
+  async askUpdate(id: string, version: string): Promise<{ version: string }> {
+    const p = this.peers.get(id);
+    if (!p) throw new UpdateError("unknown");
+    if (!p.online) throw new UpdateError("offline");
+    const r = await this.call(p, "POST", "/api/replica/update", { version }, 120_000);
+    let body: any;
+    try {
+      body = JSON.parse(r.body.toString() || "null");
+    } catch {
+      body = undefined;
+    }
+    if (r.status === 409 && body?.reason) throw new UpdateError(body.reason as UpdateRefusal, body.version);
+    // A replica from before this call answers 404.
+    if (r.status === 404) throw new UpdateError("replicaOld", p.hello?.version);
+    if (r.status !== 200) throw new Error(`${p.name}: ${body?.error ?? r.status}`);
+    this.hub.audit.append("user", "replica.update.ask", id, { name: p.name, to: version });
+    return { version: String(body?.version ?? version) };
+  }
+
+  /**
+   * The other replicas as their last hellos say: versions, how each updates, its own update (self-update.ts). Only the
+   * leader updates replicas: a standby (its own copy shown while the leader is away) sees none.
+   */
+  replicaPeers(): ReplicaPeer[] {
+    if (!this.identity || !this.leads()) return [];
+    return [...this.peers.values()].map((p) => ({
+      id: p.id,
+      name: p.name,
+      online: p.online,
+      heardAt: p.helloAt,
+      ...(p.hello?.version ? { version: p.hello.version } : {}),
+      ...(p.hello?.updates ? { updates: p.hello.updates } : {}),
+      ...(p.hello?.update ? { update: p.hello.update } : {}),
+    }));
+  }
+
   // ---------- what peers ask of us (device app routes) ----------
 
   hello(): Hello {
@@ -802,6 +873,8 @@ export class Cluster {
       version: this.hub.config.version,
       webUi: true,
       console: true,
+      updates: this.hub.updates?.kind ?? "none",
+      ...(this.hub.updates ? { update: this.hub.updates.selfState() } : {}),
     };
   }
 
@@ -902,7 +975,7 @@ export class Cluster {
     if (!this.identity) return [];
     const me = this.self();
     const out: ReplicaState[] = [];
-    if (me) out.push({ ...me, self: true, online: true, role: this.role, sealed: this.hub.vault.state() !== "unlocked" });
+    if (me) out.push({ ...me, self: true, online: true, role: this.role, sealed: this.hub.vault.state() !== "unlocked", version: this.hub.config.version });
     for (const p of this.peers.values()) {
       out.push({
         id: p.id,
@@ -915,6 +988,9 @@ export class Cluster {
         role: p.online ? (p.hello?.role ?? "unknown") : "unknown",
         sealed: !!p.hello?.sealed,
         ...(p.lastSeen ? { lastSeenAt: new Date(p.lastSeen).toISOString() } : {}),
+        ...(p.hello?.version ? { version: p.hello.version } : {}),
+        // Behind this hub, from the leader: Update (or "Updating…") on its row in Machines.
+        ...(this.leads() ? (this.hub.updates?.offerFor(p.id) ?? {}) : {}),
       });
     }
     out.sort((a, b) => (ahead(a, b) ? -1 : 1));
@@ -947,7 +1023,7 @@ export class Cluster {
 
   private emitState(force = false): void {
     const s = this.states();
-    const key = JSON.stringify(s.map((x) => [x.id, x.online, x.role, x.sealed, x.priority]));
+    const key = JSON.stringify(s.map((x) => [x.id, x.online, x.role, x.sealed, x.priority, x.version, x.update, x.updating]));
     if (!force && key === this.lastState) return;
     this.lastState = key;
     this.hub.bus.emit("cluster.updated", s);

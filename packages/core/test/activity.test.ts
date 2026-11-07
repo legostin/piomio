@@ -64,6 +64,37 @@ describe("machines activity", () => {
     feed.close();
   });
 
+  it("shows a hub replica's Update on the row of its computer, or on a row of its own", () => {
+    const { feed } = setup([
+      { id: "m1", name: "vps", status: "online" },
+      { id: "m2", name: "laptop", status: "offline" },
+    ]);
+    let node: { update?: string; updating?: boolean } = {};
+    let replicas = [
+      { id: "rep_vps", name: "VPS", update: "0.3.0" },
+      { id: "rep_mac", name: "mac", update: "0.3.0", updating: true },
+      // Its computer's row is offline: the replica gets a row of its own.
+      { id: "rep_laptop", name: "laptop", update: "0.3.0" },
+    ];
+    feed.updates = { offerFor: (id) => (id === "m1" ? node : {}), replicaOffers: () => replicas };
+    let view = feed.view();
+    expect(view.find((r) => r.id === "m1")).toMatchObject({ name: "vps", update: "0.3.0" });
+    expect(view.find((r) => r.id === "m1")?.updating).toBeUndefined();
+    expect(view.find((r) => r.id === "rep_vps")).toBeUndefined();
+    expect(view.find((r) => r.id === "rep_mac")).toEqual({ id: "rep_mac", name: "mac", online: true, work: [], update: "0.3.0", updating: true });
+    expect(view.find((r) => r.id === "rep_laptop")).toMatchObject({ name: "laptop", online: true, update: "0.3.0" });
+    expect(view.find((r) => r.id === "m2")?.update).toBeUndefined();
+
+    // Both behind: "Updating…" only once neither waits for the press.
+    node = { update: "0.3.0", updating: true };
+    expect(feed.view().find((r) => r.id === "m1")?.updating).toBeUndefined();
+    replicas = [{ id: "rep_vps", name: "vps", update: "0.3.0", updating: true }];
+    expect(feed.view().find((r) => r.id === "m1")).toMatchObject({ update: "0.3.0", updating: true });
+    node = { update: "0.3.0" };
+    expect(feed.view().find((r) => r.id === "m1")?.updating).toBeUndefined();
+    feed.close();
+  });
+
   it("tells what a tool call does by the tool's name", () => {
     expect(["Bash", "shell", "exec_command"].map(stepOfTool)).toEqual(["command", "command", "command"]);
     expect(["Read", "Grep", "Glob"].map(stepOfTool)).toEqual(["reading", "reading", "reading"]);

@@ -1203,7 +1203,10 @@ export interface MachineActivity {
   name: string;
   online: boolean;
   work: MachineWork[];
-  /** The version an "Update" on this machine would bring: a newer release for a server's hub, the hub's for a node. */
+  /**
+   * The version an "Update" on this machine would bring: a newer release for a server's hub, the hub's for a node or a
+   * hub replica behind it (a row of its own, or the row of the machine of its name).
+   */
   update?: string;
   /** That update is under way. */
   updating?: boolean;
@@ -1297,6 +1300,12 @@ export interface ReplicaState extends Replica {
   lastSeenAt?: ISODate;
   /** First in the order: it leads whenever it is up, and phones try it right after the leader (replica_primary). */
   primary?: boolean;
+  /** The Piomio it runs (its last hello; unset while it has not answered). */
+  version?: string;
+  /** From the leader, for a replica behind it: the version its Update brings (POST /api/machines/<its id>/update). */
+  update?: string;
+  /** That update is under way. */
+  updating?: boolean;
 }
 
 // ---------- Devices (phones running the Piomio app) ----------

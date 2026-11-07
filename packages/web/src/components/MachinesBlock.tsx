@@ -1,7 +1,7 @@
 // The machines in the sidebar: closed, one line with a dot for each computer (and how many are at work); open, the hub's
 // computer and the paired ones, and under a busy one who works there and what they do right now. A row opens that
 // dialog, group chat or task. Kept current by "machines.activity". A machine with an update on offer (a server's hub, a
-// node older than the hub) has "Update" on its row, and a dot on the closed line.
+// node or a hub replica older than the hub) has "Update" on its row, and a dot on the closed line.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
@@ -53,9 +53,10 @@ function WorkRow({ work, agent, href, onNavigate }: { work: MachineWork; agent?:
 
 /**
  * "Update" until it is pressed, then "Updating…" until the machine runs the new version; an update that ended without
- * it (the desktop app could not install) shows "Update" again, since the row's key changes with `updating`.
+ * it (the desktop app could not install) shows "Update" again, since the row's key changes with `updating`. Also on a
+ * hub replica in Settings → Machines (its id; the same call).
  */
-function UpdateButton({ machine }: { machine: MachineActivity }) {
+export function UpdateButton({ machine }: { machine: Pick<MachineActivity, "id" | "update" | "updating"> }) {
   const [asked, setAsked] = useState(false);
   if (!machine.update) return null;
   if (machine.updating || asked) return <span className="shrink-0 text-[12px] text-muted">{t("machines.updating")}</span>;

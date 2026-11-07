@@ -220,7 +220,7 @@ The hub checks GitHub for a new release every hour, and right away when you open
 
 On the button the hub downloads the release, checks its signature, makes sure the new version starts, keeps a copy of the database and restarts. It is back in about a minute, and the assistant tells you what changed. If the new version doesn't come up three times in a row, the server goes back to the previous version with the database as it was before, and the assistant says so in the chat.
 
-A computer of your hub gets its new `piomio-node` from the hub: its row in **Machines** shows **Update** when it is behind. See [Updates](updates.md).
+A computer of your hub gets its new `piomio-node` from the hub: its row in **Machines** shows **Update** when it is behind. A server that is a standby replica of your hub is updated the same way, from the replica that leads: it downloads and checks the release itself, as above. See [Updates](updates.md).
 
 ## Backups
 

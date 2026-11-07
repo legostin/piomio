@@ -7,7 +7,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventBus } from "../src/bus.ts";
-import { HubUpdates, archiveName, clearRolledBack, confirmStarted, currentVersion, desktopOffer, desktopPlatform, installLayout, latestOffer, launchApp, settleBeforeStart, switchTo, UpdateError, type HubUpdatesDeps } from "../src/self-update.ts";
+import {
+  HubUpdates,
+  archiveName,
+  clearRolledBack,
+  confirmStarted,
+  currentVersion,
+  desktopOffer,
+  desktopPlatform,
+  installLayout,
+  latestOffer,
+  launchApp,
+  releaseOffer,
+  replicaVersionNote,
+  settleBeforeStart,
+  switchTo,
+  UpdateError,
+  type HubUpdatesDeps,
+  type ReplicaPeer,
+} from "../src/self-update.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "owl-selfupdate-"));
 
@@ -98,6 +116,18 @@ describe("the release on offer", () => {
     expect(await latestOffer("o/r", "0.2.4", "arm64", jsonFetch(release("v0.3.0", names)))).toBeUndefined();
     expect(await latestOffer("o/r", "0.2.4", "x64", jsonFetch(release("v0.3.0", [names[0]])))).toBeUndefined();
     await expect(latestOffer("o/r", "0.2.4", "x64", jsonFetch({}, 403))).rejects.toThrow("403");
+  });
+
+  it("of one version is that release's archive, when it has one for this architecture", async () => {
+    const names = [archiveName("0.2.9", "arm64"), `${archiveName("0.2.9", "arm64")}.sig`];
+    const asked: string[] = [];
+    const answer = (async (url: string) => (asked.push(url), new Response(JSON.stringify(release("v0.2.9", names))))) as unknown as typeof fetch;
+    expect(await releaseOffer("o/r", "0.2.9", "arm64", answer)).toMatchObject({ version: "0.2.9", archive: `https://example.test/${names[0]}` });
+    expect(asked).toEqual(["https://api.github.com/repos/o/r/releases/tags/v0.2.9"]);
+    expect(await releaseOffer("o/r", "0.2.9", "x64", answer)).toBeUndefined();
+    expect(await releaseOffer("o/r", "0.2.9", "arm64", jsonFetch({}, 404))).toBeUndefined();
+    // A feed (PIOMIO_UPDATE_URL) that has another version: not this one.
+    expect(await releaseOffer("o/r", "0.2.8", "arm64", answer, "http://feed.test/latest")).toBeUndefined();
   });
 });
 
@@ -340,5 +370,250 @@ describe("the desktop app's update", () => {
     await u.check();
     expect(told).toHaveLength(2);
     expect(told[1]).toContain("Piomio 0.3.1 is out");
+  });
+});
+
+/** A release of `version` as GitHub serves it: the release's JSON at releases/tags, its archive and signature. */
+function releaseServed(version: string) {
+  const { fetchImpl, offer } = served(version);
+  const names = [archiveName(version, "x64"), `${archiveName(version, "x64")}.sig`];
+  const asked: string[] = [];
+  const answer = (async (url: string) => {
+    asked.push(url);
+    return url.includes("/releases/") ? new Response(JSON.stringify(release(`v${version}`, names))) : fetchImpl(url);
+  }) as unknown as typeof fetch;
+  return { fetchImpl: answer, offer, asked };
+}
+
+describe("a replica asked by the leader to update", () => {
+  it("downloads and checks the leader's version itself, and says in its hello that it installs it", async () => {
+    const r = root("0.2.4");
+    const { fetchImpl, asked } = releaseServed("0.3.0");
+    const { u, restart } = updates(r, { fetch: fetchImpl });
+    expect(await u.updateTo("0.3.0")).toEqual({ version: "0.3.0" });
+    expect(u.selfState()).toEqual({ installing: "0.3.0" });
+    await vi.waitFor(() => expect(restart).toHaveBeenCalledOnce());
+    expect(asked[0]).toBe("https://api.github.com/repos/o/r/releases/tags/v0.3.0");
+    expect(currentVersion(r)).toBe("0.3.0");
+    expect(readFileSync(installLayout(r).trial, "utf8").trim()).toBe("0.2.4 0.3.0 0");
+    expect(existsSync(installLayout(r).snapshot)).toBe(true);
+  });
+
+  it("goes only forward, to a release that exists, on an install that can update", async () => {
+    const { fetchImpl } = releaseServed("0.3.0");
+    const { u } = updates(root("0.2.4"), { fetch: fetchImpl });
+    await expect(u.updateTo("0.2.4")).rejects.toMatchObject({ reason: "upToDate" });
+    await expect(u.updateTo("0.2.3")).rejects.toMatchObject({ reason: "upToDate" });
+    await expect(u.updateTo("0.3.0/../../x")).rejects.toMatchObject({ reason: "noRelease" });
+    await expect(u.updateTo("0.3.1")).rejects.toMatchObject({ reason: "noRelease" });
+    await expect(updates(root("0.2.4"), { platform: "darwin" }).u.updateTo("0.3.0")).rejects.toMatchObject({ reason: "notInstalled" });
+  });
+
+  it("says in its hello why the update failed, and stays as it was", async () => {
+    const r = root("0.2.4");
+    const { fetchImpl } = releaseServed("0.3.0");
+    const { u, restart } = updates(r, { fetch: fetchImpl, verify: async () => false });
+    await u.updateTo("0.3.0");
+    await vi.waitFor(() => expect(u.selfState().failed).toBeTruthy());
+    expect(u.selfState()).toEqual({ failed: { version: "0.3.0", why: "the archive's signature does not match Piomio's key" } });
+    expect(currentVersion(r)).toBe("0.2.4");
+    expect(restart).not.toHaveBeenCalled();
+    // A version the launcher went back from, after its restart.
+    u.rolledBack("0.3.0");
+    expect(u.selfState().failed?.why).toContain("did not start");
+  });
+
+  it("in the desktop app, has the app install its update, and hears why it couldn't", async () => {
+    const launched: string[][] = [];
+    const { u } = updates(root(), {
+      config: { desktopApp: "/Applications/Piomio.app/Contents/MacOS/piomio", version: "0.2.4", releasesRepo: "o/r", dataDir: tmp(), appRoot: tmp() },
+      platform: "darwin",
+      arch: "arm64",
+      fetch: jsonFetch({ version: "0.3.0", platforms: { "darwin-aarch64": { url: "https://example.test/app", signature: "sig" } } }),
+      launch: (file, args) => void launched.push([file, ...args]),
+    });
+    expect(await u.updateTo("0.3.0")).toEqual({ version: "0.3.0" });
+    expect(launched).toEqual([["/Applications/Piomio.app/Contents/MacOS/piomio", "--install-update"]]);
+    expect(u.selfState()).toEqual({ installing: "0.3.0" });
+    u.desktopFailed("no network");
+    expect(u.selfState()).toEqual({ failed: { version: "0.3.0", why: "no network" } });
+    u.stop();
+  });
+
+  it("in the desktop app, looks again rather than install an older release, and refuses one short of the leader's", async () => {
+    const latest = (version: string) => jsonFetch({ version, platforms: { "darwin-aarch64": { url: "https://example.test/app", signature: "sig" } } });
+    const launched: string[][] = [];
+    const { u } = updates(root(), {
+      config: { desktopApp: "/Applications/Piomio.app/Contents/MacOS/piomio", version: "0.2.4", releasesRepo: "o/r", dataDir: tmp(), appRoot: tmp() },
+      platform: "darwin",
+      arch: "arm64",
+      fetch: latest("0.3.0"),
+      launch: (file, args) => void launched.push([file, ...args]),
+    });
+    // The hourly check found 0.3.0; the leader runs 0.3.1, and latest.json still lists 0.3.0: refused, nothing launched.
+    await u.check();
+    await expect(u.updateTo("0.3.1")).rejects.toMatchObject({ reason: "noRelease", version: "0.3.1" });
+    expect(launched).toEqual([]);
+    expect(u.selfState()).toEqual({});
+    // Once 0.3.1 is out, the fresh look finds it (not the 0.3.0 from the hourly check).
+    (u as any).d.fetch = latest("0.3.1");
+    expect(await u.updateTo("0.3.1")).toEqual({ version: "0.3.1" });
+    expect(launched).toHaveLength(1);
+    expect(u.selfState()).toEqual({ installing: "0.3.1" });
+    u.stop();
+  });
+});
+
+describe("the leader and its replicas", () => {
+  const peer = (over: Partial<ReplicaPeer> = {}): ReplicaPeer => ({ id: "rep_vps", name: "vps", online: true, version: "0.2.3", updates: "server", heardAt: 0, ...over });
+
+  function leader(over: Partial<HubUpdatesDeps> = {}) {
+    let now = Date.parse("2026-11-07T12:00:00Z");
+    const replicas: ReplicaPeer[] = [peer()];
+    const asked: Array<[string, string]> = [];
+    const t = updates(root("0.2.4"), {
+      replicas: () => replicas,
+      askReplica: async (id, version) => (asked.push([id, version]), { version }),
+      now: () => now,
+      ...over,
+    });
+    return { ...t, replicas, asked, later: (ms: number) => void (now += ms), at: () => now };
+  }
+
+  it("offers Update on a replica behind it that can update itself, and not on the others", () => {
+    const { u, replicas } = leader();
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4" });
+    expect(u.replicaOffers()).toEqual([{ id: "rep_vps", name: "vps", update: "0.2.4" }]);
+    for (const over of [{ version: "0.2.4" }, { version: "0.2.5" }, { online: false }, { updates: undefined }, { updates: "none" as const }, { version: undefined }]) {
+      replicas[0] = peer(over);
+      expect(u.offerFor("rep_vps")).toEqual({});
+    }
+  });
+
+  it("asks the replica for its own version and shows it updating until it comes back on it", async () => {
+    const { u, replicas, asked, at } = leader();
+    expect(await u.update("rep_vps")).toEqual({ version: "0.2.4", replica: { name: "vps", updates: "server" } });
+    expect(asked).toEqual([["rep_vps", "0.2.4"]]);
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4", updating: true });
+    // A second press while it updates does not ask again.
+    await u.update("rep_vps");
+    expect(asked).toHaveLength(1);
+    // It restarts (away), then says hello with the new version.
+    replicas[0] = peer({ online: false, heardAt: at() + 1 });
+    u.replicasChanged();
+    expect(u.offerFor("rep_vps")).toEqual({});
+    replicas[0] = peer({ version: "0.2.4", heardAt: at() + 2 });
+    u.replicasChanged();
+    expect(u.offerFor("rep_vps")).toEqual({});
+    expect((u as any).replicaJobs.size).toBe(0);
+    u.stop();
+  });
+
+  it("tells the person when the replica's update failed, once a hello after the ask says so", async () => {
+    const { u, replicas, told, at } = leader();
+    // A failure from before this ask is in the hello that crossed it: not this update's.
+    replicas[0] = peer({ update: { failed: { version: "0.2.4", why: "old" } } });
+    await u.update("rep_vps");
+    replicas[0] = peer({ heardAt: at() - 1, update: { failed: { version: "0.2.4", why: "old" } } });
+    u.replicasChanged();
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4", updating: true });
+    expect(told).toHaveLength(0);
+    replicas[0] = peer({ heardAt: at() + 1, update: { installing: "0.2.4" } });
+    u.replicasChanged();
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4", updating: true });
+    replicas[0] = peer({ heardAt: at() + 2, update: { failed: { version: "0.2.4", why: "GitHub answered 502" } } });
+    u.replicasChanged();
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4" });
+    expect(told).toEqual([expect.stringContaining("The hub replica vps could not update to Piomio 0.2.4 (GitHub answered 502); it stays on 0.2.3")]);
+    u.replicasChanged();
+    expect(told).toHaveLength(1);
+    u.stop();
+  });
+
+  it("shows Update again at once when the replica comes back on a newer version that is still behind", async () => {
+    const { u, replicas, told, at } = leader();
+    replicas[0] = peer({ version: "0.2.2", updates: "desktop" });
+    await u.update("rep_vps");
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4", updating: true });
+    // An update it had downloaded before: 0.2.3, not this hub's 0.2.4.
+    replicas[0] = peer({ version: "0.2.3", updates: "desktop", heardAt: at() + 1 });
+    u.replicasChanged();
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4" });
+    expect(told).toEqual([expect.stringContaining("The hub replica vps updated to Piomio 0.2.3, not yet this hub's 0.2.4")]);
+    u.stop();
+  });
+
+  it("says why it can't update a replica, and lets a refusal there through", async () => {
+    const { u, replicas } = leader({
+      askReplica: async () => {
+        throw new UpdateError("noRelease", "0.2.4");
+      },
+    });
+    await expect(u.update("rep_vps")).rejects.toMatchObject({ reason: "noRelease" });
+    expect(u.offerFor("rep_vps")).toEqual({ update: "0.2.4" });
+    replicas[0] = peer({ updates: undefined });
+    await expect(u.update("rep_vps")).rejects.toMatchObject({ reason: "replicaOld" });
+    replicas[0] = peer({ updates: "none" });
+    await expect(u.update("rep_vps")).rejects.toMatchObject({ reason: "notInstalled" });
+    replicas[0] = peer({ online: false });
+    await expect(u.update("rep_vps")).rejects.toMatchObject({ reason: "offline" });
+    replicas[0] = peer({ version: "0.2.4" });
+    await expect(u.update("rep_vps")).rejects.toMatchObject({ reason: "upToDate" });
+  });
+
+  it("updates the replica with the paired machine of its name: one computer, one Update", async () => {
+    const info = { os: "linux", hostname: "vps", arch: "x64", clis: [], allowedDirs: [], nodeVersion: "v24", version: "0.2.4", selfUpdate: true };
+    let m = { name: "VPS", online: true, info };
+    const sent: string[] = [];
+    const { u, asked } = leader({ machine: () => m, sendNode: async (id) => void sent.push(id) });
+    // The machine's program is current: only the replica is asked.
+    expect(await u.update("m1")).toMatchObject({ replica: { name: "vps" } });
+    expect(asked).toEqual([["rep_vps", "0.2.4"]]);
+    expect(sent).toEqual([]);
+    u.stop();
+
+    // Both behind: both are updated.
+    const t = leader({ machine: () => m, sendNode: async (id) => void sent.push(id) });
+    m = { name: "vps", online: true, info: { ...info, version: "0.2.3" } };
+    const appRoot = (t.u as any).d.config.appRoot;
+    mkdirSync(join(appRoot, "packages", "node", "dist"), { recursive: true });
+    writeFileSync(join(appRoot, "packages", "node", "dist", "piomio-node.mjs"), "0.2.4\n");
+    await t.u.update("m1");
+    expect(t.asked).toEqual([["rep_vps", "0.2.4"]]);
+    expect(sent).toEqual(["m1"]);
+    t.u.stop();
+  });
+
+  it("offers to update a replica behind it in the chat, after a while, once per version and at most once a day", async () => {
+    const { u, replicas, told, later, d } = leader();
+    u.replicasChanged();
+    expect(told).toHaveLength(0);
+    later(3 * 60_000);
+    u.replicasChanged();
+    u.replicasChanged();
+    expect(told).toEqual([expect.stringContaining('The hub replica vps runs Piomio 0.2.3, older than this hub\'s 0.2.4')]);
+    expect(told[0]).toContain('hub_machine_update (machine "vps")');
+    // Once per version, kept in the replicated meta table (another leader does not offer it again).
+    expect(JSON.parse((d.prepare("select value from meta where key = 'replica_update_offered:rep_vps'").get() as { value: string }).value)).toMatchObject({ version: "0.2.4" });
+    later(25 * 3600_000);
+    u.replicasChanged();
+    expect(told).toHaveLength(1);
+
+    // One from before replicas updated from the leader: how to update it there, this once.
+    replicas[0] = peer({ id: "rep_mac", name: "mac", updates: undefined });
+    u.replicasChanged();
+    later(3 * 60_000);
+    u.replicasChanged();
+    expect(told[1]).toContain("run the installer there again");
+  });
+});
+
+describe("what agents hear about a replica's version", () => {
+  it("is nothing while it runs this hub's, else that it is older and how it gets this one", () => {
+    expect(replicaVersionNote({ name: "vps", version: "0.2.4" }, "0.2.4")).toBe("");
+    expect(replicaVersionNote({ name: "vps" }, "0.2.4")).toBe("");
+    expect(replicaVersionNote({ name: "vps", version: "0.2.3", update: "0.2.4" }, "0.2.4")).toContain('older than this hub\'s 0.2.4: machine_update with machine "vps"');
+    expect(replicaVersionNote({ name: "vps", version: "0.2.3", update: "0.2.4", updating: true }, "0.2.4")).toBe(" (updating to 0.2.4)");
+    expect(replicaVersionNote({ name: "vps", version: "0.2.3" }, "0.2.4")).toContain("can't be updated from here");
   });
 });

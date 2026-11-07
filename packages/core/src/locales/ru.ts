@@ -426,6 +426,8 @@ export default {
   "update.offline": "Машина не в сети.",
   "update.notSelf": "Эта машина обновляется вместе со своим приложением.",
   "update.noBundle": "У хаба нет программы для машин: соберите её через npm run build.",
+  "update.replicaOld": "На этой реплике Piomio старше обновлений от ведущей: обновите её один раз на том компьютере (установщик ещё раз или «Установить обновление» в меню приложения).",
+  "update.noRelease": "В релизе {version} пока нет ничего для того компьютера: попробуйте, когда релиз будет готов полностью.",
   "cli.auditOk": "Журнал цел: {count, plural, one {# запись} few {# записи} many {# записей} other {# записи}}",
   "cli.auditBroken": "Цепочка нарушена на записи {seq}",
   // the hub's own commands (commands.ts): what the composer lists and how the hub answers

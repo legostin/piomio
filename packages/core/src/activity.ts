@@ -6,6 +6,7 @@ import type { Approval, MachineActivity, MachineInfo, MachineWork, WorkStep } fr
 import { nowIso, parseBrainRef } from "@piomio/shared";
 import type { EventBus } from "./bus.ts";
 import type { MachineHub } from "./machines.ts";
+import { sameComputer, type ReplicaOffer } from "./self-update.ts";
 
 interface Turn extends MachineWork {
   machineId: string;
@@ -73,8 +74,8 @@ const EMIT_DELAY_MS = 250;
 export class MachineActivityFeed {
   bus: EventBus;
   machines: MachineHub;
-  /** The "Update" each row offers (self-update.ts). */
-  updates?: { offerFor(id: string, info?: MachineInfo): { update?: string; updating?: boolean } };
+  /** The "Update" each row offers (self-update.ts), and the hub replicas behind this hub. */
+  updates?: { offerFor(id: string, info?: MachineInfo): { update?: string; updating?: boolean }; replicaOffers?(): ReplicaOffer[] };
   /** By the streaming message's id: one per turn. */
   private turns = new Map<string, Turn>();
   private timer?: NodeJS.Timeout;
@@ -147,7 +148,10 @@ export class MachineActivityFeed {
     if (this.turns.delete(id)) this.changed();
   }
 
-  /** The hub's computer first, then the paired machines; each with its turns, the oldest first. */
+  /**
+   * The hub's computer first, then the paired machines; each with its turns, the oldest first. A hub replica behind
+   * this hub shows its Update on the row of its computer (the paired machine of its name), or on a row of its own.
+   */
   view(): MachineActivity[] {
     const work = (machineId: string): MachineWork[] =>
       [...this.turns.values()]
@@ -155,10 +159,23 @@ export class MachineActivityFeed {
         .sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0))
         .map(({ machineId: _, held: __, heldDetail: ___, ...w }) => w);
     const offer = (id: string, info?: MachineInfo) => this.updates?.offerFor(id, info) ?? {};
-    return [
+    const rows: MachineActivity[] = [
       { id: "local", name: this.machines.localName(), online: true, work: work("local"), ...offer("local") },
       ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id), ...(m.status === "online" ? offer(m.id, m.info) : {}) })),
     ];
+    for (const r of this.updates?.replicaOffers?.() ?? []) {
+      const row = rows.find((x) => x.id !== "local" && x.online && sameComputer(x.name, r.name));
+      if (!row) {
+        rows.push({ id: r.id, name: r.name, online: true, work: [], update: r.update, ...(r.updating ? { updating: true } : {}) });
+        continue;
+      }
+      // Its Update covers both (HubUpdates.update): "Updating…" once nothing on that computer waits for the press.
+      const updating = row.update ? !!row.updating && !!r.updating : !!r.updating;
+      row.update = r.update;
+      if (updating) row.updating = true;
+      else delete row.updating;
+    }
+    return rows;
   }
 
   close(): void {
