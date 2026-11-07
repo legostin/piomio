@@ -8,7 +8,7 @@
 // (policy/auto.ts) or the person's on an approval card, like an external action. Outside the home (system files,
 // tools) reading is fine. The person's credentials and the hub's own data (conversations, the vault, other agents'
 // folders) are never theirs to read, and a command that names them is refused.
-import { realPath } from "@piomio/shared/agent-workspaces";
+import { absolutePath, realPath } from "@piomio/shared/agent-workspaces";
 import { existsSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
@@ -61,7 +61,7 @@ const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim
 /** A Claude Code tool call as an action. A task's networked Bash needs command review even inside its sandbox. */
 export function classifyClaudeTool(tool: string, input: unknown, cwd: string, reviewSandboxed = false): NativeAction {
   const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const at = (p: string | undefined) => (p ? resolve(cwd, expandHome(p)) : cwd);
+  const at = (p: string | undefined) => (p ? absolutePath(expandHome(p), cwd) : cwd);
   if (FREE.has(tool)) return { kind: "free", tool };
   if (FETCH.has(tool)) return { kind: "fetch", tool, url: str(i.url) };
   if (READ.has(tool)) return { kind: "read", tool, path: at(str(i.file_path) ?? str(i.notebook_path) ?? str(i.path)) };
@@ -82,7 +82,7 @@ const KIMI_FREE = new Set(["Agent", "AgentSwarm", "Skill", "SetTodoList", "TodoL
  */
 export function classifyKimiTool(tool: string, input: unknown, cwd: string): NativeAction {
   const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const at = (p: string | undefined) => (p ? resolve(cwd, expandHome(p)) : cwd);
+  const at = (p: string | undefined) => (p ? absolutePath(expandHome(p), cwd) : cwd);
   const file = str(i.path) ?? str(i.file_path);
   if (KIMI_FREE.has(tool)) return { kind: "free", tool };
   if (tool === "Bash") return { kind: "command", tool, command: str(i.command) ?? "", cwd, reason: str(i.description) };
@@ -93,7 +93,7 @@ export function classifyKimiTool(tool: string, input: unknown, cwd: string): Nat
 }
 
 export function expandHome(p: string, home = homedir()): string {
-  return p === "~" ? home : p.startsWith("~/") ? join(home, p.slice(2)) : p;
+  return p === "~" ? home : p.startsWith("~/") ? `${home}${sep}${p.slice(2)}` : p;
 }
 
 /** `p` is `dir` or inside it. */
@@ -144,12 +144,38 @@ function temps(): string[] {
 }
 
 export function decideNative(a: NativeAction, scope: NativeScope): NativeDecision {
+  // These tools do not inspect local paths. Do not let an unavailable filesystem change their policy.
+  if (a.kind === "free") return { decision: "allow", reason: "no reach of its own" };
+  if (a.kind === "sandboxed") return { decision: "allow", reason: "runs inside the sandbox" };
+  if (a.kind === "fetch") return { decision: "allow", reason: "the web, through the hub's egress rules" };
+  if (a.kind === "other") return { decision: "ask", reason: `an unknown tool (${a.tool})` };
+  const original = scope;
+  const originalExempt = [scope.workspace, ...(scope.roots ?? [])];
+  const originalExemptRead = [...originalExempt, ...(scope.readRoots ?? [])];
+  if (a.kind === "read" || a.kind === "write") {
+    const open = a.kind === "read" ? originalExemptRead : originalExempt;
+    const path = a.path;
+    if (!open.some((d) => within(path, d)) && (scope.denied ?? []).some((d) => within(path, d))) {
+      return { decision: "deny", reason: "the person's credentials or the hub's own data" };
+    }
+  }
+  let own: string[];
+  let home: string;
+  try {
+    home = realPath(scope.home ?? homedir());
+    own = [scope.workspace, claudeProjectDir(scope.workspace, scope.home), ...(scope.roots ?? []), ...temps()].map(realPath);
+    scope = {
+      ...scope,
+      workspace: realPath(scope.workspace),
+      roots: scope.roots?.map(realPath),
+      readRoots: scope.readRoots?.map(realPath),
+      denied: scope.denied?.map(realPath),
+    };
+  } catch { return { decision: "deny", reason: "cannot resolve the real permission roots" }; }
   if (a.kind === "read" || a.kind === "write") {
     try { a = { ...a, path: realPath(a.path) }; }
     catch { return { decision: "deny", reason: "cannot resolve the real file path" }; }
   }
-  const home = scope.home ?? homedir();
-  const own = [scope.workspace, claudeProjectDir(scope.workspace, home), ...(scope.roots ?? []), ...temps()];
   const mine = (p: string) => own.some((d) => within(p, d));
   const readable = (p: string) => (scope.readRoots ?? []).some((d) => within(p, d));
   // Only the agent's own folders open a denied one (the hub's data may well sit in a temp folder); its agent's other
@@ -160,12 +186,6 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
   if (a.kind === "read" && denied(a.path, exemptRead)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
   if (a.kind === "write" && denied(a.path, exempt)) return { decision: "deny", reason: "the person's credentials or the hub's own data" };
   switch (a.kind) {
-    case "free":
-      return { decision: "allow", reason: "no reach of its own" };
-    case "sandboxed":
-      return { decision: "allow", reason: "runs inside the sandbox" };
-    case "fetch":
-      return { decision: "allow", reason: "the web, through the hub's egress rules" };
     case "read":
       if (mine(a.path) || readable(a.path)) return { decision: "allow", reason: "inside the agent's folder" };
       // System files and tools are fine to read; the person's home is theirs.
@@ -175,13 +195,15 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
       if (mine(a.path)) return { decision: "allow", reason: "inside the agent's folder" };
       return { decision: "ask", reason: "writes outside the agent's folder" };
     case "command": {
-      const env = { home, tmp: tmpdir() };
+      const env = { home: original.home ?? homedir(), tmp: tmpdir() };
+      // Retain the lexical check for complex command words that cannot be resolved as paths.
+      if (deniedPathIn(a.command, original.denied ?? [], originalExemptRead, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
       if (deniedPathIn(a.command, scope.denied ?? [], exemptRead, env)) return { decision: "deny", reason: "names the person's credentials or the hub's own data" };
       const words = commandParts(a.command, env)?.flat() ?? [];
       for (const word of words) {
         if (word.startsWith("-")) continue;
         try {
-          const path = realPath(resolve(a.cwd ?? scope.workspace, expandHome(word, home)));
+          const path = realPath(absolutePath(expandHome(word, env.home), a.cwd ?? original.workspace));
           if (denied(path, exemptRead)) return { decision: "deny", reason: "a file path resolves into the person's credentials or the hub's data" };
         } catch { /* Complex or absent paths stay subject to the usual review. */ }
       }
@@ -189,8 +211,6 @@ export function decideNative(a: NativeAction, scope: NativeScope): NativeDecisio
       if (!a.network && readOnlyCommand(a.command, env)) return { decision: "allow", reason: "only reads" };
       return { decision: "ask", reason: a.network ? `a command reaching ${a.network}` : "a command outside the sandbox" };
     }
-    case "other":
-      return { decision: "ask", reason: `an unknown tool (${a.tool})` };
   }
 }
 
