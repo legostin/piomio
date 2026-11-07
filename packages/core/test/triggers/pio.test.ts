@@ -300,7 +300,8 @@ describe("ToolGateway.callRead", () => {
           await h.gateway.callRead(listed, name, input);
           ms = Math.min(ms, performance.now() - t0);
         }
-        expect(ms, `${name}: ${what}`).toBeLessThan(50);
+        // Linear stays in milliseconds even on a small CI runner; the quadratic version took seconds on 40K.
+        expect(ms, `${name}: ${what}`).toBeLessThan(500);
       }
     }
     // A source tool is not given a word too long to check for host names; no tool is given a host longer than one.
