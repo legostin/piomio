@@ -49,6 +49,18 @@ describe("task placement storage and constraints", () => {
     expect(taskBrains(["codex@local"], agent, { ...task, machineId: "other" }, "rep_hub", canonical)).toEqual([]);
     expect(taskBrains(["api:a@local", "api:b@local"], agent, { ...task, thinking: { brain: "api:b" } }, "rep_hub", canonical)).toEqual(["api:b@local"]);
   });
+
+  it.each([
+    { feedId: "feed_news", createdBy: "trigger" },
+    { createdBy: "trigger" },
+    { kind: "message" },
+  ])("does not infer native code requirements from non-task instructions: %j", (kind) => {
+    const agent = {} as AgentDef;
+    const task = { ...kind, goal: "Save sources as script <file>" } as Task;
+    expect(taskBrains(["api@local"], agent, task, "hub")).toEqual(["api@local"]);
+    expect(taskBrains(["api@local"], agent, { ...task, thinking: { skill: "code" } }, "hub")).toEqual([]);
+    expect(taskBrains(["api@local"], agent, { goal: task.goal } as Task, "hub")).toEqual([]);
+  });
 });
 
 describe("available task brains (integration)", () => {
@@ -224,5 +236,16 @@ describe("available task brains (integration)", () => {
     const failed = await finished(start({ goal: "fix the bug", thinking: { skill: "code" } }).id);
     expect(failed.status).toBe("failed");
     expect(opened).toEqual([]);
+  });
+
+  it("starts a channel's first gathering run with its only API brain", async () => {
+    probes.set("codex@local", signedOut); probes.set("api@local", ready);
+    save({ brains: ["api@local"] });
+    const feed = hub.feeds.create({ title: "City news", brief: "Gather city news", agentId: "legost" }, { run: false });
+    const first = hub.feeds.run(feed.id);
+    expect(first.goal).toContain("script <file>");
+    expect((await finished(first.id)).status).toBe("done");
+    expect(opened).toEqual(["api@local"]);
+    expect(hub.store.activeSession(first.conversationId, "legost")?.brainRef).toBe("api@local");
   });
 });

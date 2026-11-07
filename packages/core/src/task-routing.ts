@@ -1,5 +1,5 @@
 // Placement is a computer constraint, never a snapshot of whichever brain happened to be first at creation.
-import { formatBrainRef, onMachine, parseBrainRef, sameBrain, type AgentDef, type Task } from "@piomio/shared";
+import { formatBrainRef, onMachine, parseBrainRef, sameBrain, workKind, type AgentDef, type Task } from "@piomio/shared";
 import { skillOfGoal } from "./model-router.ts";
 
 export function taskPlacement(task: Pick<Task, "machineId" | "brainRef">): string | undefined {
@@ -13,7 +13,8 @@ export function taskBrains(refs: readonly string[], agent: AgentDef, task: Task,
   const at = placed === undefined ? undefined : machine(placed) === machine("local") ? "local" : canonical(placed);
   // A brain supplied to task_delegate means "must use this brain"; the agent's thinking.brain is a preference.
   const required = task.thinking?.brain;
-  const native = (task.thinking?.skill ?? skillOfGoal(task.goal)) === "code";
+  // Feed/schedule instructions can mention scripts without asking for native code work.
+  const native = (task.thinking?.skill ?? (workKind(task) === "task" ? skillOfGoal(task.goal) : undefined)) === "code";
   const out: string[] = [];
   for (const ref of refs) {
     const r = parseBrainRef(ref);
