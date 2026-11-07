@@ -47,7 +47,7 @@ describe("normalizeOn", () => {
     expect(normalizeOn({ ...base, on: [{ type: "web.page", config: { url: "https://e.com", selector: "h1", intervalMinutes: 10 } }] })).toEqual({
       ...base, kind: "watch", url: "https://e.com", selector: "h1", intervalMinutes: 10, on: [],
     });
-    expect(normalizeOn({ ...base, on: [{ type: "web.webhook", config: { verify: { kind: "hmac" } } }] })).toEqual({ ...base, kind: "event", verify: { kind: "hmac" }, on: [] });
+    expect(normalizeOn({ ...base, on: [{ type: "web.webhook", config: { verify: { kind: "github", secretRef: "vault://gh" } } }] })).toEqual({ ...base, kind: "event", verify: { kind: "github", secretRef: "vault://gh" }, on: [] });
     expect(normalizeOn({ ...base, on: [{ type: "web.webhook" }] })).toEqual({ ...base, kind: "event", on: [] });
   });
 
@@ -64,10 +64,34 @@ describe("normalizeOn", () => {
     expect(normalizeOn({ ...base, kind: "schedule", on: [{ type: "time.cron", config: { cron: "0 9 * * *" } }] }).kind).toBe("schedule");
   });
 
+  it("refuses fields that disagree with the source config, and cron with times", () => {
+    const base = { name: "n", prompt: "p" };
+    bad("onFieldConflict", () => normalizeOn({ ...base, cron: "0 8 * * *", on: [{ type: "time.cron", config: { cron: "0 9 * * *" } }] }));
+    bad("onFieldConflict", () => normalizeOn({ ...base, url: "https://a.com", on: [{ type: "web.page", config: { url: "https://b.com" } }] }));
+    expect(normalizeOn({ ...base, cron: "0 9 * * *", on: [{ type: "time.cron", config: { cron: "0 9 * * *" } }] }).cron).toBe("0 9 * * *");
+    bad("cronAndTimes", () => normalizeOn({ ...base, on: [{ type: "time.cron", config: { cron: "0 9 * * *", times: ["09:00"] } }] }));
+    bad("cronAndTimes", () => normalizeOn({ ...base, cron: "0 9 * * *", on: [{ type: "time.cron", config: { times: ["09:00"] } }] }));
+  });
+
+  it("validates verify and keeps it to webhooks", () => {
+    const hook = (verify: unknown) => () => buildTrigger({ kind: "event", name: "n", prompt: "p", verify } as never, opts);
+    expect(hook({ kind: "stripe", secretRef: "vault://s", header: "Stripe-Signature" })).not.toThrow();
+    expect(hook({ kind: "secret" })).not.toThrow();
+    bad("verifyInvalid", hook({ kind: "hmac-sha256", secretRef: "rawsecret" }));
+    bad("verifyInvalid", hook({ kind: "github" }));
+    bad("verifyInvalid", hook({ kind: "nope" }));
+    bad("verifyEventOnly", () => signal({ verify: { kind: "secret" } }));
+  });
+
+  it("stores triagePerDay only with triage", () => {
+    expect(signal({ triagePerDay: 50 }).triagePerDay).toBeUndefined();
+    expect(signal({ triage: { brief: "b" }, triagePerDay: 50 }).triagePerDay).toBe(50);
+  });
+
   it("builds a trigger from a normalized built-in source", () => {
-    const t = buildTrigger(normalizeOn({ name: "n", prompt: "p", on: [{ type: "web.webhook", config: { verify: { kind: "hmac" } } }] }), opts);
+    const t = buildTrigger(normalizeOn({ name: "n", prompt: "p", on: [{ type: "web.webhook", config: { verify: { kind: "github", secretRef: "vault://gh" } } }] }), opts);
     expect(t.kind).toBe("event");
-    expect(t.verify).toEqual({ kind: "hmac" });
+    expect(t.verify).toEqual({ kind: "github", secretRef: "vault://gh" });
     expect(t.on).toBeUndefined();
   });
 });
@@ -93,12 +117,16 @@ describe("validation", () => {
     bad("batchMax", sig({ batch: { windowSec: 10, max: 501 } }));
     bad("scriptTooBig", sig({ script: { code: "a".repeat(64 * 1024 + 1), hosts: [] } }));
     bad("hostsTooMany", sig({ script: { code: "x", hosts: Array.from({ length: 31 }, (_, i) => `h${i}.example.com`) } }));
-    for (const host of ["https://example.com", "example.com:8080", "example.com/path", "10.0.0.1", "192.168.1.5", "localhost", "*.10.0.0.1", "a b.com", ""])
+    for (const host of ["https://example.com", "*", "*.com", "пример.рф", "example.com:8080", "example.com/path", "10.0.0.1", "192.168.1.5", "localhost", "*.10.0.0.1", "a b.com", ""])
       bad("hostInvalid", sig({ script: { code: "x", hosts: [host] } }));
     bad("briefRequired", sig({ triage: { brief: "  " } }));
     bad("briefTooLong", sig({ triage: { brief: "a".repeat(2001) } }));
     bad("triageLimit", sig({ triage: { brief: "b" }, triagePerDay: 0 }));
     bad("triageLimit", sig({ triage: { brief: "b" }, triagePerDay: 2001 }));
+  });
+
+  it("accepts a punycode host", () => {
+    expect(signal({ script: { code: "x", hosts: ["xn--e1afmkfd.xn--p1ai"] } }).script?.hosts).toEqual(["xn--e1afmkfd.xn--p1ai"]);
   });
 
   it("accepts the boundaries", () => {

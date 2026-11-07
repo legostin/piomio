@@ -134,8 +134,8 @@ const isBuiltin = (type: unknown): boolean => (BUILTIN_SOURCES as readonly strin
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** The kind a built-in source maps to, given its config. */
-const builtinKind = (type: string, config: Record<string, unknown>): TriggerKind =>
-  type === "time.cron" ? (config.times !== undefined || config.weekdays !== undefined ? "heartbeat" : "schedule") : type === "time.at" ? "once" : type === "web.page" ? "watch" : "event";
+const builtinKind = (type: string, config: Record<string, unknown>, input: TriggerInput): TriggerKind =>
+  type === "time.cron" ? (config.times !== undefined || config.weekdays !== undefined || input.times !== undefined ? "heartbeat" : "schedule") : type === "time.at" ? "once" : type === "web.page" ? "watch" : "event";
 
 /**
  * Turn a built-in `on` entry (time.cron, time.at, web.page, web.webhook) into the trigger's kind and its fields,
@@ -148,27 +148,32 @@ export function normalizeOn(input: TriggerInput): TriggerInput {
   if (builtin.length > 1) fail("onBuiltinTwice", "Only one built-in source (time.cron, time.at, web.page, web.webhook) fits in one trigger");
   const entry = builtin[0];
   const config = isObject(entry.config) ? entry.config : {};
-  const kind = builtinKind(entry.type, config);
+  const kind = builtinKind(entry.type, config, input);
   if (input.kind !== undefined && input.kind !== kind)
     fail("onKindConflict", `The source ${entry.type} does not fit a trigger of kind ${String(input.kind)}`, { type: entry.type, kind: String(input.kind) });
-  const out: TriggerInput = { ...input, kind, on: input.on.filter((s) => s !== entry) };
+  const fields: Record<string, unknown> = {};
   switch (entry.type) {
     case "time.cron":
-      if (kind === "schedule") out.cron = config.cron as string;
-      else {
-        if (config.times !== undefined) out.times = config.times as string[];
-        if (config.weekdays !== undefined) out.weekdays = config.weekdays as number[];
-      }
+      if ((config.cron !== undefined || input.cron !== undefined) && (config.times !== undefined || input.times !== undefined))
+        fail("cronAndTimes", "A time.cron source takes either cron or times (with weekdays), not both");
+      for (const k of ["cron", "times", "weekdays"]) fields[k] = config[k];
       break;
     case "time.at":
-      out.at = config.at as string;
+      fields.at = config.at;
       break;
     case "web.page":
-      for (const k of ["url", "selector", "jsonPath", "intervalMinutes"] as const) if (config[k] !== undefined) (out as Record<string, unknown>)[k] = config[k];
+      for (const k of ["url", "selector", "jsonPath", "intervalMinutes"]) fields[k] = config[k];
       break;
     case "web.webhook":
-      if (config.verify !== undefined) out.verify = config.verify;
+      fields.verify = config.verify;
       break;
+  }
+  const out: TriggerInput = { ...input, kind, on: input.on.filter((s) => s !== entry) };
+  for (const [field, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    const have = (input as Record<string, unknown>)[field];
+    if (have !== undefined && JSON.stringify(have) !== JSON.stringify(value)) fail("onFieldConflict", `${field} is given twice with different values (in the trigger and in the ${entry.type} config)`, { field });
+    (out as Record<string, unknown>)[field] = value;
   }
   return out;
 }
@@ -215,7 +220,10 @@ function checkBatch(v: unknown): { windowSec: number; max?: number } {
   return out;
 }
 
-/** A host the script may reach: a DNS name or *.domain (or a public IP), nothing else. */
+/**
+ * A host the script may reach: a DNS name or *.domain (or a public IP), nothing else. There is no public-suffix list, so
+ * wildcards such as *.co.uk pass; the person confirms each new host on a network card anyway.
+ */
 function checkHost(v: unknown): string {
   if (typeof v === "string") {
     try {
@@ -224,7 +232,7 @@ function checkHost(v: unknown): string {
       // falls through to the error below
     }
   }
-  return fail("hostInvalid", `"${String(v)}" is not a valid host: use a name like example.com or *.example.com, with no scheme, port, path or private address`, { host: String(v) });
+  return fail("hostInvalid", `"${String(v)}" is not a valid host: use a host name like example.com, *.example.com or a public IP, with no scheme, port or path`, { host: String(v) });
 }
 
 function checkScript(v: unknown): { code: string; hosts: string[] } {
@@ -249,6 +257,24 @@ function checkTriagePerDay(v: unknown): number {
   const n = Number(v);
   if (!Number.isInteger(n) || n < 1 || n > MAX_TRIAGE_PER_DAY) fail("triageLimit", `triagePerDay must be an integer from 1 to ${MAX_TRIAGE_PER_DAY}`, { max: MAX_TRIAGE_PER_DAY });
   return n;
+}
+
+const VERIFY_KINDS = ["github", "stripe", "hmac-sha256"];
+
+/** How a webhook sender is verified; HMAC kinds name a vault entry, never hold the secret. */
+function checkVerify(v: unknown): Record<string, unknown> {
+  const o = isObject(v) ? v : {};
+  if (o.kind === "secret") {
+    if (Object.keys(o).length === 1) return { kind: "secret" };
+  } else if (typeof o.kind === "string" && VERIFY_KINDS.includes(o.kind) && typeof o.secretRef === "string" && /^vault:\/\/[A-Za-z0-9_.-]+$/.test(o.secretRef)) {
+    const out: Record<string, unknown> = { kind: o.kind, secretRef: o.secretRef };
+    if (o.header !== undefined) {
+      if (typeof o.header !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(o.header)) return fail("verifyInvalid", "verify is not valid: header must be an HTTP header name", {});
+      out.header = o.header;
+    }
+    if (Object.keys(o).every((k) => ["kind", "secretRef", "header"].includes(k))) return out;
+  }
+  return fail("verifyInvalid", 'verify is not valid: use { kind: "secret" } or { kind: "github" | "stripe" | "hmac-sha256", secretRef: "vault://<id>", header? }', {});
 }
 
 const isUnset = (v: unknown) => v === null || v === undefined;
@@ -308,7 +334,10 @@ export function buildTrigger(input: TriggerInput, o: BuildOptions): Trigger {
     case "signal":
       break;
   }
-  if (kind === "event" && input.verify !== undefined && input.verify !== null) t.verify = input.verify;
+  if (!isUnset(input.verify)) {
+    if (kind !== "event") fail("verifyEventOnly", "verify applies only to webhook triggers (kind event)", { kind });
+    t.verify = checkVerify(input.verify);
+  }
   if (!isUnset(input.on)) {
     const on = checkOn(input.on, kind);
     if (on.length) t.on = on;
@@ -318,7 +347,8 @@ export function buildTrigger(input: TriggerInput, o: BuildOptions): Trigger {
   if (!isUnset(input.script)) t.script = checkScript(input.script);
   if (!isUnset(input.triage)) t.triage = checkTriage(input.triage);
   if (!isUnset(input.triagePerDay)) t.triagePerDay = checkTriagePerDay(input.triagePerDay);
-  else if (t.triage) t.triagePerDay = DEFAULT_TRIAGE_PER_DAY;
+  if (t.triage) t.triagePerDay ??= DEFAULT_TRIAGE_PER_DAY;
+  else delete t.triagePerDay;
   t.report = input.report === undefined ? defaultReport(t, o.tz, o.now) : checkReport(input.report, kind);
   return t;
 }
@@ -404,8 +434,20 @@ export function applyUpdate(t: Trigger, patch: TriggerInput, o: { now: Date; tz:
     }
   }
   if (patch.triagePerDay !== undefined) {
-    if (isUnset(patch.triagePerDay)) delete next.triagePerDay;
-    else next.triagePerDay = checkTriagePerDay(patch.triagePerDay);
+    if (isUnset(patch.triagePerDay)) {
+      if (next.triage) next.triagePerDay = DEFAULT_TRIAGE_PER_DAY;
+      else delete next.triagePerDay;
+    } else {
+      const n = checkTriagePerDay(patch.triagePerDay);
+      if (next.triage) next.triagePerDay = n;
+    }
+  }
+  if (patch.verify !== undefined) {
+    if (isUnset(patch.verify)) delete next.verify;
+    else {
+      if (t.kind !== "event") fail("verifyEventOnly", "verify applies only to webhook triggers (kind event)", { kind: t.kind });
+      next.verify = checkVerify(patch.verify);
+    }
   }
   next.updatedAt = o.now.toISOString();
   return next;
