@@ -176,6 +176,7 @@ export default {
   "plugin.crashLoop": "Плагин падал 5 раз за 10 минут и был остановлен",
   "plugin.dirNotFound": "Папка не найдена: {path}",
   "plugin.builtinCannotReplace": "Плагин {id} встроенный и не может быть заменён",
+  "plugin.coreId": "«{id}» — часть самого Piomio, поэтому плагин не может взять себе это имя",
   "plugin.builtinCannotRemove": "Встроенный плагин нельзя удалить, только отключить",
   "plugin.installExpired": "Установка не найдена или устарела",
   "plugin.vaultItemsArray": "items: ожидается массив id записей vault",

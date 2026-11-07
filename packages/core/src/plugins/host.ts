@@ -20,6 +20,7 @@ import { linkUserKeychains } from "./keychains.ts";
 import { pluginKv } from "./kv.ts";
 import { compilePluginUi } from "./ui-compile.ts";
 import { BRAIN_MODEL_EGRESS } from "../settings.ts";
+import { TRIGGERS_ID } from "../signals/core-host.ts";
 
 /**
  * What model access through plain API keys means for the builtin plugins (Config.apiKeys): without it the API brain
@@ -33,6 +34,11 @@ export const UNRELEASED: Readonly<Record<string, (c: Config) => boolean>> = { pi
 export function heldBack(id: string, c: Config): boolean {
   return (!c.apiKeys && HELD_BACK_WITHOUT_KEYS.includes(id)) || (id in UNRELEASED && !UNRELEASED[id](c));
 }
+/**
+ * Ids of what is part of the hub itself: the trigger engine keeps the id the Triggers plugin had (its storage, its
+ * tools' owner, its HTTP and webhook addresses), so no plugin may take it, installed or found on disk.
+ */
+export const CORE_IDS: readonly string[] = [TRIGGERS_ID];
 const KEY_PARTS: Record<string, { vault: string[]; settings: string[] }> = { "brain-codex": { vault: ["openai_api_key"], settings: ["apiKeyRef"] } };
 
 /** A builtin layout without its key parts: those vault items out of its permissions, those settings out of its form. */
@@ -205,6 +211,10 @@ export class PluginHost {
         return;
       }
       const id = layout.manifest.id;
+      if (CORE_IDS.includes(id)) {
+        console.error(`[plugins] skip ${dir}: "${id}" is part of the hub itself, not a plugin`);
+        return;
+      }
       if (source === "builtin" && heldBack(id, this.d.config)) {
         seen.add(id);
         return;
@@ -816,8 +826,16 @@ export class PluginHost {
       cpSync(src, dir, { recursive: true, filter: (p) => !p.includes(`${"node_modules"}`) });
     }
     const layout = readPluginLayout(dir);
-    if (this.records.get(layout.manifest.id)?.source === "builtin" || HELD_BACK_WITHOUT_KEYS.includes(layout.manifest.id) || layout.manifest.id in UNRELEASED) {
-      throw new LocalizedError("plugin.builtinCannotReplace", { id: layout.manifest.id });
+    const id = layout.manifest.id;
+    const refused = CORE_IDS.includes(id)
+      ? "plugin.coreId"
+      : this.records.get(id)?.source === "builtin" || HELD_BACK_WITHOUT_KEYS.includes(id) || id in UNRELEASED
+        ? "plugin.builtinCannotReplace"
+        : undefined;
+    if (refused) {
+      // Nothing of a refused install stays in staging.
+      rmSync(dir, { recursive: true, force: true });
+      throw new LocalizedError(refused, { id });
     }
     // A card's source without its build (an integration an agent made): the hub compiles it.
     compilePluginUi(dir, layout.uiEntry);

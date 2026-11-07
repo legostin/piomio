@@ -177,6 +177,7 @@ export default {
   "plugin.crashLoop": "The plugin crashed 5 times in 10 minutes and was stopped",
   "plugin.dirNotFound": "Folder not found: {path}",
   "plugin.builtinCannotReplace": "{id} is a built-in plugin and cannot be replaced",
+  "plugin.coreId": "“{id}” is part of Piomio itself, so a plugin can't use that id",
   "plugin.builtinCannotRemove": "Built-in plugins cannot be removed, only disabled",
   "plugin.installExpired": "The installation was not found or has expired",
   "plugin.vaultItemsArray": "items: expected an array of vault item ids",
