@@ -9,7 +9,9 @@ import { Worker } from "node:worker_threads";
 import type { FromSandbox, SandboxJob, ToSandbox } from "./sandbox-worker.ts";
 
 /** What a script decides about its signal(s). Task 2 moves it to types.ts. */
-export type Verdict = { drop: string } | { note: string } | { wake: string; context?: unknown } | { triage: unknown };
+import type { Verdict } from "./types.ts";
+
+export type { Verdict };
 
 export interface SandboxLimits {
   memoryBytes: number;
