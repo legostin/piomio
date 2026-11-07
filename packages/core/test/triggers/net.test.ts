@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { createServer as createTcp, type AddressInfo } from "node:net";
+import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { proxiedGet } from "../../src/signals/net.ts";
 import { fetchPage } from "../../src/signals/watch.ts";
 
@@ -70,6 +71,38 @@ describe("watch page loads", () => {
     const end = Date.now() + 2000;
     while (mine() && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
     expect(mine()).toBe(0);
+  });
+
+  it("asks for compressed pages and unpacks them, as fetch did", async () => {
+    const page = "<p>Цена: 1 200 ₽</p>".repeat(200);
+    const packers: Record<string, (b: Buffer) => Buffer> = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync };
+    let asked = "";
+    // A server that compresses whether asked or not.
+    const packed = createServer((req, res) => {
+      asked = String(req.headers["accept-encoding"] ?? "");
+      const enc = new URL(req.url ?? "/", "http://x").searchParams.get("enc")!;
+      const body = enc === "bad" ? Buffer.from("not gzip at all") : packers[enc](Buffer.from(page));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-encoding": enc === "bad" ? "gzip" : enc, "content-length": String(body.length) });
+      res.end(body);
+    });
+    await new Promise<void>((r) => packed.listen(0, "127.0.0.1", r));
+    const get = proxiedGet(`http://tok123:x@127.0.0.1:${proxyPort}`);
+    try {
+      const url = (enc: string) => `http://127.0.0.1:${(packed.address() as AddressInfo).port}/?enc=${enc}`;
+      for (const enc of Object.keys(packers)) {
+        const res = await get(url(enc), { headers: { accept: "text/html" } });
+        expect(res.headers.get("content-encoding")).toBeNull();
+        expect(res.headers.get("content-length")).toBeNull();
+        expect(await res.text()).toBe(page);
+      }
+      expect(asked.split(/,\s*/).sort()).toEqual(["br", "deflate", "gzip"]);
+      expect((await fetchPage(url("gzip"), { allowPrivate: true, timeoutMs: 1000, fetch: get })).body).toBe(page);
+      // A body that is not what its encoding says fails to read, rather than reading as garbage.
+      await expect((await get(url("bad"), {})).text()).rejects.toThrow();
+    } finally {
+      get.close();
+      packed.close();
+    }
   });
 
   it("fetchPage uses the given fetch and reports its timeout as a timeout", async () => {
