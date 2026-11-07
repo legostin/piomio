@@ -306,8 +306,8 @@ export class CoreTriggers {
     };
     // The hub settings under the names the engine reads (engine.ts readEngineSettings), as the card's form had them.
     const engineSettings = () => {
-      const s = d.settings.get();
-      return { allowPrivateUrls: s.triggersAllowPrivateUrls, watchTimeoutSec: s.triggersWatchTimeoutSec };
+      const hs = d.settings.get();
+      return { allowPrivateUrls: hs.triggersAllowPrivateUrls, watchTimeoutSec: hs.triggersWatchTimeoutSec };
     };
     return {
       pluginId: TRIGGERS_ID,
