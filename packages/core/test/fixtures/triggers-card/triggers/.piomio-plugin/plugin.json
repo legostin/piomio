@@ -1,0 +1,16 @@
+{
+  "id": "triggers",
+  "name": "Triggers",
+  "version": "0.2.0",
+  "builtin": true,
+  "contributes": {
+    "settings": {
+      "type": "object",
+      "properties": {
+        "allowPrivateUrls": { "type": "boolean", "default": false },
+        "watchTimeoutSec": { "type": "integer", "default": 30 }
+      }
+    }
+  },
+  "permissions": {}
+}

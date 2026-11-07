@@ -66,6 +66,8 @@ import { InviteRegistry } from "./invites.ts";
 import { deviceTls, type DeviceTls } from "./devices-tls.ts";
 import { deviceUrls, hubName, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
 import { createCoreCall } from "./core-call.ts";
+import { CoreTriggers, TRIGGERS_ID } from "./signals/core-host.ts";
+import { proxiedGet } from "./signals/net.ts";
 import { configureHubLocale, coreCatalog, hubLocale, localizePluginValue, LocalizedError, t } from "./i18n.ts";
 import { registerHubTools, slug } from "./tools/hub-tools.ts";
 import { SecretIntake } from "./secrets.ts";
@@ -139,6 +141,10 @@ export class Hub {
   /** "New channel" and "Add agent" chats (setup-chats.ts). */
   setupChats: SetupChats;
   plugins: PluginHost;
+  /** The trigger engine (signals/): runs while this hub leads and the Triggers card is on. */
+  triggers: CoreTriggers;
+  /** The egress token the trigger engine's page loads use, issued once (like reviewToken). */
+  private triggersToken?: string;
   /** This computer's graphics cards, once read (start()). */
   private gpus?: string[];
   mcp: McpEndpoint;
@@ -439,6 +445,7 @@ export class Hub {
     });
     this.pages = new Pages({ db: this.db, bus: this.bus, dir: join(config.dataDir, "pages") });
     this.mcpClients = new McpClientManager({ config, registry: this.tools, vault: this.vault, audit: this.audit, egress: this.egress });
+    const coreCall = createCoreCall(this);
     this.plugins = new PluginHost({
       config,
       db: this.db,
@@ -450,12 +457,33 @@ export class Hub {
       egress: this.egress,
       brains: this.brains,
       channels: this.channels,
-      coreCall: createCoreCall(this),
+      coreCall,
       onLayoutsChanged: () => this.reindex(),
       // The user's own CLIs first, then the ones the hub installed: a CLI the user installed wins.
       cliBinDirs: () => [...this.userPath.dirs(), ...this.cliTools.binDirs()],
       attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
       onCatalogUpdated: (pluginId, before, after) => this.catalogUpdated(pluginId, before, after),
+    });
+    this.triggers = new CoreTriggers({
+      db: this.db,
+      bus: this.bus,
+      tools: this.tools,
+      card: {
+        get: () => {
+          const r = this.plugins.get(TRIGGERS_ID);
+          const allowed = config.plugins === "all" || (Array.isArray(config.plugins) && config.plugins.includes(TRIGGERS_ID));
+          return r && allowed ? { enabled: r.enabled, settings: r.settings } : undefined;
+        },
+        onSettings: (cb) => this.plugins.onSettings(TRIGGERS_ID, cb),
+      },
+      coreCall,
+      hubUrl: config.internalUrl,
+      // Page loads go through the egress proxy, checked and audited like the plugin process's were.
+      fetch: () => proxiedGet(`http://${(this.triggersToken ??= this.egress.issueToken("plugin:triggers", ["*"]))}:x@127.0.0.1:${config.egressPort}`),
+    });
+    // The person turned the Triggers card on or off.
+    this.bus.on("plugins.updated", () => {
+      if (this.leading && !this.stopping) void this.triggers.sync().catch((e) => console.log(`[piomio] triggers: ${e?.message ?? e}`));
     });
     this.voiceProviders = new VoiceProviders(this.plugins, this.speech, this.transcriber);
     this.mcp = new McpEndpoint(this.gateway, this.store, config.version);
@@ -1177,6 +1205,7 @@ export class Hub {
     for (const r of this.machines.replaced()) this.machineReplaced(r.from, r.to);
     this.store.agentConversation(this.settings.get().defaultAgent);
     if (cfg.plugins !== "none") await this.plugins.startAll(cfg.plugins);
+    await this.triggers.start().catch((e) => console.log(`[piomio] triggers did not start: ${e?.message ?? e}`));
     await this.mcpClients.sync(this.pluginMcpFiles());
     this.mcpClients.onChange = () => this.bus.emit("plugins.updated", {});
     this.runner.start();
@@ -1228,6 +1257,7 @@ export class Hub {
     this.leading = false;
     this.notifier.stop();
     this.feeds.stop();
+    this.triggers.stop();
     this.setup.stop();
     await this.runner.stop();
     // Its tasks go back to the queue: the leader carries them on from where they stopped. One that led while this
@@ -1321,6 +1351,7 @@ export class Hub {
     await this.cluster.stop();
     this.notifier.stop();
     this.feeds.stop();
+    this.triggers.stop();
     this.setup.stop();
     await this.runner.stop();
     this.speech.stop();

@@ -3,6 +3,7 @@
 // on loopback behind the hub's Tailscale node, the link's host only, no desktop sign-in, passkeys, Google's return page
 // or webhooks; its first-run setup and sign-in count toward the link's shared budget.
 
+import { hasPluginHttp, pluginHttp } from "./plugin-http.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -235,9 +236,9 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
   if (!remote) {
     app.all("/hooks/:pluginId/*", async (req, reply) => {
       const { pluginId } = req.params as { pluginId: string };
-      if (!hub.plugins.hasHttp(pluginId)) throw new HttpError(404, "not found");
+      if (!hasPluginHttp(hub, pluginId)) throw new HttpError(404, "not found");
       const rest = (req.params as any)["*"] as string;
-      const r = await hub.plugins.http(pluginId, {
+      const r = await pluginHttp(hub, pluginId, {
         method: req.method,
         path: "/" + rest,
         query: req.query as Record<string, string>,
