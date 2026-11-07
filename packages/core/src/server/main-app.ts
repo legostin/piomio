@@ -344,6 +344,7 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
       bootstrap: (req) => ({ csrf: req.authSession!.csrf }),
       wsAllowed: (req) => !!vouched(req) || originAllowed(req, origins()),
       relaySocket: (socket, req) => !!uiLeader() && !vouched(req) && pipeToLeader(hub, socket, req, "main", req.authSession),
+      relays: (req) => !!uiLeader() && !vouched(req),
       authenticate: guard,
     });
   });
