@@ -3,6 +3,7 @@
 // on loopback behind the hub's Tailscale node, the link's host only, no desktop sign-in, passkeys, Google's return page
 // or webhooks; its first-run setup and sign-in count toward the link's shared budget.
 
+import { hasPluginHttp, pluginHttp } from "./plugin-http.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -68,9 +69,25 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
     return l?.link && l.webUi ? { link: l.link, name: l.name } : undefined;
   };
 
+  // Public webhooks keep the body exactly as it arrived (req.rawBody) beside the parsed one: a sender's signature is
+  // over those bytes. Other routes parse as before. Raw size is the route's bodyLimit.
+  const jsonParser = app.getDefaultJsonParser("error", "error");
+  const keepRaw = (req: FastifyRequest, body: string) => {
+    if (req.url.startsWith("/hooks/")) (req as FastifyRequest & { rawBody?: string }).rawBody = body;
+  };
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+    keepRaw(req, String(body));
+    jsonParser(req, String(body), done);
+  });
   // Keep raw text for non-JSON bodies (webhooks).
-  app.addContentTypeParser("*", { parseAs: "string" }, (_req, body, done) => done(null, body));
-  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => done(null, Object.fromEntries(new URLSearchParams(String(body)))));
+  app.addContentTypeParser("*", { parseAs: "string" }, (req, body, done) => {
+    keepRaw(req, String(body));
+    done(null, body);
+  });
+  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (req, body, done) => {
+    keepRaw(req, String(body));
+    done(null, Object.fromEntries(new URLSearchParams(String(body))));
+  });
 
   app.addHook("onRequest", async (req, reply) => {
     if (!hostAllowed(req, hosts())) {
@@ -252,14 +269,15 @@ export async function buildMainApp(hub: Hub, opts: MainAppOptions = {}): Promise
   if (!remote) {
     app.all("/hooks/:pluginId/*", async (req, reply) => {
       const { pluginId } = req.params as { pluginId: string };
-      if (!hub.plugins.hasHttp(pluginId)) throw new HttpError(404, "not found");
+      if (!hasPluginHttp(hub, pluginId)) throw new HttpError(404, "not found");
       const rest = (req.params as any)["*"] as string;
-      const r = await hub.plugins.http(pluginId, {
+      const r = await pluginHttp(hub, pluginId, {
         method: req.method,
         path: "/" + rest,
         query: req.query as Record<string, string>,
         headers: req.headers as Record<string, string>,
         body: req.body ?? null,
+        ...((req as FastifyRequest & { rawBody?: string }).rawBody !== undefined ? { rawBody: (req as FastifyRequest & { rawBody?: string }).rawBody } : {}),
         public: true,
         locale: hubLocale(),
       });

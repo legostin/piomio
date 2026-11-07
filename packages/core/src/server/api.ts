@@ -1,6 +1,7 @@
 // The authenticated hub API, shared by the web UI (cookie sessions, port 8080) and the phones (device port, bearer
 // tokens). The caller adds its own auth hook first; everything here assumes the request comes from the owner.
 
+import { pluginHttp } from "./plugin-http.ts";
 import { DEFAULT_BRAIN_EGRESS } from "../settings.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -510,7 +511,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   });
   api.all("/api/plugins/:id/http/*", async (req, reply) => {
     const id = (req.params as any).id as string;
-    const r = await hub.plugins.http(id, {
+    const r = await pluginHttp(hub, id, {
       method: req.method,
       path: "/" + ((req.params as any)["*"] as string),
       query: req.query as Record<string, string>,

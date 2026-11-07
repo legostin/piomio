@@ -29,7 +29,7 @@ The app looks for a new release a minute after it starts and then every hour; th
 
 - **In the sidebar.** Above the row of icons at the bottom, **Update Piomio to …** appears. Press it. (Other computers' updates are on their rows under **Machines**.)
 - **In the chat.** When a new version is out, the assistant tells you and offers buttons to update now or not now. It brings up each version once, and no more than once a day. You can also just write "update Piomio".
-- **In the icon's menu.** The update item says **Install update …** once a release is downloaded. **Check for updates** looks right away.
+- **In the icon's menu.** While a release downloads, the update item shows how much is done (**Downloading update … 20%**); once it's downloaded, the item says **Install update …**. **Check for updates** looks right away.
 
 Then the app stops the hub cleanly (tasks that were running wait in the queue for the new version), installs the update, and starts again. It's back in a minute or two, with all your data. On Windows the installer shows a small progress window and asks nothing.
 

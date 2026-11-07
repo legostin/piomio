@@ -120,6 +120,8 @@ export interface PluginHttpRequest {
   query: Record<string, string>;
   headers: Record<string, string>;
   body: unknown;
+  /** Public webhooks only: the body exactly as it arrived (UTF-8 text), for checking a signature. */
+  rawBody?: string;
   /** True for unauthenticated public webhooks (/hooks/<pluginId>/...). Validate secrets yourself. */
   public: boolean;
   /** Language of whoever made the request (the UI's choice); the hub language for public webhooks. */

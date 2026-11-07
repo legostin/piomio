@@ -67,6 +67,8 @@ import { InviteRegistry } from "./invites.ts";
 import { deviceTls, type DeviceTls } from "./devices-tls.ts";
 import { deviceUrls, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
 import { createCoreCall } from "./core-call.ts";
+import { CoreTriggers, TRIGGERS_ID } from "./signals/core-host.ts";
+import { proxiedGet } from "./signals/net.ts";
 import { configureHubLocale, coreCatalog, hubLocale, localizePluginValue, LocalizedError, t } from "./i18n.ts";
 import { registerHubTools, slug } from "./tools/hub-tools.ts";
 import { SecretIntake } from "./secrets.ts";
@@ -89,6 +91,9 @@ import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
 import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
+import { pageReader } from "./signals/extract.ts";
+import { scriptSandbox } from "./signals/sandbox.ts";
+import { quickModel } from "./bare-ask.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
@@ -116,6 +121,7 @@ export class Hub {
   /** Which pictures the hub may fetch when a chat shows them (policy/pictures.ts). */
   pictures: Pictures;
   private reviewToken?: string;
+  private quickToken?: string;
   agents: AgentRegistry;
   /** Pinned, archived and deleted built-in agents (agents-state.ts). */
   agentsState: AgentsStateStore;
@@ -141,6 +147,8 @@ export class Hub {
   /** "New channel" and "Add agent" chats (setup-chats.ts). */
   setupChats: SetupChats;
   plugins: PluginHost;
+  /** The trigger engine (signals/): runs while this hub leads and the Triggers card is on. */
+  triggers: CoreTriggers;
   /** This computer's graphics cards, once read (start()). */
   private gpus?: string[];
   mcp: McpEndpoint;
@@ -391,6 +399,7 @@ export class Hub {
       ],
       activity: this.activity,
       locations: this.locations,
+      signalNotes: (q) => this.triggers.notes(q),
       secrets: this.secrets,
       transcriber: this.transcriber,
       toolNames: () =>
@@ -449,6 +458,7 @@ export class Hub {
     });
     this.pages = new Pages({ db: this.db, bus: this.bus, dir: join(config.dataDir, "pages") });
     this.mcpClients = new McpClientManager({ config, registry: this.tools, vault: this.vault, audit: this.audit, egress: this.egress });
+    const coreCall = createCoreCall(this);
     this.plugins = new PluginHost({
       config,
       db: this.db,
@@ -460,12 +470,50 @@ export class Hub {
       egress: this.egress,
       brains: this.brains,
       channels: this.channels,
-      coreCall: createCoreCall(this),
+      coreCall,
       onLayoutsChanged: () => this.reindex(),
       // The user's own CLIs first, then the ones the hub installed: a CLI the user installed wins.
       cliBinDirs: () => [...this.userPath.dirs(), ...this.cliTools.binDirs()],
       attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
       onCatalogUpdated: (pluginId, before, after) => this.catalogUpdated(pluginId, before, after),
+    });
+    this.triggers = new CoreTriggers({
+      db: this.db,
+      bus: this.bus,
+      tools: this.tools,
+      card: {
+        get: () => {
+          const r = this.plugins.get(TRIGGERS_ID);
+          const allowed = config.plugins === "all" || (Array.isArray(config.plugins) && config.plugins.includes(TRIGGERS_ID));
+          return r && allowed ? { enabled: r.enabled, settings: r.settings } : undefined;
+        },
+        onSettings: (cb) => this.plugins.onSettings(TRIGGERS_ID, cb),
+      },
+      coreCall,
+      hubUrl: config.internalUrl,
+      // Page loads go through the egress proxy, checked and audited like the plugin process's were: a token per start,
+      // revoked with its connections when the engine stops (as the plugin's went with its process).
+      fetch: () => {
+        const token = this.egress.issueToken("plugin:triggers", ["*"]);
+        const get = proxiedGet(`http://${token}:x@127.0.0.1:${config.egressPort}`);
+        return {
+          fetch: get,
+          release: () => {
+            this.egress.revoke(token);
+            get.close();
+          },
+        };
+      },
+      // Triggers' scripts read with their agents' tools; triage and pio.llm.ask ask the quick model; a script's fetches
+      // go through the egress proxy on a token of each run's own.
+      gateway: this.gateway,
+      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
+      egress: { proxy: this.egress, port: config.egressPort },
+      vault: this.vault,
+    });
+    // The person turned the Triggers card on or off.
+    this.bus.on("plugins.updated", () => {
+      if (this.leading && !this.stopping) void this.triggers.sync().catch((e) => console.log(`[piomio] triggers: ${e?.message ?? e}`));
     });
     this.voiceProviders = new VoiceProviders(this.plugins, this.speech, this.transcriber);
     this.mcp = new McpEndpoint(this.gateway, this.store, config.version);
@@ -831,7 +879,17 @@ export class Hub {
   /** The reviewer's environment: the egress proxy with the brains' hosts, as for a brain session (runner.ts). */
   private reviewerEnv(): Record<string, string> {
     this.reviewToken ??= this.egress.issueToken("brain:auto-review", DEFAULT_BRAIN_EGRESS);
-    const proxy = `http://${this.reviewToken}:x@127.0.0.1:${this.config.egressPort}`;
+    return this.proxyEnv(this.reviewToken);
+  }
+
+  /** The quick model's environment (triggers' triage and pio.llm.ask): the egress proxy with the brains' hosts. */
+  private quickEnv(): Record<string, string> {
+    this.quickToken ??= this.egress.issueToken("brain:quick", DEFAULT_BRAIN_EGRESS);
+    return this.proxyEnv(this.quickToken);
+  }
+
+  private proxyEnv(token: string): Record<string, string> {
+    const proxy = `http://${token}:x@127.0.0.1:${this.config.egressPort}`;
     return { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" };
   }
 
@@ -1203,6 +1261,7 @@ export class Hub {
     for (const r of this.machines.replaced()) this.machineReplaced(r.from, r.to);
     this.store.agentConversation(this.settings.get().defaultAgent);
     if (cfg.plugins !== "none") await this.plugins.startAll(cfg.plugins);
+    await this.triggers.start().catch((e) => console.log(`[piomio] triggers did not start: ${e?.message ?? e}`));
     await this.mcpClients.sync(this.pluginMcpFiles());
     this.mcpClients.onChange = () => this.bus.emit("plugins.updated", {});
     this.runner.start();
@@ -1254,6 +1313,7 @@ export class Hub {
     this.leading = false;
     this.notifier.stop();
     this.feeds.stop();
+    this.triggers.stop();
     this.setup.stop();
     await this.runner.stop();
     // Its tasks go back to the queue: the leader carries them on from where they stopped. One that led while this
@@ -1350,10 +1410,13 @@ export class Hub {
     await this.ownNode.stop();
     this.notifier.stop();
     this.feeds.stop();
+    this.triggers.stop();
     this.setup.stop();
     await this.runner.stop();
     this.speech.stop();
     this.media.previews.stop();
+    pageReader.stop();
+    scriptSandbox.stop();
     this.machines.closeAll();
     this.activity.close();
     await this.plugins.stopAll();
