@@ -1,5 +1,5 @@
 // Builtin plugin "web": web_fetch (readable page content), web_search (several providers) and web_rss (RSS and Atom
-// feeds, found from a site's page too). All are sources: their results come from the internet and taint the session.
+// feeds, found from a site's page too), and the signal source web.rss_item (new feed items; signals.ts). All are sources: their results come from the internet and taint the session.
 
 import type { PluginContext, PluginModule } from "@piomio/plugin-sdk";
 import type { ToolResult } from "@piomio/shared";
@@ -7,6 +7,7 @@ import { guardedFetch, DEFAULT_USER_AGENT, MAX_BYTES } from "./fetch.ts";
 import { extractHtml, type TextFormat } from "./extract.ts";
 import { searchInBrowser, webSearch, type SearchSettings } from "./search.ts";
 import { findFeeds, parseFeed } from "./rss.ts";
+import { rssItemProvider } from "./signals.ts";
 
 interface WebSettings extends SearchSettings {
   allowPrivate?: boolean;
@@ -52,6 +53,8 @@ const plugin: PluginModule = {
     let settings: WebSettings = ctx.settings ?? {};
     ctx.onSettingsChange((s) => (settings = s ?? {}));
     const userAgent = () => settings.userAgent || DEFAULT_USER_AGENT;
+
+    ctx.signals.provide("rss_item", rssItemProvider(ctx, () => settings));
 
     ctx.tools.register({
       name: "fetch",

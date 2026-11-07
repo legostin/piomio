@@ -14,7 +14,7 @@ from sunrise-sunset.org): copy it and change what it does, keep its shape.
   .piomio-plugin/plugin.json         manifest: id, name, the catalog card, permissions, tools, widgets, settings
   .piomio-plugin/locales/en.json     every text a person reads (English is the source and the fallback)
   .piomio-plugin/locales/ru.json     the same keys in Russian
-  server/index.ts                    the tools (TypeScript run directly by Node: no build)
+  server/index.ts                    the tools, and the signals if there are any (TypeScript run directly by Node: no build)
   ui/src/index.tsx                   the card (widget) drawn in the chat, optional
   test/<id>.test.ts                  tests against a fake of the service (in the Piomio repository)
   package.json                       the folder's npm name; `dependencies` only if truly needed
@@ -45,6 +45,7 @@ from sunrise-sunset.org): copy it and change what it does, keep its shape.
    - `permissions.network`: the exact hosts it calls (`api.example.com`, `*.example.com`); never `"*"` unless the
      user gives the addresses at run time;
    - `contributes.widgets`: the card kinds the tools show (`[]` and no `ui` when there is no card);
+   - `contributes.signals`: only if the service can start the person's triggers (see Signals);
    - `contributes.settings`: a JSON Schema of the person's settings, only if there are any.
 4. `locales/en.json` and `locales/ru.json`: the same keys, natural text in each language. Tool descriptions and tool
    results are for the model: English, in the code, not in the locales.
@@ -84,6 +85,53 @@ card, straight into the vault:
 and set `"connect": "setup"` in `integration`. In the code: `const { value } = await ctx.vault.get("vault://<id>_api_key")`
 when a tool needs it; when it is missing, answer that the user should connect the integration (hub_plugin_setup shows
 the card).
+
+## Signals
+
+A signal is something that happened, which can start the person's triggers (a new feed item, a sensor reading, a
+sunrise). Declare one when the service has events the person would want an agent to react to, not for every fact a
+tool can look up: a lookup is a tool. The hub shows each source to the agents as `<id>.<type>` (`sun.sunrise`), and
+a trigger subscribes to it with `on: [{ type: "sun.sunrise", config: { … } }]`.
+
+```json
+"contributes": { "signals": [ {
+  "type": "sunrise", "mode": "subscribe", "title": "%signal.sunrise.title%",
+  "description": "The sun rose at a place (English, for the model).",
+  "config": { "type": "object", "properties": { "lat": { "type": "number" } }, "required": ["lat"] },
+  "data": { "type": "object", "properties": { "place": { "type": "string" } }, "required": ["place"] },
+  "sample": { "place": "Lisbon" }, "external": false } ] }
+```
+
+- `type`: lowercase letters, digits and `_`, starting with a letter; one declaration per type. `title` goes through the
+  locales (`"%key%"`); `description` is English, for the model.
+- **Broadcast** (`"mode": "broadcast"`, the default): the plugin sends a signal whenever something happens, from
+  anywhere in its code: `ctx.signals.emit("alert", data, { key, subject })`. Use it when the plugin is already
+  listening (a webhook it serves, a socket it keeps) whatever the triggers do.
+- **Subscribe** (`"mode": "subscribe"`): the plugin works only while a trigger listens. It gives a provider,
+  `ctx.signals.provide("sunrise", { subscribe(sub, emit) { …; return { stop() { … } }; } })`. The hub calls
+  `subscribe` once per distinct config (`sub.config` is the person's config, checked against the `config` schema),
+  and `stop` when no enabled trigger uses it. It calls `subscribe` again when the plugin restarts, so keep the state
+  that matters (what was seen) in `ctx.storage`, and never hold a timer, socket or poll after `stop`. Use it for
+  polling or watching something for the person (`integrations/_template` waits for the sunrise; the `web` plugin's
+  `rss_item` reads a feed). Do the first network call without making `subscribe` wait for it, tell failures to
+  `ctx.log` and try again at the next interval, and never send a signal for something you could not read.
+- `emit(data, { key, subject })`: `key` is the event's identity (a feed item's id, a date); the hub drops a second
+  signal with the same key to the same trigger within 24 hours, so a repeat poll or a restart does not wake the agent
+  twice. `subject` is a short line naming the event for people and the model (the item's title). Neither is
+  required; without a key every signal counts.
+- `data` schema: a JSON Schema of what `emit` sends, at most 16 KB and 32 levels deep; the hub refuses a signal that
+  does not match it, or whose data is over 256 KB, and the plugin's log says why. Keep it plain: patterns only in the
+  linear-time subset (no backreferences, lookahead, lookbehind or `\p{…}`), no `uniqueItems`, no `$ref` or `$dynamicRef`
+  (write the schema out), no `$async`, no enum of more than 1000 values, at most 100 patterns. A source with a schema
+  that breaks these is refused whole. The `config` schema follows the same rules; give each field a `description` so an
+  agent can fill it, and `minimum` for intervals (poll no more often than every 10 minutes).
+- `external`: whether the signal's text comes from outside (the internet, other people). Triggers treat an external
+  signal's text as untrusted: it is not shown in notes, and the agent it wakes is marked tainted. A plugin the person
+  installs is always external, whatever its manifest says; only the hub's own integrations may declare `false`. Say
+  `true` whenever a stranger could have written the data.
+- Only types in `contributes.signals` can be emitted; the hub allows a plugin 600 signals a minute.
+- Test with the testkit: `h.subscribeSignal("sunrise", config)` starts the provider, `h.signals` lists what it sent,
+  `h.stopSignal(id)` stops it (see `test/sun.test.ts`).
 
 ## A service with its own MCP server
 

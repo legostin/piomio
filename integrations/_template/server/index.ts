@@ -43,11 +43,94 @@ export function duration(sec: number): string {
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
+/** sunrise-sunset.org's answer for a place and date: its `results`, or the error to tell the model. */
+async function fetchTimes(api: string, lat: number, lon: number, date: string, timezone: string): Promise<{ r: any } | { error: string }> {
+  let body: any;
+  try {
+    const res = await fetch(`${api}/json?lat=${lat}&lng=${lon}&date=${date}&formatted=0&tzid=${encodeURIComponent(timezone)}`, {
+      headers: { accept: "application/json", "user-agent": USER_AGENT },
+      signal: AbortSignal.timeout(15_000),
+    });
+    body = await res.json().catch(() => undefined);
+    if (!res.ok) return { error: `sunrise-sunset.org: HTTP ${res.status}` };
+  } catch (e: any) {
+    return { error: `sunrise-sunset.org is unreachable (${e?.cause?.code ?? e?.name ?? "network error"}).` };
+  }
+  const r = body?.results;
+  if (body?.status !== "OK" || !r?.sunrise || !r?.sunset) return { error: `sunrise-sunset.org could not answer: ${body?.status ?? "no data"}.` };
+  return { r };
+}
+
+/** The calendar date (YYYY-MM-DD) of `ms` in an IANA time zone; undefined for a zone that does not exist. */
+export function localDate(ms: number, timezone: string): string | undefined {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(ms);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The day after a YYYY-MM-DD date. */
+export function nextDay(date: string): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+}
+
+const RETRY_MS = 30 * 60_000;
+/** setTimeout cannot wait longer than this. */
+const MAX_WAIT_MS = 2 ** 31 - 1;
+
 const plugin: PluginModule = {
   activate(ctx: PluginContext) {
     let settings: Settings = ctx.settings ?? {};
     ctx.onSettingsChange((s) => (settings = s ?? {}));
     const api = () => (settings.apiUrl || "https://api.sunrise-sunset.org").replace(/\/+$/, "");
+
+    // A subscribe-mode signal source (contributes.signals): it works only while a trigger listens to "sun.sunrise" for a
+    // place, and says "the sun rose" once a day. The hub calls subscribe when a trigger starts listening and stop when
+    // none does; `emit` sends the signal. See SKILL.md, "Signals".
+    ctx.signals.provide("sunrise", {
+      subscribe(sub, emit) {
+        const lat = Number(sub.config.lat);
+        const lon = Number(sub.config.lon);
+        const timezone = String(sub.config.timezone ?? "UTC");
+        const place = String(sub.config.place ?? "").trim() || `${lat}, ${lon}`;
+        let stopped = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const wait = (ms: number, then: () => void) => {
+          timer = setTimeout(then, Math.min(ms, MAX_WAIT_MS));
+        };
+
+        // Looks the day's sunrise up and waits for it; then emits and goes on to the next day. A day whose sunrise
+        // has passed is skipped, so a restart at noon does not announce the morning.
+        const next = async (date: string): Promise<void> => {
+          if (stopped) return;
+          const got = await fetchTimes(api(), lat, lon, date, timezone);
+          if (stopped) return;
+          if ("error" in got) {
+            ctx.log.warn(`sunrise for ${place}: ${got.error} Trying again later.`);
+            return wait(RETRY_MS, () => void next(date));
+          }
+          const at = Date.parse(got.r.sunrise);
+          if (!Number.isFinite(at)) return wait(RETRY_MS, () => void next(date));
+          if (at <= Date.now()) return void next(nextDay(date));
+          const sleep = (): void => {
+            if (stopped) return;
+            const left = at - Date.now();
+            if (left > 0) return wait(left, sleep);
+            emit({ place, date, sunrise: clock(got.r.sunrise) }, { key: date, subject: place });
+            void next(nextDay(date));
+          };
+          sleep();
+        };
+        void next(localDate(Date.now(), timezone) ?? "today");
+        return {
+          stop() {
+            stopped = true;
+            if (timer) clearTimeout(timer);
+          },
+        };
+      },
+    });
 
     ctx.tools.register({
       name: "times",
@@ -77,19 +160,9 @@ const plugin: PluginModule = {
         const timezone = String(input.timezone ?? "").trim() || "UTC";
         const place = String(input.place ?? "").trim() || `${lat}, ${lon}`;
 
-        let body: any;
-        try {
-          const res = await fetch(`${api()}/json?lat=${lat}&lng=${lon}&date=${date}&formatted=0&tzid=${encodeURIComponent(timezone)}`, {
-            headers: { accept: "application/json", "user-agent": USER_AGENT },
-            signal: AbortSignal.timeout(15_000),
-          });
-          body = await res.json().catch(() => undefined);
-          if (!res.ok) return text(`sunrise-sunset.org: HTTP ${res.status}`, true);
-        } catch (e: any) {
-          return text(`sunrise-sunset.org is unreachable (${e?.cause?.code ?? e?.name ?? "network error"}).`, true);
-        }
-        const r = body?.results;
-        if (body?.status !== "OK" || !r?.sunrise || !r?.sunset) return text(`sunrise-sunset.org could not answer: ${body?.status ?? "no data"}.`, true);
+        const got = await fetchTimes(api(), lat, lon, date, timezone);
+        if ("error" in got) return text(got.error, true);
+        const { r } = got;
 
         const card: DayCard = { place, date, sunrise: clock(r.sunrise), sunset: clock(r.sunset), dayLengthSec: Number(r.day_length) || 0 };
         ctx.widgets.show(call, "day", card);

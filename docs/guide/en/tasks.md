@@ -125,6 +125,20 @@ Limits: each schedule runs at most 24 times a day unless you raise it; a run is 
 
 To change or stop one, say so: "pause the weather schedule", "delete the price watch". The same is on the **Triggers** page (**Settings** → **Triggers**): **Create trigger**, and on each card the **On** switch, **Run now**, **Check** (for a watch), **Edit**, **History** and **Delete**.
 
+## What can start a trigger
+
+A trigger waits for something to happen. What it waits for comes from one of three places, and one trigger can listen to several:
+
+| Where | What | Examples |
+|---|---|---|
+| Built in | A time, a page or a webhook | a schedule, a one-time reminder, a watched page, an address that takes events |
+| The hub's own events | Something inside Piomio | a task finished or failed, a computer came online or went offline, a channel got a post, an approval is waiting |
+| A plugin | Whatever the plugin watches | a new item in an RSS or Atom feed (`web.rss_item`), a plugin you installed or an agent built |
+
+Ask in the chat: "when a task of mine fails, tell me on Telegram", "when this blog has a new post, summarize it". The agent can list what is available and sets the trigger up for you. A feed is read every 10 minutes at the most often; the first time it only remembers what is already there, and then each new item starts the trigger once. A feed that can't be read starts nothing and is tried again later.
+
+Text that comes from the internet or from outside (a page, a webhook, a feed, a plugin you installed) is treated as untrusted: the agent it wakes is told not to follow instructions inside it. The hub's own events are not treated as outside text, except those that carry what a task or channel wrote.
+
 ## What a trigger does before it wakes an agent
 
 A trigger doesn't have to wake its agent for everything that comes in. Ask for a check first, in your own words: "watch this webhook and wake me only for failed deploys", "check the shop page every hour, keep a note when the price moves, and wake me only below 500". The agent sets up the check, tests it and tells you what it will do.
