@@ -66,12 +66,16 @@ export const QUICKJS_STACK_BYTES = 256 * 1024;
 
 /** The stripper's own errors about the code; any other failure may have left its WASM unfit for the next script. */
 const SYNTAX_CODES = new Set(["ERR_INVALID_TYPESCRIPT_SYNTAX", "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX"]);
+/** Promise jobs run between checks of whether the script's run has settled. */
+const JOB_BATCH = 1000;
 
 /**
  * Runs before the script, as global code. It takes the two host functions off the global object, so the script reaches
- * the hub only through `pio`, and evaluates to `{ start, describe }`: the function that calls the script's default
- * export, and the one that reads what a script threw as one short line. Both keep their own references to what they use,
- * so a script that changes the built-ins changes only its own results. (`${…}` here is the host's: the limits.)
+ * the hub only through `pio`, and evaluates to `{ start, describe, kindOf }`: the function that calls the script's
+ * default export, the one that reads what a script threw as one short line, and the one that tells QuickJS's own
+ * out-of-memory and stack-overflow errors from anything a script throws. The built-ins they use are taken once, here,
+ * before the script runs, so a script that changes them changes only its own results. (`${…}` here is the host's: the
+ * limits.)
  */
 const PRELUDE = String.raw`(() => {
   "use strict";
@@ -80,10 +84,24 @@ const PRELUDE = String.raw`(() => {
   delete globalThis.__host;
   delete globalThis.__log;
   const { stringify, parse } = JSON;
+  const toText = String;
+  const sliceFn = String.prototype.slice;
+  const execFn = RegExp.prototype.exec;
   const bindCall = Function.prototype.call.bind(Function.prototype.call);
-  const slice = (s, a, b) => bindCall(String.prototype.slice, s, a, b);
-  const exec = (re, s) => bindCall(RegExp.prototype.exec, re, s);
+  const slice = (s, a, b) => bindCall(sliceFn, s, a, b);
+  const exec = (re, s) => bindCall(execFn, re, s);
   const isArray = Array.isArray;
+  const { InternalError, RangeError, SyntaxError } = globalThis;
+  // QuickJS's own: its stack check (InternalError; SyntaxError from the parser and JSON.parse) and its allocator.
+  const isOverflow = (e) => (e instanceof InternalError || e instanceof RangeError || e instanceof SyntaxError) && e.message === "stack overflow";
+  const kindOf = (e) => {
+    try {
+      if (e instanceof InternalError && e.message === "out of memory") return "memory";
+      return isOverflow(e) ? "stack" : "";
+    } catch {
+      return "";
+    }
+  };
   const clip = (s, n) => (s.length > n ? slice(s, 0, n - 1) + "…" : s);
   const call = async (name, args) => {
     const json = stringify(args);
@@ -95,9 +113,9 @@ const PRELUDE = String.raw`(() => {
     if (typeof v === "string") return v;
     try {
       const s = stringify(v);
-      return s === undefined ? String(v) : s;
+      return s === undefined ? toText(v) : s;
     } catch {
-      return String(v);
+      return toText(v);
     }
   };
   const describe = (e) => {
@@ -114,8 +132,9 @@ const PRELUDE = String.raw`(() => {
         }
       }
       const s = stringify(e);
-      return clip(s === undefined ? String(e) : s, ${MAX_ERROR_CHARS});
+      return clip(s === undefined ? toText(e) : s, ${MAX_ERROR_CHARS});
     } catch (x) {
+      if (isOverflow(x)) return "the script threw a value nested too deeply to show";
       return "the script threw a value that cannot be shown" + (x !== null && typeof x === "object" && typeof x.message === "string" ? " (" + clip(x.message, 200) + ")" : "");
     }
   };
@@ -149,7 +168,7 @@ const PRELUDE = String.raw`(() => {
     if (json.length > ${MAX_JSON_CHARS}) throw new Error("invalid verdict: over 1 MB of JSON");
     return json;
   };
-  return { start, describe };
+  return { start, describe, kindOf };
 })()`;
 
 type Outcome = { value?: unknown; error?: string; retire?: boolean };
@@ -216,7 +235,9 @@ async function execute(job: SandboxJob): Promise<Outcome> {
     session?.dispose();
     runtime.dispose();
   } catch (e) {
-    out = { error: `the script sandbox did not clean up: ${message(e)}`, retire: true };
+    // A run that already failed (out of memory inside a job, say) can leave QuickJS unable to free its runtime: that
+    // run's own error says what happened. A run that went well and does not clean up is the sandbox's leak.
+    out = out.error !== undefined ? { ...out, retire: true } : { error: `the script sandbox did not clean up: ${message(e)}`, retire: true };
   }
   return out;
 }
@@ -239,9 +260,10 @@ class Session {
   private cpuOut = false;
   /** The first host-level failure inside QuickJS (V8's stack running out in the WASM, a WASM trap). */
   private failure?: { error: unknown };
-  /** The prelude's two functions, and the promise of the script's run. */
+  /** The prelude's three functions, and the promise of the script's run. */
   private startFn?: QuickJSHandle;
   private describeFn?: QuickJSHandle;
+  private kindOfFn?: QuickJSHandle;
   private promise?: QuickJSHandle;
   private ended = false;
   private settle!: (o: Outcome) => void;
@@ -287,6 +309,7 @@ class Session {
     const fns = this.keep(prelude.value);
     this.startFn = this.keep(vm.getProp(fns, "start"));
     this.describeFn = this.keep(vm.getProp(fns, "describe"));
+    this.kindOfFn = this.keep(vm.getProp(fns, "kindOf"));
 
     const mod = this.guest(() => vm.evalCode(code, "trigger.mjs", { type: "module" }));
     if (mod.error) return this.failed(this.keep(mod.error));
@@ -294,6 +317,7 @@ class Session {
     // A module with a top-level await evaluates to a promise of its namespace: it has to settle without pio.
     const pumped = this.pump();
     if (pumped) return pumped;
+    if (this.cpuOut) return this.cpuError();
     const state = vm.getPromiseState(ns);
     if (state.type === "pending") return { error: "the script's top level must not wait: wait inside the default function" };
     if (state.type === "rejected") return this.failed(this.keep(state.error));
@@ -399,11 +423,27 @@ class Session {
     this.end({ value });
   }
 
-  /** executePendingJobs in guest time; an outcome when a job failed outside any promise. */
+  /**
+   * executePendingJobs in guest time, in batches; an outcome when a job failed outside any promise. Once the script's
+   * run has settled, what it left queued is not run: it goes with the runtime. (A promise chain left looping would
+   * otherwise fill memory after the script was done, and QuickJS cannot always free a runtime that ran out of it.)
+   */
   private pump(): Outcome | undefined {
-    const r = this.guest(() => this.runtime.executePendingJobs());
-    if (!r.error) return undefined;
-    return this.failed(this.keep(r.error));
+    for (;;) {
+      const r = this.guest(() => this.runtime.executePendingJobs(JOB_BATCH));
+      if (r.error) return this.failed(this.keep(r.error));
+      if (this.cpuOut || !this.runtime.hasPendingJob() || this.settled()) return undefined;
+    }
+  }
+
+  /** Whether the script's run (once it started) has settled. */
+  private settled(): boolean {
+    if (!this.promise) return false;
+    const state = this.vm.getPromiseState(this.promise);
+    if (state.type === "pending") return false;
+    if (state.type === "fulfilled" && !state.notAPromise) state.value.dispose();
+    else if (state.type === "rejected") state.error.dispose();
+    return true;
   }
 
   private end(o: Outcome): void {
@@ -447,12 +487,30 @@ class Session {
 
   /** The run's error from what the guest threw (the CPU and memory limits named as such). */
   private failed(error: QuickJSHandle): Outcome {
-    const text = this.cpuOut ? "" : this.describe(error);
-    // Reading what was thrown may run the guest's code too (a toJSON), and use up its CPU time.
     if (this.cpuOut) return this.cpuError();
-    if (/out of memory/i.test(text)) return { error: `the script ran out of memory (${Math.round(this.limits.memoryBytes / 1024 / 1024)} MB)` };
-    if (/stack overflow/i.test(text)) return { error: `the script nested too deeply: ${text}` };
+    // QuickJS throws null when it cannot even make its out-of-memory error.
+    const kind = this.vm.sameValue(error, this.vm.null) ? "memory" : this.kindOf(error);
+    const text = kind === "memory" ? "" : this.describe(error);
+    // Reading what was thrown may run the guest's code too (a getter, a toJSON), and use up its CPU time.
+    if (this.cpuOut) return this.cpuError();
+    if (kind === "memory") return { error: `the script ran out of memory (${Math.round(this.limits.memoryBytes / 1024 / 1024)} MB)` };
+    if (kind === "stack") return { error: `the script nested too deeply: ${text}` };
     return { error: text };
+  }
+
+  /** "memory", "stack" (QuickJS's own errors, by their type) or "" for anything else, asked of the prelude's kindOf. */
+  private kindOf(error: QuickJSHandle): string {
+    const r = this.guest(() => this.vm.callFunction(this.kindOfFn!, this.vm.undefined, error));
+    if (r.error) {
+      r.error.dispose();
+      return "";
+    }
+    const v = r.value;
+    try {
+      return this.vm.typeof(v) === "string" ? this.vm.getString(v) : "";
+    } finally {
+      v.dispose();
+    }
   }
 
   private cpuError(): Outcome {
@@ -502,6 +560,9 @@ class Session {
     } finally {
       this.used += performance.now() - t0;
       this.entered = undefined;
+      // One long native call (a sort, a GC filling memory) runs past the limit with no chance to interrupt it: it still
+      // counts as having used up the CPU time.
+      if (this.used > this.limits.cpuMs) this.cpuOut = true;
     }
     // A host function failed that way while the guest ran: QuickJS went on, but its state is not to be trusted.
     if (this.failure) throw new SandboxBroken("the sandbox failed in a host function");

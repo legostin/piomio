@@ -33,6 +33,8 @@ export interface ScriptResult {
   error?: string;
   ms: number;
   calls: number;
+  /** pio calls still running when the run ended at its wall time (or the sandbox stopped): their answers were dropped. */
+  droppedCalls?: number;
 }
 
 /** Runs holding a slot at once (each on its own worker while it runs). */
@@ -211,8 +213,14 @@ export class ScriptSandbox {
     this.running.delete(run.id);
     clearTimeout(run.timer);
     const out = run.ended ?? {};
-    const logs = run.inflight ? [...run.logs, `(${run.inflight} pio ${run.inflight === 1 ? "call was" : "calls were"} still running when the run ended: their answers were dropped)`] : run.logs;
-    run.resolve({ ...out, ...(out.error !== undefined ? { error: clip(out.error) } : {}), logs, ms: Math.round(performance.now() - run.t0), calls: run.calls });
+    run.resolve({
+      ...out,
+      ...(out.error !== undefined ? { error: clip(out.error) } : {}),
+      logs: run.logs,
+      ms: Math.round(performance.now() - run.t0),
+      calls: run.calls,
+      ...(run.inflight ? { droppedCalls: run.inflight } : {}),
+    });
     this.next();
   }
 

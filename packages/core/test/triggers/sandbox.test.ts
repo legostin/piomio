@@ -151,7 +151,8 @@ describe("trigger scripts in the sandbox", () => {
     expect(r.error).toMatch(/30 s|wall/);
     expect(r.verdict).toBeUndefined();
     expect(r.calls).toBe(1);
-    expect(r.logs).toEqual(["asking", "(1 pio call was still running when the run ended: their answers were dropped)"]);
+    expect(r.logs).toEqual(["asking"]);
+    expect(r.droppedCalls).toBe(1);
     expect(Date.now() - t0).toBeLessThan(3000);
     expect((await runScript(`export default () => ({ note: "after" })`, input(), noHost)).verdict).toEqual({ note: "after" });
   });
@@ -361,6 +362,7 @@ describe("trigger scripts in the sandbox", () => {
       }
       const results = await Promise.all(runs);
       expect(results.map((r) => r.verdict)).toEqual(Array(6).fill({ note: "fired" }));
+      expect(results.every((r) => r.droppedCalls === undefined)).toBe(true);
       expect(results.map((r) => r.calls)).toEqual(Array(6).fill(50));
       expect(most).toBe(100);
     } finally {
@@ -384,8 +386,75 @@ describe("trigger scripts in the sandbox", () => {
     expect(Date.now() - t0).toBeLessThan(3000);
     expect(hung.verdict).toEqual({ note: "kept" });
     expect(hung.error).toBeUndefined();
-    expect(hung.logs).toEqual(["(1 pio call was still running when the run ended: their answers were dropped)"]);
+    expect(hung.logs).toEqual([]);
+    expect(hung.droppedCalls).toBe(1);
     expect((await runScript(`export default () => ({ note: "next" })`, input(), noHost)).verdict).toEqual({ note: "next" });
+  });
+
+  it("lets a script catch a page nested too deeply for json()", async () => {
+    const page = "[".repeat(100_000) + "]".repeat(100_000);
+    const host: HostCall = async () => ({ status: 200, headers: {}, text: page });
+    const r = await runScript(
+      `export default async (s, pio) => { const res = await pio.fetch("https://deep.example.com"); try { res.json() } catch (e) { return { note: "caught" } } return { note: "parsed" } }`,
+      input(),
+      host,
+    );
+    // QuickJS's own stack check fired (a SyntaxError the script can catch), not V8's inside the WASM.
+    expect(r.error).toBeUndefined();
+    expect(r.verdict).toEqual({ note: "caught" });
+  });
+
+  it("says out of memory when QuickJS ran out of it, whatever it threw", async () => {
+    const mem = limits({ memoryBytes: 8 * 1024 * 1024 });
+    // A Set growing past the limit: QuickJS cannot even make its error and throws null.
+    const set = await runScript(`export default () => { const s = new Set(); for (let i = 0; ; i++) s.add("v" + i) }`, input(), noHost, mem);
+    expect(set.error).toBe("the script ran out of memory (8 MB)");
+    // A promise chain the script waits on fills memory inside its jobs: QuickJS then cannot free its runtime either, and
+    // the run says what happened first (its thread goes all the same). Where the allocation fails decides whether the
+    // out-of-memory error makes it back up the chain, or the chain just stops and the script waits for ever.
+    const chain = await runScript(`export default async () => { const loop = () => Promise.resolve().then(loop); await loop() }`, input(), noHost, mem);
+    expect(chain.error).toMatch(/^the script ran out of memory \(8 MB\)$|^the script waits for a promise that never settles$/);
+    expect((await runScript(`export default () => ({ note: "clean" })`, input(), noHost)).verdict).toEqual({ note: "clean" });
+    // One it leaves looping is not run once the script is done: no memory runs out, the verdict stands.
+    const left = await runScript(`export default () => { const loop = () => Promise.resolve().then(loop); loop(); return { note: "done" } }`, input(), noHost, mem);
+    expect(left.error).toBeUndefined();
+    expect(left.verdict).toEqual({ note: "done" });
+    expect((await runScript(`export default () => ({ note: "clean" })`, input(), noHost)).verdict).toEqual({ note: "clean" });
+    expect((await runScript(`export default () => { throw null }`, input(), noHost)).error).toBe("the script ran out of memory (64 MB)");
+  });
+
+  it("names a limit or nesting from QuickJS's own errors, not from what a message says", async () => {
+    const own = await runScript(`export default () => { throw new Error("my stack overflow") }`, input(), noHost);
+    expect(own.error).toMatch(/^my stack overflow \(at trigger\.mjs:1:\d+\)$/);
+    const mem = await runScript(`export default () => { throw new RangeError("out of memory") }`, input(), noHost);
+    expect(mem.error).toMatch(/^RangeError: out of memory \(at trigger\.mjs:1:\d+\)$/);
+    const real = await runScript(`export default () => { const f = () => f(); f() }`, input(), noHost);
+    expect(real.error).toMatch(/^the script nested too deeply: InternalError: stack overflow/);
+  });
+
+  it("counts a long native call that ran past the CPU limit as the CPU limit", async () => {
+    // One sort of 400 000 numbers takes about 100 ms of guest time in one call that QuickJS never interrupts.
+    const r = await runScript(
+      `export default () => { const a = new Array(4e5); for (let i = 0; i < 4e5; i++) a[i] = (i * 7919) % 100003; a.sort(); return { note: "sorted" } }`,
+      input(),
+      noHost,
+      limits({ cpuMs: 30 }),
+    );
+    expect(r.verdict).toBeUndefined();
+    expect(r.error).toBe("the script ran out of CPU time (30 ms)");
+  });
+
+  it("reads a thrown error with the built-ins as they were before the script changed them", async () => {
+    const tamper = `String.prototype.slice = () => "tampered"; RegExp.prototype.exec = () => null; globalThis.String = () => "tampered";`;
+    const long = await runScript(`export default () => { ${tamper} throw new TypeError("x".repeat(5000)) }`, input(), noHost);
+    expect(long.error!.startsWith("TypeError: xxxx")).toBe(true);
+    expect(long.error!.length).toBeLessThanOrEqual(2000);
+    expect(long.error).not.toMatch(/tampered/);
+    // The stack is cut and searched with the prelude's own slice and exec: the location is still found.
+    const short = await runScript(`export default () => { ${tamper} throw new TypeError("short") }`, input(), noHost);
+    expect(short.error).toMatch(/^TypeError: short \(at trigger\.mjs:1:\d+\)$/);
+    const obj = await runScript(`export default () => { ${tamper} throw Symbol("odd") }`, input(), noHost);
+    expect(obj.error).toBe("Symbol(odd)");
   });
 
   it("refuses arguments a script's toJSON made into something else than a list", async () => {
