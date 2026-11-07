@@ -472,7 +472,7 @@ export class TriggerEngine {
     t.state.nextRunAt = t.enabled ? new Date(now.getTime() + (t.intervalMinutes ?? 60) * 60_000).toISOString() : undefined;
     let value: string;
     try {
-      const page = await fetchPage(t.url!, { allowPrivate: this.settings.allowPrivateUrls, timeoutMs: this.settings.watchTimeoutSec * 1000 });
+      const page = await fetchPage(t.url!, { allowPrivate: this.settings.allowPrivateUrls, timeoutMs: this.settings.watchTimeoutSec * 1000, fetch: this.ctx.fetch });
       value = extractValue(page.body, page.contentType, { selector: t.selector, jsonPath: t.jsonPath });
     } catch (e) {
       const err = errorFields(e);

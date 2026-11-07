@@ -5,6 +5,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { parse as parseHtml } from "node-html-parser";
 import { TriggerError } from "./errors.ts";
+import type { FetchLike } from "./host.ts";
 
 export const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
@@ -169,19 +170,20 @@ async function readLimited(res: Response, max: number): Promise<string> {
   return new TextDecoder("utf-8", { fatal: false }).decode(buf);
 }
 
-export async function fetchPage(url: string, opts: { allowPrivate: boolean; timeoutMs: number }): Promise<{ body: string; contentType: string; url: string }> {
+export async function fetchPage(url: string, opts: { allowPrivate: boolean; timeoutMs: number; fetch?: FetchLike }): Promise<{ body: string; contentType: string; url: string }> {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertFetchable(current, opts.allowPrivate);
     let res: Response;
     try {
-      res = await fetch(current, {
+      res = await (opts.fetch ?? fetch)(current, {
         redirect: "manual",
         signal: AbortSignal.timeout(opts.timeoutMs),
         headers: { "user-agent": "piomio-triggers/0.1 (+watch)", accept: "text/html,application/json;q=0.9,*/*;q=0.8" },
       });
     } catch (e: any) {
-      if (e?.name === "TimeoutError") throw new WatchError("fetchTimeout", `Could not load ${current}: timeout`, { url: current });
+      // fetch rejects with TimeoutError; node:http (net.ts) with an AbortError whose cause is the TimeoutError.
+      if (e?.name === "TimeoutError" || e?.cause?.name === "TimeoutError") throw new WatchError("fetchTimeout", `Could not load ${current}: timeout`, { url: current });
       const why = String(e?.cause?.code ?? e?.message ?? e);
       throw new WatchError("fetchFailed", `Could not load ${current}: ${why}`, { url: current, reason: why });
     }
