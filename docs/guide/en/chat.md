@@ -138,7 +138,9 @@ The agent has the same library. Ask "send me the contract from last week again" 
 
 ### What your device keeps
 
-The chat shows a small copy of each photo or screenshot, which the hub makes once; the picture itself loads only when you open it in the viewer. Your device also keeps the latest messages of the dialogs you opened, the team, the group chats and those small copies, so a chat opens at once, even before the hub answers, and the hub's answer replaces what was kept. Signing out removes it all.
+The chat shows a small copy of each photo or screenshot, which the hub makes once; the picture itself loads only when you open it in the viewer. Your device also keeps the latest messages of the dialogs you opened, the team, the group chats and those small copies, so a chat opens at once, even before the hub answers. The hub then sends only what changed since the device's copy: new messages, and replies that finished or cards that were answered meanwhile. Signing out removes it all.
+
+An open chat stays live. A connection that went quiet without closing (the laptop slept, the phone changed networks) is noticed within half a minute, or at once when you come back to the app, and opens again with what you missed.
 
 **Clear cache** removes what this device keeps; you stay signed in. It is in **Settings** under **General**, in the command palette, in the desktop app's menu bar (tray) menu and in the iPhone app's **Hub** tab.
 

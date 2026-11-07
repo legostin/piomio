@@ -33,8 +33,8 @@ describe("notification storage", () => {
       alter table approvals drop column auto; drop table pictures;
       alter table messages drop column quiet;
       alter table devices drop column push_handle;
-      drop table machine_hosts; alter table tasks drop column machine_id;
-      update schema_version set v = v - 9;`);
+      drop table machine_hosts; alter table tasks drop column machine_id; drop index messages_conv_changed; alter table messages drop column updated_at;
+      update schema_version set v = v - 10;`);
     const ins = old.prepare("insert into notifications(id, level, title, body, created_at, delivered_at) values (?,?,?,?,?,?)");
     ins.run("n1", "notify", "A", "a", "2026-10-30T10:00:00.000Z", "2026-10-30T10:00:01.000Z");
     ins.run("n2", "digest", "B", "b", "2026-10-30T11:00:00.000Z", null);
