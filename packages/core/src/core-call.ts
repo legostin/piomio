@@ -143,11 +143,11 @@ export function createCoreCall(hub: Hub) {
           goal = `${goal}\n\n[System] This task follows the skill "${skill}": read its instructions (skill_load) first and do the task as they say.`;
         }
         // machine: the computer the task runs on (id or name, see machines.list), like task_delegate's.
-        let brainRef: string | undefined;
+        let machineId: string | undefined;
         if (typeof p.machine === "string" && p.machine.trim()) {
           const place = hub.runner.placeTask(agentId, p.machine);
           if ("error" in place) throw new Error(place.error);
-          brainRef = place.brainRef;
+          machineId = place.machineId;
           if (place.note) goal = `${goal}\n\n${place.note}`;
         }
         const t = hub.runner.createTask({
@@ -166,7 +166,7 @@ export function createCoreCall(hub: Hub) {
           // report: the run's final reply is delivered to the person as a report (a trigger set to report).
           ...(p.report === true ? { deliver: "report" as const } : {}),
           parentConversationId: p.parentConversationId,
-          ...(brainRef ? { brainRef } : {}),
+          ...(machineId ? { machineId } : {}),
           ...(skill ? { skill } : {}),
         });
         return t;
