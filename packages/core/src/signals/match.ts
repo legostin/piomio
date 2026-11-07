@@ -1,3 +1,5 @@
+import { setFlagsFromString } from "node:v8";
+
 // The declarative signal filter: a small JSON tree of leaf checks on a dotted path,
 // combined with all / any / not. Pure: no I/O, bounded in depth and size.
 
@@ -7,6 +9,11 @@ export type Leaf =
   | { path: string; in: unknown[] } | { path: string; exists: boolean }
   | { path: string; gt: number } | { path: string; lt: number };
 export type Match = Leaf | { all: Match[] } | { any: Match[] } | { not: Match };
+
+// Filters are written by people and agents and run against text from outside (a mail subject, a
+// webhook body). V8's experimental linear-time engine (the `l` flag) rules out catastrophic
+// backtracking; it only affects regexes compiled with `l`, the rest of the process is untouched.
+setFlagsFromString("--enable-experimental-regexp-engine");
 
 const MAX_DEPTH = 8;
 const MAX_NODES = 50; // every node below the root counts, so breadth is bounded too
@@ -34,65 +41,39 @@ export function pathGet(value: unknown, path: string): unknown {
  * True when a pattern can backtrack catastrophically: a repeated group whose body holds a repeating
  * quantifier or an alternation, or a backreference. A conservative scan, not a full parser.
  */
-/** Whether a quantifier starts at the text and repeats (`*`, `+`, `{n,}`, `{n,m}` with m > 1). `?`, `{1}` and `{0,1}` do not. */
-function repeats(text: string): boolean {
-  const c = text[0];
-  if (c === "*" || c === "+") return true;
-  const m = /^\{(\d+)(,(\d*))?\}/.exec(text);
-  if (!m) return false;
-  if (m[2] === undefined) return Number(m[1]) > 1;
-  return m[3] === "" || Number(m[3]) > 1;
-}
-
-function riskyPattern(pattern: string): boolean {
-  type Frame = { q: boolean; alt: boolean };
-  const stack: Frame[] = [{ q: false, alt: false }];
-  const top = () => stack[stack.length - 1]!;
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i]!;
-    if (c === "\\") {
-      const n = pattern[i + 1];
-      if (n !== undefined && (/[1-9]/.test(n) || n === "k")) return true;
-      i++;
-    } else if (c === "[") {
-      for (i++; i < pattern.length && pattern[i] !== "]"; i++) if (pattern[i] === "\\") i++;
-    } else if (c === "(") {
-      stack.push({ q: false, alt: false });
-      if (pattern[i + 1] === "?") i++; // group syntax such as (?: (?= (?<name>
-    } else if (c === ")") {
-      if (stack.length === 1) continue;
-      const g = stack.pop()!;
-      const rest = pattern.slice(i + 1);
-      const quantified = repeats(rest);
-      if (quantified && (g.q || g.alt)) return true;
-      const parent = top();
-      parent.q = parent.q || g.q || quantified;
-      parent.alt = parent.alt || g.alt;
-    } else if (c === "|") {
-      top().alt = true;
-    } else if (repeats(pattern.slice(i))) {
-      top().q = true;
-    }
-  }
-  return false;
-}
-
-// Compiled patterns (or the reason one was refused), so a filter is not recompiled per call.
-const compiled = new Map<string, RegExp | string>();
+// A compiled filter regex: `fold` means the value is lowercased before testing (the `i` flag,
+// emulated because the linear engine refuses it).
+type Compiled = { re: RegExp; fold: boolean } | string;
+const compiled = new Map<string, Compiled>();
 const CACHE_MAX = 500;
 
-function compile(pattern: string, flags: string | undefined): RegExp | string {
+/** Lowercases a pattern except escapes: a backslash and the character after it stay as written. */
+function foldPattern(pattern: string): string {
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === "\\" && i + 1 < pattern.length) out += pattern[i] + pattern[++i];
+    else out += pattern[i]!.toLowerCase();
+  }
+  return out;
+}
+
+function compile(pattern: string, flags: string | undefined): Compiled {
   const key = `${pattern}/${flags ?? ""}`;
   const hit = compiled.get(key);
   if (hit !== undefined) return hit;
-  let out: RegExp | string;
+  let out: Compiled;
+  const fl = flags ?? "";
   if (pattern.length > MAX_PATTERN) out = `a regular expression is at most ${MAX_PATTERN} characters`;
-  else if (riskyPattern(pattern)) out = "a regular expression with nested repetition or a backreference can take forever; simplify it";
+  else if (!/^[ims]*$/.test(fl) || new Set(fl).size !== fl.length) out = "regular expression flags may only be i, m and s, each once";
   else {
+    const fold = fl.includes("i");
     try {
-      out = new RegExp(pattern, flags);
+      out = { re: new RegExp(fold ? foldPattern(pattern) : pattern, "l" + fl.replace("i", "")), fold };
     } catch (e) {
-      out = `not a valid regular expression: ${(e as Error).message}`;
+      const msg = (e as Error).message;
+      out = /linear time/i.test(msg)
+        ? "this regular expression cannot run in linear time (no backreferences, lookahead or \\p classes); simplify it"
+        : `not a valid regular expression: ${msg}`;
     }
   }
   if (compiled.size >= CACHE_MAX) compiled.delete(compiled.keys().next().value!);
@@ -163,8 +144,8 @@ function leaf(node: Record<string, unknown>, value: unknown): boolean {
     if (typeof got !== "string") return false;
     const re = compile(node.matches as string, node.flags as string | undefined);
     if (typeof re === "string") return false;
-    re.lastIndex = 0;
-    return re.test(got.length > MAX_TEST_CHARS ? got.slice(0, MAX_TEST_CHARS) : got);
+    const text = got.length > MAX_TEST_CHARS ? got.slice(0, MAX_TEST_CHARS) : got;
+    return re.re.test(re.fold ? text.toLowerCase() : text);
   }
   if ("in" in node) return (node.in as unknown[]).some((el) => same(got, el));
   if ("exists" in node) return (got !== undefined) === node.exists;

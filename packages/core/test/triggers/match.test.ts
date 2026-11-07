@@ -67,13 +67,36 @@ describe("signal filter limits", () => {
     expect(matches({ path: "a", eq: { x: [1] } }, { a: { x: [1] } })).toBe(true);
     expect(matches({ path: "a", eq: { x: [2] } }, { a: { x: [1] } })).toBe(false);
   });
-  it("refuses regular expressions that can take forever", () => {
-    for (const p of ["(a+)+$", "(a|aa)*", "(\\w+\\s?)*$", "((a+)b)*", "(a)\\1", "((a+)?)+", "(a+){2,}", "(a|b){2,5}"]) {
-      expect(matchError({ path: "a", matches: p }), p).toMatch(/take forever/);
+  it("runs hostile patterns in linear time", () => {
+    const hostile: [string, string][] = [
+      ["\\d*\\d*\\d*$", "1".repeat(3000) + "x"],
+      [".*.*.*x", "a".repeat(2000)],
+      ["(a+)+$", "a".repeat(10_000) + "!"],
+      ["(a|aa)*$", "a".repeat(10_000) + "!"],
+      ["((a+)?)+$", "a".repeat(10_000) + "!"],
+    ];
+    for (const [p, v] of hostile) {
+      expect(matchError({ path: "a", matches: p }), p).toBeUndefined();
+      const t0 = Date.now();
+      matches({ path: "a", matches: p }, { a: v });
+      expect(Date.now() - t0, p).toBeLessThan(100);
     }
-    for (const p of ["^Invoice #\\d+", "[a+]+", "\\(a+\\)+", "(?:ab)c+", "(ab)+", "(a|b)?", "(https?://)?", "(\\d+)?", "(a+){1}", "(a|b){0,1}", "(a+?)"]) {
+  });
+  it("refuses what the linear engine cannot run", () => {
+    for (const p of ["(a)\\1", "a(?=b)"]) {
+      expect(matchError({ path: "a", matches: p }), p).toMatch(/cannot run in linear time/);
+    }
+    expect(matchError({ path: "a", matches: "a", flags: "g" })).toMatch(/flags/);
+    expect(matchError({ path: "a", matches: "(" })).toMatch(/regular expression/);
+  });
+  it("accepts ordinary patterns, ignoring case with i", () => {
+    for (const p of ["^Invoice #\\d+", "[a+]+", "\\(a+\\)+", "(?:ab)c+", "(a|b)?", "(https?://)?", "(\\d+)?"]) {
       expect(matchError({ path: "a", matches: p }), p).toBeUndefined();
     }
+    expect(matches({ path: "a", matches: "^invoice", flags: "i" }, { a: "INVOICE 1" })).toBe(true);
+    expect(matches({ path: "a", matches: "[A-Z]+$", flags: "i" }, { a: "abc" })).toBe(true);
+    expect(matches({ path: "a", matches: "\\D+$", flags: "i" }, { a: "1abc" })).toBe(true);
+    expect(matches({ path: "a", matches: "^invoice" }, { a: "INVOICE 1" })).toBe(false);
   });
   it("tests a huge value quickly", () => {
     const big = "x".repeat(1_000_000);
