@@ -34,4 +34,11 @@ describe("brain plugins' own processes", () => {
     expect(pluginEgress(["api.example.com"], true)).toContain("api.example.com");
     expect(pluginEgress(["api.example.com"], false)).toEqual(["api.example.com"]);
   });
+
+  it("let a plugin that serves webhooks reach the hub's own public https address, to check that it reaches the hub", () => {
+    expect(pluginEgress(["api.example.com"], false, "https://Hub.Example.com:8443/piomio")).toEqual(["api.example.com", "hub.example.com"]);
+    // Nothing for an address that is not https (the hub on localhost), or one that does not parse.
+    expect(pluginEgress(["api.example.com"], false, "http://localhost:8080")).toEqual(["api.example.com"]);
+    expect(pluginEgress([], false, "not a url")).toEqual([]);
+  });
 });

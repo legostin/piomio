@@ -47,6 +47,8 @@ const PUSHER = process.env.PIOMIO_COMPOSIO_PUSHER || undefined;
 const RECONNECT_MS = Number(process.env.PIOMIO_COMPOSIO_RECONNECT_MS) || undefined;
 /** Tests only: how long a minute is for the triggers' grace, leases, reconcile and warm-up. */
 const MINUTE_MS = Number(process.env.PIOMIO_COMPOSIO_MINUTE_MS) || undefined;
+/** Tests only: where the hub's public address is checked from outside, instead of the address itself. */
+const PROBE_URL = process.env.PIOMIO_COMPOSIO_PROBE_URL || undefined;
 /** Main tools one app gets as tools of its own, at most; and with those composio_tools_search added. */
 const MAX_TOOLS = 30;
 const MAX_APP_TOOLS = 60;
@@ -564,6 +566,7 @@ const plugin: PluginModule & { stop?: () => void } = {
       ...(PUSHER ? { pusherBase: PUSHER } : {}),
       ...(RECONNECT_MS && RECONNECT_MS > 0 ? { reconnectMs: RECONNECT_MS } : {}),
       ...(MINUTE_MS && MINUTE_MS > 0 ? { minuteMs: MINUTE_MS } : {}),
+      ...(PROBE_URL ? { probeBase: PROBE_URL } : {}),
     });
     ctx.signals.provide("event", triggers.provider);
     ctx.http.handle((req) => triggers!.http(req));

@@ -5,7 +5,9 @@
 //
 // Subscribing upserts the trigger instance on the app's connected account (one per type and account: subscriptions
 // with the same one share it) and enables it again when it was off. Events reach the hub one of two ways:
-//   1. a project webhook at <publicUrl>/hooks/composio/events, when the hub has a public https address: registered
+//   1. a project webhook at <publicUrl>/hooks/composio/events, when the hub has a public https address that really
+//      reaches it (the plugin's GET <publicUrl>/hooks/composio/ping must come back to this process with the nonce it
+//      made at start; the Access from anywhere link, for one, does not carry webhooks): registered
 //      once (checked again whenever the first subscription comes), its secret kept in the plugin's storage (never in
 //      settings or logs), every request checked by its Standard Webhooks signature over the raw body. A webhook the
 //      person set up in the project themselves is never changed: then the events come the other way.
@@ -30,8 +32,13 @@ import type { PluginContext, PluginHttpRequest, PluginHttpResponse, SignalEmitOp
 import { ComposioError, hostOf, ownWebhook, TRIGGER_MESSAGE, WebhookTaken, type ComposioApi, type WebhookSubscription } from "./api.ts";
 import { RealtimeChannel } from "./realtime.ts";
 
-/** The webhook's path under /hooks/composio. */
+/** The webhook's path under /hooks/composio, and the one the plugin checks its own public address by. */
 export const WEBHOOK_PATH = "/events";
+export const PING_PATH = "/ping";
+/** How long the check of the public address may take, how much of its answer is read, and when a failed one is tried again. */
+const PROBE_TIMEOUT_MS = 10_000;
+const PROBE_READ_MAX = 4096;
+const PROBE_RETRY_MS = 10 * 60_000;
 /** Signatures older (or newer) than this are refused, in seconds. */
 export const TOLERANCE_S = 300;
 /** Storage keys of the leases: inst:<ti>. */
@@ -68,6 +75,8 @@ export interface TriggerDeps {
   reconnectMs?: number;
   /** How long a minute of the timings above is (tests only). */
   minuteMs?: number;
+  /** Where the public address is checked instead of the address itself (tests only). */
+  probeBase?: string;
   now?: () => number;
 }
 
@@ -256,6 +265,12 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
   const minute = d.minuteMs ?? 60_000;
   /** This process, in the leases. */
   const nonce = randomUUID();
+  /** What this process answers on its public ping: only it can, so a stale or another server cannot pass the check. */
+  const pingNonce = randomUUID();
+  /** The checks of the public address, by webhook URL: why it does not reach this hub (undefined: it does). */
+  const probes = new Map<string, { at: number; result: Promise<string | undefined>; why?: string; done: boolean }>();
+  /** Why the public address does not reach this hub's webhooks, when the last check found so. */
+  let unreachable: string | undefined;
   const started = now();
   /** Instances by pairKey(trigger, account), and by their Composio id; each subscription's pair. */
   const pairs = new Map<string, Instance>();
@@ -269,7 +284,6 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let reconcileTimer: ReturnType<typeof setTimeout> | undefined;
   let reconcileRescheduled = false;
-  let address: Promise<string | undefined> | undefined;
   /** How this process's subscriptions get their events now, and the check that decides it. */
   let current: "webhook" | "realtime" | undefined;
   let deciding: Promise<"webhook" | "realtime"> | undefined;
@@ -318,13 +332,73 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
 
   // ---------- delivery ----------
 
-  /** The webhook's address when the hub has a public https one (it does not change while the hub runs). */
-  function webhookUrl(): Promise<string | undefined> {
-    address ??= ctx.core.call<{ publicUrl?: string }>("settings.get").then(
-      (s) => (isPublicHttps(s?.publicUrl) ? `${String(s.publicUrl).replace(/\/+$/, "")}/hooks/${ctx.pluginId}${WEBHOOK_PATH}` : undefined),
-      () => undefined,
-    );
-    return address;
+  /** The hub's public address when it is a public https one (read each time: it may change), else undefined. */
+  async function hubBase(): Promise<string | undefined> {
+    try {
+      const s = await ctx.core.call<{ publicUrl?: string }>("settings.get");
+      return isPublicHttps(s?.publicUrl) ? String(s.publicUrl).replace(/\/+$/, "") : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const hookUrl = (base: string) => `${base}/hooks/${ctx.pluginId}${WEBHOOK_PATH}`;
+
+  /** At most `max` bytes of a response's body, as text. */
+  async function head(res: Response, max: number): Promise<string> {
+    const reader = res.body?.getReader();
+    if (!reader) return "";
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (size < max) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        size += value.length;
+      }
+    } finally {
+      void reader.cancel().catch(() => {});
+    }
+    return Buffer.concat(chunks).subarray(0, max).toString("utf8");
+  }
+
+  /**
+   * Whether the hub's public address reaches this very process: its ping there (through the hub's egress proxy, as any
+   * request of the plugin) must answer 200 with the nonce made at start. Undefined when it does, else why not.
+   */
+  async function ping(base: string): Promise<string | undefined> {
+    const target = `${(d.probeBase ?? base).replace(/\/+$/, "")}/hooks/${ctx.pluginId}${PING_PATH}`;
+    let res: Response;
+    try {
+      res = await fetch(target, { redirect: "manual", headers: { accept: "application/json" }, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    } catch (e: any) {
+      return `it could not be reached from the hub (${e?.cause?.message ?? e?.message ?? String(e)})`;
+    }
+    const text = await head(res, PROBE_READ_MAX).catch(() => "");
+    if (res.status !== 200) return `it answers HTTP ${res.status} there${res.status === 404 ? " (the Access from anywhere link does not carry webhooks)" : ""}`;
+    let answer: unknown;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+      /* not this hub's answer */
+    }
+    if (!isObject(answer) || answer.nonce !== pingNonce) return "something answers there, but not this hub (a stale or another server)";
+    return undefined;
+  }
+
+  /** The check of an address, once (a failed one again after a while); a new address is checked anew. */
+  function probe(base: string): Promise<string | undefined> {
+    const url = hookUrl(base);
+    const kept = probes.get(url);
+    if (kept && (!kept.done || !kept.why || now() - kept.at < PROBE_RETRY_MS)) return kept.result;
+    const entry: { at: number; result: Promise<string | undefined>; why?: string; done: boolean } = { at: now(), result: Promise.resolve(undefined), done: false };
+    entry.result = ping(base).then((why) => {
+      entry.why = why;
+      entry.done = true;
+      return why;
+    });
+    probes.set(url, entry);
+    return entry.result;
   }
 
   /**
@@ -362,8 +436,17 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
   }
 
   async function decide(): Promise<"webhook" | "realtime"> {
-    const url = await webhookUrl();
-    if (!url) return (current = "realtime");
+    const base = await hubBase();
+    if (!base) return (current = "realtime");
+    const url = hookUrl(base);
+    // Never a webhook that cannot arrive: the address must reach this hub's webhooks before one is made or pointed there.
+    const why = await probe(base);
+    if (why) {
+      if (unreachable !== why) ctx.log.warn(`composio: the hub's public address ${hostOf(base)} does not reach its webhooks: ${why}; the apps' events come over Composio's realtime channel`);
+      unreachable = why;
+      return (current = "realtime");
+    }
+    unreachable = undefined;
     try {
       await ensureWebhook(url);
       taken = undefined;
@@ -383,8 +466,12 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
 
   async function deliveryNote(): Promise<string> {
     const channel = "Composio's realtime channel, which Composio calls internal (it may change without notice)";
-    const url = await webhookUrl();
-    if (!url) return `The hub has no public https address, so the apps' events come over ${channel}.`;
+    const base = await hubBase();
+    if (!base) return `The hub has no public https address, so the apps' events come over ${channel}.`;
+    const url = hookUrl(base);
+    // Checking the address is a read (and done once per address): it may run here.
+    const why = await probe(base);
+    if (why) return `The hub's public address does not reach its webhooks (${why}), so the apps' events come over ${channel}.`;
     let host = taken;
     if (!host && !current) {
       // Nothing decided yet: look, without changing anything.
@@ -698,6 +785,8 @@ export function composioTriggers(d: TriggerDeps): ComposioTriggers {
   }
 
   async function http(req: PluginHttpRequest): Promise<PluginHttpResponse> {
+    // The plugin's own check that its public address reaches it (see ping()).
+    if (req.public && req.path === PING_PATH && req.method === "GET") return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, nonce: pingNonce } };
     if (!req.public || req.path !== WEBHOOK_PATH) return { status: 404, body: { error: "not found" } };
     if (req.method !== "POST") return { status: 405, body: { error: "POST only" } };
     if (typeof req.rawBody !== "string") return { status: 400, body: { error: "no raw body to check the signature against" } };

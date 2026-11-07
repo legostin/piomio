@@ -172,6 +172,23 @@ function fakePusher() {
   return { wss, sockets, state, live, open, push, ready, close, url: () => `ws://127.0.0.1:${(wss.address() as AddressInfo).port}` };
 }
 
+/**
+ * The hub's public address as the outside sees it: GET /hooks/composio/ping goes to the plugin (as the hub's public
+ * route does), or the address answers 404 (like the Access from anywhere link), or another server answers.
+ */
+function frontDoor() {
+  const state = { mode: "hub" as "hub" | "404" | "stranger", hits: [] as string[], h: undefined as PluginHarness | undefined };
+  const server = createServer(async (req, res) => {
+    state.hits.push(`${req.method} ${req.url}`);
+    if (state.mode === "404" || req.url !== "/hooks/composio/ping" || !state.h) return res.writeHead(404).end("not found");
+    if (state.mode === "stranger") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, nonce: "a-stale-hub" }));
+    const r = await state.h.http({ method: "GET", path: "/ping", public: true });
+    res.writeHead(r.status ?? 200, { "content-type": "application/json" }).end(JSON.stringify(r.body));
+  });
+  const listen = () => new Promise<string>((r) => server.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));
+  return { server, state, listen };
+}
+
 /** A V3 trigger message, as Composio sends it by webhook and over the channel; its key is its log id. */
 const message = (ti: string, id: string, data: Record<string, unknown>, slug = GMAIL, account = "ca_gmail") => ({
   id,
@@ -218,20 +235,25 @@ function signedIn(more: Array<[string, unknown]> = []): Map<string, unknown> {
   ]);
 }
 
-function start(api: string, o: { storage?: Map<string, unknown>; publicUrl?: string; pusher?: string; minuteMs?: number }) {
-  return startPlugin({
+/** `door`: a front door the plugin checks its public address through, instead of the address itself. */
+async function start(api: string, o: { storage?: Map<string, unknown>; publicUrl?: string | (() => string); pusher?: string; minuteMs?: number; door?: ReturnType<typeof frontDoor> }) {
+  const door = o.door ? await o.door.listen() : undefined;
+  const h = await startPlugin({
     dir,
     storage: o.storage ?? signedIn(),
     vault: { composio: { value: "good" } },
-    core: (method) => (method === "settings.get" ? { publicUrl: o.publicUrl ?? "http://localhost:8080" } : {}),
+    core: (method) => (method === "settings.get" ? { publicUrl: (typeof o.publicUrl === "function" ? o.publicUrl() : o.publicUrl) ?? "http://localhost:8080" } : {}),
     env: {
       PIOMIO_COMPOSIO_API: api,
       PIOMIO_COMPOSIO_PUSHER: o.pusher ?? "ws://127.0.0.1:1",
       PIOMIO_COMPOSIO_RECONNECT_MS: "30",
       PIOMIO_COMPOSIO_POLL_MS: "30",
       PIOMIO_COMPOSIO_MINUTE_MS: String(o.minuteMs ?? 400),
+      ...(door ? { PIOMIO_COMPOSIO_PROBE_URL: door } : {}),
     },
   });
+  if (o.door) o.door.state.h = h;
+  return h;
 }
 
 describe("the declaration", () => {
@@ -494,24 +516,35 @@ describe("composio.event by webhook (a public https address)", () => {
   let h: PluginHarness;
   let sub = "";
   let ti = "";
+  let publicUrl = HUB;
+  const door = frontDoor();
 
   beforeAll(async () => {
     fake = fakeComposio();
     pusher = fakePusher();
     const api = await fake.listen();
     await pusher.ready;
-    h = await start(api, { publicUrl: HUB, pusher: pusher.url() });
+    h = await start(api, { publicUrl: () => publicUrl, pusher: pusher.url(), door });
   });
 
   afterAll(async () => {
     await h?.stop();
     pusher?.close();
     fake?.server.close();
+    door.server.close();
   });
 
-  it("registers the project's webhook once, at the hub's public address, and keeps its secret in storage only", async () => {
+  it("answers its own ping on the public route with the nonce it made at start", async () => {
+    const r = await h.http({ method: "GET", path: "/ping", public: true });
+    expect(r).toMatchObject({ status: 200, body: { ok: true, nonce: expect.stringMatching(/^[0-9a-f-]{36}$/) } });
+    expect((await h.http({ method: "GET", path: "/ping", public: true })).body).toEqual(r.body);
+    expect((await h.http({ method: "GET", path: "/ping" })).status).toBe(404);
+  });
+
+  it("checks that its public address reaches it, then registers the project's webhook once there and keeps its secret in storage only", async () => {
     sub = await h.subscribeSignal("event", { trigger: GMAIL });
     ti = fake.instanceOf(GMAIL, "ca_gmail")!;
+    expect(door.state.hits).toEqual(["GET /hooks/composio/ping"]);
     expect(fake.webhooks).toEqual([{ webhook_url: HOOK, enabled_events: ["composio.trigger.message"], version: "V3" }]);
     expect(h.storage.get("webhook")).toEqual({ id: "whs_1", url: HOOK, secret: SECRET });
     const other = await h.subscribeSignal("event", { trigger: SLACK });
@@ -574,6 +607,17 @@ describe("composio.event by webhook (a public https address)", () => {
     expect(fake.paths).toContain("GET /api/v3.1/webhook_subscriptions/whs_1");
     expect(fake.webhooks).toHaveLength(2);
     expect(h.storage.get("webhook")).toEqual({ id: "whs_2", url: HOOK, secret: SECRET });
+    // The same address is not checked again.
+    expect(door.state.hits).toHaveLength(1);
+  });
+
+  it("checks again when the hub's public address changes, and points the hub's own webhook there", async () => {
+    await h.stopSignal(sub);
+    publicUrl = "https://hub2.example.com";
+    sub = await h.subscribeSignal("event", { trigger: GMAIL });
+    expect(door.state.hits).toHaveLength(2);
+    expect(h.storage.get("webhook")).toEqual({ id: "whs_2", url: "https://hub2.example.com/hooks/composio/events", secret: SECRET });
+    expect(fake.subs.map((s) => s.webhook_url)).toEqual(["https://hub2.example.com/hooks/composio/events"]);
   });
 
   it("never writes the secret to its log", () => {
@@ -581,10 +625,51 @@ describe("composio.event by webhook (a public https address)", () => {
   });
 });
 
+for (const [mode, why] of [
+  ["404", /does not reach its webhooks: it answers HTTP 404 there \(the Access from anywhere link does not carry webhooks\)/],
+  ["stranger", /does not reach its webhooks: something answers there, but not this hub/],
+] as const) {
+  describe(`a public address that ${mode === "404" ? "answers 404 for the hub's webhooks" : "another server answers"}`, () => {
+    let fake: ReturnType<typeof fakeComposio>;
+    let pusher: ReturnType<typeof fakePusher>;
+    let h: PluginHarness;
+    const door = frontDoor();
+    door.state.mode = mode;
+
+    beforeAll(async () => {
+      fake = fakeComposio();
+      pusher = fakePusher();
+      const api = await fake.listen();
+      await pusher.ready;
+      h = await start(api, { publicUrl: HUB, pusher: pusher.url(), door });
+    });
+
+    afterAll(async () => {
+      await h?.stop();
+      pusher?.close();
+      fake?.server.close();
+      door.server.close();
+    });
+
+    it("registers no webhook, uses the realtime channel, and says why in the log and in composio_triggers", async () => {
+      const id = await h.subscribeSignal("event", { trigger: GMAIL });
+      await until(() => pusher.live().length === 1, "the realtime channel");
+      expect(door.state.hits).toEqual(["GET /hooks/composio/ping"]);
+      expect(fake.webhooks).toEqual([]);
+      expect(fake.paths.filter((p) => p.includes("webhook_subscriptions"))).toEqual([]);
+      expect(h.logs.some((l) => why.test(l))).toBe(true);
+      expect(await h.invokeText("triggers", {})).toMatch(/public address does not reach its webhooks.*realtime channel/);
+      pusher.push("trigger_to_client", message(fake.instanceOf(GMAIL, "ca_gmail")!, "msg_rt", { subject: "Over the channel" }));
+      await until(() => h.signals.find((s) => s.subscription === id), "the event over the channel");
+    });
+  });
+}
+
 describe("a webhook the person set up in their Composio project", () => {
   let fake: ReturnType<typeof fakeComposio>;
   let pusher: ReturnType<typeof fakePusher>;
   let h: PluginHarness;
+  const door = frontDoor();
 
   beforeAll(async () => {
     fake = fakeComposio();
@@ -592,13 +677,14 @@ describe("a webhook the person set up in their Composio project", () => {
     pusher = fakePusher();
     const api = await fake.listen();
     await pusher.ready;
-    h = await start(api, { publicUrl: HUB, pusher: pusher.url() });
+    h = await start(api, { publicUrl: HUB, pusher: pusher.url(), door });
   });
 
   afterAll(async () => {
     await h?.stop();
     pusher?.close();
     fake?.server.close();
+    door.server.close();
   });
 
   it("is left alone: the events come over the realtime channel, the log names where theirs goes, composio_triggers says so", async () => {
@@ -713,6 +799,7 @@ describe("the warm-up after a start", () => {
   let fake: ReturnType<typeof fakeComposio>;
   let h: PluginHarness;
   let release!: () => void;
+  const door = frontDoor();
   const storage = signedIn([
     ["webhook", { id: "whs_1", url: HOOK, secret: SECRET }],
     // The instance this hub made for a trigger before it restarted (the fake makes ti_1 first).
@@ -724,13 +811,14 @@ describe("the warm-up after a start", () => {
     fake.subs.push({ id: "whs_1", webhook_url: HOOK, enabled_events: ["composio.trigger.message"], secret: SECRET });
     // The first account check waits: the plugin is still warming up.
     fake.state.hold = new Promise<void>((r) => (release = r));
-    h = await start(await fake.listen(), { storage, publicUrl: HUB, minuteMs: 1000 });
+    h = await start(await fake.listen(), { storage, publicUrl: HUB, minuteMs: 1000, door });
   });
 
   afterAll(async () => {
     release?.();
     await h?.stop();
     fake?.server.close();
+    door.server.close();
   });
 
   it("answers 503 for one of the hub's instances not held yet, 200 for others, then delivers once it is held", async () => {
@@ -763,16 +851,18 @@ describe("an app's account changes", () => {
   let fake: ReturnType<typeof fakeComposio>;
   let h: PluginHarness;
   let id = "";
+  const door = frontDoor();
 
   beforeAll(async () => {
     fake = fakeComposio();
     fake.subs.push({ id: "whs_1", webhook_url: HOOK, enabled_events: ["composio.trigger.message"], secret: SECRET });
-    h = await start(await fake.listen(), { storage: signedIn([["webhook", { id: "whs_1", url: HOOK, secret: SECRET }]]), publicUrl: HUB, minuteMs: 200 });
+    h = await start(await fake.listen(), { storage: signedIn([["webhook", { id: "whs_1", url: HOOK, secret: SECRET }]]), publicUrl: HUB, minuteMs: 200, door });
   });
 
   afterAll(async () => {
     await h?.stop();
     fake?.server.close();
+    door.server.close();
   });
 
   it("moves its subscriptions to the new account when the app signs in again", async () => {

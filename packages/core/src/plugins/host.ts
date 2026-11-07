@@ -311,7 +311,8 @@ export class PluginHost {
     // Builtin brain plugins run harness CLIs (claude, codex) with a persistent home where the CLI logins live
     // (config.brainHome: the user's own home in the desktop app); everything else gets its data dir as its home.
     const isBrainHost = rec.source === "builtin" && rec.layout.manifest.contributes.brains.length > 0;
-    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, pluginEgress(rec.granted.network, isBrainHost));
+    const ownUrl = rec.layout.manifest.contributes.http ? cfg.publicUrl : undefined;
+    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, pluginEgress(rec.granted.network, isBrainHost, ownUrl));
     const proxyUrl = `http://${proxyToken}:x@127.0.0.1:${cfg.egressPort}`;
     const home = isBrainHost ? cfg.brainHome : dataDir;
     mkdirSync(dataDir, { recursive: true });
@@ -915,11 +916,21 @@ export class PluginHost {
 }
 
 /**
- * The hosts a plugin's process reaches: what it was granted, and for a built-in brain plugin its CLIs' own model APIs
- * too (listing models, signing in: a Codex there was refused chatgpt.com hundreds of times a day).
+ * The hosts a plugin's process reaches: what it was granted; for a built-in brain plugin its CLIs' own model APIs
+ * too (listing models, signing in: a Codex there was refused chatgpt.com hundreds of times a day); and for a plugin
+ * that serves webhooks (`ownUrl`: the hub's public address), that address's host when it is https, so the plugin can
+ * check the address really reaches the hub before it gives it to an outside service.
  */
-export function pluginEgress(granted: string[], brainHost: boolean): string[] {
-  return brainHost ? [...new Set([...granted, ...BRAIN_MODEL_EGRESS])] : granted;
+export function pluginEgress(granted: string[], brainHost: boolean, ownUrl?: string): string[] {
+  let own: string | undefined;
+  try {
+    const u = ownUrl ? new URL(ownUrl) : undefined;
+    if (u?.protocol === "https:") own = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    /* not an address */
+  }
+  if (!brainHost && !own) return granted;
+  return [...new Set([...granted, ...(brainHost ? BRAIN_MODEL_EGRESS : []), ...(own ? [own] : [])])];
 }
 
 export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string> {
