@@ -1,7 +1,7 @@
 // The desktop installers' shared launcher and stage (packaging/desktop) and the text the macOS build generates
 // (packaging/macos).
 import { describe, expect, it } from "vitest";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,31 @@ describe("desktop launcher", () => {
     expect(wanted(join(ROOT, "integrations", "weather", "test", "weather.test.ts"))).toBe(false);
     expect(wanted(join(ROOT, "integrations", "_template", "ui", "src", "index.tsx"))).toBe(true);
     expect(wanted(join(ROOT, "integrations", "_template", "test", "sun.test.ts"))).toBe(true);
+  });
+
+  it("leaves behind a plugin folder without a manifest, as the hub does not load one", () => {
+    const root = tmp();
+    // A removed plugin's build output left in a local checkout, next to a plugin that is still there.
+    mkdirSync(join(root, "plugins", "triggers", "ui", "dist"), { recursive: true });
+    writeFileSync(join(root, "plugins", "triggers", "ui", "dist", "index.js"), "export {}");
+    for (const [top, id] of [["plugins", "memory"], ["integrations", "weather"]]) {
+      mkdirSync(join(root, top, id, ".piomio-plugin"), { recursive: true });
+      writeFileSync(join(root, top, id, ".piomio-plugin", "plugin.json"), JSON.stringify({ id }));
+    }
+    // A Claude Code plugin is one too.
+    mkdirSync(join(root, "plugins", "claude-only", ".claude-plugin"), { recursive: true });
+    writeFileSync(join(root, "plugins", "claude-only", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "claude-only" }));
+    writeFileSync(join(root, "integrations", "README.md"), "# Integrations");
+    expect(wanted(join(root, "plugins", "triggers"), root)).toBe(false);
+    expect(wanted(join(root, "plugins", "triggers", "ui", "dist", "index.js"), root)).toBe(false);
+    expect(wanted(join(root, "plugins", "memory"), root)).toBe(true);
+    expect(wanted(join(root, "plugins", "memory", ".piomio-plugin", "plugin.json"), root)).toBe(true);
+    expect(wanted(join(root, "plugins", "claude-only"), root)).toBe(true);
+    expect(wanted(join(root, "integrations", "weather"), root)).toBe(true);
+    expect(wanted(join(root, "integrations", "README.md"), root)).toBe(true);
+    // Every plugin and integration in this checkout ships.
+    for (const top of ["plugins", "integrations"])
+      for (const d of readdirSync(join(ROOT, top), { withFileTypes: true })) if (d.isDirectory()) expect(wanted(join(ROOT, top, d.name)), `${top}/${d.name}`).toBe(true);
   });
 
   it("keeps data in the user's profile", () => {
