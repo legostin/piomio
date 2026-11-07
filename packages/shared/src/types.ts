@@ -588,6 +588,9 @@ export interface Task {
   title: string;
   goal: string;
   status: TaskStatus;
+  /** Required computer. The brain is resolved when the task runs. */
+  machineId?: string;
+  /** Legacy placement snapshot; only its computer is a constraint. */
   brainRef?: string;
   createdBy: "user" | "agent" | "trigger";
   triggerId?: string;

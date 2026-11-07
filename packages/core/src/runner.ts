@@ -1,6 +1,7 @@
 // Session runner: turns user messages, delegated tasks and trigger runs into brain sessions.
 // Handles brain selection and fallback, streaming into messages, tasks, deferred approvals and recovery.
 
+import { taskBrains, taskPlacement } from "./task-routing.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -849,7 +850,9 @@ export class SessionRunner {
     background: boolean;
     createdBy: Task["createdBy"];
     triggerId?: string;
-    /** The brain (and so the computer) the task runs on, instead of the agent's own order. */
+    /** Required computer; resolve a ready brain when execution begins. */
+    machineId?: string;
+    /** Legacy placement snapshot (only its computer remains binding). */
     brainRef?: string;
     kind?: Task["kind"];
     tainted?: boolean;
@@ -909,6 +912,7 @@ export class SessionRunner {
   retryTask(id: string): Task | undefined {
     const t = this.d.store.getTask(id);
     if (!t) return undefined;
+    this.waiting.delete(id);
     const r = this.d.store.updateTask(id, { status: "queued", error: undefined, resumeAt: undefined });
     setImmediate(() => this.scheduleTasks());
     return r;
@@ -996,6 +1000,10 @@ export class SessionRunner {
       });
       return;
     }
+    // Installation/sign-in may have changed since a failed run or while the task was queued.
+    const choice = taskThinking(agent, workKind(fresh), fresh.thinking);
+    const pool = [...this.ownBrains(agent, workKind(fresh), choice), ...this.d.brains.list().map((b) => b.ref)];
+    for (const ref of taskBrains(pool, agent, fresh, this.here(), this.d.canonicalMachine)) this.d.brains.invalidate(ref);
     this.d.store.updateTask(fresh.id, { status: "running", resumeAt: undefined, error: undefined });
 
     const history = this.d.store.listMessages(conv.id, { limit: 50 });
@@ -1058,7 +1066,7 @@ export class SessionRunner {
     this.waiting.set(task.id, w);
     // Placed on a computer (or its agent bound to computers): it waits for that computer to come online.
     const agent = this.d.agents.get(task.agentId);
-    const at = task.brainRef ? parseBrainRef(task.brainRef).machineId : "local";
+    const at = taskPlacement(task) ?? "local";
     const placedOn = at !== "local" && at !== this.here() ? this.computerName(at) : undefined;
     const machines = placedOn ?? (agent && bound(agent.machines) && !onMachine("local", agent.machines, this.here(), this.d.canonicalMachine) ? this.boundNames(agent) : undefined);
     const window = machines ? this.waits.machineMs : this.waits.brainMs;
@@ -1485,10 +1493,9 @@ export class SessionRunner {
   }
 
   /**
-   * task_delegate's `machine`: the agent's brain on that computer (its own entry, or the same kind of brain there), or
-   * the agent's usual brain working there through the machine tools when the computer has none.
+   * task_delegate's `machine`: preserve the requested computer, without freezing a brain before its probe.
    */
-  placeTask(agentId: string, machine: string): { brainRef?: string; machineName: string; note?: string; offline?: boolean } | { error: string } {
+  placeTask(agentId: string, machine: string): { machineId: string; machineName: string; note?: string; offline?: boolean } | { error: string } {
     const agent = this.d.agents.get(agentId);
     if (!agent) return { error: `No agent ${agentId}.` };
     const list = this.computers();
@@ -1500,21 +1507,7 @@ export class SessionRunner {
       const names = this.boundNames(agent);
       return { error: `${agentName(agent, hubLocale())} works only on ${names}. Place the task there, or ask the user whether to change the agent's computers.` };
     }
-    const refs = agent.brains.map(parseBrainRef);
-    const own = refs.find((r) => r.machineId === m.id || (this.d.canonicalMachine && this.d.canonicalMachine(r.machineId) === this.d.canonicalMachine(m.id)));
-    // Offline now: the task waits for the agent's brain there (its own entry, or one the computer said it was signed in to).
-    if (!m.online) {
-      const known = (this.d.machines?.() ?? []).find((x) => x.id === m.id)?.info?.clis.filter((c) => c.available && c.authenticated).map((c) => c.brainId) ?? [];
-      const there = own ?? refs.find((r) => known.includes(r.brainId));
-      if (!there) return { error: `"${m.name}" is offline right now, and no brain of ${agentName(agent, hubLocale())} is known there. Ask the user whether to wait or use another computer.` };
-      return { brainRef: formatBrainRef({ brainId: there.brainId, variant: there.variant, machineId: m.id }), machineName: m.name, offline: true };
-    }
-    if (own) return { brainRef: formatBrainRef(own), machineName: m.name };
-    for (const r of refs) {
-      const there = formatBrainRef({ brainId: r.brainId, variant: r.variant, machineId: m.id });
-      if (this.d.brains.has(there)) return { brainRef: there, machineName: m.name };
-    }
-    return { machineName: m.name, ...(m.id === "local" ? {} : { note: `Work on the computer "${m.name}" (machine id ${m.id}) through the machine_* tools.` }) };
+    return { machineId: m.id, machineName: m.name, ...(!m.online ? { offline: true } : {}) };
   }
 
   /** What a session is opened with; a dialog's carries the team's rules for where work goes too. */
@@ -1550,7 +1543,7 @@ export class SessionRunner {
 
   /** ", on <computer>" for a task placed on another computer. */
   private taskWhere(task: Task): string {
-    const id = task.brainRef ? parseBrainRef(task.brainRef).machineId : "local";
+    const id = taskPlacement(task) ?? "local";
     return id === "local" ? "" : `, on ${this.d.machineName(id) ?? id}`;
   }
 
@@ -2064,12 +2057,12 @@ export class SessionRunner {
    * ("auto": the kind of work and, in a dialog, the message); what it is about from the task (or its goal's words).
    * Work on code needs a brain with its own hands. A brain the choice names comes first.
    */
-  private async routeFor(agent: AgentDef, kind: WorkKind, choice: ThinkingChoice, text: string, task: Task | undefined): Promise<Route[]> {
+  private async routeFor(agent: AgentDef, kind: WorkKind, choice: ThinkingChoice, text: string, task: Task | undefined, pool?: string[]): Promise<Route[]> {
     // The person's exact model and effort, or an agent from before `thinking` with its one model: as they chose.
     if (choice.model || choice.effort || (!choice.preset && agent.model)) return [];
     const need = needOf(choice.preset, kind, task ? task.goal : text);
     const skill = choice.skill ?? (task && kind === "task" ? skillOfGoal(task.goal) : undefined);
-    const refs = this.ownBrains(agent, kind, choice);
+    const refs = pool ?? this.ownBrains(agent, kind, choice);
     const brains = await Promise.all(refs.map(async (ref) => ({ ref, probe: this.d.brains.has(ref) ? await this.d.brains.probe(ref, 10 * 60_000).catch(() => undefined) : undefined })));
     const routes = route(brains, { need, ...(skill ? { skill } : {}), hands: !!task && skill === "code" });
     if (!choice.brain) return routes;
@@ -2264,7 +2257,9 @@ export class SessionRunner {
 
   /** The computer a task runs on: where it was placed, its session's brain, or its agent's first brain. */
   private taskMachine(t: Task): string {
-    const ref = t.brainRef ?? this.d.store.activeSession(t.conversationId, t.agentId)?.brainRef ?? this.d.agents.get(t.agentId)?.brains[0];
+    const placed = taskPlacement(t);
+    if (placed) return placed;
+    const ref = this.d.store.activeSession(t.conversationId, t.agentId)?.brainRef ?? this.d.agents.get(t.agentId)?.brains[0];
     return ref ? parseBrainRef(ref).machineId : "local";
   }
 
@@ -2341,22 +2336,21 @@ export class SessionRunner {
     const kind = workKind(task);
     let earliestReset: string | undefined;
 
-    // A task placed on a computer runs on the brain there or not at all (unless the agent was bound elsewhere since).
-    const pinned = task?.brainRef && onMachines([task.brainRef], agent.machines, this.here(), this.d.canonicalMachine).length ? [task.brainRef] : undefined;
     // Under the hood: the brains in the order this request should take them, each with its model and effort
     // (model-router.ts). An exact model and effort the person chose take the agent's own order instead.
     const choice = task ? taskThinking(agent, kind, task.thinking) : thinkingFor(agent, kind);
-    const routes = await this.routeFor(agent, kind, choice, prompt, task);
+    const constrain = (refs: string[]) => task ? taskBrains(refs, agent, task, this.here(), this.d.canonicalMachine) : refs;
+    const own = constrain(this.ownBrains(agent, kind, choice));
+    let routes = await this.routeFor(agent, kind, choice, prompt, task, own);
     // A dialog stays with the agent's own brain (its chosen one, else its first): the router picks the model and
     // effort there, and other brains only take over when that one cannot. Work on the side goes where it fits best.
-    const own = this.ownBrains(agent, kind, choice);
     let order = routes.length && task ? routes.map((r) => r.ref) : own;
     let widened = false;
     // The brain the person chose for this kind comes before the one the conversation fell back to.
-    const preferred = choice.brain ? undefined : stay;
+    const preferred = choice.brain || task ? undefined : stay;
     let waits = 0;
     for (let attempt = 0; attempt < 6; attempt++) {
-      const { usable, earliestReset: reset, reasons, hard, busy, offline, setupOnly } = await this.candidates({ ...agent, brains: order }, preferred, pinned, !!task);
+      const { usable, earliestReset: reset, reasons, hard, busy, offline, setupOnly } = await this.candidates({ ...agent, brains: order }, preferred, task ? order : undefined, !!task);
       earliestReset = reset ?? earliestReset;
       // Stop, or the hub stopping, while it looked (a brain that just came back included): the turn ends here.
       if (wait.interrupted || this.stopped) return { text: "", awaitingApproval: false };
@@ -2372,12 +2366,15 @@ export class SessionRunner {
         attempt--;
         continue;
       }
-      // None of the agent's own brains is set up, but the hub has others: it thinks with those (not one bound to computers).
-      if (!ref && setupOnly && !tried.size && !pinned && !widened && !bound(agent.machines)) {
+      // Tasks can use another suitable brain after any unavailable candidate, within the same constraints.
+      // Dialogs keep their existing setup-only fallback policy.
+      if (!ref && (task || (setupOnly && !tried.size && !bound(agent.machines))) && !widened) {
         widened = true;
-        const rest = this.otherBrains(order);
+        const rest = constrain(this.otherBrains(order)).filter((r) => this.d.brains.has(r) && !order.some((o) => sameBrain(o, r)));
         if (rest.length) {
-          order = [...order, ...rest];
+          const more = await this.routeFor(agent, kind, choice, prompt, task, rest);
+          routes = [...routes, ...more];
+          order = [...order, ...(task && more.length ? more.map((r) => r.ref) : rest)];
           attempt--;
           continue;
         }
@@ -2409,11 +2406,16 @@ export class SessionRunner {
         return { text: "", error: t("chat.needsBrain"), awaitingApproval: false };
       }
       if (!ref) {
-        const why = reasons.length ? reasons.join("; ") : lastError || (bound(agent.machines) ? t("chat.noBrainOn", { machines: this.boundNames(agent) }) : t("chat.noSuitableBrains"));
+        const placed = task && taskPlacement(task);
+        const unavailable = task && (placed || task.thinking?.brain)
+          ? t("task.noMatchingBrain", { machine: placed ? this.computerName(placed) : t("task.allowedComputers"), brain: task.thinking?.brain ?? t("task.anySuitableBrain") })
+          : bound(agent.machines) ? t("chat.noBrainOn", { machines: this.boundNames(agent) }) : t("chat.noSuitableBrains");
+        // Opening the first candidate may have failed even though its probe succeeded; keep that cause too.
+        const why = [...new Set([lastError, ...reasons].filter(Boolean))].join("; ") || unavailable;
         const allLimited = earliestReset && usable.length === 0 && hard === 0;
         const message = allLimited
           ? t("chat.allLimited", { time: this.formatTime(earliestReset!) })
-          : t(this.d.config.apiKeys ? "chat.cannotStart" : "chat.cannotStartPlans", { agent: agentName(agent, hubLocale()), reason: why });
+          : t(task ? "task.cannotStart" : this.d.config.apiKeys ? "chat.cannotStart" : "chat.cannotStartPlans", { agent: agentName(agent, hubLocale()), reason: why });
         // None usable, some only not connected now (the computer asleep, a plugin restarting): a task waits for them quietly.
         if (task && away) return { text: "", error: message, errorCode: "brain-offline", awaitingApproval: false };
         // Every brain it tried broke off before a word: a task tries again (no limit stands in the way).

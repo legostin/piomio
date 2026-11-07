@@ -13,10 +13,12 @@ You just ask: "compare the three laptops I sent and pick one", "check why the si
 The agent also chooses:
 
 - **who does it**: itself, or the teammate whose role or skills fit better;
-- **where**: the computer whose files, apps or hardware the work needs (rendering, 3D and model training go to a computer with a strong graphics card); the task then thinks with that agent's brain on that computer;
+- **where**: the computer whose files, apps or hardware the work needs (rendering, 3D and model training go to a computer with a strong graphics card); the task uses a suitable available brain on that computer;
 - **how hard it is** (fast, balanced or deep) and what it is about (code, analysis, writing, research, an errand). From that the hub picks the brain, model and effort.
 
 If the right agent or computer is unclear and it matters, the agent asks you one short question first. A task placed on a computer that is offline waits for it and starts when it comes online (for up to a day). Agents bound to certain computers never start tasks elsewhere (see [Agents and the team](agents.md)).
+
+Creating a task puts it in the queue; it does not confirm that its brain has started. At each start, including a retry, the hub checks installation and sign-in on the selected computer and reads the agent's current settings. If the preferred brain is unavailable, cannot open a session or has reached its limit, the task can use another suitable brain. A brain explicitly required for the task stays mandatory, as does its computer. If no option works, the failure reports the actual reason instead of assuming that you have not signed in.
 
 ### Rules for where work goes
 

@@ -803,8 +803,9 @@ export class Hub {
     let tasks = 0;
     for (const t of this.store.listTasks({ status: open, limit: 10_000 })) {
       const brainRef = t.brainRef && brainMoved(t.brainRef, from, to);
-      if (brainRef === t.brainRef) continue;
-      this.store.updateTask(t.id, { brainRef });
+      const machineId = t.machineId === from ? to : t.machineId;
+      if (brainRef === t.brainRef && machineId === t.machineId) continue;
+      this.store.updateTask(t.id, { brainRef, machineId });
       tasks++;
     }
     let rules = 0;
