@@ -114,7 +114,7 @@ A command there that only looks at the computer or the repository (`pwd`, `ls`, 
 
 ## Who works where right now
 
-Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, "needs you" while it waits for your approval, or "waiting for connection" while its brain is not connected for now. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section.
+Under the team in the sidebar, the **Machines** line shows a dot for every computer, the hub's own included (online or offline), and how many agents are at work; a click opens it into the full list. While agents work on one, a line per agent shows what it's on and what it's doing right now: thinking, writing, in the terminal, reading files, editing files, on the web, using a tool, "needs you" while it waits for your approval, or "waiting for connection" while its brain is not connected for now. A line opens that chat or task. The iPhone app's **Hub** tab has the same **Machines** section. A server that runs the hub and `piomio-node` side by side (a replica, say) is one computer there, named as you named its `piomio-node` (`PIOMIO_NAME`, `vps`), not by the server's host name.
 
 ## Agents bound to computers
 

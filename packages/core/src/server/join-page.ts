@@ -6,7 +6,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Hub } from "../app.ts";
 import { requestLocale, tFor } from "../i18n.ts";
-import { desktopPairLink, hubName, serverJoinCommand } from "../pairing.ts";
+import { desktopPairLink, serverJoinCommand } from "../pairing.ts";
 import { HttpError, type FailureBudget } from "./http.ts";
 
 type Platform = "windows" | "macos" | "ios" | "android" | "other";
@@ -62,7 +62,7 @@ export function registerJoinPage(app: FastifyInstance, hub: Hub, o: { remote: bo
     const server = serverSection(t, origin, `${origin}/join/${code}`);
     const first = platform === "ios" ? phone : platform === "android" ? `<section><p>${esc(t("join.android"))}</p></section>` : platform === "other" ? server : desktop;
     const rest = (platform === "ios" ? [desktop, server] : platform === "android" ? [desktop, phone, server] : platform === "other" ? [desktop, phone] : [phone, server]).join("");
-    const lead = `<p>${esc(t("join.lead", { hub: hubName() }))}</p>`;
+    const lead = `<p>${esc(t("join.lead", { hub: hub.machines.localName() }))}</p>`;
     return page(reply, 200, t("join.title"), `${lead}${first}<details><summary>${esc(t("join.other"))}</summary>${rest}</details>`, t);
   });
 
