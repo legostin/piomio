@@ -9,7 +9,24 @@ import { AlarmClock, CalendarClock, ChevronRight, Eye, HeartPulse, MessageCircle
 import { api, errorText } from "../lib/api";
 import { relativeTime } from "../lib/format";
 import { useStore } from "../lib/store";
-import { changedTrigger, checkText, formatAt, KIND_LABEL, lastErrorLine, runNowText, statusBadge, triggerUrl, TRIGGERS_API, type TriggerKind, type TriggerRun, type TriggersList, type TriggerView } from "../lib/triggers";
+import {
+  afterLoad,
+  changedTrigger,
+  checkText,
+  formatAt,
+  KIND_LABEL,
+  lastErrorLine,
+  loadNote,
+  runNowText,
+  statusBadge,
+  triggerUrl,
+  TRIGGERS_API,
+  type Loaded,
+  type TriggerKind,
+  type TriggerRun,
+  type TriggersList,
+  type TriggerView,
+} from "../lib/triggers";
 import { hubEvents } from "../state/app";
 import { useAsk } from "../state/ask";
 import { openPanelItem, panel, panelBack } from "../state/panel";
@@ -18,7 +35,7 @@ import { t } from "../i18n";
 import { Badge, Button, cx, EmptyState, ErrorNote, Loading, Modal, Page, Spinner, Toggle } from "../components/ui";
 import { Journal } from "./triggers/Journal";
 import { Pipeline } from "./triggers/Pipeline";
-import { ExternalMark, Section } from "./triggers/parts";
+import { ExternalMark, LoadNote, Section } from "./triggers/parts";
 import { TriggerForm } from "./triggers/TriggerForm";
 
 const KIND_ICON: Record<TriggerKind, LucideIcon> = {
@@ -30,17 +47,16 @@ const KIND_ICON: Record<TriggerKind, LucideIcon> = {
   signal: Radio,
 };
 
-/** The list the hub answers, kept fresh: the engine says "changed" whenever a trigger or its journal does. */
+/**
+ * The list the hub answers, kept fresh: the engine says "changed" whenever a trigger or its journal does. A failed
+ * reload keeps what was shown, and `note` says it could not refresh.
+ */
 function useTriggerList() {
-  const [data, setData] = useState<TriggersList | null>(null);
-  const [error, setError] = useState<string>();
+  const [loaded, setLoaded] = useState<Loaded<TriggersList>>({ value: null });
   const load = useCallback(() => {
     api.get<TriggersList>(TRIGGERS_API).then(
-      (r) => {
-        setData(r);
-        setError(undefined);
-      },
-      (e) => setError(errorText(e)),
+      (r) => setLoaded((l) => afterLoad(l, { value: r })),
+      (e) => setLoaded((l) => afterLoad(l, { error: errorText(e) })),
     );
   }, []);
   useEffect(() => {
@@ -49,7 +65,7 @@ function useTriggerList() {
       if (changedTrigger(e) !== undefined) load();
     });
   }, [load]);
-  return { data, error, load };
+  return { data: loaded.value, note: loadNote("triggers", loaded), load };
 }
 
 export function TriggersPage() {
@@ -71,7 +87,7 @@ function KindMark({ kind, size = "md" }: { kind: TriggerKind; size?: "md" | "lg"
   );
 }
 
-function TriggerList({ data, error, load }: ListProps) {
+function TriggerList({ data, note, load }: ListProps) {
   const ask = useAsk();
   const [form, setForm] = useState(false);
   return (
@@ -89,8 +105,8 @@ function TriggerList({ data, error, load }: ListProps) {
         </>
       }
     >
-      {error && <ErrorNote onRetry={load}>{t("triggers.loadFailed", { error })}</ErrorNote>}
-      {!data && !error && <Loading />}
+      {note && <ErrorNote onRetry={load}>{note}</ErrorNote>}
+      {!data && !note && <Loading />}
       {data && data.triggers.length === 0 && <EmptyState icon="alarm-clock" title={t("triggers.empty.title")} hint={t("triggers.empty.hint")} />}
       {data && data.triggers.length > 0 && (
         <div className="overflow-hidden rounded-2xl border border-hairline bg-surface shadow-card">
@@ -124,11 +140,11 @@ function TriggerList({ data, error, load }: ListProps) {
 
 // ---------- a trigger's page ----------
 
-function TriggerPage({ id, data, error, load }: ListProps & { id: string }) {
-  if (error && !data)
+function TriggerPage({ id, data, note, load }: ListProps & { id: string }) {
+  if (note && !data)
     return (
       <div className="px-4 py-4 sm:px-5">
-        <ErrorNote onRetry={load}>{t("triggers.loadFailed", { error })}</ErrorNote>
+        <ErrorNote onRetry={load}>{note}</ErrorNote>
       </div>
     );
   if (!data) return <Loading />;
@@ -142,7 +158,7 @@ function TriggerPage({ id, data, error, load }: ListProps & { id: string }) {
         </Button>
       </div>
     );
-  return <TriggerDetail tr={tr} list={data} reload={load} />;
+  return <TriggerDetail tr={tr} list={data} reload={load} note={note} />;
 }
 
 /** A label and its value, one row of a two-column list. */
@@ -155,7 +171,8 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function TriggerDetail({ tr, list, reload }: { tr: TriggerView; list: TriggersList; reload: () => void }) {
+/** A trigger's page; `note` says the list behind it could not be refreshed (what is shown is from before). */
+function TriggerDetail({ tr, list, reload, note }: { tr: TriggerView; list: TriggersList; reload: () => void; note?: string }) {
   const ask = useAsk();
   const tz = list.timezone;
   const [busy, setBusy] = useState<"enabled" | "run" | "check" | "delete">();
@@ -181,6 +198,7 @@ function TriggerDetail({ tr, list, reload }: { tr: TriggerView; list: TriggersLi
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4 sm:px-5">
+      {note && <LoadNote text={note} onRetry={reload} />}
       <div className="flex items-start gap-3.5">
         <KindMark kind={tr.kind} size="lg" />
         <div className="min-w-0 flex-1 pt-0.5">

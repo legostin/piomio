@@ -125,6 +125,24 @@ export interface TriggersList {
   computers?: Array<{ id: string; name: string; status: string }>;
 }
 
+/** What a request loaded (null before the first answer) and why the last one failed, if it did. */
+export interface Loaded<T> {
+  value: T | null;
+  error?: string;
+}
+
+/** After a request: its answer replaces what was loaded; a failure keeps what was loaded and says why. */
+export function afterLoad<T>(prev: Loaded<T>, outcome: { value: T } | { error: string }): Loaded<T> {
+  return "error" in outcome ? { value: prev.value, error: outcome.error } : { value: outcome.value };
+}
+
+/** The line a failed load shows: nothing loaded yet, or what is shown is from before (it could not refresh). */
+export function loadNote(what: "triggers" | "journal", l: Loaded<unknown>): string | undefined {
+  if (!l.error) return undefined;
+  if (l.value !== null) return t("triggers.refreshFailed", { error: l.error });
+  return what === "journal" ? t("triggers.journal.loadFailed", { error: l.error }) : t("triggers.loadFailed", { error: l.error });
+}
+
 /** The kinds the form makes; a signal trigger is made in the chat (it needs `on`). */
 export const FORM_KINDS: TriggerKind[] = ["schedule", "once", "watch", "event", "heartbeat"];
 

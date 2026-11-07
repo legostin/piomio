@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sectionForPath, takenBySection } from "../components/nav";
 import {
+  afterLoad,
   builtinSource,
   changedTrigger,
   checkText,
@@ -9,6 +10,7 @@ import {
   errorMessage,
   formatMs,
   lastErrorLine,
+  loadNote,
   parseTimes,
   reasonText,
   runBadge,
@@ -100,6 +102,19 @@ describe("triggers in the web UI", () => {
     expect(builtinSource("signal")).toBeUndefined();
     expect(sourceLabel("hub.task.finished")).toBe("When a task finishes");
     expect(sourceLabel("composio.gmail_new_message")).toBeUndefined();
+  });
+
+  it("keeps what was loaded when a reload fails, and says which it is", () => {
+    // A failed first load is an error, not an empty journal.
+    expect(afterLoad<number[]>({ value: null }, { error: "offline" })).toEqual({ value: null, error: "offline" });
+    expect(afterLoad({ value: [1] }, { error: "offline" })).toEqual({ value: [1], error: "offline" });
+    expect(afterLoad({ value: [1], error: "offline" }, { value: [2] })).toEqual({ value: [2] });
+    expect(loadNote("triggers", { value: null })).toBeUndefined();
+    expect(loadNote("triggers", { value: [1] })).toBeUndefined();
+    expect(loadNote("triggers", { value: null, error: "offline" })).toBe("Could not load triggers: offline");
+    expect(loadNote("journal", { value: null, error: "offline" })).toBe("Could not load the journal: offline");
+    expect(loadNote("triggers", { value: [], error: "offline" })).toBe("Could not refresh, showing what was loaded before: offline");
+    expect(loadNote("journal", { value: [1], error: "offline" })).toBe("Could not refresh, showing what was loaded before: offline");
   });
 
   it("words the last error and marks it when it came from outside content", () => {

@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { ShieldAlert } from "lucide-react";
 import { t } from "../../i18n";
-import { Badge } from "../../components/ui";
+import { Badge, Button } from "../../components/ui";
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -16,6 +16,18 @@ export function Section({ title, children }: { title: string; children: ReactNod
 
 export const Mono = ({ children }: { children: ReactNode }) => <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs break-all">{children}</code>;
 export const Muted = ({ children }: { children: ReactNode }) => <p className="text-xs leading-relaxed break-words text-muted">{children}</p>;
+
+/** A short line for a load that failed (lib/triggers.ts loadNote), with Retry. */
+export function LoadNote({ text, onRetry }: { text: string; onRetry: () => void }) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-danger">
+      <span className="min-w-0 break-words">{text}</span>
+      <Button size="sm" variant="ghost" onClick={onRetry}>
+        {t("common.retry")}
+      </Button>
+    </div>
+  );
+}
 
 /**
  * "Outside content": a run read a page, a webhook or a letter, so its words (an error too) may carry that content. `hint`

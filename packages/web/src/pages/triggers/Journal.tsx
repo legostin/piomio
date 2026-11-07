@@ -4,22 +4,37 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "wouter";
 import { ChevronRight, ShieldAlert } from "lucide-react";
-import { api } from "../../lib/api";
+import { api, errorText } from "../../lib/api";
 import { taskStatus } from "../../lib/format";
-import { changedTrigger, errorMessage, formatAt, reasonText, runBadge, sourceLabel, stageLines, triggerUrl, type TriggerRun, type TriggerView } from "../../lib/triggers";
+import {
+  afterLoad,
+  changedTrigger,
+  errorMessage,
+  formatAt,
+  loadNote,
+  reasonText,
+  runBadge,
+  sourceLabel,
+  stageLines,
+  triggerUrl,
+  type Loaded,
+  type TriggerRun,
+  type TriggerView,
+} from "../../lib/triggers";
 import { hubEvents } from "../../state/app";
 import { t } from "../../i18n";
 import { Badge, Button, cx, Loading } from "../../components/ui";
-import { Muted, Section } from "./parts";
+import { LoadNote, Muted, Section } from "./parts";
 
 export function Journal({ tr, tz }: { tr: TriggerView; tz: string }) {
-  const [runs, setRuns] = useState<TriggerRun[] | null>(null);
+  const [loaded, setLoaded] = useState<Loaded<TriggerRun[]>>({ value: null });
   const [limit, setLimit] = useState(20);
   const [open, setOpen] = useState<string>();
   const load = useCallback(() => {
+    // A failed request keeps the runs already shown (or none) and says so; it never reads as "no runs yet".
     api.get<{ runs: TriggerRun[] }>(`${triggerUrl(tr.id, "runs")}?limit=${limit}`).then(
-      (r) => setRuns(r.runs ?? []),
-      () => setRuns((x) => x ?? []),
+      (r) => setLoaded((l) => afterLoad(l, { value: r.runs ?? [] })),
+      (e) => setLoaded((l) => afterLoad(l, { error: errorText(e) })),
     );
   }, [tr.id, limit]);
   useEffect(() => {
@@ -29,11 +44,14 @@ export function Journal({ tr, tz }: { tr: TriggerView; tz: string }) {
       if (id === tr.id || id === "") load();
     });
   }, [load, tr.id]);
+  const runs = loaded.value;
+  const note = loadNote("journal", loaded);
 
   return (
     <Section title={t("triggers.journal.title")}>
+      {note && <LoadNote text={note} onRetry={load} />}
       {!runs ? (
-        <Loading />
+        !note && <Loading />
       ) : runs.length === 0 ? (
         <Muted>{t("triggers.journal.empty")}</Muted>
       ) : (
