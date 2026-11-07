@@ -440,7 +440,7 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
         from: { type: "string", enum: ["recent", "sample"], description: "Which signals to test on, when you give none." },
         signals: {
           type: "array",
-          description: "Signals to test on, at most 20: { type, data, subject?, key?, external? } (external defaults to true but for time.tick, manual and hub.* types).",
+          description: "Signals to test on, at most 20: { type, data, subject?, key?, external? } (external defaults to what the type's source declares in trigger_sources, false for manual, true for a type no source has).",
           items: { type: "object", properties: { type: { type: "string" }, data: { type: "object" }, subject: { type: "string" }, key: { type: "string" }, external: { type: "boolean" } }, required: ["type"] },
         },
         n: { type: "integer", minimum: 1, maximum: 20, description: "How many signals at most (default: 5 recent ones, or all the samples or signals given)." },

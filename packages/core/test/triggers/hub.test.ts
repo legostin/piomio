@@ -115,6 +115,25 @@ describe("the hub's trigger engine", () => {
     }
   });
 
+  it("marks hub.task.finished as outside content when the task's session read a source tool, though the task was started plain", async () => {
+    const created = await hub.tools.get("trigger_create")!.invoke(
+      { name: "Finished tasks", prompt: "Look at the result.", on: [{ type: "hub.task.finished" }], script: { code: "export default (s) => ({ note: 'finished ' + s.data.taskId })" } },
+      call,
+    );
+    const id = /trigger (t_[0-9a-f]+)/.exec((created.content[0] as { text: string }).text)![1];
+    const task = hub.store.createTask({ agentId: "assistant", title: "Research", goal: "Read the web", createdBy: "user", background: true });
+    expect(task.tainted).toBeFalsy();
+    const session = hub.store.createSession({ conversationId: task.conversationId, taskId: task.id, agentId: "assistant", brainRef: "fake@local", background: true }).row.id;
+    // A tool that reads outside content taints the session, not the task.
+    await hub.gateway.call(session, "signals_recent", {});
+    expect(hub.store.getTask(task.id)!.tainted).toBeFalsy();
+    hub.store.updateTask(task.id, { status: "done", result: "What the page said" });
+    const run = await until(async () => (await hub.triggers.engine!.runs(id)).find((r) => r.outcome === "note"), "the finished task's note");
+    expect(run).toMatchObject({ external: true, signals: [{ type: "hub.task.finished", subject: "Research" }] });
+    expect(hub.triggers.notes({ triggerId: id })).toMatchObject([{ text: `finished ${task.id}`, external: true }]);
+    await hub.tools.get("trigger_delete")!.invoke({ id }, call);
+  });
+
   it("checks a signature over the exact bytes of a real request, with the key from the vault", async () => {
     hub.vault.init("webhook-verify-passphrase");
     hub.vault.upsert({ id: "gh-hook", type: "secret", name: "Hook key", fields: { value: "hookkey" } });

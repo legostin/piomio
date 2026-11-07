@@ -19,7 +19,7 @@ import type { Locale, SignalDecl } from "@piomio/shared";
 import type { EventBus } from "../bus.ts";
 import { hubLocale, tFor } from "../i18n.ts";
 import { BUILTIN_SOURCES_INFO } from "./builtin-sources.ts";
-import { HUB_SOURCES, listenToHub, type MachineView } from "./hub-sources.ts";
+import { HUB_SOURCES, listenToHub, type HubListenDeps, type MachineView } from "./hub-sources.ts";
 import { linearRegExp } from "./match.ts";
 import { canonicalJson, dataProblem, newSignalId } from "./pipeline.ts";
 import { BUILTIN_SOURCES, type Signal, type Trigger } from "./types.ts";
@@ -31,6 +31,8 @@ export const RETRY_MS = [30_000, 120_000, 600_000, 1_800_000];
 const RATE_MS = 60_000;
 const KEY_MAX = 200;
 const SUBJECT_MAX = 500;
+/** Room kept past a key's or subject's bound before redacting: a known secret that starts within the bound stays whole. */
+const LINE_SPARE = 4096;
 /** A declared schema, at most: as JSON, its nesting, an enum's values, its patterns. */
 const SCHEMA_MAX = 16 * 1024;
 const SCHEMA_DEPTH = 32;
@@ -103,6 +105,10 @@ export interface SignalSourcesDeps {
   bus: EventBus;
   /** The computers and whether they are online now (the baseline for hub.machine.*); unset: none known. */
   machines?: () => MachineView[];
+  /** Whether a task carries outside content (hub.task.*): its own mark, or its conversation's sessions'; unset: its own mark. */
+  taskTainted?: HubListenDeps["taskTainted"];
+  /** A task by its id, for the self-loop guard to follow subtasks and approvals to a trigger's own wake task. */
+  task?: HubListenDeps["task"];
   now?: () => number;
   /** Known secrets taken out of what a plugin sends (the vault's redactor); unset: kept as it came. */
   redact?: <T>(v: T) => T;
@@ -285,7 +291,12 @@ export class SignalSources {
   start(): void {
     this.started = true;
     this.unlisten?.();
-    this.unlisten = listenToHub(this.d.bus, (type, s, skip) => this.fromHub(type, s, skip), () => this.d.machines?.() ?? [], this.now);
+    this.unlisten = listenToHub(this.d.bus, (type, s, skip) => this.fromHub(type, s, skip), {
+      machines: () => this.d.machines?.() ?? [],
+      now: this.now,
+      ...(this.d.taskTainted ? { taskTainted: this.d.taskTainted } : {}),
+      ...(this.d.task ? { task: this.d.task } : {}),
+    });
     void this.sync().catch((e) => this.log(`sync failed: ${message(e)}`));
   }
 
@@ -426,15 +437,14 @@ export class SignalSources {
     const problem = dataProblem(data) ?? (checked.data && !checked.data(data) ? mismatch(checked.data, "its data") : undefined);
     if (problem) return refuse(`${full} was refused: ${problem}`);
     if (!this.started) return OK;
-    const redact = this.d.redact ?? (<T>(v: T) => v);
-    const key = m.key ? redact(m.key).slice(0, KEY_MAX) : undefined;
-    const subject = m.subject?.trim() ? redact(m.subject.trim()).slice(0, SUBJECT_MAX) : undefined;
+    const key = this.line(m.key, KEY_MAX);
+    const subject = this.line(m.subject, SUBJECT_MAX);
     const signal: Signal = {
       id: newSignalId(),
       type: full,
       source: pluginId,
       at: new Date(this.now()).toISOString(),
-      data: redact(data),
+      data: this.redact(data),
       ...(key ? { key } : {}),
       ...(subject ? { subject } : {}),
       external: decl.external || !plugin.builtin,
@@ -454,11 +464,20 @@ export class SignalSources {
   // ---------- internals ----------
 
   /** A hub event as a signal, to every enabled trigger with an entry of its type except those `skip` names. */
-  private fromHub(type: string, s: Pick<Signal, "data" | "key" | "external">, skip?: (triggerId: string) => boolean): void {
+  private fromHub(type: string, s: Pick<Signal, "data" | "key" | "external" | "subject">, skip?: (triggerId: string) => boolean): void {
     if (!this.started) return;
-    const redact = this.d.redact ?? (<T>(v: T) => v);
-    const key = s.key ? redact(s.key).slice(0, KEY_MAX) : undefined;
-    const signal: Signal = { id: newSignalId(), type, source: HUB, at: new Date(this.now()).toISOString(), data: redact(s.data), ...(key ? { key } : {}), external: s.external };
+    const key = this.line(s.key, KEY_MAX);
+    const subject = this.line(s.subject, SUBJECT_MAX);
+    const signal: Signal = {
+      id: newSignalId(),
+      type,
+      source: HUB,
+      at: new Date(this.now()).toISOString(),
+      data: this.redact(s.data),
+      ...(key ? { key } : {}),
+      ...(subject ? { subject } : {}),
+      external: s.external,
+    };
     for (const t of this.d.triggers()) {
       if (!t.enabled || skip?.(t.id) || !(t.on ?? []).some((e) => e.type === type)) continue;
       try {
@@ -467,6 +486,20 @@ export class SignalSources {
         this.log(`${type} did not reach trigger ${t.id}: ${message(e)}`);
       }
     }
+  }
+
+  private redact<T>(v: T): T {
+    return this.d.redact ? this.d.redact(v) : v;
+  }
+
+  /**
+   * A signal's key or subject as kept: cut to its bound with room to spare (so redacting costs no more than that), then
+   * known secrets taken out (one that starts within the bound is still whole in the spare room), then cut to `max`.
+   */
+  private line(v: string | undefined, max: number): string | undefined {
+    if (typeof v !== "string") return undefined;
+    const kept = this.redact(v.trim().slice(0, max + LINE_SPARE)).slice(0, max).trim();
+    return kept || undefined;
   }
 
   /** A plugin's declarations, checked (and a refused one said in its log) the first time they are read. */

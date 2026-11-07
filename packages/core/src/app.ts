@@ -494,6 +494,9 @@ export class Hub {
       sink: { deliver: (triggerId, signals, reason, o) => this.triggers.deliver(triggerId, signals, reason, o) },
       bus: this.bus,
       machines: () => this.machines.list().map((m) => ({ id: m.id, name: m.name, status: m.status })),
+      // As the runner decides it (carriesTaint, cardFromOutside): a task that read the web itself taints only its session.
+      taskTainted: (t) => t.tainted === true || (typeof t.conversationId === "string" && this.store.conversationTainted(t.conversationId)),
+      task: (id) => this.store.getTask(id),
       redact: (v) => this.vault.redactor.value(v),
     });
     this.triggers = new CoreTriggers({

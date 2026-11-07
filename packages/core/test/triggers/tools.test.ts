@@ -152,6 +152,22 @@ describe("the trigger tools in the chat", () => {
     expect(patched._meta?.taint).toBeFalsy();
   });
 
+  it("takes a given signal as outside content as its source declares, by default", async () => {
+    const report = await h.engine.test({
+      trigger: { name: "Defaults", prompt: "Look.", on: [{ type: "hub.feed.post" }, { type: "hub.task.finished" }, { type: "mail.message" }], script: { code: `export default () => ({ note: "seen" })` } },
+      signals: [{ type: "hub.feed.post", data: {} }, { type: "hub.task.finished", data: {} }, { type: "mail.message", data: {} }, { type: "manual", data: {} }, { type: "web.webhook", data: {} }, { type: "other.thing", data: {} }, { type: "hub.feed.post", data: {}, external: false }],
+    });
+    expect(report.runs.map((r) => [r.signals[0].type, r.external])).toEqual([
+      ["hub.feed.post", true],
+      ["hub.task.finished", false],
+      ["mail.message", true],
+      ["manual", false],
+      ["web.webhook", true],
+      ["other.thing", true],
+      ["hub.feed.post", false],
+    ]);
+  });
+
   it("marks a test outside content when its script read some", async () => {
     const id = idOf(
       await h.invokeText("create", {
