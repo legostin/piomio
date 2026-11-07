@@ -499,6 +499,8 @@ export interface Message {
    */
   quiet?: boolean;
   createdAt: ISODate;
+  /** When it last changed (its text, status, a card's answer): a device that kept the dialog asks for what changed after it. */
+  updatedAt?: ISODate;
 }
 
 /** What a setup chat makes ("New channel", "Add agent"). */
@@ -588,6 +590,9 @@ export interface Task {
   title: string;
   goal: string;
   status: TaskStatus;
+  /** Required computer. The brain is resolved when the task runs. */
+  machineId?: string;
+  /** Legacy placement snapshot; only its computer is a constraint. */
   brainRef?: string;
   createdBy: "user" | "agent" | "trigger";
   triggerId?: string;
@@ -785,6 +790,8 @@ export interface ProbeResult {
    */
   catalog?: ModelProfile[];
   detail?: string;
+  /** The brain's host did not answer (its connection closed or timed out): not connected for now, not a setup problem. */
+  unreachable?: boolean;
 }
 
 // ---------- Brain sign-in from the chat ----------
@@ -1168,7 +1175,11 @@ export interface Computer {
  * answer, running a command, reading or editing files, on the web, calling another tool, or waiting for the user to
  * approve a call.
  */
-export type WorkStep = "thinking" | "writing" | "command" | "reading" | "editing" | "web" | "tool" | "approval";
+/**
+ * What a turn does now. "approval": it waits for the person's permission; "offline": its brains (or its computers) are
+ * not connected for now (the hub switching machines, a computer asleep, a plugin restarting), and it goes on once they are.
+ */
+export type WorkStep = "thinking" | "writing" | "command" | "reading" | "editing" | "web" | "tool" | "approval" | "offline";
 
 /** One turn in progress on a machine. */
 export interface MachineWork {
@@ -1192,7 +1203,10 @@ export interface MachineActivity {
   name: string;
   online: boolean;
   work: MachineWork[];
-  /** The version an "Update" on this machine would bring: a newer release for a server's hub, the hub's for a node. */
+  /**
+   * The version an "Update" on this machine would bring: a newer release for a server's hub, the hub's for a node or a
+   * hub replica behind it (a row of its own, or the row of the machine of its name).
+   */
   update?: string;
   /** That update is under way. */
   updating?: boolean;
@@ -1272,7 +1286,7 @@ export interface Replica {
   name: string;
   /** Device-app addresses (https, the hub's shared certificate). */
   urls: string[];
-  /** Who leads first: 1, then 2… */
+  /** Who leads first: the lowest number (the primary), then the next… */
   priority: number;
   createdAt: ISODate;
 }
@@ -1284,6 +1298,14 @@ export interface ReplicaState extends Replica {
   role: "leader" | "standby" | "unknown";
   sealed: boolean;
   lastSeenAt?: ISODate;
+  /** First in the order: it leads whenever it is up, and phones try it right after the leader (replica_primary). */
+  primary?: boolean;
+  /** The Piomio it runs (its last hello; unset while it has not answered). */
+  version?: string;
+  /** From the leader, for a replica behind it: the version its Update brings (POST /api/machines/<its id>/update). */
+  update?: string;
+  /** That update is under way. */
+  updating?: boolean;
 }
 
 // ---------- Devices (phones running the Piomio app) ----------

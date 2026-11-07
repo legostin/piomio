@@ -64,7 +64,7 @@ import { MachineActivityFeed } from "./activity.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { InviteRegistry } from "./invites.ts";
 import { deviceTls, type DeviceTls } from "./devices-tls.ts";
-import { deviceUrls, hubName, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
+import { deviceUrls, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
 import { createCoreCall } from "./core-call.ts";
 import { CoreTriggers, TRIGGERS_ID } from "./signals/core-host.ts";
 import { proxiedGet } from "./signals/net.ts";
@@ -88,6 +88,7 @@ import { HubCommands } from "./commands.ts";
 import { buildMainApp } from "./server/main-app.ts";
 import { buildConsoleApp } from "./server/console-app.ts";
 import { buildDeviceApp } from "./server/device-app.ts";
+import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
 import type { FastifyInstance } from "fastify";
 
@@ -156,6 +157,8 @@ export class Hub {
   setups: MachineSetups;
   /** This hub's place among its replicas (cluster.ts); a hub of one always leads. */
   cluster: Cluster;
+  /** The realtime sockets this replica serves from its own bus: they follow the lead (server/realtime.ts). */
+  readonly realtime = new RealtimeSockets();
   /** What every machine is doing now, for the machines block (activity.ts). */
   activity: MachineActivityFeed;
   /** Updates on the person's button: this hub's on a server install, and the machines' (self-update.ts). */
@@ -279,7 +282,7 @@ export class Hub {
     this.cluster = new Cluster(this);
     this.machines.cluster = this.cluster;
     this.machines.version = config.version;
-    this.machines.here = () => ({ id: this.here(), name: hubName() });
+    this.machines.here = () => ({ id: this.here(), name: this.machines.localName() });
     this.machines.boundTo = (id) => this.agents.get(id)?.machines;
     this.activity = new MachineActivityFeed(this.bus, this.machines);
     this.updates = new HubUpdates({
@@ -291,10 +294,13 @@ export class Hub {
       restart: () => void process.kill(process.pid, "SIGTERM"),
       machine: (id) => {
         const m = this.machines.get(id);
-        return m ? { info: m.info, online: m.status === "online" } : undefined;
+        return m ? { name: m.name, info: m.info, online: m.status === "online" } : undefined;
       },
       sendNode: (id, update) => this.machines.sendUpdate(id, update),
       appUpdateNode: (id) => this.machines.appUpdate(id),
+      // Standby replicas behind this hub update themselves when asked over their link (cluster.ts).
+      replicas: () => this.cluster.replicaPeers(),
+      askReplica: (id, version) => this.cluster.askUpdate(id, version),
     });
     this.activity.updates = this.updates;
     this.bus.on("machine.updated", (m: { id?: string; info?: MachineInfo } | undefined) => m?.id && this.updates.machineChanged(m.id, m.info));
@@ -606,7 +612,7 @@ export class Hub {
       roots: () => this.plugins.enabledLayouts().filter((l) => l.formats.includes("claude") && !l.manifest.builtin).map((l) => l.dir),
       here: () => this.here(),
       auto: this.auto,
-      ownedReadRoots: (ctx) => this.machines.canonical(ctx.machineId ?? "local") === this.here() ? ownedWorkspaces(this.workspaceRoots(), ctx.agentId, this.workspaceKeys(ctx.agentId)) : [],
+      ownedFolders: (ctx) => this.machines.canonical(ctx.machineId ?? "local") === this.here() ? ownedWorkspaces(this.workspaceRoots(), ctx.agentId, this.workspaceKeys(ctx.agentId)) : [],
       ownedFiles: (action, ctx) => this.ownsFiles(action, ctx),
       machineName: (id) => this.runner.computerName(id),
       egress: this.egressGuard,
@@ -731,7 +737,7 @@ export class Hub {
   /** The phone's link for an invite code, while phones can reach the hub (the device port or the link). */
   phoneLink(code: string): string | undefined {
     const urls = this.phoneUrls();
-    return urls.length ? pairingLink({ code, hubName: hubName(), fingerprint: this.deviceTls().fingerprint, urls }) : undefined;
+    return urls.length ? pairingLink({ code, hubName: this.machines.localName(), fingerprint: this.deviceTls().fingerprint, urls }) : undefined;
   }
 
   /** One invite for any device: the shareable /join link and, while phones can reach the hub, the phone's QR. */
@@ -750,7 +756,7 @@ export class Hub {
     if (!urls.length) throw new LocalizedError("device.noAddress", undefined, 409);
     const { fingerprint } = this.deviceTls();
     const { code, expiresAt } = this.devices.createPairingCode();
-    const link = pairingLink({ code, hubName: hubName(), fingerprint, urls });
+    const link = pairingLink({ code, hubName: this.machines.localName(), fingerprint, urls });
     return { code, expiresAt, link, qrSvg: qrSvg(link), urls, fingerprint };
   }
 
@@ -840,8 +846,9 @@ export class Hub {
     let tasks = 0;
     for (const t of this.store.listTasks({ status: open, limit: 10_000 })) {
       const brainRef = t.brainRef && brainMoved(t.brainRef, from, to);
-      if (brainRef === t.brainRef) continue;
-      this.store.updateTask(t.id, { brainRef });
+      const machineId = t.machineId === from ? to : t.machineId;
+      if (brainRef === t.brainRef && machineId === t.machineId) continue;
+      this.store.updateTask(t.id, { brainRef, machineId });
       tasks++;
     }
     let rules = 0;
@@ -944,7 +951,7 @@ export class Hub {
     const here = this.here();
     const replicas = this.db.prepare("select id, name from replicas where revoked = 0 and id != ? order by priority").all(here) as Array<{ id: string; name: string }>;
     return [
-      { id: here, aliases: this.machines.aliases(), name: hubName(), online: true },
+      { id: here, aliases: this.machines.aliases(), name: this.machines.localName(), online: true },
       ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online" })),
       ...replicas.map((r) => ({ id: r.id, name: r.name, online: false, standby: true })),
     ];
@@ -1277,6 +1284,8 @@ export class Hub {
     await this.mcpClients.closeAll();
     // Machines that reached this replica while it led reconnect, and land on the leader (directly or over the link).
     this.machines.closeAll();
+    // So do the phones and windows: this replica's bus has nothing more to tell them.
+    this.realtime.closeAll();
   }
 
   async start(opts: { listen?: boolean } = {}): Promise<void> {

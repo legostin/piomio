@@ -1,8 +1,8 @@
 //! Updates from the project's GitHub releases (tauri-plugin-updater): `latest.json` of the latest release, its files
 //! signed with the project's key (the public half is in tauri.conf.json, so nothing else installs). Checked a minute
-//! after start and then every hour, downloaded in the background; installed only when the person picks
-//! "Install update" in the menu or presses Update in the hub (`--install-update`, install_now). The hub stops cleanly
-//! first; the new version starts it again.
+//! after start and then every hour, downloaded in the background (the menu item says how much is here); installed only
+//! when the person picks "Install update" in the menu or presses Update in the hub (`--install-update`, install_now).
+//! The hub stops cleanly first; the new version starts it again.
 //! PIOMIO_UPDATE_URL points the check at another latest.json (a local test, the test build over plain http): the
 //! signature still has to match.
 
@@ -31,9 +31,47 @@ enum Checked {
 pub enum Item {
   Check,
   Checking,
+  /// A release on its way down, and how much of it is here once the first bytes come.
+  Downloading(String, Option<Got>),
   Install(String),
   Installing,
   Failed,
+}
+
+/// How much of a download is here: whole percents when its size is known, else whole megabytes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Got {
+  Percent(u8),
+  Megabytes(u64),
+}
+
+/// A download as the menu follows it: a new item only when its text would change, so a hundred or so at most.
+struct Progress {
+  version: String,
+  bytes: u64,
+  shown: Item,
+}
+
+impl Progress {
+  fn new(version: String) -> Progress {
+    let shown = Item::Downloading(version.clone(), None);
+    Progress { version, bytes: 0, shown }
+  }
+
+  /// `chunk` more bytes of `total`: the item to show now, or None when it says what the menu already does.
+  fn add(&mut self, chunk: usize, total: Option<u64>) -> Option<Item> {
+    self.bytes += chunk as u64;
+    let got = match total {
+      Some(total) if total > 0 => Got::Percent((self.bytes.min(total) * 100 / total) as u8),
+      _ => Got::Megabytes(self.bytes / 1_000_000),
+    };
+    let item = Item::Downloading(self.version.clone(), Some(got));
+    if item == self.shown {
+      return None;
+    }
+    self.shown = item.clone();
+    Some(item)
+  }
 }
 
 struct Ready {
@@ -80,25 +118,30 @@ pub fn on_menu(app: &AppHandle) {
   }
 }
 
-/// The hub's Update button (packages/core/src/self-update.ts runs the app with `--install-update`): installs what is
-/// ready, else checks, downloads and installs it. When there is nothing to install or the check fails, the hub hears
-/// it on its stdin (`update-failed <why>`), so its button comes back and the person is told.
+/// The hub's Update button (packages/core/src/self-update.ts runs the app with `--install-update`): checks first, so a
+/// newer release replaces one downloaded earlier (the leading replica asks a replica for at least its own version),
+/// then installs the newest. When there is nothing to install, or the check fails with nothing downloaded, the hub
+/// hears it on its stdin (`update-failed <why>`), so its button comes back and the person is told.
 pub fn install_now(app: &AppHandle) {
   let app = app.clone();
   std::thread::spawn(move || {
     let st = app.state::<AppState>();
     loop {
-      if st.updates.ready.lock().unwrap().is_some() {
-        return install(&app);
-      }
       let why = match tauri::async_runtime::block_on(check(&app, true)) {
-        Checked::Ready => continue,
+        // The latest release is downloaded: just now, or it already was.
+        Checked::Ready => return install(&app),
         Checked::Busy => {
           std::thread::sleep(Duration::from_secs(1));
           continue;
         }
         Checked::Nothing => "the latest release has no newer version for this computer".to_string(),
-        Checked::Failed(e) => e,
+        Checked::Failed(e) => {
+          // No answer from the releases: what was downloaded earlier still installs.
+          if st.updates.ready.lock().unwrap().is_some() {
+            return install(&app);
+          }
+          e
+        }
       };
       st.supervisor.send_line(&format!("update-failed {}", why.replace(['\r', '\n'], " ")));
       return;
@@ -156,7 +199,18 @@ async fn fetch(app: &AppHandle, had: Option<&str>) -> Result<Option<Ready>, Stri
   if had == Some(update.version.as_str()) {
     return Ok(None);
   }
-  let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+  // With nothing downloaded yet the item said "Checking": it follows the download instead, which takes minutes on a
+  // slow network (a release is over a hundred megabytes). With one downloaded, the item keeps offering that one.
+  let mut progress = had.is_none().then(|| Progress::new(update.version.clone()));
+  if let Some(p) = &progress {
+    show(app, p.shown.clone());
+  }
+  let on_chunk = |chunk: usize, total: Option<u64>| {
+    if let Some(item) = progress.as_mut().and_then(|p| p.add(chunk, total)) {
+      show_soon(app, item);
+    }
+  };
+  let bytes = update.download(on_chunk, || {}).await.map_err(|e| e.to_string())?;
   Ok(Some(Ready { update, bytes }))
 }
 
@@ -185,6 +239,40 @@ fn show(app: &AppHandle, item: Item) {
   let menu_item = st.tray.lock().unwrap().as_ref().and_then(|t| t.update.clone());
   if let Some(menu_item) = menu_item {
     let _ = menu_item.set_text(crate::tray::update_text(crate::i18n::texts(), &item));
-    let _ = menu_item.set_enabled(!matches!(item, Item::Checking | Item::Installing));
+    let _ = menu_item.set_enabled(!matches!(item, Item::Checking | Item::Downloading(..) | Item::Installing));
+  }
+}
+
+/// `show` without waiting for the main thread, so the download never pauses for the menu. The main thread takes these
+/// in order, before any `show` that comes after them.
+fn show_soon(app: &AppHandle, item: Item) {
+  let handle = app.clone();
+  let _ = app.run_on_main_thread(move || show(&handle, item));
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn follows_a_download_in_whole_percents() {
+    let mut p = Progress::new("0.2.43".into());
+    assert_eq!(p.shown, Item::Downloading("0.2.43".into(), None));
+    let total = Some(1_000);
+    assert_eq!(p.add(4, total), Some(Item::Downloading("0.2.43".into(), Some(Got::Percent(0)))));
+    // Still 0%: the menu already says so.
+    assert_eq!(p.add(5, total), None);
+    assert_eq!(p.add(191, total), Some(Item::Downloading("0.2.43".into(), Some(Got::Percent(20)))));
+    assert_eq!(p.add(800, total), Some(Item::Downloading("0.2.43".into(), Some(Got::Percent(100)))));
+    // More than the server announced never shows over 100%.
+    assert_eq!(p.add(50, total), None);
+  }
+
+  #[test]
+  fn counts_megabytes_when_the_size_is_unknown() {
+    let mut p = Progress::new("0.2.43".into());
+    assert_eq!(p.add(400_000, None), Some(Item::Downloading("0.2.43".into(), Some(Got::Megabytes(0)))));
+    assert_eq!(p.add(400_000, Some(0)), None);
+    assert_eq!(p.add(1_300_000, None), Some(Item::Downloading("0.2.43".into(), Some(Got::Megabytes(2)))));
   }
 }

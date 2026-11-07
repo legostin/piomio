@@ -48,6 +48,7 @@ const msgFrom = (r: any): Message => ({
   channel: r.channel ?? undefined,
   ...(r.quiet ? { quiet: true } : {}),
   createdAt: r.created_at,
+  updatedAt: r.updated_at ?? r.created_at,
 });
 
 const taskFrom = (r: any): Task => ({
@@ -59,6 +60,7 @@ const taskFrom = (r: any): Task => ({
   title: r.title,
   goal: r.goal,
   status: r.status,
+  machineId: r.machine_id ?? undefined,
   brainRef: r.brain_ref ?? undefined,
   createdBy: r.created_by,
   triggerId: r.trigger_id ?? undefined,
@@ -285,10 +287,11 @@ export class Store {
   // ---------- messages ----------
 
   addMessage(m: Omit<Message, "id" | "createdAt"> & { id?: string }): Message {
-    const msg: Message = { ...m, id: m.id ?? newId("m_"), createdAt: nowIso() };
+    const at = nowIso();
+    const msg: Message = { ...m, id: m.id ?? newId("m_"), createdAt: at, updatedAt: at };
     this.db
-      .prepare("insert into messages(id, conversation_id, role, parts, status, agent_id, task_id, brain_ref, model, effort, channel, quiet, created_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(msg.id, msg.conversationId, msg.role, JSON.stringify(msg.parts), msg.status, msg.agentId ?? null, msg.taskId ?? null, msg.brainRef ?? null, msg.model ?? null, msg.effort ?? null, msg.channel ?? null, msg.quiet ? 1 : 0, msg.createdAt);
+      .prepare("insert into messages(id, conversation_id, role, parts, status, agent_id, task_id, brain_ref, model, effort, channel, quiet, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(msg.id, msg.conversationId, msg.role, JSON.stringify(msg.parts), msg.status, msg.agentId ?? null, msg.taskId ?? null, msg.brainRef ?? null, msg.model ?? null, msg.effort ?? null, msg.channel ?? null, msg.quiet ? 1 : 0, msg.createdAt, at);
     this.touchConversation(msg.conversationId);
     this.bus.emit("message.created", msg);
     return msg;
@@ -300,6 +303,7 @@ export class Store {
     if (patch.status) this.db.prepare("update messages set status = ? where id = ?").run(patch.status, id);
     if (patch.brainRef) this.db.prepare("update messages set brain_ref = ? where id = ?").run(patch.brainRef, id);
     if (patch.model) this.db.prepare("update messages set model = ? where id = ?").run(patch.model, id);
+    this.db.prepare("update messages set updated_at = ? where id = ?").run(nowIso(), id);
     const m = this.getMessage(id);
     if (m && emit) this.bus.emit("message.updated", m);
     return m;
@@ -318,11 +322,19 @@ export class Store {
     return r ? msgFrom(r) : undefined;
   }
 
-  listMessages(conversationId: string, opts: { limit?: number; before?: string } = {}): Message[] {
+  /**
+   * The newest `limit` messages, oldest first: those before `before` (an older page), or those that changed after
+   * `since` (what a device that kept the dialog has not seen; `limit` of them means there may be more).
+   */
+  listMessages(conversationId: string, opts: { limit?: number; before?: string; since?: string } = {}): Message[] {
     const limit = opts.limit ?? 200;
     const rows = opts.before
       ? this.db.prepare("select * from messages where conversation_id = ? and created_at < ? order by created_at desc limit ?").all(conversationId, opts.before, limit)
-      : this.db.prepare("select * from messages where conversation_id = ? order by created_at desc limit ?").all(conversationId, limit);
+      : opts.since
+        ? this.db
+            .prepare("select * from messages where conversation_id = ? and coalesce(updated_at, created_at) > ? order by created_at desc limit ?")
+            .all(conversationId, opts.since, limit)
+        : this.db.prepare("select * from messages where conversation_id = ? order by created_at desc limit ?").all(conversationId, limit);
     return rows.map(msgFrom).reverse();
   }
 
@@ -359,7 +371,7 @@ export class Store {
     const task: Task = { ...t, id, conversationId: conv.id, status: t.status ?? "queued", createdAt: now, updatedAt: now };
     this.db
       .prepare(
-        "insert into tasks(id, conversation_id, parent_conversation_id, parent_task_id, agent_id, title, goal, status, brain_ref, created_by, trigger_id, background, result, error, resume_at, kind, tainted, from_agent, feed_id, thinking, skill, deliver, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "insert into tasks(id, conversation_id, parent_conversation_id, parent_task_id, agent_id, title, goal, status, brain_ref, created_by, trigger_id, background, result, error, resume_at, kind, tainted, from_agent, feed_id, thinking, skill, deliver, machine_id, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       )
       .run(
         task.id,
@@ -384,6 +396,7 @@ export class Store {
         task.thinking ? JSON.stringify(task.thinking) : null,
         task.skill ?? null,
         task.deliver ?? null,
+        task.machineId ?? null,
         now,
         now,
       );
@@ -405,8 +418,8 @@ export class Store {
     return this.db.prepare("select * from tasks order by created_at desc limit ?").all(limit).map(taskFrom);
   }
 
-  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds">>): Task | undefined {
-    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds" };
+  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds">>): Task | undefined {
+    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", machineId: "machine_id", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds" };
     for (const [k, col] of Object.entries(cols)) {
       if (k in patch) this.db.prepare(`update tasks set ${col} = ? where id = ?`).run((patch as any)[k] ?? null, id);
     }

@@ -69,7 +69,7 @@ Piomio keeps an icon in the menu bar (macOS) or the system tray (Windows). On a 
 | Item | What it does |
 |---|---|
 | The first line | The state: **Starting…**, **Running**, **Restarting…**, **Stopped: it kept crashing**, **Port … is taken**, or **Machine of …** when this computer is connected to another hub. |
-| **Check for updates** | Looks for a new release now. When one is downloaded, it turns into **Install update …**. See [Updates](updates.md). |
+| **Check for updates** | Looks for a new release now. While one downloads, it shows how much is done; once downloaded, it turns into **Install update …**. See [Updates](updates.md). |
 | **Open Piomio** | Opens the window. |
 | **Start at login** | Starts Piomio in the background when you sign in to your computer. On by default. |
 | **Show log** | Opens the log: the hub's, or the machine daemon's when this computer is a machine of another hub. |

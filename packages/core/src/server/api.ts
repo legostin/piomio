@@ -15,16 +15,20 @@ import { toUiEvent } from "../bus.ts";
 import { agentFromMarkdown, localizedAgent, patchAgent } from "../agents.ts";
 import { draftPatch } from "../agent-drafts.ts";
 import { applyThinking } from "../thinking.ts";
-import { pipeToLeader } from "./forward.ts";
+import { canPipeToLeader, pipeToLeader } from "./forward.ts";
+import { isPing, keepAlive, PONG } from "./realtime.ts";
 import { attachmentDisposition, HttpError, safeFile, sendFile } from "./http.ts";
 import { UpdateError } from "../self-update.ts";
 import { imageFileName, MediaError, parseImageUrl } from "../media.ts";
 import { entryRef, googleScopes, listCatalog, listIntegrations, logoFile } from "../integrations.ts";
 import { callbackParams } from "../connections.ts";
-import { hubName, machineHubUrl, qrSvg } from "../pairing.ts";
+import { machineHubUrl, qrSvg } from "../pairing.ts";
 import { attachmentFromPath, discardAttachment, formatSize, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveAttachment, type AttachmentPart } from "../attachments.ts";
 import { MAX_TRANSCRIBE_BYTES, TranscribeError } from "../transcribe.ts";
 import { heardPrefixes } from "../speech/interruption.ts";
+
+/** An ISO timestamp as the hub writes them (nowIso). */
+const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/;
 
 export interface ApiOptions {
   kind: "web" | "device";
@@ -32,6 +36,10 @@ export interface ApiOptions {
   bootstrap(req: FastifyRequest): Record<string, unknown>;
   /** May this request open the realtime socket (the web UI checks Origin). */
   wsAllowed(req: FastifyRequest): boolean;
+  /** The web UI's realtime socket on a standby: true when it went to the leader instead (main-app.ts). */
+  relaySocket?(socket: WebSocket, req: FastifyRequest): boolean;
+  /** Would the web UI's socket go to the leader if it opened now (the one served here then reconnects there). */
+  relays?(req: FastifyRequest): boolean;
   /** Every realtime socket as it opens (the device port closes a revoked phone's sockets). */
   onSocket?(socket: WebSocket, req: FastifyRequest): void;
   /** The caller's auth hook: a file upload runs it before its body (up to 25 MB) is read. */
@@ -46,7 +54,7 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     return {
       ...opts.bootstrap(req),
       version: cfg.version,
-      hubName: hubName(),
+      hubName: hub.machines.localName(),
       publicUrl: cfg.publicUrl,
       consoleUrl: cfg.consoleUrl,
       // The default agent's dialog: what "/" opens.
@@ -132,8 +140,10 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     return { ok: true };
   });
   api.get("/api/conversations/:id/messages", async (req) => {
-    const q = req.query as { before?: string; limit?: string };
-    return hub.store.listMessages((req.params as any).id, { before: q.before, limit: Math.min(Number(q.limit ?? 100), 500) });
+    const q = req.query as { before?: string; since?: string; limit?: string };
+    // `since`: a device that kept the dialog (web lib/cache.ts) asks only for what changed after its mark.
+    const since = typeof q.since === "string" && ISO.test(q.since) ? q.since : undefined;
+    return hub.store.listMessages((req.params as any).id, { before: q.before, since, limit: Math.min(Number(q.limit ?? 100), 500) });
   });
   api.post("/api/conversations/:id/messages", async (req) => {
     const id = (req.params as any).id;
@@ -542,6 +552,11 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   api.get("/api/machines/activity", async () => hub.activity.view());
   api.get("/api/machines/setups", async () => hub.machines.list().map((m) => hub.setups.view(m.id)));
   api.get("/api/cluster", async () => hub.cluster.states());
+  // The star on a replica in Machines: the same as replica_primary in the chat.
+  api.post("/api/cluster/primary", async (req) => {
+    hub.cluster.setPrimary(String((req.body as any)?.replica ?? ""));
+    return hub.cluster.states();
+  });
   api.get("/api/machines/:id/setup", async (req) => {
     const m = hub.machines.find((req.params as any).id);
     if (!m) throw new HttpError(404, "machine.notFound");
@@ -916,13 +931,21 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       socket.close(4403, "origin");
       return;
     }
-    // A phone on a standby replica: its events come from the leader.
-    if ((req as any).device && pipeToLeader(hub, socket as unknown as WebSocket, req)) return;
+    const ws = socket as unknown as WebSocket;
+    // A phone, or the web UI, on a standby replica: its events come from the leader. The client's leg here is still
+    // watched: a phone that went away is dropped, and its socket on the leader with it.
+    if (((req as any).device && pipeToLeader(hub, ws, req)) || opts.relaySocket?.(ws, req)) return keepAlive(ws);
     const send = (ev: unknown) => {
       if (socket.readyState === 1) socket.send(JSON.stringify(ev));
     };
-    opts.onSocket?.(socket as unknown as WebSocket, req);
+    opts.onSocket?.(ws, req);
+    // Served from this replica's bus: when the lead moves, it reconnects to the leader (server/realtime.ts).
+    hub.realtime.add(ws, () => ((req as any).device ? canPipeToLeader(hub) : !!opts.relays?.(req)));
+    keepAlive(ws);
+    // The phone app's own socket asks without streamed text (only its chat page shows it, over its own socket).
+    const deltas = (req.query as { deltas?: string } | undefined)?.deltas !== "0";
     const unsub = hub.bus.onAny((name, payload) => {
+      if (!deltas && name === "message.delta") return;
       if (name === "approval.created" || name === "approval.resolved") {
         send({ type: "approval.pending", data: { count: hub.approvals.pendingCount() } });
         return;
@@ -930,12 +953,13 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
       const ev = toUiEvent(name, payload);
       if (ev) send(ev);
     });
-    const ping = setInterval(() => socket.ping(), 25_000);
-    socket.on("close", () => {
-      unsub();
-      clearInterval(ping);
-    });
+    socket.on("close", () => unsub());
     socket.on("message", (raw) => {
+      // The page's heartbeat (lib/socket.ts): it cannot see pings.
+      if (isPing(raw)) {
+        if (socket.readyState === 1) socket.send(PONG);
+        return;
+      }
       // Client → plugin backend messages: {pluginId, payload}
       try {
         const m = JSON.parse(String(raw));

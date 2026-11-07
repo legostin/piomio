@@ -4,6 +4,7 @@
 // behaves as it always did. Replicas talk over the device app: TLS with the hub's one certificate (pinned), every
 // request signed with the replica's own key.
 
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,10 +26,11 @@ import {
 import type WebSocket from "ws";
 import type { RpcPeer } from "@piomio/shared";
 import { json } from "./db.ts";
-import { t } from "./i18n.ts";
+import { LocalizedError, t } from "./i18n.ts";
 import type { Hub } from "./app.ts";
 import { ruleMatches } from "./policy/engine.ts";
 import { dialLink, linkPeer, serveLink, type LinkAnswer, type LinkCall } from "./replica-link.ts";
+import { UpdateError, type ReplicaPeer, type SelfUpdateState, type UpdateKind, type UpdateRefusal } from "./self-update.ts";
 
 /** piomio.db tables every replica shares (the rest stays per replica: audit's hash chain, pairing codes). */
 export const MAIN_TABLES: ReplTable[] = [
@@ -112,6 +114,14 @@ interface Hello {
   stale?: boolean;
   vectors: Record<DbName, Vector>;
   version: string;
+  /** Its main app takes the web-UI calls a standby checked and sends over the link (replica-link.ts LINK_SESSION). */
+  webUi?: boolean;
+  /** Its security console takes the console calls a standby checked and sends over the link, the same way. */
+  console?: boolean;
+  /** How it updates itself when the leader asks (replica.update); unset: a Piomio from before it could be asked. */
+  updates?: UpdateKind;
+  /** Its own update: the version it installs now, or the last one that failed and why. */
+  update?: SelfUpdateState;
 }
 
 interface Peer extends Replica {
@@ -121,6 +131,8 @@ interface Peer extends Replica {
   lastSeen: number;
   url?: string;
   hello?: Hello;
+  /** When the last hello that answered was asked for. */
+  helloAt: number;
   pulling: Record<DbName, boolean>;
   /** The last pull from it found nothing more. */
   current: Record<DbName, number>;
@@ -137,6 +149,74 @@ const rowToReplica = (r: any): Replica & { publicKey: string; nodeUrls: string[]
   createdAt: r.created_at,
   publicKey: r.public_key,
 });
+
+/**
+ * Who leads first: the lower priority, then the lower id. The first replica in this order is the primary, the one the
+ * person chose (replica_primary) or else the one the cluster started on.
+ */
+export function ahead(a: { id: string; priority: number }, b: { id: string; priority: number }): boolean {
+  return a.priority < b.priority || (a.priority === b.priority && a.id < b.id);
+}
+
+/** A peer as the lead choice sees it: online, with its last hello. */
+export interface LeadPeer {
+  id: string;
+  priority: number;
+  role: Role;
+  /** It led into a sleep and has yet to hear who led meanwhile. */
+  stale?: boolean;
+  wantLead: boolean;
+  /** Our last pulls from it found nothing more (both databases). */
+  caughtUp: boolean;
+}
+
+export interface LeadView {
+  me: { id: string; priority: number };
+  role: Role;
+  /** This replica's lead went stale: it led into a sleep (see Cluster.noticeSleep). */
+  stale: boolean;
+  handingOver: boolean;
+  /** Since this replica started. */
+  upMs: number;
+  /** Since it last came back from a sleep (since it started, if it has not slept). */
+  awakeMs: number;
+  awakeBeforeLead: number;
+  /** The peers that answer now. */
+  peers: LeadPeer[];
+}
+
+export type LeadStep =
+  | { do: "standby"; why: string; stale?: boolean }
+  | { do: "handOver" }
+  | { do: "lead"; why: string }
+  /** No switch; `wantLead` (when set) is what this replica now tells the leader. */
+  | { do: "stay"; wantLead?: boolean };
+
+/**
+ * The lead choice at each heartbeat. The replica first in the order (the primary) leads whenever it is up and caught
+ * up; one behind it leads only while no replica ahead of it answers, and gives the lead back when one asks for it. So a
+ * primary that stays up keeps the lead however often the others sleep, wake or drop off, and one that slept asks for
+ * the lead back only after it has stayed awake a while (awakeBeforeLead).
+ */
+export function leadStep(v: LeadView): LeadStep {
+  const better = v.peers.filter((p) => ahead(p, v.me));
+  const leader = v.peers.find((p) => p.role === "leader");
+  if (v.role === "leader") {
+    // Back from a sleep another replica led through: that one keeps the lead. This one held on to what it had before
+    // it slept (plugins' memory, timers, its copies of rows): it stands down, catches up and asks for the lead later.
+    if (leader && v.stale) return { do: "standby", why: "another replica led while this one slept", stale: true };
+    // After a split both led: the better one keeps it. A better one that is back and caught up gets it.
+    if (better.some((p) => p.role === "leader" && !p.stale)) return { do: "standby", why: "a replica ahead of this one leads" };
+    if (!v.handingOver && better.some((p) => p.wantLead)) return { do: "handOver" };
+    return { do: "stay" };
+  }
+  if (better.length) return { do: "stay", wantLead: false };
+  if (!leader) return v.upMs >= STARTUP_GRACE_MS ? { do: "lead", why: v.peers.length ? "no replica leads" : "no other replica answers" } : { do: "stay" };
+  // A replica behind this one leads (it took over while this one was away): catch up, then ask for the lead. Back from
+  // a sleep, it asks only once it has stayed awake a while: a computer that naps all night leaves the lead with the
+  // replica that stays up, instead of both switching at every wake.
+  return { do: "stay", wantLead: leader.caughtUp && v.awakeMs >= v.awakeBeforeLead };
+}
 
 /** piomio://replica?c=<code>&u=<url>&u=…&fp=<fingerprint> */
 export function replicaLink(code: string, urls: string[], fingerprint: string): string {
@@ -189,6 +269,8 @@ export class Cluster {
   private staleUntil = 0;
   /** How long a replica back from a sleep stays awake before it asks for the lead (tests shorten it). */
   awakeBeforeLead = AWAKE_BEFORE_LEAD_MS;
+  /** Tells this replica's main app that a call came over a link (replica-link.ts LINK_MARK); it never leaves this process. */
+  private readonly mark = randomBytes(32).toString("base64url");
 
   constructor(hub: Hub) {
     this.hub = hub;
@@ -306,7 +388,7 @@ export class Cluster {
       const base = rowToReplica(r);
       const p = this.peers.get(r.id);
       if (p) Object.assign(p, base);
-      else this.peers.set(r.id, { ...base, online: false, lastSeen: 0, pulling: { main: false, vault: false }, current: { main: 0, vault: 0 }, filesAt: 0, filesBusy: false });
+      else this.peers.set(r.id, { ...base, online: false, lastSeen: 0, helloAt: 0, pulling: { main: false, vault: false }, current: { main: 0, vault: 0 }, filesAt: 0, filesBusy: false });
     }
     for (const id of [...this.peers.keys()]) if (!seen.has(id)) this.peers.delete(id);
   }
@@ -365,8 +447,10 @@ export class Cluster {
     for (const p of this.peers.values()) this.dial(p);
     await Promise.all(
       [...this.peers.values()].map(async (p) => {
+        const asked = Date.now();
         try {
           p.hello = await this.callJson<Hello>(p, "GET", "/api/replica/hello", undefined, 3_000);
+          p.helloAt = asked;
           p.online = true;
           p.lastSeen = Date.now();
         } catch {
@@ -380,7 +464,13 @@ export class Cluster {
       if (!p.filesBusy && Date.now() - p.filesAt > FILES_EVERY_MS) void this.syncFiles(p);
     }
     await this.decide();
-    if (this.leads()) this.askToUnlock();
+    if (this.leads()) {
+      this.askToUnlock();
+      // Replicas behind this one: their Update, how one asked for goes, the chat's offer (self-update.ts).
+      this.hub.updates?.replicasChanged();
+    }
+    // A standby that reaches its leader (again): phones and windows it served while it had none reconnect there.
+    else this.hub.realtime.closeMoved();
     this.emitState();
   }
 
@@ -480,6 +570,8 @@ export class Cluster {
       call: (from, c) => this.serveCall(from, c),
       deviceUrl: () => `https://127.0.0.1:${this.hub.config.devicePort}`,
       mainUrl: () => `http://127.0.0.1:${this.hub.config.port}`,
+      consoleUrl: () => `http://127.0.0.1:${this.hub.config.consolePort}`,
+      mark: () => this.mark,
       fingerprint: () => this.hub.deviceTls().fingerprint,
     });
     const old = this.links.get(peerId);
@@ -487,6 +579,11 @@ export class Cluster {
     rpc.onClose(() => {
       if (this.links.get(peerId) === rpc) this.links.delete(peerId);
     });
+  }
+
+  /** Is this the mark this replica puts on the calls its peers send it over a link. */
+  markOk(v: unknown): boolean {
+    return typeof v === "string" && v.length === this.mark.length && timingSafeEqual(Buffer.from(v), Buffer.from(this.mark));
   }
 
   /** The link to the leader, for forwarding the phones. */
@@ -520,18 +617,14 @@ export class Cluster {
       case "/api/replica/vault-key":
         this.receiveKey(from, String(b.key ?? ""));
         return { status: 200, body: { ok: true } };
+      case "/api/replica/update":
+        return this.serveUpdate(from, b);
       default:
         return { status: 404, body: { error: `no ${c.path}` } };
     }
   }
 
   // ---------- who leads ----------
-
-  private better(p: Peer): boolean {
-    const me = this.self();
-    if (!me) return false;
-    return p.priority < me.priority || (p.priority === me.priority && p.id < this.identity!.id);
-  }
 
   /**
    * A sleeping computer runs nothing while its wall clock goes on (a Mac's DarkWake puts it to sleep every few minutes
@@ -553,32 +646,47 @@ export class Cluster {
   }
 
   private async decide(): Promise<void> {
-    const online = [...this.peers.values()].filter((p) => p.online && p.hello);
-    const better = online.filter((p) => this.better(p));
-    const leader = online.find((p) => p.hello!.role === "leader");
-    if (this.role === "leader") {
-      // Back from a sleep another replica led through: that one keeps the lead. This one held on to what it had before
-      // it slept (plugins' memory, timers, its copies of rows): it stands down, catches up and asks for the lead later.
-      if (leader && this.leadStale()) await this.switchTo("standby", "another replica led while this one slept", { stale: true });
-      // After a split both led: the better one keeps it. A better one that is back and caught up gets it.
-      else if (better.some((p) => p.hello!.role === "leader" && !p.hello!.stale)) await this.switchTo("standby", "a replica ahead of this one leads");
-      else if (!this.handingOver && better.some((p) => p.hello!.wantLead)) void this.handOver();
-      return;
-    }
-    if (better.length) {
-      this.wantLead = false;
-      return;
-    }
-    if (!leader) {
-      if (Date.now() - this.startedAt >= STARTUP_GRACE_MS) await this.switchTo("leader", online.length ? "no replica leads" : "no other replica answers");
-      return;
-    }
-    // A replica behind this one leads (it took over while this one was away): catch up, then ask for the lead.
-    // Pulls are long polls (20 s): one that came back with nothing more within that time means caught up. Back from a
-    // sleep, it asks only once it has stayed awake a while: a computer that naps all night leaves the lead with the
-    // replica that stays up, instead of both switching at every wake.
-    const fresh = (db: DbName) => Date.now() - (this.peers.get(leader.id)?.current[db] ?? 0) < 25_000;
-    this.wantLead = fresh("main") && fresh("vault") && Date.now() - this.wokeAt >= this.awakeBeforeLead;
+    const me = this.self();
+    if (!me) return;
+    const now = Date.now();
+    // Pulls are long polls (20 s): one that came back with nothing more within that time means caught up.
+    const fresh = (p: Peer, db: DbName) => now - p.current[db] < 25_000;
+    const step = leadStep({
+      me: { id: me.id, priority: me.priority },
+      role: this.role,
+      stale: this.leadStale(),
+      handingOver: this.handingOver,
+      upMs: now - this.startedAt,
+      awakeMs: now - this.wokeAt,
+      awakeBeforeLead: this.awakeBeforeLead,
+      peers: [...this.peers.values()]
+        .filter((p) => p.online && p.hello)
+        .map((p) => ({ id: p.id, priority: p.priority, role: p.hello!.role, stale: !!p.hello!.stale, wantLead: p.hello!.wantLead, caughtUp: fresh(p, "main") && fresh(p, "vault") })),
+    });
+    if (step.do === "standby") await this.switchTo("standby", step.why, step.stale ? { stale: true } : {});
+    else if (step.do === "lead") await this.switchTo("leader", step.why);
+    else if (step.do === "handOver") void this.handOver();
+    else if (step.wantLead !== undefined) this.wantLead = step.wantLead;
+  }
+
+  /**
+   * Makes a replica the primary one: it goes to the front of the order (its priority below every other's), so it leads
+   * whenever it is up. If another replica leads now, it hands over once the primary has caught up and its turns are done.
+   */
+  setPrimary(idOrName: string): { id: string; name: string; changed: boolean } {
+    if (!this.identity) throw new LocalizedError("cluster.none", undefined, 409);
+    const rows = this.hub.db.prepare("select id, name, priority from replicas where revoked = 0").all() as { id: string; name: string; priority: number }[];
+    const want = idOrName.trim();
+    const r = rows.find((x) => x.id === want) ?? rows.find((x) => x.name.toLowerCase() === want.toLowerCase());
+    if (!r) throw new LocalizedError("cluster.noReplica", { replica: want }, 404);
+    const first = rows.reduce((a, b) => (ahead(b, a) ? b : a));
+    if (first.id === r.id) return { id: r.id, name: r.name, changed: false };
+    // One row changes: the others keep their order behind it.
+    this.hub.db.prepare("update replicas set priority = ? where id = ?").run(Math.min(...rows.map((x) => x.priority)) - 1, r.id);
+    this.hub.audit.append("user", "replica.primary", r.id, { name: r.name, before: first.id });
+    this.loadPeers();
+    this.emitState(true);
+    return { id: r.id, name: r.name, changed: true };
   }
 
   /** The leader steps down for a better replica once its turns are done (at most DRAIN_MS). */
@@ -611,13 +719,19 @@ export class Cluster {
     return this.switching;
   }
 
-  /** The leader to forward clients to, when this replica is standby. */
-  leaderTarget(): { url?: string; name: string; link?: RpcPeer } | undefined {
+  /** The leader to forward clients to, when this replica is standby (`webUi`, `console`: it takes this replica's web UI, its console too). */
+  leaderTarget(): { url?: string; name: string; link?: RpcPeer; webUi?: boolean; console?: boolean } | undefined {
     if (this.leads()) return undefined;
     const p = [...this.peers.values()].find((x) => x.online && x.hello?.role === "leader");
     if (!p) return undefined;
     const link = this.links.get(p.id);
-    return { name: p.name, ...(p.url ? { url: p.url } : {}), ...(link && !link.closed ? { link } : {}) };
+    return {
+      name: p.name,
+      ...(p.url ? { url: p.url } : {}),
+      ...(link && !link.closed ? { link } : {}),
+      ...(p.hello?.webUi ? { webUi: true } : {}),
+      ...(p.hello?.console ? { console: true } : {}),
+    };
   }
 
   // ---------- the vault on other replicas ----------
@@ -686,6 +800,62 @@ export class Cluster {
     return p.name;
   }
 
+  // ---------- updates of the replicas ----------
+
+  /**
+   * Another replica (the leader) asks this one to update itself to its version (replica.update). This hub fetches and
+   * checks that release itself (self-update.ts updateTo), never an older one: the leader sends no code. Answers once
+   * the update is under way; the hellos then say how it goes.
+   */
+  async serveUpdate(from: string, body: { version?: unknown }): Promise<LinkAnswer> {
+    const version = String(body?.version ?? "");
+    try {
+      const r = await this.hub.updates.updateTo(version);
+      this.hub.audit.append(`replica:${from}`, "replica.update", this.identity?.id ?? "", { from: this.hub.config.version, to: r.version });
+      return { status: 200, body: r };
+    } catch (e: any) {
+      if (e instanceof UpdateError) return { status: 409, body: { reason: e.reason, ...(e.version ? { version: e.version } : {}) } };
+      return { status: 500, body: { error: String(e?.message ?? e) } };
+    }
+  }
+
+  /** Asks a replica to update itself to `version` (self-update.ts askReplica); its refusal comes back as an UpdateError. */
+  async askUpdate(id: string, version: string): Promise<{ version: string }> {
+    const p = this.peers.get(id);
+    if (!p) throw new UpdateError("unknown");
+    if (!p.online) throw new UpdateError("offline");
+    const r = await this.call(p, "POST", "/api/replica/update", { version }, 120_000);
+    let body: any;
+    try {
+      body = JSON.parse(r.body.toString() || "null");
+    } catch {
+      body = undefined;
+    }
+    if (r.status === 409 && body?.reason) throw new UpdateError(body.reason as UpdateRefusal, body.version);
+    // A replica from before this call answers 404.
+    if (r.status === 404) throw new UpdateError("replicaOld", p.hello?.version);
+    if (r.status !== 200) throw new Error(`${p.name}: ${body?.error ?? r.status}`);
+    this.hub.audit.append("user", "replica.update.ask", id, { name: p.name, to: version });
+    return { version: String(body?.version ?? version) };
+  }
+
+  /**
+   * The other replicas as their last hellos say: versions, how each updates, its own update (self-update.ts). Only the
+   * leader updates replicas: a standby (its own copy shown while the leader is away) sees none.
+   */
+  replicaPeers(): ReplicaPeer[] {
+    if (!this.identity || !this.leads()) return [];
+    return [...this.peers.values()].map((p) => ({
+      id: p.id,
+      name: p.name,
+      online: p.online,
+      heardAt: p.helloAt,
+      ...(p.hello?.version ? { version: p.hello.version } : {}),
+      ...(p.hello?.updates ? { updates: p.hello.updates } : {}),
+      ...(p.hello?.update ? { update: p.hello.update } : {}),
+    }));
+  }
+
   // ---------- what peers ask of us (device app routes) ----------
 
   hello(): Hello {
@@ -701,6 +871,10 @@ export class Cluster {
       stale: this.leadStale(),
       vectors: { main: this.main!.vector(), vault: this.vaultRepl!.vector() },
       version: this.hub.config.version,
+      webUi: true,
+      console: true,
+      updates: this.hub.updates?.kind ?? "none",
+      ...(this.hub.updates ? { update: this.hub.updates.selfState() } : {}),
     };
   }
 
@@ -801,7 +975,7 @@ export class Cluster {
     if (!this.identity) return [];
     const me = this.self();
     const out: ReplicaState[] = [];
-    if (me) out.push({ ...me, self: true, online: true, role: this.role, sealed: this.hub.vault.state() !== "unlocked" });
+    if (me) out.push({ ...me, self: true, online: true, role: this.role, sealed: this.hub.vault.state() !== "unlocked", version: this.hub.config.version });
     for (const p of this.peers.values()) {
       out.push({
         id: p.id,
@@ -814,17 +988,29 @@ export class Cluster {
         role: p.online ? (p.hello?.role ?? "unknown") : "unknown",
         sealed: !!p.hello?.sealed,
         ...(p.lastSeen ? { lastSeenAt: new Date(p.lastSeen).toISOString() } : {}),
+        ...(p.hello?.version ? { version: p.hello.version } : {}),
+        // Behind this hub, from the leader: Update (or "Updating…") on its row in Machines.
+        ...(this.leads() ? (this.hub.updates?.offerFor(p.id) ?? {}) : {}),
       });
     }
-    return out.sort((a, b) => a.priority - b.priority);
+    out.sort((a, b) => (ahead(a, b) ? -1 : 1));
+    if (out[0]) out[0].primary = true;
+    return out;
   }
 
-  /** Every replica's device addresses, the leader's first (phones keep the list and take the first that answers). */
+  /**
+   * Every replica's device addresses: the leader's first, then the primary's, then the others in order (phones keep the
+   * list and take the first that answers).
+   */
   phoneUrls(own: string[]): string[] {
     if (!this.identity) return own;
-    const lead = this.leads() ? own : [];
-    const peers = [...this.peers.values()].sort((a, b) => Number(b.hello?.role === "leader") - Number(a.hello?.role === "leader") || a.priority - b.priority);
-    return [...new Set([...lead, ...peers.flatMap((p) => p.urls), ...own])];
+    const me = this.self();
+    const all = [
+      { id: this.identity.id, priority: me?.priority ?? Number.MAX_SAFE_INTEGER, leads: this.leads(), urls: own },
+      ...[...this.peers.values()].map((p) => ({ id: p.id, priority: p.priority, leads: p.online && p.hello?.role === "leader", urls: p.urls })),
+    ];
+    all.sort((a, b) => Number(b.leads) - Number(a.leads) || (ahead(a, b) ? -1 : 1));
+    return [...new Set(all.flatMap((x) => x.urls))];
   }
 
   /** Every replica's address for machines (node.setup), this one's first. */
@@ -837,7 +1023,7 @@ export class Cluster {
 
   private emitState(force = false): void {
     const s = this.states();
-    const key = JSON.stringify(s.map((x) => [x.id, x.online, x.role, x.sealed, x.priority]));
+    const key = JSON.stringify(s.map((x) => [x.id, x.online, x.role, x.sealed, x.priority, x.version, x.update, x.updating]));
     if (!force && key === this.lastState) return;
     this.lastState = key;
     this.hub.bus.emit("cluster.updated", s);

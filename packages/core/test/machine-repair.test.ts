@@ -129,6 +129,7 @@ describe("a computer paired again (the hub)", () => {
   it("moves the agents' brains and computers, unfinished tasks and the team's rules to the new record", () => {
     row("mach_old", "legostin-pc");
     const { rule, task } = onPc("mach_old");
+    const placed = hub.store.createTask({ agentId: "blender", title: "Placed", goal: "Render", machineId: "mach_old", background: false, createdBy: "agent", resumeAt: "2099-01-01T00:00:00.000Z" });
     hub.machines.revoke("mach_old");
     const pc = pair("LEGOSTIN-PC");
     const a = hub.agents.get("blender")!;
@@ -137,6 +138,8 @@ describe("a computer paired again (the hub)", () => {
     expect(a.machines).toEqual([pc]);
     expect(hub.runner.rules.list().find((r) => r.id === rule)).toMatchObject({ machine: pc, brain: `fake@${pc}` });
     expect(hub.store.getTask(task)!.brainRef).toBe(`fake@${pc}`);
+    expect(hub.store.getTask(placed.id)!.machineId).toBe(pc);
+    expect(hub.store.getTask(placed.id)!.brainRef).toBeUndefined();
   });
 
   it("keeps a brain once when the agent already had it on the new record", () => {

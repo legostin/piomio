@@ -12,6 +12,11 @@
 // A hub the desktop app runs (PIOMIO_DESKTOP_APP) offers the app's own update, the one its latest.json lists for this
 // computer: the button runs the app with `--install-update`, and the app downloads it, stops the hub, installs and
 // restarts (packages/desktop/src-tauri/src/update.rs). When it can't, it says why on the hub's stdin (desktopFailed).
+//
+// The leading replica (cluster.ts) gets its standby replicas onto its own version the same way, on the same button: it
+// asks one over the replica link (replica.update) and the replica updates itself (updateTo) — a server downloads and
+// checks that very release, a desktop app installs its own update. The leader sends no code; it hears how it goes in
+// the replica's hellos (selfState) and tells the person when it fails.
 
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -46,6 +51,12 @@ const OFFERED = "update_offered";
 const OFFERED_AT = "update_offered_at";
 /** A version the launcher had to go back from: never offered again (a newer one is). */
 const FAILED = "update_failed";
+/** A replica's update the leader asked for: "Updating…" until it runs the version, it fails, or this long. */
+const REPLICA_UPDATE_MS = 30 * 60_000;
+/** A replica behind the leader this long (not one restarting into its update): the default agent offers to update it. */
+const BEHIND_MS = 2 * 60_000;
+/** meta `replica_update_offered:<id>`: {version, at} of the last chat offer for that replica (the meta table replicates). */
+const REPLICA_OFFERED = "replica_update_offered";
 
 export function installLayout(root: string) {
   return {
@@ -178,23 +189,102 @@ export async function desktopOffer(repo: string, version: string, platform: stri
   return files?.url && files.signature ? { version: v } : undefined;
 }
 
+interface GithubRelease {
+  tag_name?: string;
+  assets?: Array<{ name?: string; browser_download_url?: string }>;
+}
+
+async function fetchRelease(url: string, version: string, fetchImpl: typeof fetch): Promise<GithubRelease | undefined> {
+  const r = await fetchImpl(url, {
+    headers: { accept: "application/vnd.github+json", "user-agent": `Piomio/${version}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (r.status === 404) return undefined;
+  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
+  return (await r.json()) as GithubRelease;
+}
+
+/** A release's version and its archive and signature for this architecture, when it has both. */
+function offerOf(rel: GithubRelease | undefined, arch: string): Offer | undefined {
+  const v = String(rel?.tag_name ?? "").replace(/^v/, "");
+  if (!v) return undefined;
+  const url = (name: string) => rel?.assets?.find((a) => a.name === name)?.browser_download_url;
+  const archive = url(archiveName(v, arch));
+  const signature = url(`${archiveName(v, arch)}.sig`);
+  return archive && signature ? { version: v, archive, signature } : undefined;
+}
+
 /**
  * The latest release, when it is newer than `version` and has an archive for this architecture. `feed`: another URL
  * that answers like GitHub's releases/latest (PIOMIO_UPDATE_URL, a local check).
  */
 export async function latestOffer(repo: string, version: string, arch: string, fetchImpl: typeof fetch = fetch, feed?: string): Promise<Offer | undefined> {
-  const r = await fetchImpl(feed ?? `https://api.github.com/repos/${repo}/releases/latest`, {
-    headers: { accept: "application/vnd.github+json", "user-agent": `Piomio/${version}` },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
-  const rel = (await r.json()) as { tag_name?: string; assets?: Array<{ name?: string; browser_download_url?: string }> };
-  const v = String(rel.tag_name ?? "").replace(/^v/, "");
-  if (!v || compareVersions(v, version) <= 0) return undefined;
-  const url = (name: string) => rel.assets?.find((a) => a.name === name)?.browser_download_url;
-  const archive = url(archiveName(v, arch));
-  const signature = url(`${archiveName(v, arch)}.sig`);
-  return archive && signature ? { version: v, archive, signature } : undefined;
+  const rel = await fetchRelease(feed ?? `https://api.github.com/repos/${repo}/releases/latest`, version, fetchImpl);
+  if (!rel) throw new Error("GitHub answered 404");
+  const offer = offerOf(rel, arch);
+  return offer && compareVersions(offer.version, version) > 0 ? offer : undefined;
+}
+
+/**
+ * The release of exactly `version` (the leading replica's), with an archive for this architecture. `feed`: as for
+ * latestOffer, then only when it is that version.
+ */
+export async function releaseOffer(repo: string, version: string, arch: string, fetchImpl: typeof fetch = fetch, feed?: string): Promise<Offer | undefined> {
+  const offer = offerOf(await fetchRelease(feed ?? `https://api.github.com/repos/${repo}/releases/tags/v${version}`, version, fetchImpl), arch);
+  return offer?.version === version ? offer : undefined;
+}
+
+/** This hub's own update, as its hello tells the other replicas (cluster.ts). */
+export interface SelfUpdateState {
+  /** The version it is installing now. */
+  installing?: string;
+  /** The last update that failed, and why (English, for the leader's note to the default agent). */
+  failed?: { version: string; why: string };
+}
+
+/** How a hub updates itself (HubUpdates.kind); "none": it runs from the source code. */
+export type UpdateKind = "server" | "desktop" | "none";
+
+/** Another replica of this hub, as its last hello says (cluster.ts replicaPeers). */
+export interface ReplicaPeer {
+  id: string;
+  name: string;
+  online: boolean;
+  version?: string;
+  /** Unset: a Piomio from before the leader could ask a replica to update (replica.update). */
+  updates?: UpdateKind;
+  update?: SelfUpdateState;
+  /** When the hello that said this was asked for. */
+  heardAt: number;
+}
+
+/** What the person sees on a replica's row: the version Update brings, and whether it is under way. */
+export interface ReplicaOffer {
+  id: string;
+  name: string;
+  update: string;
+  updating?: boolean;
+}
+
+/**
+ * A replica and a paired machine of the same name are one computer (install.sh names the hub replica and piomio-node
+ * there after it): one row, one Update for both.
+ */
+export const sameComputer = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * What an agent hears about a replica's version next to its name (cluster_status, machine_list): nothing while it runs
+ * this hub's version (or one it can't tell); else that it is older, and how it gets this one.
+ */
+export function replicaVersionNote(r: { name: string; version?: string; update?: string; updating?: boolean }, hubVersion: string): string {
+  if (!r.version) return "";
+  if (r.updating) return ` (updating to ${r.update ?? hubVersion})`;
+  if (compareVersions(hubVersion, r.version) <= 0) return "";
+  if (r.update) return ` (older than this hub's ${hubVersion}: machine_update with machine "${r.name}" updates it)`;
+  return (
+    ` (older than this hub's ${hubVersion}, and it can't be updated from here: it runs a Piomio from before replicas updated from the leader, ` +
+    "or one from the source code. Once, on that computer: run the installer again on a server, or Install update in the desktop app's icon menu)"
+  );
 }
 
 export type Run = (file: string, args: string[], timeoutMs: number) => Promise<string>;
@@ -221,11 +311,15 @@ export interface HubUpdatesDeps {
   /** Stops the hub; systemd starts the version `current` points at. */
   restart: () => void;
   /** The machine and its info, to see whether it can be updated. */
-  machine: (id: string) => { info?: MachineInfo; online: boolean } | undefined;
+  machine: (id: string) => { name?: string; info?: MachineInfo; online: boolean } | undefined;
   /** Sends a machine the hub's own piomio-node bundle. */
   sendNode: (id: string, update: { version: string; sha256: string; bundle: string }) => Promise<void>;
   /** Has a machine that runs inside the desktop app install the app's own update (node.appUpdate). */
   appUpdateNode?: (id: string) => Promise<void>;
+  /** This hub's other replicas, as their hellos say (cluster.ts); none for a hub of one. */
+  replicas?: () => ReplicaPeer[];
+  /** Asks a replica over its link to update itself to `version` (replica.update); resolves once it is under way. */
+  askReplica?: (id: string, version: string) => Promise<{ version: string }>;
   fetch?: typeof fetch;
   run?: Run;
   verify?: (file: string, signatureText: string) => Promise<boolean>;
@@ -248,13 +342,30 @@ export const launchApp = (file: string, args: string[], env: NodeJS.ProcessEnv =
   child.unref();
 };
 
+/** What an Update started: its version, and the hub replica it covers (alone, or with the machine of its name). */
+export interface UpdateStarted {
+  version: string;
+  replica?: { name: string; updates: "server" | "desktop" };
+}
+
 export class HubUpdates {
   private d: HubUpdatesDeps;
   /** A server install's archive, or the version the desktop app fetches itself. */
   private offer?: Offer | { version: string };
   private installing = false;
+  /** The version this hub installs now, and the last update of its own that failed (selfState). */
+  private installingTo?: string;
+  private failure?: { version: string; why: string };
   private desktopTimer?: NodeJS.Timeout;
   private machines = new Map<string, NodeJS.Timeout>();
+  /**
+   * Replicas the leader asked to update (from `from`): until they run `version`, come back on another version, say
+   * they failed, or REPLICA_UPDATE_MS.
+   */
+  private replicaJobs = new Map<string, { version: string; from: string; answeredAt: number; timer: NodeJS.Timeout }>();
+  /** Since when each replica has been behind this hub (the chat offer waits BEHIND_MS). */
+  private behind = new Map<string, number>();
+  private replicaKey = "";
   private timer?: NodeJS.Timeout;
   private lastLook = 0;
 
@@ -291,6 +402,8 @@ export class HubUpdates {
     this.timer = undefined;
     for (const t of this.machines.values()) clearTimeout(t);
     this.machines.clear();
+    for (const j of this.replicaJobs.values()) clearTimeout(j.timer);
+    this.replicaJobs.clear();
   }
 
   /**
@@ -338,16 +451,195 @@ export class HubUpdates {
   /** The launcher went back from `version` (StartState.rolledBack): its tree goes, and it is not offered again. */
   rolledBack(version: string): void {
     this.setMeta(FAILED, version);
+    // A standby's leader hears it in the hello, and tells the person.
+    this.failure = { version, why: "the new version did not start, so the launcher went back to the one before" };
     if (this.d.config.installRoot && currentVersion(this.d.config.installRoot) !== version) {
       rmSync(join(installLayout(this.d.config.installRoot).versions, version), { recursive: true, force: true });
     }
   }
 
-  /** What the machines block offers on a machine's row ("local": this hub). */
+  /** What the machines block offers on a machine's row ("local": this hub; a replica's id: that replica). */
   offerFor(id: string, info?: MachineInfo): { update?: string; updating?: boolean } {
     if (id === "local") return this.offer ? { update: this.offer.version, ...(this.installing ? { updating: true } : {}) } : {};
+    const replica = this.replicaPeer(id);
+    if (replica) return this.replicaOffer(replica);
     if (this.machines.has(id)) return { update: this.d.config.version, updating: true };
     return this.nodeNeeds(info) ? { update: this.d.config.version } : {};
+  }
+
+  /** This hub's own update, for its hello: under way, or how the last one failed. */
+  selfState(): SelfUpdateState {
+    return {
+      ...(this.installing ? { installing: this.installingTo ?? this.offer?.version ?? this.d.config.version } : {}),
+      ...(this.failure ? { failed: this.failure } : {}),
+    };
+  }
+
+  // ---------- the other replicas, from the one that leads ----------
+
+  /** A replica by id or name. */
+  replicaPeer(idOrName: string): ReplicaPeer | undefined {
+    const all = this.d.replicas?.() ?? [];
+    return all.find((r) => r.id === idOrName) ?? all.find((r) => sameComputer(r.name, idOrName));
+  }
+
+  /** Online, older than this hub and able to update itself when asked. */
+  private replicaNeeds(r: ReplicaPeer): boolean {
+    return r.online && (r.updates === "server" || r.updates === "desktop") && !!r.version && compareVersions(this.d.config.version, r.version) > 0;
+  }
+
+  private replicaOffer(r: ReplicaPeer): { update?: string; updating?: boolean } {
+    if (!this.replicaNeeds(r)) return {};
+    return { update: this.d.config.version, ...(this.replicaJobs.has(r.id) || r.update?.installing ? { updating: true } : {}) };
+  }
+
+  /** The replicas with an Update on offer (the machines block gives each a row, or the row of its computer). */
+  replicaOffers(): ReplicaOffer[] {
+    return (this.d.replicas?.() ?? []).flatMap((r) => {
+      const o = this.replicaOffer(r);
+      return o.update ? [{ id: r.id, name: r.name, update: o.update, ...(o.updating ? { updating: true } : {}) }] : [];
+    });
+  }
+
+  /**
+   * The cluster heard every replica's hello again (cluster.ts, on the leader): an update asked of one is done once it
+   * runs the version, or failed when a hello asked for after it was under way says so; a replica behind for a while
+   * gets one offer in the chat.
+   */
+  replicasChanged(): void {
+    const replicas = this.d.replicas?.() ?? [];
+    for (const [id, job] of [...this.replicaJobs]) {
+      const r = replicas.find((x) => x.id === id);
+      if (!r || (r.version && compareVersions(r.version, job.version) >= 0)) {
+        this.replicaDone(id);
+        continue;
+      }
+      // It restarted on a newer version that is still behind (an older update it had downloaded): Update again.
+      if (r.version && compareVersions(r.version, job.from) > 0) {
+        this.replicaDone(id);
+        this.d.tell(
+          `[System] The hub replica ${r.name} updated to Piomio ${r.version}, not yet this hub's ${job.version}. Tell the person in one short message; ` +
+            "Update once more (the machines block, or ask you) brings it the rest of the way.",
+        );
+        continue;
+      }
+      const failed = r.update?.failed;
+      if (job.answeredAt && r.heardAt > job.answeredAt && failed && !r.update?.installing) {
+        this.replicaDone(id);
+        this.d.tell(
+          `[System] The hub replica ${r.name} could not update to Piomio ${failed.version} (${failed.why.slice(0, 300)}); it stays on ${r.version ?? "its version"}. ` +
+            "Tell the person in one short message; they can try again from the machines block in the sidebar, or ask you.",
+        );
+      }
+    }
+    this.offerReplicas(replicas);
+    const key = JSON.stringify(this.replicaOffers());
+    if (key !== this.replicaKey) {
+      this.replicaKey = key;
+      this.d.bus.emit("updates.changed", {});
+    }
+  }
+
+  /**
+   * The default agent offers to update a replica that has been behind this hub for a while: once per version of this
+   * hub, at most once a day. One that can't be updated from here gets how to do it on that computer.
+   */
+  private offerReplicas(replicas: ReplicaPeer[]): void {
+    const now = (this.d.now ?? Date.now)();
+    const v = this.d.config.version;
+    for (const r of replicas) {
+      if (!r.online || !r.version || compareVersions(v, r.version) <= 0) {
+        this.behind.delete(r.id);
+        continue;
+      }
+      const since = this.behind.get(r.id) ?? now;
+      this.behind.set(r.id, since);
+      if (now - since < BEHIND_MS || this.replicaJobs.has(r.id) || r.update?.installing) continue;
+      const key = `${REPLICA_OFFERED}:${r.id}`;
+      let last: { version?: string; at?: string } = {};
+      try {
+        last = JSON.parse(this.meta(key) ?? "{}");
+      } catch {
+        /* an unreadable mark: offer again */
+      }
+      if (last.version === v || now - Date.parse(last.at ?? "") < OFFER_EVERY_MS) continue;
+      this.setMeta(key, JSON.stringify({ version: v, at: new Date(now).toISOString() }));
+      const lag = `[System] The hub replica ${r.name} runs Piomio ${r.version}, older than this hub's ${v}: replicas on different versions can't fully take over from each other. `;
+      this.d.tell(
+        this.replicaNeeds(r)
+          ? lag +
+              "Tell the person in one short message and offer to update it now with show_choices (update now / not now). On yes call hub_machine_update " +
+              `(machine "${r.name}"): ${r.name} downloads and checks the release itself and restarts with it (about a minute on a server, a few minutes in the desktop app), ` +
+              "and goes back by itself if the new version does not start. The machines block in the sidebar has the same Update button."
+          : lag +
+              (r.updates === "none"
+                ? `It runs from the source code, so it can't be updated from here: tell the person in one short message to update it on that computer (git pull and a restart).`
+                : "It runs a Piomio from before replicas updated from the leader, so it can't be updated from here this once. Tell the person in one short message how: " +
+                  "on a server, run the installer there again as root (curl -fsSL https://piomio.io/install.sh | sh); in the desktop app, Install update in its icon's menu. " +
+                  "After that it updates from here, on the machines block's Update button or in the chat."),
+      );
+    }
+  }
+
+  /** The replica runs the version asked for, failed, or took too long: its row shows what is on offer again. */
+  private replicaDone(id: string): void {
+    const j = this.replicaJobs.get(id);
+    if (!j) return;
+    clearTimeout(j.timer);
+    this.replicaJobs.delete(id);
+    this.d.bus.emit("updates.changed", {});
+  }
+
+  /** Asks a replica to update itself to this hub's version; resolves once it is under way there. */
+  private async updateReplica(r: ReplicaPeer): Promise<UpdateStarted> {
+    const v = this.d.config.version;
+    if (!r.online) throw new UpdateError("offline");
+    if (!r.version || compareVersions(v, r.version) <= 0) throw new UpdateError("upToDate", r.version ?? v);
+    if (r.updates === "none") throw new UpdateError("notInstalled");
+    if ((r.updates !== "server" && r.updates !== "desktop") || !this.d.askReplica) throw new UpdateError("replicaOld", r.version);
+    const started: UpdateStarted = { version: v, replica: { name: r.name, updates: r.updates } };
+    if (this.replicaJobs.has(r.id) || r.update?.installing) return started;
+    const timer = setTimeout(() => this.replicaDone(r.id), REPLICA_UPDATE_MS);
+    timer.unref?.();
+    const job = { version: v, from: r.version, answeredAt: 0, timer };
+    this.replicaJobs.set(r.id, job);
+    this.d.bus.emit("updates.changed", {});
+    try {
+      await this.d.askReplica(r.id, v);
+      job.answeredAt = (this.d.now ?? Date.now)();
+    } catch (e) {
+      this.replicaDone(r.id);
+      throw e;
+    }
+    return started;
+  }
+
+  /**
+   * Asked by the replica that leads (replica.update): this hub updates itself to `version`, the leader's. A server
+   * downloads that very release and checks its signature itself, as for its own Update; the desktop app installs its
+   * own update (the newest, which is the leader's version or a later one). Never to an older or the same version.
+   * Resolves once the update is under way; selfState() then tells the leader how it goes.
+   */
+  async updateTo(version: string): Promise<{ version: string }> {
+    const kind = this.kind;
+    if (!kind) throw new UpdateError("notInstalled");
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new UpdateError("noRelease", version);
+    if (compareVersions(version, this.d.config.version) <= 0) throw new UpdateError("upToDate", this.d.config.version);
+    if (this.installing) return { version: this.installingTo ?? version };
+    if (kind === "desktop") {
+      // A fresh look, not the offer from the last hourly check: the app installs the latest release (one it downloaded
+      // earlier gives way to a newer one, update.rs install_now), and that has to reach the leader's version.
+      const offer = await this.check();
+      if (!offer || compareVersions(offer.version, version) < 0) throw new UpdateError("noRelease", version);
+      this.installDesktop(offer.version);
+      return { version: offer.version };
+    }
+    const { releasesRepo, updateUrl } = this.d.config;
+    const known = this.offer && "archive" in this.offer && this.offer.version === version ? this.offer : undefined;
+    const offer = known ?? (await releaseOffer(releasesRepo, version, linuxArch(this.d.arch)!, this.d.fetch, updateUrl));
+    if (!offer) throw new UpdateError("noRelease", version);
+    void this.install(offer).catch(() => {});
+    return { version };
   }
 
   private nodeNeeds(info?: MachineInfo): boolean {
@@ -356,9 +648,10 @@ export class HubUpdates {
 
   /**
    * Updates a machine: "local" starts this hub's update and resolves once it is under way (the hub restarts when it
-   * is ready; a failure before that is told in the chat); a paired machine gets the hub's bundle.
+   * is ready; a failure before that is told in the chat); a paired machine gets the hub's bundle; a hub replica (its id)
+   * updates itself to this hub's version. A machine whose replica of the same name is behind too gets both.
    */
-  async update(id: string): Promise<{ version: string }> {
+  async update(id: string): Promise<UpdateStarted> {
     if (id === "local") {
       if (!this.enabled) throw new UpdateError("notInstalled");
       const offer = this.offer ?? (await this.check());
@@ -369,8 +662,21 @@ export class HubUpdates {
       else void this.install(offer as Offer).catch(() => {});
       return { version: offer.version };
     }
+    const replica = this.replicaPeer(id);
+    if (replica?.id === id) return this.updateReplica(replica);
     const m = this.d.machine(id);
     if (!m) throw new UpdateError("unknown");
+    const twin = m.online && m.name ? (this.d.replicas?.() ?? []).find((r) => sameComputer(r.name, m.name!) && this.replicaNeeds(r)) : undefined;
+    if (!twin) return this.updateNode(id, m);
+    // The node's part is best effort: the replica's answer is the one the button and the chat hear.
+    const node = this.nodeNeeds(m.info) && !this.machines.has(id) ? this.updateNode(id, m).catch((e) => console.log(`[piomio] update of ${m.name}: ${e?.message ?? e}`)) : undefined;
+    const started = await this.updateReplica(twin);
+    await node;
+    return started;
+  }
+
+  /** A paired machine gets the hub's piomio-node bundle, or (inside the desktop app) installs the app's update. */
+  private async updateNode(id: string, m: { info?: MachineInfo; online: boolean }): Promise<UpdateStarted> {
     if (!m.online) throw new UpdateError("offline");
     if (!m.info?.selfUpdate && !(m.info?.desktopApp && this.d.appUpdateNode)) throw new UpdateError("notSelf");
     if (!this.nodeNeeds(m.info)) throw new UpdateError("upToDate", m.info.version);
@@ -416,8 +722,10 @@ export class HubUpdates {
   }
 
   /** The desktop app installs its update itself: this hub stops when it does, or hears why not (desktopFailed). */
-  private installDesktop(): void {
+  private installDesktop(version?: string): void {
     this.installing = true;
+    this.installingTo = version ?? this.offer?.version;
+    this.failure = undefined;
     this.d.bus.emit("updates.changed", {});
     clearTimeout(this.desktopTimer);
     this.desktopTimer = setTimeout(() => this.desktopDone(), DESKTOP_INSTALL_MS);
@@ -428,7 +736,9 @@ export class HubUpdates {
 
   /** The desktop app could not install the update the button asked for (its `update-failed` line on the hub's stdin). */
   desktopFailed(why: string): void {
+    const version = this.installingTo ?? this.offer?.version;
     this.desktopDone();
+    if (version) this.failure = { version, why: why || "the desktop app gave no reason" };
     console.log(`[piomio] the desktop app's update failed: ${why}`);
     this.d.tell(
       `[System] The Piomio app could not update (${why || "no reason given"}); it stays on ${this.d.config.version}. Tell the person in one short ` +
@@ -441,6 +751,7 @@ export class HubUpdates {
     this.desktopTimer = undefined;
     if (!this.installing) return;
     this.installing = false;
+    this.installingTo = undefined;
     this.d.bus.emit("updates.changed", {});
   }
 
@@ -457,6 +768,8 @@ export class HubUpdates {
     const unpack = join(l.versions, `.${v}.tmp`);
     const dest = join(l.versions, v);
     this.installing = true;
+    this.installingTo = v;
+    this.failure = undefined;
     this.d.bus.emit("updates.changed", {});
     try {
       mkdirSync(l.versions, { recursive: true });
@@ -483,6 +796,8 @@ export class HubUpdates {
       if (currentVersion(root) !== v) rmSync(dest, { recursive: true, force: true });
       rmSync(l.trial, { force: true });
       this.installing = false;
+      this.installingTo = undefined;
+      this.failure = { version: v, why: String(e?.message ?? e) };
       this.d.bus.emit("updates.changed", {});
       console.log(`[piomio] update to ${v} failed: ${e?.message ?? e}`);
       this.d.tell(`[System] The update to Piomio ${v} failed before anything changed (${String(e?.message ?? e)}); the hub stays on ${this.d.config.version}. Tell the person in one short message.`);
@@ -502,7 +817,11 @@ export class HubUpdates {
   }
 }
 
-export type UpdateRefusal = "notInstalled" | "upToDate" | "unknown" | "offline" | "notSelf" | "noBundle";
+/**
+ * Why an Update can't be done. replicaOld: a hub replica from before replicas updated from the leader; noRelease: the
+ * release of that version has nothing for that computer (yet).
+ */
+export type UpdateRefusal = "notInstalled" | "upToDate" | "unknown" | "offline" | "notSelf" | "noBundle" | "replicaOld" | "noRelease";
 
 export class UpdateError extends Error {
   readonly reason: UpdateRefusal;

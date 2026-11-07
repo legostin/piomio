@@ -17,9 +17,11 @@ import { InviteRegistry } from "./invites.ts";
 import type { MachineSetups } from "./machine-setup.ts";
 import type { Cluster } from "./cluster.ts";
 import { compareVersions } from "./updates.ts";
+import { replicaVersionNote } from "./self-update.ts";
 import { posix } from "node:path";
 import { commandParts, readOnlyCommand } from "./policy/commands.ts";
 import { PRIVATE } from "./native-permissions.ts";
+import { localComputerName } from "./pairing.ts";
 
 /**
  * What names credentials or private stores: a command that names one is never "only reads", wherever it runs. The
@@ -118,6 +120,8 @@ export class MachineHub {
     return id === "local" || id === here || this.sameHost.has(id) ? here : id;
   }
   aliases(): string[] { return [...this.sameHost]; }
+  /** This hub's own computer for people: the name of a machine paired from it, else the hostname (pairing.ts). */
+  localName(): string { return localComputerName(this.list()); }
   async ownsFiles(id: string, agentId: string, keys: string[], files: WorkspaceFileOperation): Promise<boolean> {
     try { return await this.call<boolean>(id, "workspace.owns", { agentId, keys, ...files }, 5_000); } catch { return false; }
   }
@@ -474,10 +478,15 @@ export class MachineHub {
         const ms = this.list().filter((m) => !m.sameHost);
         const h = this.here?.();
         const hereLine = h ? `- ${h.name} (${h.id}) — this hub's own computer: agents running there use their own shell; work goes there with machine "${h.id}"` : "";
-        if (!ms.length) return text([hereLine, "No other machines are paired. The user can connect a computer on the Machines page."].filter(Boolean).join("\n"));
+        // Hub replicas behind this hub: nothing runs on a standby, but its Piomio needs updating too.
+        const behind = (this.cluster?.states() ?? [])
+          .filter((r) => !r.self && this.version && replicaVersionNote(r, this.version))
+          .map((r) => `- ${r.name} (${r.id}) — a standby replica of this hub, Piomio ${r.version}${replicaVersionNote(r, this.version!)}`);
+        if (!ms.length) return text([hereLine, "No other machines are paired. The user can connect a computer on the Machines page.", ...behind].filter(Boolean).join("\n"));
         return text(
           [hereLine, ...ms
-            .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}${m.info.gpus?.length ? `, GPU: ${m.info.gpus.join(", ")}` : ""}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}${app(m.info)}` : ""}`)
+            .map((m) => `- ${m.name} (${m.id}) — ${m.status}${m.info ? `, ${m.info.os}/${m.info.arch}${m.info.gpus?.length ? `, GPU: ${m.info.gpus.join(", ")}` : ""}, brains: ${m.info.clis.filter((c) => c.available).map((c) => c.brainId).join(", ") || "none"}, folders: ${m.info.allowedDirs.join(", ") || "—"}${app(m.info)}` : ""}`),
+          ...behind,
           ].filter(Boolean).join("\n"),
         );
       }),

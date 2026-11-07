@@ -44,7 +44,8 @@ export function notifyRefusal(task: Pick<Task, "feedId" | "deliver"> | undefined
 
 /** One plain sentence for why a task failed: known causes in the person's words, otherwise the error's first sentence. */
 export function humanFailure(error: string, code: "no-brain" | undefined, agent: string): string {
-  if (code === "no-brain") return t("notify.failed.noBrain", { agent });
+  // No usable candidate can mean missing installation, an offline computer, or a constraint, not only sign-in.
+  if (code === "no-brain" && !error.trim()) return t("task.cannotStart", { agent, reason: t("chat.noSuitableBrains") });
   const first = error.trim().split(/(?<=[.!?])\s+|\n/)[0]?.trim() || error.trim();
   return first.length > 200 ? first.slice(0, 200) : first;
 }

@@ -1,6 +1,7 @@
 // What a turn is doing right now (machines.activity), where its reply will appear: "Reading plan.md…", "Running: npm
 // test…", "Starting a task…", "Waiting for your permission". The three dots while nothing is known yet. A task's line
-// shows the same words for its own turn.
+// shows the same words for its own turn. A turn waiting for its brains to connect has a passing line under the chat
+// instead of an error message: it goes once they are back.
 
 import { useEffect } from "react";
 import type { MachineWork } from "@piomio/shared";
@@ -39,6 +40,23 @@ export function stepText(w: Pick<MachineWork, "step" | "detail">): string {
   }
   if (detail && (w.step === "command" || w.step === "reading" || w.step === "editing" || w.step === "web")) return t(`step.${w.step}Named`, { detail });
   return t(`step.${w.step}`);
+}
+
+/**
+ * Under the chat while a turn waits for its brains to connect (the hub switching computers, one asleep, a plugin
+ * restarting): a status, not a message. It goes by itself once they are back and the reply starts.
+ */
+export function BrainWaitLine({ conversationId }: { conversationId: string }) {
+  const all = useStore(machineActivity);
+  useEffect(() => ensureMachineActivity(), []);
+  const waiting = (all ?? []).some((m) => m.work.some((w) => w.conversationId === conversationId && w.step === "offline"));
+  if (!waiting) return null;
+  return (
+    <div role="status" aria-live="polite" className="animate-in flex items-center gap-2 px-1 text-[13px] text-muted">
+      <span className="size-1.5 shrink-0 rounded-full ring-1 ring-muted/60" />
+      <span className="min-w-0">{t("step.offline")}</span>
+    </div>
+  );
 }
 
 /** The line in place of the three dots: what the agent does now, breathing while it works. */

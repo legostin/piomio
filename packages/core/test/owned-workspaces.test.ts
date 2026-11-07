@@ -1,13 +1,16 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { ownsWorkspacePaths } from "@piomio/shared/agent-workspaces";
 import { ordinaryFilePaths } from "../src/access/owned-files.ts";
 import { Hub, loadConfig } from "../src/index.ts";
 import { freePort } from "@piomio/testkit";
 
-const root = mkdtempSync(join(tmpdir(), "ownership-"));
+// Everything, the hub's data dir included, is reached through a link, as macOS's temp folder is (/var → /private/var).
+const real = mkdtempSync(join(realpathSync(tmpdir()), "ownership-"));
+const root = `${real}-link`;
+symlinkSync(real, root);
 const ws = join(root, "workspaces");
 const keys = ["c_dialog", "t_task", "t_other"];
 for (const a of ["dev", "dev-other"]) for (const k of keys) mkdirSync(join(ws, a, k), { recursive: true });
@@ -80,6 +83,16 @@ describe("ownership through native permissions and the gateway", () => {
     expect((await native("Write", { file_path: path })).behavior).toBe("deny");
     expect((await native("Read", { file_path: path })).behavior).toBe("deny");
   });
+  it("refuses symlink/.. escapes through the native ownership shortcut", async () => {
+    const foreign = join(root, "hub/workspaces/assistant", "traversal");
+    mkdirSync(join(foreign, "deep"), { recursive: true });
+    symlinkSync(join(foreign, "deep"), join(workspace, "traversal"));
+    const path = `${workspace}/traversal/../victim`;
+    for (const tool of ["Read", "Write", "kimi.Read", "kimi.Write", "codex.fileChange"]) {
+      expect((await native(tool, { path, file_path: path })).behavior, tool).toBe("deny");
+    }
+    expect((await native("Bash", { command: `cp '${workspace}/source' '${path}'`, dangerouslyDisableSandbox: true })).behavior).toBe("deny");
+  });
   it("reviews compound writes and a copy into a directory whose destination is a foreign symlink", async () => {
     const source = join(workspace, "source.txt");
     const dest = join(workspace, "dest");
@@ -92,6 +105,16 @@ describe("ownership through native permissions and the gateway", () => {
     expect((await native("Bash", { command: `cp '${source}' '${dest}'`, dangerouslyDisableSandbox: true })).behavior).toBe("deny");
     expect((await native("Bash", { command: `touch '${source}' && mkdir '${join(workspace, "next")}'`, dangerouslyDisableSandbox: true })).behavior).toBe("deny");
     expect(reviews).toBeGreaterThan(before);
+  });
+  it("never lets ownership turn the hub's own refusal into a yes", async () => {
+    const owns = vi.spyOn(hub as unknown as { ownsFiles: () => Promise<boolean> }, "ownsFiles").mockResolvedValue(true);
+    try {
+      expect((await native("Read", { file_path: join(homedir(), ".ssh", "id_rsa") })).behavior).toBe("deny");
+      expect((await native("Write", { file_path: join(root, "hub", "piomio.db") })).behavior).toBe("deny");
+      expect((await native("Write", { file_path: join(root, "hub/workspaces/assistant", "foreign", "y") })).behavior).toBe("deny");
+    } finally {
+      owns.mockRestore();
+    }
   });
   it("keeps a person's explicit deny above owned files", async () => {
     hub.rules.create({ decision: "deny", tool: "Write", agentId: "dev", conditions: [], createdVia: "settings" });

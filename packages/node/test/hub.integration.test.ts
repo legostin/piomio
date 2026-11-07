@@ -1,7 +1,7 @@
 // The daemon against a REAL hub (packages/core) running in-process: pairing, challenge auth, node.hello,
 // fs/exec over hub.machines.call and a remote brain session with a fake Claude Code CLI.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { freePort } from "@piomio/testkit";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -151,8 +151,8 @@ describe("one computer with hub and node executors", () => {
     } finally { hub.activity.end(activityId); }
     hub.saveAgent({ ...agent, id: "identity-dev", name: "Dev", brains: [`claude-code@${machineId}`], machines: [machineId] }, "user");
     const task = hub.store.createTask({ agentId: "identity-dev", title: "Kept", goal: "Keep", brainRef: `claude-code@${machineId}`, createdBy: "agent", background: true, resumeAt: "2099-01-01T00:00:00.000Z", status: "queued" });
-    expect(hub.runner.placeTask("identity-dev", "local")).toMatchObject({ brainRef: `claude-code@${machineId}` });
-    expect(hub.runner.placeTask("identity-dev", machineId)).toMatchObject({ brainRef: `claude-code@${machineId}` });
+    expect(hub.runner.placeTask("identity-dev", "local")).toMatchObject({ machineId: "local" });
+    expect(hub.runner.placeTask("identity-dev", machineId)).toMatchObject({ machineId: "local" });
     expect(hub.store.getTask(task.id)?.brainRef).toBe(`claude-code@${machineId}`);
     expect(hub.machines.get(machineId)?.info?.workspacesRoot).toBe(workspace);
     const dialog = hub.store.agentConversation("identity-dev").id;
@@ -174,6 +174,17 @@ describe("one computer with hub and node executors", () => {
     // The node also verifies paths on its own filesystem for hubs on a different computer.
     expect(await hub.machines.ownsFiles(machineId, "identity-dev", [task.id, dialog], { paths: [parentFile, join(taskDir, "result.jpeg")], write: true })).toBe(true);
     expect(await hub.machines.ownsFiles(machineId, "identity-dev", [task.id], { paths: [join(workspace, "assistant", "other", "x")], write: false })).toBe(false);
+  });
+
+  it("runs a locally placed task through the ready same-host node executor", async () => {
+    vi.stubEnv("FAKE_LOGGED_IN", "1");
+    try {
+      const task = hub.runner.createTask({ agentId: "identity-dev", title: "Run here", goal: "hello", machineId: "local", createdBy: "user", background: false });
+      await until(() => ["done", "failed"].includes(hub.store.getTask(task.id)!.status), 15_000, "same-host task");
+      const result = hub.store.getTask(task.id)!;
+      expect(result.status, result.error).toBe("done");
+      expect(hub.store.activeSession(task.conversationId, "identity-dev")?.brainRef).toBe(`claude-code@${machineId}`);
+    } finally { vi.unstubAllEnvs(); hub.brains.invalidateAll(); }
   });
 });
 
