@@ -94,35 +94,52 @@ const plugin: PluginModule = {
         const lon = Number(sub.config.lon);
         const timezone = String(sub.config.timezone ?? "UTC");
         const place = String(sub.config.place ?? "").trim() || `${lat}, ${lon}`;
+        // Refuse what cannot work, with a reason the hub shows in the plugin's log (it tries again later).
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error("sunrise: lat and lon must be numbers");
+        const today = localDate(Date.now(), timezone);
+        if (!today) throw new Error(`sunrise: "${timezone}" is not an IANA time zone (e.g. Europe/Lisbon)`);
         let stopped = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const wait = (ms: number, then: () => void) => {
           timer = setTimeout(then, Math.min(ms, MAX_WAIT_MS));
         };
+        // Every step runs through here: whatever goes wrong is told to the log and tried again later, never left as an
+        // unhandled rejection.
+        const go = (date: string): void => {
+          void next(date).catch((e) => {
+            ctx.log.warn(`sunrise for ${place}: ${e instanceof Error ? e.message : String(e)}. Trying again later.`);
+            if (!stopped) wait(RETRY_MS, () => go(date));
+          });
+        };
 
         // Looks the day's sunrise up and waits for it; then emits and goes on to the next day. A day whose sunrise
-        // has passed is skipped, so a restart at noon does not announce the morning.
+        // has passed is skipped, so a restart at noon does not announce the morning. A day with no sunrise (a polar
+        // night or day) waits a while before the next day is asked about, so the service is not asked again at once.
         const next = async (date: string): Promise<void> => {
           if (stopped) return;
           const got = await fetchTimes(api(), lat, lon, date, timezone);
           if (stopped) return;
           if ("error" in got) {
             ctx.log.warn(`sunrise for ${place}: ${got.error} Trying again later.`);
-            return wait(RETRY_MS, () => void next(date));
+            return wait(RETRY_MS, () => go(date));
           }
           const at = Date.parse(got.r.sunrise);
-          if (!Number.isFinite(at)) return wait(RETRY_MS, () => void next(date));
-          if (at <= Date.now()) return void next(nextDay(date));
+          if (!Number.isFinite(at)) return wait(RETRY_MS, () => go(date));
+          if (localDate(at, timezone) !== date) {
+            ctx.log.info(`sunrise: no sunrise in ${place} on ${date}; asking about the next day later.`);
+            return wait(RETRY_MS, () => go(nextDay(date)));
+          }
+          if (at <= Date.now()) return go(nextDay(date));
           const sleep = (): void => {
             if (stopped) return;
             const left = at - Date.now();
             if (left > 0) return wait(left, sleep);
             emit({ place, date, sunrise: clock(got.r.sunrise) }, { key: date, subject: place });
-            void next(nextDay(date));
+            go(nextDay(date));
           };
           sleep();
         };
-        void next(localDate(Date.now(), timezone) ?? "today");
+        go(today);
         return {
           stop() {
             stopped = true;

@@ -38,7 +38,7 @@
           "required": ["place", "date", "sunrise"]
         },
         "sample": {"place": "Lisbon", "date": "2026-06-21", "sunrise": "06:12"},
-        "external": false
+        "external": true
       }
     ]
   },

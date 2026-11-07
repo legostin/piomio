@@ -45,7 +45,8 @@ from sunrise-sunset.org): copy it and change what it does, keep its shape.
    - `permissions.network`: the exact hosts it calls (`api.example.com`, `*.example.com`); never `"*"` unless the
      user gives the addresses at run time;
    - `contributes.widgets`: the card kinds the tools show (`[]` and no `ui` when there is no card);
-   - `contributes.signals`: only if the service can start the person's triggers (see Signals);
+   - `contributes.signals`: only if the service can start the person's triggers (see Signals); when it has none,
+     delete it along with the `sunrise` provider in `server/index.ts` and its `signal.sunrise.title` texts;
    - `contributes.settings`: a JSON Schema of the person's settings, only if there are any.
 4. `locales/en.json` and `locales/ru.json`: the same keys, natural text in each language. Tool descriptions and tool
    results are for the model: English, in the code, not in the locales.
@@ -99,7 +100,7 @@ a trigger subscribes to it with `on: [{ type: "sun.sunrise", config: { … } }]`
   "description": "The sun rose at a place (English, for the model).",
   "config": { "type": "object", "properties": { "lat": { "type": "number" } }, "required": ["lat"] },
   "data": { "type": "object", "properties": { "place": { "type": "string" } }, "required": ["place"] },
-  "sample": { "place": "Lisbon" }, "external": false } ] }
+  "sample": { "place": "Lisbon" }, "external": true } ] }
 ```
 
 - `type`: lowercase letters, digits and `_`, starting with a letter; one declaration per type. `title` goes through the
@@ -111,27 +112,43 @@ a trigger subscribes to it with `on: [{ type: "sun.sunrise", config: { … } }]`
   `ctx.signals.provide("sunrise", { subscribe(sub, emit) { …; return { stop() { … } }; } })`. The hub calls
   `subscribe` once per distinct config (`sub.config` is the person's config, checked against the `config` schema),
   and `stop` when no enabled trigger uses it. It calls `subscribe` again when the plugin restarts, so keep the state
-  that matters (what was seen) in `ctx.storage`, and never hold a timer, socket or poll after `stop`. Use it for
-  polling or watching something for the person (`integrations/_template` waits for the sunrise; the `web` plugin's
-  `rss_item` reads a feed). Do the first network call without making `subscribe` wait for it, tell failures to
-  `ctx.log` and try again at the next interval, and never send a signal for something you could not read.
+  that matters (what was seen) in `ctx.storage`, keyed by the whole config so two subscriptions never share it, and
+  never hold a timer, socket or poll after `stop`. Use it for polling or watching something for the person
+  (`integrations/_template` waits for the sunrise; the `web` plugin's `rss_item` reads a feed). Check the config in
+  `subscribe` and throw with a clear reason when it cannot work (the hub logs it and tries again later). Do the first
+  network call without making `subscribe` wait for it, tell failures to `ctx.log` and try again at the next interval,
+  never ask the service again at once in a loop, catch every rejection of your own async work, and never send a
+  signal for something you could not read. Take the poll interval from the config only: never from a setting (an
+  agent can change settings), and never more often than every 10 minutes.
 - `emit(data, { key, subject })`: `key` is the event's identity (a feed item's id, a date); the hub drops a second
   signal with the same key to the same trigger within 24 hours, so a repeat poll or a restart does not wake the agent
   twice. `subject` is a short line naming the event for people and the model (the item's title). Neither is
   required; without a key every signal counts.
 - `data` schema: a JSON Schema of what `emit` sends, at most 16 KB and 32 levels deep; the hub refuses a signal that
-  does not match it, or whose data is over 256 KB, and the plugin's log says why. Keep it plain: patterns only in the
-  linear-time subset (no backreferences, lookahead, lookbehind or `\p{…}`), no `uniqueItems`, no `$ref` or `$dynamicRef`
-  (write the schema out), no `$async`, no enum of more than 1000 values, at most 100 patterns. A source with a schema
-  that breaks these is refused whole. The `config` schema follows the same rules; give each field a `description` so an
-  agent can fill it, and `minimum` for intervals (poll no more often than every 10 minutes).
-- `external`: whether the signal's text comes from outside (the internet, other people). Triggers treat an external
-  signal's text as untrusted: it is not shown in notes, and the agent it wakes is marked tainted. A plugin the person
-  installs is always external, whatever its manifest says; only the hub's own integrations may declare `false`. Say
-  `true` whenever a stranger could have written the data.
+  does not match it, or whose data is over 256 KB, and the plugin's log says why. Keep it plain, since it runs on the
+  hub against outside content:
+  - patterns run on V8's linear-time engine and without flags: no backreferences, lookahead or lookbehind; no counted
+    repeat over 16 (`{17}`, `{1,20}`, `{0,200}`, `{17,}`) and none inside another counted repeat (for a length, use
+    `minLength` / `maxLength` and a plain `+` or `*` in the pattern); no `\p{…}` classes or `\u{…}` escapes (write
+    `\uXXXX`); no case-insensitive match (write `[Aa]`);
+  - no `uniqueItems`, no `$ref` or `$dynamicRef` (write the schema out), no `$async`, no enum of more than 1000
+    values, at most 100 patterns;
+  - `format` is not checked: say it in the `description` and check it in your code.
+
+  A source with a schema that breaks these is refused whole: it is left out of trigger_sources' list and shown in its
+  `Refused` part with why, the plugin's log says why, and the testkit's `startPlugin` fails with the same reason. The
+  `config` schema follows the same rules; give each field a `description` so an agent can fill it, and `minimum` for
+  intervals (poll no more often than every 10 minutes). A trigger whose config the schema refuses is not made.
+- `external`: whether the signal's text comes from outside (the internet, other people, a service's API). Triggers
+  treat an external signal's text as untrusted: it is not shown in notes, and the agent it wakes is marked tainted.
+  Declare `true`. A plugin the person or an agent installs is always external, whatever its manifest says: only the
+  hub's own built-in plugins may declare `false`, for data that no stranger could have written.
 - Only types in `contributes.signals` can be emitted; the hub allows a plugin 600 signals a minute.
-- Test with the testkit: `h.subscribeSignal("sunrise", config)` starts the provider, `h.signals` lists what it sent,
-  `h.stopSignal(id)` stops it (see `test/sun.test.ts`).
+- Test with the testkit: `h.subscribeSignal("sunrise", config)` starts the provider (and rejects a config the
+  `config` schema refuses, as the hub would not subscribe), `h.signals` lists what it sent, `h.stopSignal(id)` stops it
+  (see `test/sun.test.ts`). The testkit checks every signal as the hub does: what the hub refuses is not in
+  `h.signals`, and `h.logs` says why.
+- After installing, call trigger_sources: your source must be in the list, not under `Refused`.
 
 ## A service with its own MCP server
 

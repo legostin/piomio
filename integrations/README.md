@@ -17,7 +17,8 @@ That copies [`_template`](_template) (a complete integration: sunrise and sunset
    its card kinds and settings.
 2. `.piomio-plugin/locales/en.json` and `ru.json`: every text a person reads, in both languages.
 3. `server/index.ts`: the tools agents call, and the signals that can start triggers (the template's `sunrise` is one; see
-   "Signals" in the guide). `ui/src/index.tsx`: the card they show in the chat.
+   "Signals" in the guide; when the service has none, delete `contributes.signals` and the provider). `ui/src/index.tsx`:
+   the card they show in the chat.
 4. `test/air-quality.test.ts`: tests against a fake of the service.
 
 ```bash
