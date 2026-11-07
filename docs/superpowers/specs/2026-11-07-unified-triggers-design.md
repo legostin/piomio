@@ -154,7 +154,10 @@ A typical exchange: «Следи за почтой, буди меня тольк
 
 ## 7. Moving in, the cluster, failures
 
-**Migration** (once, at start, when `plugin_kv` still holds `triggers` rows): `trigger:*` and `runs:*` move into `triggers` and `trigger_runs`, state included, so no slot fires twice. The mapping:
+**Moving in** happens in steps, so nothing breaks on the way:
+
+- Phase 1 moves the engine's code into core behind a small host interface (`TriggerHost`, the part of the plugin context it used) and keeps everything else where it is. The triggers stay in `plugin_kv` under `triggers` (already replicated), the settings stay on the Triggers card in Plugins, and the page stays the plugin's UI module. The plugin stays as a UI-only plugin, and its on/off switch still turns triggers on and off. The old addresses keep working as they are: webhooks at `/hooks/triggers/<id>` and the API at `/api/plugins/triggers/http/*`, both served by core. The `trigger_*` tools keep their names.
+- Phase 2 changes the stored shape in place, once, at start (a trigger without `on` is converted):
 
 | before | after |
 |---|---|
@@ -164,9 +167,10 @@ A typical exchange: «Следи за почтой, буди меня тольк
 | `watch` | `web.page { url, selector, jsonPath, intervalMinutes }` |
 | `event` | `web.webhook { secret }` |
 
-`prompt` → `wake.prompt`, `maxRunsPerDay` → `limits.wakesPerDay`, and `machine`, `skill`, `report` → `wake`. The default heartbeat is still created once, for a new hub. The old addresses stay as aliases: webhooks at `/hooks/triggers/<id>`, and the API at `/api/plugins/triggers/http/*` for `/api/triggers/*`, in the same response shape plus the new fields. The plugin folder goes away. Its settings become hub settings in `packages/core/src/settings.ts` (`triggersAllowPrivateUrls`, `triggersWatchTimeoutSec`, carried over from the plugin's saved values; not environment variables). Its locale strings move to core's catalogs.
+  `prompt` → `wake.prompt`, `maxRunsPerDay` → `limits.wakesPerDay`, and `machine`, `skill`, `report` → `wake`. State moves with it, so no slot fires twice. The default heartbeat is still created once, for a new hub. The API answers in the same shape plus the new fields, so the phone keeps working.
+- Phase 5 moves the page into the web app (`/api/triggers/*`, with the old path kept as an alias), turns the plugin's settings into hub settings in `packages/core/src/settings.ts` (`triggersAllowPrivateUrls`, `triggersWatchTimeoutSec`, carried over from the plugin's saved values; not environment variables), and removes the plugin.
 
-**Cluster**: the engine runs on the leading replica only, as plugins do today. `triggers`, `trigger_runs`, `signal_notes` and `trigger_state` join replication (`cluster.ts` tables). A webhook that reaches a standby replica is forwarded to the leader (`server/forward.ts`).
+**Cluster**: the engine runs on the leading replica only, as plugins do today. Triggers live in `plugin_kv`, which is replicated already; `trigger_runs`, `signal_notes` and `trigger_state` join replication (`cluster.ts` tables) when phase 2 adds them. A webhook that reaches a standby replica is forwarded to the leader (`server/forward.ts`).
 
 **Failures:**
 
@@ -187,11 +191,11 @@ A typical exchange: «Следи за почтой, буди меня тольк
 
 One spec, built in this order, each phase shipping on its own:
 
-1. **Core engine**: `packages/core/src/signals/` (store, engine, sources registry), `time.*`, `web.page`, `web.webhook` (secret + HMAC), migration from the plugin, aliases for the old API and webhooks, the same `trigger_*` tools, today's behaviour unchanged. The plugin is removed. Its tests move with it.
-2. **Stages**: match, dedup, batch, the QuickJS sandbox with `pio`, triage, `signal_notes` with `[Signals]` and `signals_recent`, the journal, `trigger_test`, `trigger_sources`.
+1. **Core engine**: the code moves into `packages/core/src/signals/` behind `TriggerHost`; the data, the settings and the page stay; core serves the old addresses; the same `trigger_*` tools; today's behaviour unchanged. Its tests move with it.
+2. **Model and stages**: the new trigger shape migrated in place (section 7), the sources registry with `time.*`, `web.page` and `web.webhook` (secret + HMAC), then match, dedup, batch, the QuickJS sandbox with `pio`, triage, `signal_notes` with `[Signals]` and `signals_recent`, the journal, `trigger_test`, `trigger_sources`.
 3. **Plugin sources**: `contributes.signals`, `ctx.signals` in the SDK and runner, the RPC, `hub.*`; `web.rss_item` in the web plugin as the reference subscribe source; `integrations/_template`, its guide and the `make-integration` skill.
 4. **Outside services**: Composio triggers in the Composio integration (one source per app's trigger the person's connected accounts have, e.g. Gmail's new message, Slack, GitHub, Notion, Linear). Before building, check whether Composio's delivery needs the hub's public URL or offers a channel the hub opens itself. An IMAP integration for mail with no one in between comes after.
-5. **Web**: the Triggers tab, a trigger's page with its pipeline and journal; docs in `docs/guide/{en,ru}` for triggers, sources and writing a source in a plugin.
+5. **Web**: the Triggers tab, a trigger's page with its pipeline and journal, the plugin's settings as hub settings, the plugin removed; docs in `docs/guide/{en,ru}` for triggers, sources and writing a source in a plugin.
 
 ## Testing
 
