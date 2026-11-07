@@ -11,6 +11,8 @@ describe("watch page loads", () => {
   let sitePort = 0;
   const seen: Array<{ url: string; auth?: string }> = [];
   let siteHits = 0;
+  /** The site's connections still open. */
+  const sockets = new Set<import("node:net").Socket>();
 
   beforeAll(async () => {
     // A stand-in for the egress proxy: plain HTTP requests arrive with the absolute URL.
@@ -23,6 +25,10 @@ describe("watch page loads", () => {
       siteHits++;
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("direct");
+    });
+    site.on("connection", (sock) => {
+      sockets.add(sock);
+      sock.on("close", () => sockets.delete(sock));
     });
     await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
     await new Promise<void>((r) => site.listen(0, "127.0.0.1", r));
@@ -50,6 +56,20 @@ describe("watch page loads", () => {
     expect(await res.text()).toBe("direct");
     expect(siteHits).toBe(1);
     expect(seen.length).toBe(before);
+  });
+
+  it("close() lets its kept-alive connections go", async () => {
+    const others = new Set(sockets);
+    const mine = () => [...sockets].filter((x) => !others.has(x)).length;
+    const get = proxiedGet(`http://tok123:x@127.0.0.1:${proxyPort}`);
+    expect(await (await get(`http://127.0.0.1:${sitePort}/`, {})).text()).toBe("direct");
+    // Kept alive for the next load.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mine()).toBe(1);
+    get.close();
+    const end = Date.now() + 2000;
+    while (mine() && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+    expect(mine()).toBe(0);
   });
 
   it("fetchPage uses the given fetch and reports its timeout as a timeout", async () => {

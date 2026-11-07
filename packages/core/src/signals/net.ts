@@ -10,10 +10,13 @@ import type { FetchLike } from "./host.ts";
 /** What the plugin process had in NO_PROXY: the hub's own machine is reached directly. */
 export const LOOPBACK_NO_PROXY = "127.0.0.1,localhost,::1";
 
-export function proxiedGet(proxyUrl: string, noProxy = LOOPBACK_NO_PROXY): FetchLike {
+/** A GET through the proxy, and `close()`: its kept-alive connections go (the engine stopped). */
+export type ProxiedGet = FetchLike & { close(): void };
+
+export function proxiedGet(proxyUrl: string, noProxy = LOOPBACK_NO_PROXY): ProxiedGet {
   const proxyEnv = { HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, NO_PROXY: noProxy };
   const agents = { http: new http.Agent({ keepAlive: true, proxyEnv }), https: new https.Agent({ keepAlive: true, proxyEnv }) };
-  return (url, init) =>
+  const get: FetchLike = (url, init) =>
     new Promise<Response>((resolve, reject) => {
       const u = new URL(url);
       const secure = u.protocol === "https:";
@@ -41,4 +44,10 @@ export function proxiedGet(proxyUrl: string, noProxy = LOOPBACK_NO_PROXY): Fetch
       req.on("error", reject);
       req.end();
     });
+  return Object.assign(get, {
+    close() {
+      agents.http.destroy();
+      agents.https.destroy();
+    },
+  });
 }

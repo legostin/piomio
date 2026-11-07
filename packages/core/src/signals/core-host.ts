@@ -30,8 +30,11 @@ export interface CoreTriggersDeps {
   /** Core calls as a plugin makes them (core-call.ts), on behalf of "triggers". */
   coreCall: (pluginId: string, method: CoreMethod, params: unknown) => Promise<unknown>;
   hubUrl: string;
-  /** How the watch loads pages (net.ts proxiedGet); unset: the global fetch. Made once per start. */
-  fetch?: () => FetchLike;
+  /**
+   * How the watch loads pages (net.ts proxiedGet); unset: the global fetch. Made afresh on every start; `release` is
+   * called when that start's engine stops (its egress token is revoked, its connections closed).
+   */
+  fetch?: () => { fetch: FetchLike; release?(): void };
 }
 
 /** What one start registered: released together, so a stop during a start takes back exactly that start's. */
@@ -150,7 +153,9 @@ export class CoreTriggers {
     };
     /** A listener added after the release is taken back at once. */
     const keep = (off: () => void) => void (s.closed ? off() : s.offs.push(off));
-    const fetch = d.fetch?.();
+    const net = d.fetch?.();
+    if (net?.release) keep(net.release);
+    const fetch = net?.fetch;
     return {
       pluginId: TRIGGERS_ID,
       hubUrl: d.hubUrl,

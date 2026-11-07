@@ -143,8 +143,6 @@ export class Hub {
   plugins: PluginHost;
   /** The trigger engine (signals/): runs while this hub leads and the Triggers card is on. */
   triggers: CoreTriggers;
-  /** The egress token the trigger engine's page loads use, issued once (like reviewToken). */
-  private triggersToken?: string;
   /** This computer's graphics cards, once read (start()). */
   private gpus?: string[];
   mcp: McpEndpoint;
@@ -478,8 +476,19 @@ export class Hub {
       },
       coreCall,
       hubUrl: config.internalUrl,
-      // Page loads go through the egress proxy, checked and audited like the plugin process's were.
-      fetch: () => proxiedGet(`http://${(this.triggersToken ??= this.egress.issueToken("plugin:triggers", ["*"]))}:x@127.0.0.1:${config.egressPort}`),
+      // Page loads go through the egress proxy, checked and audited like the plugin process's were: a token per start,
+      // revoked with its connections when the engine stops (as the plugin's went with its process).
+      fetch: () => {
+        const token = this.egress.issueToken("plugin:triggers", ["*"]);
+        const get = proxiedGet(`http://${token}:x@127.0.0.1:${config.egressPort}`);
+        return {
+          fetch: get,
+          release: () => {
+            this.egress.revoke(token);
+            get.close();
+          },
+        };
+      },
     });
     // The person turned the Triggers card on or off.
     this.bus.on("plugins.updated", () => {

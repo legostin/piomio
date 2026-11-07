@@ -225,11 +225,13 @@ describe("the trigger engine's host in core", () => {
   it("a stop during a watch's page load: the check that finishes later starts no task and writes nothing", async () => {
     const held = latch();
     let loading = false;
-    const s = setup({ enabled: true, settings: { allowPrivateUrls: true } }, () => async () => {
-      loading = true;
-      await held.wait;
-      return new Response("<p>new price</p>", { status: 200, headers: { "content-type": "text/html" } });
-    });
+    const s = setup({ enabled: true, settings: { allowPrivateUrls: true } }, () => ({
+      fetch: async () => {
+        loading = true;
+        await held.wait;
+        return new Response("<p>new price</p>", { status: 200, headers: { "content-type": "text/html" } });
+      },
+    }));
     const kv = pluginKv(s.db, "triggers");
     kv.set("initialized", true);
     kv.set("trigger:t_w", {
@@ -253,12 +255,30 @@ describe("the trigger engine's host in core", () => {
     let n = 0;
     const s = setup(undefined, () => {
       if (n++ === 0) throw new Error("no fetch yet");
-      return (async () => new Response("")) as any;
+      return { fetch: async () => new Response("") };
     });
     await expect(s.ct.start()).rejects.toThrow("no fetch yet");
     expect(s.ct.engine).toBeUndefined();
     await s.ct.start();
     expect(s.ct.engine).toBeDefined();
     s.ct.stop();
+  });
+
+  it("makes its page loads afresh on every start and lets them go when it stops (the egress token, the sockets)", async () => {
+    const made: Array<{ released: number }> = [];
+    const s = setup(undefined, () => {
+      const m = { released: 0 };
+      made.push(m);
+      return { fetch: async () => new Response(""), release: () => void m.released++ };
+    });
+    await s.ct.start();
+    expect(made).toEqual([{ released: 0 }]);
+    s.ct.stop();
+    expect(made).toEqual([{ released: 1 }]);
+    await s.ct.start();
+    expect(made).toEqual([{ released: 1 }, { released: 0 }]);
+    s.ct.stop();
+    s.ct.stop();
+    expect(made).toEqual([{ released: 1 }, { released: 1 }]);
   });
 });

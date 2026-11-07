@@ -43,6 +43,9 @@ describe("the hub's trigger engine", () => {
     await hub?.stop();
   });
 
+  /** Egress tokens the trigger engine's page loads hold. */
+  const egressTokens = () => [...((hub.egress as any).grants as Map<string, { owner: string }>).values()].filter((g) => g.owner === "plugin:triggers").length;
+
   it("has the trigger tools, owned by the Triggers card as the plugin's were", async () => {
     expect(hub.tools.get("trigger_create")?.descriptor.owner).toBe("triggers");
     expect(hub.tools.get("trigger_run_now")?.descriptor.effect).toBe("local-write");
@@ -106,11 +109,15 @@ describe("the hub's trigger engine", () => {
   it("follows the card: settings reach the engine, off stops it, on starts it again", async () => {
     hub.plugins.setSettings("triggers", { allowPrivateUrls: true, watchTimeoutSec: 5 });
     expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 5 });
+    expect(egressTokens()).toBe(1);
     await hub.plugins.setEnabled("triggers", false);
     await until(() => !hub.triggers.engine, "the engine to stop");
     expect(hub.tools.get("trigger_create")).toBeUndefined();
     expect((await fetch(`${base}/hooks/triggers/t_any`, { method: "POST" })).status).toBe(404);
+    // Its page loads' egress token goes with it, and a new one comes with the next start.
+    expect(egressTokens()).toBe(0);
     await hub.plugins.setEnabled("triggers", true);
     await until(() => hub.triggers.engine && hub.tools.get("trigger_create"), "the engine to start again");
+    expect(egressTokens()).toBe(1);
   });
 });
