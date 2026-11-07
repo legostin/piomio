@@ -111,12 +111,15 @@ export class TriggerEngine {
   private clockGap: number;
   /** When a tick last found the computer had slept (ms). */
   private wokeAt = -Infinity;
+  /** When this engine started (the hub took the lead): before it, another replica led, or nobody did. */
+  private startedAt: number;
 
   constructor(ctx: TriggerHost, opts: { now?: () => number } = {}) {
     this.ctx = ctx;
     this.settings = readEngineSettings(ctx.settings);
     this.now = opts.now ?? Date.now;
     this.clockGap = this.now() - performance.now();
+    this.startedAt = this.now();
     this.pipeline = new TriggerPipeline(this, ctx.pipeline ?? NO_SERVICES);
   }
 
@@ -324,6 +327,17 @@ export class TriggerEngine {
         });
     }
     this.arm();
+  }
+
+  /**
+   * Whether something due at `at` (ms) came while this hub was away: before this engine started (the hub was down, or
+   * another replica led), or while the computer slept or right after it woke. Then another replica may have handled
+   * it, and what it wrote may still be on the way (a batch waits for it as a slot does in settle). `look`: check for a
+   * wake now (a timer that just fired). How late it is says nothing: a busy hub is late without having been away.
+   */
+  wasAway(at: number, look = false): boolean {
+    if (look) this.noticeWake(this.now());
+    return at < this.startedAt || at <= this.wokeAt + HANDOVER_MS;
   }
 
   /** Remembers when the computer woke: its wall clock ran on while the timers stood still. */

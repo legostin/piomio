@@ -141,10 +141,84 @@ export async function askOn(handle: BrainHandle, prompt: string, signal?: AbortS
   return text;
 }
 
+/**
+ * `p`, unless `signal` aborts first: then it rejects at once, and what `p` still brings is handed to `late` (a session
+ * opened after its asker stopped waiting is closed).
+ */
+function abortable<T>(p: Promise<T>, signal: AbortSignal | undefined, late?: (v: T) => void): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((resolve, reject) => {
+    let done = false;
+    const abort = () => {
+      if (done) return;
+      done = true;
+      reject(abortError(signal));
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", abort);
+        if (done) late?.(v);
+        else {
+          done = true;
+          resolve(v);
+        }
+      },
+      (e) => {
+        signal.removeEventListener("abort", abort);
+        if (!done) {
+          done = true;
+          reject(e);
+        }
+      },
+    );
+  });
+}
+
 /** One question in a session of its own: no tools, no hub, no memory. Rejects with `rest: true` when the brain said it cannot; `signal` closes it. */
 export async function bareAsk(d: BareAskDeps, t: BareThinking, prompt: string, o: BareOpen, signal?: AbortSignal): Promise<string> {
-  const handle = await openBare(d, t, o);
+  const handle = await abortable(openBare(d, t, o), signal, (h) => void h.close().catch(() => {}));
   return askOn(handle, prompt, signal);
+}
+
+/** Slots for at most `max` at once; the rest wait in arrival order, and one whose signal aborts leaves the line. */
+function slots(max: number) {
+  let taken = 0;
+  const line: Array<{ go: () => void; signal?: AbortSignal; abort?: () => void }> = [];
+  return {
+    take(signal?: AbortSignal): Promise<void> {
+      if (signal?.aborted) return Promise.reject(abortError(signal));
+      if (taken < max && !line.length) {
+        taken++;
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve, reject) => {
+        const w: (typeof line)[number] = {
+          signal,
+          go: () => {
+            if (w.abort) signal?.removeEventListener("abort", w.abort);
+            taken++;
+            resolve();
+          },
+        };
+        if (signal) {
+          w.abort = () => {
+            const i = line.indexOf(w);
+            if (i >= 0) line.splice(i, 1);
+            reject(abortError(signal));
+          };
+          signal.addEventListener("abort", w.abort, { once: true });
+        }
+        line.push(w);
+      });
+    },
+    give(): void {
+      taken--;
+      const next = line.shift();
+      if (next) next.go();
+    },
+  };
 }
 
 /** The local CLI brains that are signed in, cheapest model each, effort `low`; those resting left out. */
@@ -172,28 +246,28 @@ export interface QuickModel {
 }
 
 const QUICK_SYSTEM = "You answer a short question exactly in the form it asks for, in text only.";
-/** Questions the quick model takes at once; one past that is refused at once (each holds a CLI session). */
+/** Questions the quick model takes at once (each holds a CLI session); the others wait their turn. */
 export const QUICK_IN_FLIGHT = 2;
 
 /**
  * The quick model: tries the signed-in brains in order; one that said it cannot rests 5 minutes. At most
- * `maxInFlight` questions at once across everything that asks it (the hub has one for its triggers); past that it is
- * unavailable at once. An aborted question closes its session and is not tried on the next brain.
+ * `maxInFlight` questions at once across everything that asks it (the hub has one for its triggers); the others wait
+ * for a free slot in the order they came, as long as their `signal` lets them (a caller's bound). An aborted question
+ * leaves the line or closes its session at once, frees its slot, and is not tried on the next brain.
  */
 export function quickModel(d: BareAskDeps, o: { maxInFlight?: number } = {}): QuickModel {
   const resting = new Map<string, number>();
-  const max = o.maxInFlight ?? QUICK_IN_FLIGHT;
-  let inFlight = 0;
+  const turn = slots(o.maxInFlight ?? QUICK_IN_FLIGHT);
   return {
     async ask(prompt, q = {}) {
-      if (inFlight >= max) throw new Error(`the quick model is busy (${max} questions at once)`);
-      inFlight++;
+      await turn.take(q.signal);
       try {
-        if (q.signal?.aborted) throw abortError(q.signal);
-        const candidates = await quickCandidates(d, { resting });
+        // Each step gives up when the asker does, so the slot is not held past its signal.
+        const candidates = await abortable(quickCandidates(d, { resting }), q.signal);
         if (!candidates.length) throw new Error("no quick model is signed in");
         const tried: string[] = [];
         for (const t of candidates) {
+          if (q.signal?.aborted) throw abortError(q.signal);
           try {
             const text = await bareAsk(d, t, prompt, { system: q.system ?? QUICK_SYSTEM, folder: "quick" }, q.signal);
             return { text, ref: t.ref };
@@ -205,7 +279,7 @@ export function quickModel(d: BareAskDeps, o: { maxInFlight?: number } = {}): Qu
         }
         throw new Error(tried.join("; "));
       } finally {
-        inFlight--;
+        turn.give();
       }
     },
   };

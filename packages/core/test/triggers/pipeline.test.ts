@@ -3,8 +3,13 @@
 // answered at once); their runs follow under the trigger's lock. The engine runs on the fake host engine.test.ts uses,
 // with a memory store, a fake quick model and a fake read gateway; scripts run in the real sandbox.
 
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { QuickModel } from "../../src/bare-ask.ts";
+import type { BrainEvent, BrainSessionOptions, ProbeResult } from "@piomio/shared";
+import { quickModel, type QuickModel } from "../../src/bare-ask.ts";
+import type { BrainHandle, BrainRegistry } from "../../src/brains.ts";
 import { TriggerEngine } from "../../src/signals/engine.ts";
 import type { PipelineServices, TriggerHost } from "../../src/signals/host.ts";
 import { scriptSandbox } from "../../src/signals/sandbox.ts";
@@ -21,7 +26,32 @@ const stores = new WeakMap<Map<string, unknown>, TriggerStore>();
 /** What the fake quick model answers: a decision, a failure, or nothing ever ("hang"). */
 type Answer = { decision: string; why: string; summary: string } | Error | "hang";
 
-function setup(o: { triggers?: Trigger[]; kv?: Map<string, unknown>; clock?: { now: number }; answer?: Answer | (() => Answer); answerAfterMs?: number } = {}) {
+/** The hub's real quick model over one fake CLI brain: it answers `text` after `ms`, or never ("hang"). */
+function realQuick(ms: number | "hang", text = "") {
+  const opened: string[] = [];
+  const closed: string[] = [];
+  const brains = {
+    has: (ref: string) => ref === "codex@local",
+    probe: async () => ({ available: true, authenticated: true }) as ProbeResult,
+    create: async (ref: string, opts: BrainSessionOptions): Promise<BrainHandle> => {
+      opened.push(opts.sessionId);
+      return {
+        ref,
+        send: (_turn: unknown, onEvent: (e: BrainEvent) => void) =>
+          ms === "hang" ? new Promise<void>(() => {}) : new Promise<void>((r) => setTimeout(() => (onEvent({ type: "text", delta: text }), r()), ms)),
+        steer: async () => false,
+        warm: async () => {},
+        interrupt: async () => {},
+        close: async () => void closed.push(opts.sessionId),
+      } as unknown as BrainHandle;
+    },
+  } as unknown as BrainRegistry;
+  return { quick: quickModel({ brains, dataDir: mkdtempSync(join(tmpdir(), "piomio-quick-")) }), opened, closed };
+}
+
+function setup(
+  o: { triggers?: Trigger[]; kv?: Map<string, unknown>; clock?: { now: number }; answer?: Answer | (() => Answer); answerAfterMs?: number; quick?: QuickModel } = {},
+) {
   const kv = o.kv ?? new Map<string, unknown>([["initialized", true]]);
   for (const t of o.triggers ?? []) kv.set(`trigger:${t.id}`, t);
   const clock = o.clock ?? { now: START };
@@ -59,7 +89,7 @@ function setup(o: { triggers?: Trigger[]; kv?: Map<string, unknown>; clock?: { n
         release: () => void (net.released = true),
       };
     },
-    quick,
+    quick: o.quick ?? quick,
   };
   const ctx = {
     pluginId: "triggers",
@@ -286,12 +316,16 @@ describe("the trigger pipeline", () => {
     expect((await e.update("t_hook", { enabled: false })).enabled).toBe(false);
     expect(f.store.runs("t_hook").length).toBeLessThanOrEqual(begun);
     await e.pipeline.idle();
-    // Nothing more ran for it: what waited is kept as notes.
+    // Nothing more ran for it: what waited is kept as one note, with how many came.
     expect(f.asked).toHaveLength(begun);
     const runs = f.store.runs("t_hook");
-    expect(runs).toHaveLength(60);
-    expect(runs.filter((r) => r.status === "skipped" && r.outcome === "note")).toHaveLength(60 - begun);
-    expect(f.store.notes({ triggerId: "t_hook", limit: 100 })).toHaveLength(60 - begun);
+    expect(runs).toHaveLength(begun + 1);
+    expect(runs[0]).toMatchObject({ status: "skipped", outcome: "note" });
+    expect(runs[0].signals).toHaveLength(60 - begun);
+    const notes = f.store.notes({ triggerId: "t_hook", limit: 100 });
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toMatch(new RegExp(`^${60 - begun} signal\\(s\\) came in before the trigger was turned off: web\\.webhook; .*; and ${60 - begun - 5} more$`));
+    expect(notes[0].signalIds).toHaveLength(60 - begun);
     expect(f.store.stateGet("t_hook", "__queue")).toBeUndefined();
     e.stop();
   });
@@ -484,7 +518,9 @@ describe("the trigger pipeline", () => {
     const e3 = await g.start();
     await post(e3, { n: 1 });
     const stale = structuredClone(g.store.stateGet("t_hook", "__batch"));
+    // The computer sleeps through the batch's time; on waking the engine notices (its tick, or the batch's timer).
     g.clock.now += 120_000;
+    expect(e3.wasAway(g.clock.now, true)).toBe(true);
     await e3.pipeline.flushDue();
     expect(g.quick.ask).not.toHaveBeenCalled();
     g.clock.now += 46_000;
@@ -500,6 +536,51 @@ describe("the trigger pipeline", () => {
     expect(await e3.runs("t_hook")).toHaveLength(1);
     expect(g.quick.ask).toHaveBeenCalledTimes(1);
     e3.stop();
+  });
+
+  it("flushes a batch made late by a busy hub at once: only time away makes it wait", async () => {
+    const f = setup({ triggers: [hook({ batch: { windowSec: 5 }, triage: { brief: "x" }, triagePerDay: 10 })], answer: { decision: "note", why: "ok", summary: "Late" } });
+    const e = await f.start();
+    await post(e, { n: 1 });
+    f.clock.now += 20_000;
+    await e.pipeline.flushDue();
+    await e.pipeline.idle();
+    expect(await e.runs("t_hook")).toHaveLength(1);
+    e.stop();
+  });
+
+  it("triages three triggers at the same moment on the hub's quick model: the third waits its turn", async () => {
+    const { quick } = realQuick(200, '{"decision":"note","why":"ok","summary":"Seen"}');
+    const ts = ["a", "b", "c"].map((x) => base({ id: `t_${x}`, kind: "signal", on: [{ type: "demo.item" }], triage: { brief: "x" }, triagePerDay: 10 }));
+    const f = setup({ triggers: ts, quick });
+    const e = await f.start();
+    const runs = await Promise.all(ts.map((t, i) => e.pipeline.deliver(e.get(t.id)!, [sig(i)], "manual")));
+    expect(runs.map((r) => r?.outcome)).toEqual(["note", "note", "note"]);
+    expect(runs.map((r) => r!.stages!.find((x) => x.stage === "triage"))).toEqual(ts.map(() => expect.objectContaining({ verdict: "note", why: "ok" })));
+    expect(f.created()).toEqual([]);
+    for (const t of ts) expect(e.get(t.id)!.state.triageToday).toMatchObject({ count: 1 });
+    e.stop();
+  });
+
+  it("gives up a quick check at its bound when the model hangs, giving the day's check back", async () => {
+    const { quick, opened, closed } = realQuick("hang");
+    const ts = ["a", "b", "c"].map((x) => base({ id: `t_${x}`, kind: "signal", on: [{ type: "demo.item" }], triage: { brief: "x" }, triagePerDay: 10 }));
+    const f = setup({ triggers: ts, quick });
+    const e = await f.start();
+    e.pipeline.quickMs = 300;
+    const t0 = Date.now();
+    const runs = await Promise.all(ts.map((t, i) => e.pipeline.deliver(e.get(t.id)!, [sig(i)], "manual")));
+    expect(Date.now() - t0).toBeLessThan(3000);
+    for (const r of runs) {
+      expect(r!.stages!.find((x) => x.stage === "triage")).toMatchObject({ error: "the quick model did not answer within 300 ms" });
+      expect(r!.outcome).toBe("wake");
+    }
+    // No answer came: no check was spent.
+    for (const t of ts) expect(e.get(t.id)!.state.triageToday?.count ?? 0).toBe(0);
+    // Every session opened (two at once; the third only if a turn freed before its own bound ran out) was closed.
+    expect(opened.length).toBeLessThanOrEqual(3);
+    await vi.waitFor(() => expect(closed).toEqual(expect.arrayContaining(opened)));
+    e.stop();
   });
 
   it("does not carry out again a queued run whose journal line was written before a stop", async () => {
@@ -567,10 +648,16 @@ describe("the trigger pipeline", () => {
   it("keeps the same error in a row as one journal line, counted", async () => {
     const f = setup({ triggers: [hook({ script: script(`export default (s) => { throw new Error(s.data.payload.why) }`) })] });
     const e = await f.start();
-    for (const n of [1, 2, 3]) await send(e, { why: "the API changed", n });
+    for (const n of [1, 2, 3]) {
+      await send(e, { why: "the API changed", n });
+      f.clock.now += 60_000;
+    }
     let runs = await e.runs("t_hook");
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({ status: "error", count: 3, lastAt: expect.any(String) });
+    // At the streak's end: pruning and the journal's order follow its newest run.
+    expect(runs[0].at).toBe(new Date(f.clock.now - 60_000).toISOString());
+    expect(runs[0].at).toBe(runs[0].lastAt);
     expect(runs[0].detail).toContain("the API changed");
     expect(e.get("t_hook")!.state.errorsInRow).toBe(3);
     await send(e, { why: "something else" });

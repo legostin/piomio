@@ -36,9 +36,7 @@ const FLOOD_DROP = 1000;
 const FLOOD_WINDOW_SEC = 60;
 /** Failed runs in a row before the person hears of it, once. */
 export const FAILING_AFTER = 5;
-/** A batch flushed this much past its time came due while the hub slept or was down (as engine.ts ASLEEP_MS)... */
-const LATE_MS = 5_000;
-/** ...and waits this long once for what another replica wrote (as engine.ts SETTLE_MS: its pulls are 30 s long polls). */
+/** A batch that came due while the hub was away waits this long once for what another replica wrote (as engine.ts SETTLE_MS: its pulls are 30 s long polls). */
 const SETTLE_MS = 45_000;
 /** A queue step that failed outside its run is tried again after this long. */
 const STEP_RETRY_MS = 5_000;
@@ -600,14 +598,15 @@ export class TriggerPipeline {
     const delay = Math.max(0, at - this.e.now());
     const timer: NodeJS.Timeout = setTimeout(() => {
       if (this.timers.get(id) === timer) this.timers.delete(id);
-      void this.e.withLock(id, () => this.flushIfDue(id)).catch((err) => this.e.ctx.log.error(`trigger ${id}: its batch failed: ${message(err)}`));
+      void this.e.withLock(id, () => this.flushIfDue(id, true)).catch((err) => this.e.ctx.log.error(`trigger ${id}: its batch failed: ${message(err)}`));
     }, delay);
     timer.unref?.();
     this.timers.set(id, timer);
   }
 
   /** Under the trigger's lock: a batch whose window closed moves to the queue (it is never anywhere but stored) and is carried out. */
-  private async flushIfDue(id: string): Promise<TriggerRun | undefined> {
+  /** `timer`: its timer just fired (the engine looks for a wake now). */
+  private async flushIfDue(id: string, timer = false): Promise<TriggerRun | undefined> {
     if (this.stopped) return undefined;
     const b = this.open(id);
     if (!b) return undefined;
@@ -621,11 +620,12 @@ export class TriggerPipeline {
       this.arm(id, b);
       return undefined;
     }
-    // Due while the hub slept or was down (another replica may have led and flushed it): it waits once for what that
+    // Due while the hub was away (it slept, was down, or another replica led: the engine's wake detection, not how
+    // late this is, since a busy lock is late too): another replica may have flushed it, so it waits once for what that
     // replica wrote to arrive, as a schedule's slot does (engine.settle). Its stable run id covers a flush that still
     // happens twice: the journal line is replaced, not added.
     const waiting = this.settling.get(id);
-    if (waiting?.due !== due && now - due > LATE_MS) {
+    if (waiting?.due !== due && this.e.wasAway(due, timer)) {
       this.settling.set(id, { due, until: now + SETTLE_MS });
       this.armAt(id, now + SETTLE_MS);
       return undefined;
@@ -758,9 +758,12 @@ export class TriggerPipeline {
       return undefined;
     }
     let run = this.store.run(id, w.runId);
+    // Turned off while it waited (its batch open, or behind other runs): nothing more runs for it. A run taken now
+    // (a run now, a one-time reminder) goes all the same.
+    if (!run && !t.enabled && !w.now) return this.switchedOff(t);
     if (!run) {
       try {
-        run = await this.carry(t, w);
+        run = await this.run(t, w);
       } catch (e) {
         if (this.stopped) return undefined;
         run = await this.broken(t, w, message(e));
@@ -772,17 +775,38 @@ export class TriggerPipeline {
     return run;
   }
 
-  // ---------- a run ----------
-
-  private async carry(t: Trigger, w: Work): Promise<TriggerRun> {
-    // Turned off while it waited (its batch open, or behind other runs): what came in is kept as a note, not lost,
-    // and nothing more runs for it. A run taken now (a run now, a one-time reminder) goes all the same.
-    if (!t.enabled && !w.now) {
-      const why = w.flush ? "the trigger was turned off before its batch went on: kept as a note" : "the trigger was turned off before this run's turn came: kept as a note";
-      return this.noteOnly(t, w, why);
-    }
-    return this.run(t, w);
+  /**
+   * Under the lock, the trigger turned off: everything still queued for it (but runs taken now) becomes one note, with
+   * how many signals came and their first subjects, on one journal line, and leaves the queue in the same step.
+   */
+  private switchedOff(t: Trigger): TriggerRun {
+    const all = this.queue(t.id);
+    const off = all.filter((w) => !w.now);
+    const signals = off.flatMap((w) => w.signals);
+    const external = signals.some((s) => s.external);
+    const why = `the trigger was turned off: the ${signals.length} signal(s) that waited were kept as one note`;
+    const run: TriggerRun = {
+      id: off[0].runId,
+      at: new Date(this.e.now()).toISOString(),
+      reason: off[0].reason,
+      status: "skipped",
+      detail: why,
+      signals: signals.map(briefOf),
+      stages: [...trimLine(signals), { stage: "outcome", verdict: "note", why }],
+      outcome: "note",
+      external,
+      noteId: this.addNote(t, describe(signals, `${signals.length} signal(s) came in before the trigger was turned off`), signals, external),
+    };
+    this.journal(t.id, run, keptData(signals));
+    const left = all.filter((w) => w.now);
+    if (left.length) this.store.stateSet(t.id, QUEUE_KEY, left);
+    else this.store.stateDelete(t.id, QUEUE_KEY);
+    for (const w of off) this.settle(w.runId, run);
+    this.e.emit(t.id);
+    return run;
   }
+
+  // ---------- a run ----------
 
   private async run(t: Trigger, w: Work): Promise<TriggerRun> {
     const at = new Date(this.e.now()).toISOString();
@@ -862,26 +886,6 @@ export class TriggerPipeline {
     return noted;
   }
 
-  /** What a batch gathered goes into a note as it is, with no script or quick check (its trigger was turned off). */
-  private async noteOnly(t: Trigger, w: Work, why: string): Promise<TriggerRun> {
-    const external = w.signals.some((s) => s.external);
-    const run: TriggerRun = {
-      id: w.runId,
-      at: new Date(this.e.now()).toISOString(),
-      reason: w.reason,
-      status: "skipped",
-      detail: why,
-      signals: w.signals.map(briefOf),
-      stages: [...trimLine(w.signals), { stage: "outcome", verdict: "note", why }],
-      outcome: "note",
-      external,
-      noteId: this.addNote(t, describe(w.signals, "Came in before the trigger was turned off"), w.signals, external),
-    };
-    this.journal(t.id, run, keptData(w.signals));
-    this.e.emit(t.id);
-    return run;
-  }
-
   /** The script could not run at all (the sandbox full or stopped): a skipped run, no failure counted, the keys let go. */
   private async skipped(t: Trigger, w: Work, at: string, journal: Pick<TriggerRun, "signals" | "stages" | "external">, signalData: Signal[], why: string): Promise<TriggerRun> {
     const run: TriggerRun = { id: w.runId, at, reason: w.reason, status: "skipped", detail: why, ...journal };
@@ -897,11 +901,12 @@ export class TriggerPipeline {
 
   /** The script failed: an error run, the keys let go (a retry is carried out); after the fifth in a row the person hears of it, once. */
   private async failed(t: Trigger, w: Work, at: string, journal: Pick<TriggerRun, "signals" | "stages" | "external">, signalData: Signal[], error: string): Promise<TriggerRun> {
-    // The same error as the trigger's last run is the same line, counted (with the newest run's signals and stages).
+    // The same error as the trigger's last run is the same line, counted, at the newest run's time (pruning and order
+    // follow the end of the streak), with the newest run's signals and stages.
     const last = this.store.runs(t.id, 1)[0];
     const again = last && last.id !== w.runId && last.status === "error" && last.detail === error ? last : undefined;
     const run: TriggerRun = again
-      ? { ...again, ...journal, count: (again.count ?? 1) + 1, lastAt: at }
+      ? { ...again, ...journal, at, count: (again.count ?? 1) + 1, lastAt: at }
       : { id: w.runId, at, reason: w.reason, status: "error", detail: error, ...journal };
     this.unsee(t.id, w.signals);
     this.journal(t.id, run, signalData);
@@ -1021,8 +1026,9 @@ export class TriggerPipeline {
       release: net.release,
       allowPrivate: this.e.settings.allowPrivateUrls,
       external: signals.some((s) => s.external),
-      // Each question bounded: a hung CLI cannot hold the script's sandbox slot past it.
-      quick: this.bounded(),
+      // Each question bounded: a hung CLI cannot hold the script's sandbox slot past it. One that brought no answer
+      // gives back the quick check it took (pio takes one before each question).
+      quick: this.refunding(t, this.bounded()),
       triageBudget: () => this.takeTriage(t),
       store: p.dry ? dryStore(this.store) : this.store,
     });
@@ -1108,6 +1114,8 @@ export class TriggerPipeline {
         external,
       };
     } catch (e) {
+      // No answer came (unavailable, its bound ran out waiting or asking, unparseable): the check is given back.
+      this.refundTriage(t);
       const error = clip(message(e), ERROR_MAX);
       return {
         stage: { stage: "triage", error, ms: ms(), ...(chars ? { tokens: Math.ceil(chars / 4) } : {}) },
@@ -1133,6 +1141,23 @@ export class TriggerPipeline {
 
   private triageUsed(t: Trigger): number {
     return t.state.triageToday?.date === this.today() ? t.state.triageToday.count : 0;
+  }
+
+  /** Gives back one of the day's quick checks, taken for a question that brought no answer. */
+  private refundTriage(t: Trigger): void {
+    const used = this.triageUsed(t);
+    if (used > 0) t.state.triageToday = { date: this.today(), count: used - 1 };
+  }
+
+  /** `quick`, giving back a quick check for each question that brought no answer. */
+  private refunding(t: Trigger, quick: QuickModel): QuickModel {
+    return {
+      ask: (prompt, o) =>
+        quick.ask(prompt, o).catch((e: unknown) => {
+          this.refundTriage(t);
+          throw e;
+        }),
+    };
   }
 
   /** Takes one of the day's quick checks (triage, pio.llm.ask, test runs too); false when none is left. */

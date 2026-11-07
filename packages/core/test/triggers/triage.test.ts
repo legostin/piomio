@@ -152,9 +152,10 @@ describe("triage", () => {
 
 /**
  * Brains as in reviewer.test.ts: `answers[brainId]` is the text, or an error event when it starts with "!" (limit_hit
- * with "~"); "@hang" never answers. `closed` and `interrupted` name the sessions let go.
+ * with "~"); "@hang" never answers, "@after:<ms>:<text>" answers after a while. `closed` and `interrupted` name the
+ * sessions let go. `opening`: when given, a session opens only once it resolves.
  */
-function registry(probes: Record<string, Partial<ProbeResult>>, answers: Record<string, string>) {
+function registry(probes: Record<string, Partial<ProbeResult>>, answers: Record<string, string>, opening?: Promise<void>) {
   const opened: Array<{ ref: string; opts: BrainSessionOptions }> = [];
   const closed: string[] = [];
   const interrupted: string[] = [];
@@ -162,12 +163,18 @@ function registry(probes: Record<string, Partial<ProbeResult>>, answers: Record<
     has: (ref: string) => ref.split("@")[0] in probes,
     probe: async (ref: string) => ({ available: true, authenticated: true, ...probes[ref.split("@")[0]] }) as ProbeResult,
     create: async (ref: string, opts: BrainSessionOptions): Promise<BrainHandle> => {
+      if (opening) await opening;
       opened.push({ ref, opts });
       const said = answers[ref.split("@")[0]] ?? "";
       return {
         ref,
         async send(_turn, onEvent: (e: BrainEvent) => void) {
           if (said === "@hang") return new Promise<void>(() => {});
+          const after = /^@after:(\d+):(.*)$/s.exec(said);
+          if (after) {
+            await new Promise((r) => setTimeout(r, Number(after[1])));
+            return onEvent({ type: "text", delta: after[2] });
+          }
           if (said.startsWith("~")) onEvent({ type: "limit_hit", detail: said.slice(1) });
           else if (said.startsWith("!")) onEvent({ type: "error", message: said.slice(1) });
           else onEvent({ type: "text", delta: said });
@@ -221,21 +228,53 @@ describe("quickModel", () => {
     expect(opened.map((o) => o.ref)).toEqual(["claude-code@local"]);
   });
 
-  it("takes two questions at once and refuses a third at once, as unavailable", async () => {
-    const { brains, opened } = registry({ codex: {} }, { codex: "@hang" });
+  it("answers three questions at once on two sessions, the third in its turn", async () => {
+    const { brains, opened } = registry({ codex: {} }, { codex: "@after:200:OK" });
+    const m = quickModel({ brains, dataDir });
+    const t0 = Date.now();
+    const answers = await Promise.all(["q1", "q2", "q3"].map((q) => m.ask(q, { signal: AbortSignal.timeout(5000) })));
+    expect(answers.map((a) => a.text)).toEqual(["OK", "OK", "OK"]);
+    // Two at once, then the third: about two answers' time, never three sessions together.
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(380);
+    expect(opened).toHaveLength(3);
+  });
+
+  it("lets a question that waits for a free session give up at its own bound, without opening one", async () => {
+    const { brains, opened, closed } = registry({ codex: {} }, { codex: "@hang" });
     const m = quickModel({ brains, dataDir });
     const c = new AbortController();
     const first = m.ask("q1", { signal: c.signal });
     const second = m.ask("q2", { signal: c.signal });
-    await expect(m.ask("q3")).rejects.toThrow("the quick model is busy (2 questions at once)");
     await vi.waitFor(() => expect(opened).toHaveLength(2));
-    c.abort();
-    await expect(first).rejects.toThrow();
-    await expect(second).rejects.toThrow();
-    // Once they are let go, it takes questions again.
-    const later = m.ask("q4", { signal: AbortSignal.timeout(50) });
-    await expect(later).rejects.toThrow();
-    expect(opened).toHaveLength(3);
+    // It waits for a turn (not refused as busy), and gives up when its own bound runs out.
+    const t0 = Date.now();
+    const third = m.ask("q3", { signal: AbortSignal.timeout(100) });
+    await expect(third).rejects.toThrow(/timeout/i);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(90);
+    expect(opened).toHaveLength(2);
+    c.abort(new Error("bound"));
+    await expect(first).rejects.toThrow("bound");
+    await expect(second).rejects.toThrow("bound");
+    expect(closed).toEqual(expect.arrayContaining(opened.map((o) => o.opts.sessionId)));
+  });
+
+  it("frees its turn the moment a question is aborted, even while its session is still opening", async () => {
+    let open!: () => void;
+    const opening = new Promise<void>((r) => (open = r));
+    const { brains, opened, closed } = registry({ codex: {} }, { codex: "OK" }, opening);
+    const m = quickModel({ brains, dataDir }, { maxInFlight: 1 });
+    const c = new AbortController();
+    const first = m.ask("q1", { signal: c.signal });
+    const second = m.ask("q2", { signal: AbortSignal.timeout(5000) });
+    await new Promise((r) => setTimeout(r, 20));
+    c.abort(new Error("gave up"));
+    await expect(first).rejects.toThrow("gave up");
+    // The slot is free at once: the next question goes on as soon as sessions open.
+    open();
+    expect((await second).text).toBe("OK");
+    // The session the first one had asked for is closed when it arrives.
+    await vi.waitFor(() => expect(opened).toHaveLength(2));
+    await vi.waitFor(() => expect(closed).toContain(opened[0].opts.sessionId));
   });
 
   it("throws when no quick model is signed in", async () => {
