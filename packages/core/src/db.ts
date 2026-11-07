@@ -139,6 +139,8 @@ const MIGRATIONS: string[] = [
   `alter table messages add column quiet integer not null default 0;`,
   // A phone's push handle from the push relay (push.ts): its APNs token sealed by the relay, null while pushes are off.
   `alter table devices add column push_handle text;`,
+  // Verified same-user host identity: executor ids remain stable, including tasks and workspace routes.
+  `create table machine_hosts(machine_id text primary key, host_id text not null);`,
 ];
 
 /**

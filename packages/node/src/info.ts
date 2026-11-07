@@ -36,6 +36,7 @@ export function machineInfo(policy: Policy, clis: MachineInfo["clis"], gpus: str
     ...(process.env.PIOMIO_DESKTOP_APP ? { desktopApp: true } : {}),
     clis,
     allowedDirs: [...policy.allowedDirs],
+    workspacesRoot: policy.workspacesRoot,
     commands: policy.exec.enabled,
     ...(gpus.length ? { gpus } : {}),
   };

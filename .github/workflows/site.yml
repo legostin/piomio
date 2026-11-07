@@ -1,8 +1,8 @@
 # The website (packages/site) on GitHub Pages: builds the live demo of the web UI, the page and the docs (docs/guide,
 # docs/versions) in every language, checks that every chapter of the demo plays to its end, then publishes. The
 # repository's Pages source must be "GitHub Actions" (configure-pages turns Pages on when it is off).
-# It also runs after each release (release-tags.yml), so the download links and the release the docs describe are the new
-# one's.
+# The publish job of release-tags.yml also starts it after each release, so the download links and the release the docs
+# describe are the new one's.
 #
 # Repository variables (Settings → Secrets and variables → Actions → Variables):
 #   SITE_BASE    "/piomio/" while the site lives on legostin.github.io; "/" once a domain is connected
@@ -25,9 +25,6 @@ on:
       - "docs/guide/**"
       - "docs/versions/**"
       - ".github/workflows/site.yml"
-  workflow_run:
-    workflows: [tag release]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -36,13 +33,11 @@ permissions:
   id-token: write
 
 concurrency:
-  # Read-only release previews must not cancel an active deployment either.
-  group: ${{ github.event_name == 'workflow_run' && !startsWith(github.event.workflow_run.display_title, 'Publish v') && format('pages-preview-{0}', github.event.workflow_run.id) || 'pages' }}
+  group: pages
   cancel-in-progress: true
 
 jobs:
   build:
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.display_title, 'Publish v') && github.event.workflow_run.event != 'pull_request' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     env:
       SITE_BASE: ${{ vars.SITE_BASE || '/piomio/' }}

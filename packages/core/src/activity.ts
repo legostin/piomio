@@ -94,8 +94,8 @@ export class MachineActivityFeed {
     ];
   }
 
-  /** A turn started streaming into message `id` on the brain `brainRef`. */
-  start(id: string, t: { brainRef: string; agentId: string; conversationId: string; taskId?: string; title?: string }): void {
+  /** A turn started streaming into message `id` on the brain `brainRef` (or waits for it: `step` "offline"). */
+  start(id: string, t: { brainRef: string; agentId: string; conversationId: string; taskId?: string; title?: string; step?: WorkStep }): void {
     const ref = parseBrainRef(t.brainRef);
     this.turns.set(id, {
       machineId: ref.machineId,
@@ -104,7 +104,7 @@ export class MachineActivityFeed {
       ...(t.taskId ? { taskId: t.taskId } : {}),
       ...(t.title ? { title: t.title } : {}),
       brainId: ref.brainId,
-      step: "thinking",
+      step: t.step ?? "thinking",
       startedAt: nowIso(),
     });
     this.changed();
@@ -152,13 +152,13 @@ export class MachineActivityFeed {
   view(): MachineActivity[] {
     const work = (machineId: string): MachineWork[] =>
       [...this.turns.values()]
-        .filter((t) => t.machineId === machineId)
+        .filter((t) => this.machines.canonical(t.machineId) === this.machines.canonical(machineId))
         .sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0))
         .map(({ machineId: _, held: __, heldDetail: ___, ...w }) => w);
     const offer = (id: string, info?: MachineInfo) => this.updates?.offerFor(id, info) ?? {};
     return [
       { id: "local", name: hubName(), online: true, work: work("local"), ...offer("local") },
-      ...this.machines.list().map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id), ...(m.status === "online" ? offer(m.id, m.info) : {}) })),
+      ...this.machines.list().filter((m) => !m.sameHost).map((m) => ({ id: m.id, name: m.name, online: m.status === "online", work: work(m.id), ...(m.status === "online" ? offer(m.id, m.info) : {}) })),
     ];
   }
 

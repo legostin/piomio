@@ -2,6 +2,7 @@
 // Reconnects forever with exponential backoff (max 60 s); a 4401 close (revoked / unknown key) is fatal.
 
 import WebSocket from "ws";
+import { hostIdentity } from "@piomio/shared/host-identity";
 import { createRpcPeer, normalizeLocale, wsTransport, type MachineInfo, type RpcPeer, type WsLike } from "@piomio/shared";
 import { setHubLocale, t } from "./messages.ts";
 import { nodeWsUrl } from "./home.ts";
@@ -96,7 +97,9 @@ export class NodeClient {
         return;
       }
       if (msg?.type === "challenge" && typeof msg.nonce === "string") {
-        ws.send(JSON.stringify({ type: "auth", machineId: this.o.machineId, signature: signChallenge(msg.nonce, this.o.secretKey) }));
+        let hostProof: string | undefined;
+        try { hostProof = hostIdentity().proof(msg.nonce); } catch { /* Separate identities remain usable. */ }
+        ws.send(JSON.stringify({ type: "auth", hostProof, machineId: this.o.machineId, signature: signChallenge(msg.nonce, this.o.secretKey) }));
       } else if (msg?.type === "ok") {
         authed = true;
         peerOf = this.onAuthed(ws);

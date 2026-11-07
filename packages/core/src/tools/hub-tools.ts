@@ -397,8 +397,8 @@ export function registerHubTools(hub: Hub): void {
       const machines = patch.machines ?? prev?.machines ?? [];
       if (machines.length) {
         const listed = hub.brains.list().map((b) => b.ref);
-        if (!onMachines(expandBrains(patch.brains ?? prev?.brains ?? [], listed), machines, hub.here()).length) {
-          const offer = onMachines(listed, machines, hub.here());
+        if (!onMachines(expandBrains(patch.brains ?? prev?.brains ?? [], listed), machines, hub.here(), (id) => hub.machines.canonical(id)).length) {
+          const offer = onMachines(listed, machines, hub.here(), (id) => hub.machines.canonical(id));
           const names = machines.map((m) => hub.runner.computerName(m)).join(", ");
           return text(`Not saved: none of the agent's brains runs on ${names}. Give brains from there${offer.length ? ` (${offer.join(", ")})` : " (none is connected there yet)"}, or machines: [] to unbind.`, true);
         }
@@ -1078,7 +1078,8 @@ export function registerHubTools(hub: Hub): void {
     {
       name: "cluster_status",
       effect: "read",
-      description: "The hub's replicas (the machines that each hold the whole hub and take over when the leader goes away): who leads, who is online, whose vault is locked.",
+      description:
+        "The hub's replicas (the machines that each hold the whole hub and take over when the leader goes away): who leads, which one is the primary, who is online, whose vault is locked.",
       inputSchema: obj({}),
     },
     () => {
@@ -1086,9 +1087,40 @@ export function registerHubTools(hub: Hub): void {
       if (!s.length) return text("This hub runs on one machine (no replicas). cluster_invite makes a link for a new replica.");
       return text(
         s
-          .map((r) => `- ${r.name} (${r.id}) priority ${r.priority}: ${r.online ? r.role : "offline"}${r.sealed ? ", vault locked" : ""}${r.self ? " — this one" : ""}${r.lastSeenAt && !r.online ? `, last seen ${r.lastSeenAt}` : ""}`)
-          .join("\n"),
+          .map(
+            (r) =>
+              `- ${r.name} (${r.id})${r.primary ? " primary" : ""}: ${r.online ? r.role : "offline"}${r.sealed ? ", vault locked" : ""}${r.self ? " — this one" : ""}${r.lastSeenAt && !r.online ? `, last seen ${r.lastSeenAt}` : ""}`,
+          )
+          .join("\n") +
+          "\nThe primary leads whenever it is up; the others lead only while it is away and give the lead back when it returns. replica_primary changes it.",
       );
+    },
+  );
+
+  reg(
+    {
+      name: "replica_primary",
+      effect: "local-write",
+      description:
+        "Make one hub replica the primary: it leads whenever it is up, and phones try its address right after the leader's. The others take over only while it is " +
+        "away (gone for about eight seconds) and give the lead back once it is back and caught up; one that sleeps and wakes (a laptop) no longer takes the lead " +
+        "from a primary that stays up (a server). Use it when the person wants the hub based on one machine, e.g. \"keep the hub on the VPS\". The lead moves within " +
+        "a minute or two, once the running turns are done. See cluster_status for the replicas.",
+      inputSchema: obj({ replica: { type: "string", description: "Replica id or name (cluster_status)" } }, ["replica"]),
+    },
+    (i) => {
+      try {
+        const r = hub.cluster.setPrimary(String(i.replica ?? ""));
+        if (!r.changed) return text(`${r.name} is already the primary replica.`);
+        const leader = hub.cluster.states().find((s) => s.role === "leader" && s.online);
+        return text(
+          leader?.id === r.id
+            ? `${r.name} is now the primary replica and leads.`
+            : `${r.name} is now the primary replica. ${leader ? `${leader.name} leads for now and hands over` : "It takes the lead"} once ${r.name} is up and caught up.`,
+        );
+      } catch (e: any) {
+        return text(e?.message ?? String(e), true);
+      }
     },
   );
 

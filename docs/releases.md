@@ -34,9 +34,9 @@ creating the release. A late older build is published with `--latest=false`, nev
 
 The website's download version and assets already come from GitHub's latest published release. The docs now use
 that same release to select their current major/minor line, even when main's package version is stale. The source
-manifest is only the offline fallback. `site.yml` rebuilds after a successful tag release; PR preview runs do not
-trigger a deployment. Source checkouts used for local development retain their manifest version; for a local
-release build, check out the tag in a disposable worktree and run `node scripts/release-version.mjs X.Y.Z` first.
+manifest is only the offline fallback. The publish job of `release-tags.yml` starts `site.yml` once the release is
+out. Source checkouts used for local development retain their manifest version; for a local release build, check
+out the tag in a disposable worktree and run `node scripts/release-version.mjs X.Y.Z` first.
 
 There is no tracked CHANGELOG file or winget automation in this repository. GitHub release notes are generated
 from tag history (`--generate-notes`). A winget update is a separate, reviewed submission using the published tag,
@@ -52,11 +52,11 @@ PRs touching packaging or release code automatically run `release-tags.yml` as a
 stamp it, run checks, build/install/test Windows, universal macOS, Linux x64 and arm64. The publish job is disabled
 for every PR. No tag or release is created. The artifacts are for CI validation, not distribution.
 
-The new workflow has its own filename (`release-tags.yml`) and name (`tag release`). This matters during the
-first rollout: [workflow_run uses the default branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
-where the old site workflow still listens to `release` without a PR filter. The separate name keeps successful
-pre-merge previews from deploying the site. After merge, site.yml listens to `tag release` and accepts only
-successful `Publish v...` runs. Dry runs cannot deploy the site or cancel an active site deployment.
+The site can't follow a release through `workflow_run`: a run started by the workflow token, as every automatic
+release is, doesn't send it (v0.2.38 and v0.2.39 left the site on the old version). So the publish job starts
+`site.yml` itself, and only that job does. Previews and dry runs skip it, so they cannot deploy the site or cancel
+an active site deployment. If that step fails, the release is already out: rerun the job, which leaves the release
+intact and starts the site again.
 
 Manual dry runs (safe defaults):
 

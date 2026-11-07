@@ -543,6 +543,11 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   api.get("/api/machines/activity", async () => hub.activity.view());
   api.get("/api/machines/setups", async () => hub.machines.list().map((m) => hub.setups.view(m.id)));
   api.get("/api/cluster", async () => hub.cluster.states());
+  // The star on a replica in Machines: the same as replica_primary in the chat.
+  api.post("/api/cluster/primary", async (req) => {
+    hub.cluster.setPrimary(String((req.body as any)?.replica ?? ""));
+    return hub.cluster.states();
+  });
   api.get("/api/machines/:id/setup", async (req) => {
     const m = hub.machines.find((req.params as any).id);
     if (!m) throw new HttpError(404, "machine.notFound");

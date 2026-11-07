@@ -125,7 +125,7 @@ Archiving or deleting the default agent first asks who takes its place.
 
 ## Agents on particular computers
 
-An agent can be bound to computers: "let the coder work only on my laptop". It then uses only those computers' brains, never others, and its tasks don't go anywhere else. While none of them is online, its dialog says so; your message stays there, and you send it again once a computer is back. The same is under **Agent settings** → **Where it thinks**: pick a computer, then a brain on it, and the agent thinks only there, with that brain. **Anywhere** keeps the ordered list of brains instead. Computers are covered in [Machines and other computers](machines.md).
+An agent can be bound to computers: "let the coder work only on my laptop". It then uses only those computers' brains, never others, and its tasks don't go anywhere else. While none of them is online, its dialog waits for one with a passing line in the chat and answers once it is back; after half an hour it says so instead, and you send your message again later. The same is under **Agent settings** → **Where it thinks**: pick a computer, then a brain on it, and the agent thinks only there, with that brain. **Anywhere** keeps the ordered list of brains instead. Computers are covered in [Machines and other computers](machines.md).
 
 ## Project folders
 

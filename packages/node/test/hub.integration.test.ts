@@ -135,6 +135,49 @@ describe("pairing and connection", () => {
   });
 });
 
+describe("one computer with hub and node executors", () => {
+  it("has one computer/activity identity and keeps an existing task's brain reference and folder", async () => {
+    expect(hub.machines.get(machineId)?.sameHost).toBe(true);
+    expect(hub.machines.canonical(machineId)).toBe(hub.here());
+    expect(hub.computers()).toHaveLength(1);
+    expect(hub.computers()[0].aliases).toContain(machineId);
+    expect(hub.resolveComputer(machineId)).toBe(hub.here());
+    expect(hub.resolveComputer("test-box")).toBe(hub.here());
+    const activityId = "identity-test-turn";
+    hub.activity.start(activityId, { agentId: "assistant", conversationId: "c_test", brainRef: `claude-code@${machineId}` });
+    try {
+      expect(hub.activity.view()).toHaveLength(1);
+      expect(hub.activity.view()[0].work.some((w) => w.conversationId === "c_test")).toBe(true);
+    } finally { hub.activity.end(activityId); }
+    hub.saveAgent({ ...agent, id: "identity-dev", name: "Dev", brains: [`claude-code@${machineId}`], machines: [machineId] }, "user");
+    const task = hub.store.createTask({ agentId: "identity-dev", title: "Kept", goal: "Keep", brainRef: `claude-code@${machineId}`, createdBy: "agent", background: true, resumeAt: "2099-01-01T00:00:00.000Z", status: "queued" });
+    expect(hub.runner.placeTask("identity-dev", "local")).toMatchObject({ brainRef: `claude-code@${machineId}` });
+    expect(hub.runner.placeTask("identity-dev", machineId)).toMatchObject({ brainRef: `claude-code@${machineId}` });
+    expect(hub.store.getTask(task.id)?.brainRef).toBe(`claude-code@${machineId}`);
+    expect(hub.machines.get(machineId)?.info?.workspacesRoot).toBe(workspace);
+    const dialog = hub.store.agentConversation("identity-dev").id;
+    const parentFile = join(workspace, "identity-dev", dialog, "attachments", "input.jpeg");
+    mkdirSync(join(workspace, "identity-dev", dialog, "attachments"), { recursive: true });
+    writeFileSync(parentFile, "image");
+    const taskDir = join(workspace, "identity-dev", task.id);
+    mkdirSync(taskDir, { recursive: true });
+    const session = hub.store.createSession({ agentId: "identity-dev", conversationId: task.conversationId, taskId: task.id, brainRef: `claude-code@${machineId}`, background: false }).row;
+    let reviewed = false;
+    hub.auto.useReviewer(() => async () => { reviewed = true; return "BLOCK"; });
+    const verdict = await hub.auto.decide({ tool: "machine_exec", kind: "tool", effect: "external", input: { machine: machineId, cwd: taskDir, command: `ls -la '${parentFile}'` }, summary: "Read own attachment", why: "command" }, { sessionId: session.id, conversationId: session.conversationId, taskId: task.id, agentId: "identity-dev", workspace: hub.runner.workspacePath(session), machineId, machine: "test-box" });
+    expect(verdict.decision).toBe("allow");
+    expect(reviewed).toBe(false);
+    const compound = await hub.auto.decide({ tool: "machine_exec", kind: "tool", effect: "external", input: { machine: machineId, cwd: taskDir, command: `ls -la '${parentFile}' && pwd` }, summary: "Compound file operation", why: "command" }, { sessionId: session.id, conversationId: session.conversationId, taskId: task.id, agentId: "identity-dev", workspace: hub.runner.workspacePath(session), machineId, machine: "test-box" });
+    expect(compound.decision).not.toBe("allow");
+    expect(reviewed).toBe(true);
+    expect(readFileSync(parentFile, "utf8")).toBe("image");
+    // The node also verifies paths on its own filesystem for hubs on a different computer.
+    expect(await hub.machines.ownsFiles(machineId, "identity-dev", [task.id, dialog], { paths: [parentFile, join(taskDir, "result.jpeg")], write: true })).toBe(true);
+    expect(await hub.machines.ownsFiles(machineId, "identity-dev", [task.id], { paths: [join(workspace, "assistant", "other", "x")], write: false })).toBe(false);
+  });
+});
+
+
 describe("files and commands through the hub", () => {
   it("fs.write / fs.read / fs.list inside the allowed dir", async () => {
     const file = join(workspace, "docs", "hello.txt");

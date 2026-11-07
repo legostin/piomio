@@ -26,11 +26,17 @@ const STEP: Record<WorkStep, MessageKey> = {
   web: "machines.step.web",
   tool: "machines.step.tool",
   approval: "machines.step.approval",
+  offline: "machines.step.offline",
 };
+
+/** The turns at work on a machine: not one that only waits for its brains to connect. */
+const atWork = (m: MachineActivity) => m.work.filter((w) => w.step !== "offline").length;
 
 function WorkRow({ work, agent, href, onNavigate }: { work: MachineWork; agent?: AgentDef; href: string; onNavigate?: () => void }) {
   const name = agent?.name ?? work.agentId;
   const waiting = work.step === "approval";
+  // Waiting for its brains to connect: not at work, and nothing for the person to do.
+  const still = waiting || work.step === "offline";
   return (
     <Link
       href={href}
@@ -38,7 +44,7 @@ function WorkRow({ work, agent, href, onNavigate }: { work: MachineWork; agent?:
       title={work.title ? `${name}: ${work.title}` : name}
       className="animate-in flex items-center gap-2 rounded-xl py-1 pr-2 pl-[22px] text-xs transition-colors hover:bg-surface/55"
     >
-      <AgentAvatar avatar={agent?.avatar} id={work.agentId} name={name} size={18} running={!waiting} />
+      <AgentAvatar avatar={agent?.avatar} id={work.agentId} name={name} size={18} running={!still} />
       <span className="min-w-0 flex-1 truncate text-fg">{work.title ?? name}</span>
       <span className={cx("shrink-0", waiting ? "text-warning" : "text-muted")}>{t(STEP[work.step])}</span>
     </Link>
@@ -101,7 +107,7 @@ export function AppUpdateButton() {
 }
 
 function MachineRow({ machine, byId, pathOf, onNavigate }: { machine: MachineActivity; byId: Map<string, AgentDef>; pathOf: (w: MachineWork) => string; onNavigate?: () => void }) {
-  const busy = machine.work.length > 0;
+  const busy = atWork(machine) > 0;
   return (
     <li>
       <div className="flex items-center gap-2.5 px-2.5 py-1" title={t(machine.online ? "machines.online" : "machines.offline")}>
@@ -133,7 +139,7 @@ export function MachinesBlock({ onNavigate }: { onNavigate?: () => void }) {
     return agentId ? agentPath(agentId, s?.defaultAgent) : groupPath(w.conversationId);
   };
 
-  const working = list.reduce((n, m) => n + m.work.length, 0);
+  const working = list.reduce((n, m) => n + atWork(m), 0);
   const update = list.some((m) => m.update && !m.updating);
   return (
     <section aria-label={t("nav.machines")} className="max-h-[40%] shrink-0 overflow-y-auto px-2 pb-1">
@@ -147,7 +153,7 @@ export function MachinesBlock({ onNavigate }: { onNavigate?: () => void }) {
         {!open && (
           <span className="flex items-center gap-1" aria-hidden>
             {list.map((m) => (
-              <span key={m.id} title={m.name} className={cx("size-1.5 rounded-full", !m.online ? "ring-1 ring-muted/60" : m.work.length ? "live-dot" : "bg-success")} />
+              <span key={m.id} title={m.name} className={cx("size-1.5 rounded-full", !m.online ? "ring-1 ring-muted/60" : atWork(m) ? "live-dot" : "bg-success")} />
             ))}
           </span>
         )}
