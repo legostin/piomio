@@ -24,7 +24,10 @@ export class ComposioError extends Error {
   }
 }
 
-/** A success answer without what it should hold: Composio answered, so it is the request's problem, not an outage. */
+/**
+ * A trigger call's success answer without what it should hold: Composio answered, so it is the request's problem, not
+ * an outage (the triggers then use the realtime channel). A sign-in's is "down", as it always was: try again later.
+ */
 const malformed = (message: string) => new ComposioError(502, message, "other");
 
 /**
@@ -39,8 +42,14 @@ export class WebhookTaken extends ComposioError {
   }
 }
 
-/** A hub's own webhook address (any hub's: an earlier address of this one, or another replica's). */
-const HUB_HOOK_RE = /^https:\/\/[^/]+\/hooks\/composio\/events$/;
+/**
+ * A hub's own webhook address (any hub's: an earlier address of this one, or another replica's), with or without a path
+ * before the hook route (a hub served under https://example.com/piomio).
+ */
+const HUB_HOOK_RE = /^https:\/\/[^/?#]+(?:\/[^?#]*)?\/hooks\/composio\/events$/;
+
+/** Whether a webhook goes to a hub's own hook route (never the person's own server). */
+export const isHubHook = (url: string): boolean => HUB_HOOK_RE.test(url);
 
 /** The webhook event the hub's subscription is for. */
 export const TRIGGER_MESSAGE = "composio.trigger.message";
@@ -51,7 +60,7 @@ export const TRIGGER_MESSAGE = "composio.trigger.message";
  */
 export function ownWebhook(list: WebhookSubscription[], url: string, keptId?: string): { mine?: WebhookSubscription; theirs?: WebhookSubscription } {
   const kept = keptId ? list.find((w) => w.id === keptId) : undefined;
-  const mine = list.find((w) => w.url === url) ?? (kept && HUB_HOOK_RE.test(kept.url) ? kept : undefined);
+  const mine = list.find((w) => w.url === url) ?? (kept && isHubHook(kept.url) ? kept : undefined);
   if (mine) return { mine };
   const theirs = kept ?? list.find((w) => w.events.includes(TRIGGER_MESSAGE)) ?? list[0];
   return theirs ? { theirs } : {};
@@ -116,7 +125,6 @@ export interface ComposioApi {
   upsertTriggerInstance(slug: string, opts: { connectedAccountId?: string; userId?: string; config: Record<string, unknown>; type?: "poll" | "webhook"; pollingInterval?: number }): Promise<TriggerUpsert>;
   listActiveTriggers(filters?: { connectedAccountIds?: string[]; userIds?: string[]; triggerIds?: string[]; triggerNames?: string[]; showDisabled?: boolean }): Promise<TriggerInstance[]>;
   setTriggerEnabled(id: string, enabled: boolean): Promise<void>;
-  deleteTrigger(id: string): Promise<void>;
   /**
    * The project's webhook subscription for trigger messages at `url`, made when there is none. Composio keeps one per
    * project (a second is a 409): the one there is used only when it is the hub's own (it goes to `url`, or it is
@@ -125,6 +133,8 @@ export interface ComposioApi {
    */
   createWebhookSubscription(url: string, keptId?: string): Promise<WebhookSubscription>;
   getWebhookSubscription(id: string): Promise<WebhookSubscription>;
+  /** Deletes a webhook subscription; one already gone counts as deleted. Only ever called for the hub's own (isHubHook). */
+  deleteWebhookSubscription(id: string): Promise<void>;
   /** The project's webhook subscriptions, without their secrets. */
   listWebhookSubscriptions(): Promise<WebhookSubscription[]>;
   /** Composio's internal realtime channel (Pusher) for projects without a public address. Undocumented, may change. */
@@ -292,14 +302,14 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
     async createAuthConfig(slug) {
       const r = await req("POST", "/auth_configs", { toolkit: { slug }, auth_config: { type: "use_composio_managed_auth" } });
       const id = str(r?.auth_config?.id) || str(r?.id);
-      if (!id) throw malformed("Composio created no auth config");
+      if (!id) throw new ComposioError(500, "Composio created no auth config");
       return id;
     },
     async link(authConfigId, userId) {
       const r = await req("POST", "/connected_accounts/link", { auth_config_id: authConfigId, user_id: userId });
       const url = str(r?.redirect_url);
       const accountId = str(r?.connected_account_id);
-      if (!url || !accountId) throw malformed("Composio gave no sign-in link");
+      if (!url || !accountId) throw new ComposioError(500, "Composio gave no sign-in link");
       return { url, accountId, ...(str(r?.expires_at) ? { expiresAt: str(r.expires_at) } : {}) };
     },
     async account(id) {
@@ -359,13 +369,6 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
     async setTriggerEnabled(id, enabled) {
       await req("PATCH", `/trigger_instances/manage/${encodeURIComponent(id)}`, { status: enabled ? "enable" : "disable" });
     },
-    async deleteTrigger(id) {
-      try {
-        await req("DELETE", `/trigger_instances/manage/${encodeURIComponent(id)}`);
-      } catch (e) {
-        if (!(e instanceof ComposioError && e.status === 404)) throw e;
-      }
-    },
     async createWebhookSubscription(url, keptId) {
       try {
         const r = subscriptionOf(await req("POST", "/webhook_subscriptions", { webhook_url: url, enabled_events: [TRIGGER_EVENT], version: "V3" }));
@@ -389,6 +392,13 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
     },
     async getWebhookSubscription(id) {
       return subscriptionOf(await req("GET", `/webhook_subscriptions/${encodeURIComponent(id)}`));
+    },
+    async deleteWebhookSubscription(id) {
+      try {
+        await req("DELETE", `/webhook_subscriptions/${encodeURIComponent(id)}`);
+      } catch (e) {
+        if (!(e instanceof ComposioError && e.status === 404)) throw e;
+      }
     },
     listWebhookSubscriptions: subscriptions,
     async realtimeCredentials() {
