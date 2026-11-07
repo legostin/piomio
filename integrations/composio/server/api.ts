@@ -66,7 +66,68 @@ export interface ComposioApi {
   deleteAccount(id: string): Promise<void>;
   tools(slug: string, opts: { important?: boolean; query?: string; limit: number }): Promise<ComposioTool[]>;
   execute(tool: string, opts: { userId: string; accountId: string; args: Record<string, unknown>; version?: string }): Promise<{ ok: boolean; data: unknown; error?: string }>;
+  /** Trigger types of the given apps (all pages; Composio pages by 50). */
+  listTriggerTypes(toolkits: string[]): Promise<TriggerType[]>;
+  getTriggerType(slug: string): Promise<TriggerType>;
+  /** Creates the trigger instance, or updates the one that matches (same type and account). */
+  upsertTriggerInstance(slug: string, opts: { connectedAccountId?: string; userId?: string; config: Record<string, unknown>; type?: "poll" | "webhook"; pollingInterval?: number }): Promise<TriggerUpsert>;
+  listActiveTriggers(filters?: { connectedAccountIds?: string[]; userIds?: string[]; triggerIds?: string[]; triggerNames?: string[]; showDisabled?: boolean }): Promise<TriggerInstance[]>;
+  setTriggerEnabled(id: string, enabled: boolean): Promise<void>;
+  deleteTrigger(id: string): Promise<void>;
+  /** The project's one webhook subscription for trigger messages, pointed at `url`; an existing one is updated, not duplicated. */
+  createWebhookSubscription(url: string): Promise<WebhookSubscription>;
+  getWebhookSubscription(id: string): Promise<WebhookSubscription>;
+  /** Composio's internal realtime channel (Pusher) for projects without a public address. Undocumented, may change. */
+  realtimeCredentials(): Promise<RealtimeCredentials>;
 }
+
+/** What a trigger type listens to: its settings (`config`, a JSON schema) and the shape of its events (`payload`). */
+export interface TriggerType {
+  slug: string;
+  name: string;
+  description: string;
+  instructions: string;
+  /** "webhook" (instant) and / or "poll" (up to the polling interval; 2 minutes at the shortest). */
+  types: string[];
+  toolkit: string;
+  config: JsonSchema;
+  payload: JsonSchema;
+  /** The upstream provider needs a Composio-issued URL registered by hand. */
+  requiresWebhookSetup: boolean;
+}
+
+export interface TriggerUpsert {
+  id: string;
+  type: string;
+  /** Set when a webhook trigger was downgraded to polling. */
+  fallbackReason: string | null;
+  pollingInterval: number | null;
+  created: boolean;
+}
+
+export interface TriggerInstance {
+  id: string;
+  trigger: string;
+  account: string;
+  config: Record<string, unknown>;
+  disabled: boolean;
+}
+
+export interface WebhookSubscription {
+  id: string;
+  url: string;
+  /** Returned by create and by get; kept only in hub storage. */
+  secret: string;
+}
+
+export interface RealtimeCredentials {
+  pusherKey: string;
+  projectId: string;
+  cluster: string;
+}
+
+const PAGE = 50;
+const TRIGGER_EVENT = "composio.trigger.message";
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -92,6 +153,20 @@ function toolOf(t: any): ComposioTool {
   };
 }
 
+function triggerTypeOf(t: any): TriggerType {
+  return {
+    slug: str(t?.slug),
+    name: str(t?.name) || str(t?.slug),
+    description: str(t?.description),
+    instructions: str(t?.instructions),
+    types: Array.isArray(t?.types) ? t.types.filter((x: unknown) => typeof x === "string") : [],
+    toolkit: str(t?.toolkit?.slug).toLowerCase(),
+    config: t?.config && typeof t.config === "object" ? t.config : { type: "object", properties: {} },
+    payload: t?.payload && typeof t.payload === "object" ? t.payload : { type: "object", properties: {} },
+    requiresWebhookSetup: t?.requires_webhook_endpoint_setup === true,
+  };
+}
+
 function accountOf(a: any): Account {
   return { id: str(a?.id), status: str(a?.status).toUpperCase(), toolkit: str(a?.toolkit?.slug).toLowerCase(), ...(str(a?.status_reason) ? { reason: str(a.status_reason) } : {}) };
 }
@@ -99,10 +174,12 @@ function accountOf(a: any): Account {
 /** The API at `base` with the key `key()` gives (read from the vault on every request, so a new key works at once). */
 export function composioApi(base: string, key: () => Promise<string>): ComposioApi {
   const root = base.replace(/\/+$/, "");
-  async function req<T = any>(method: string, path: string, body?: unknown): Promise<T> {
+  // The internal SDK endpoints live under /api/v3, whatever version the rest of the calls use.
+  const internalRoot = root.replace(/\/api\/v3(\.\d+)?$/, "/api/v3");
+  async function call(method: string, path: string, body?: unknown, from = root): Promise<{ status: number; json: any }> {
     let res: Response;
     try {
-      res = await fetch(`${root}${path}`, {
+      res = await fetch(`${from}${path}`, {
         method,
         headers: { "x-api-key": await key(), accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}) },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -119,8 +196,22 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
       json = { message: text.slice(0, 300) };
     }
     if (!res.ok) throw new ComposioError(res.status, str(json?.error?.message) || str(json?.message) || str(json?.error) || `HTTP ${res.status}`);
-    return json as T;
+    return { status: res.status, json };
   }
+  const req = async <T = any>(method: string, path: string, body?: unknown, from?: string): Promise<T> => (await call(method, path, body, from)).json as T;
+  /** Every item of a list call, following next_cursor. */
+  async function pages(path: string, params: Record<string, string | number | boolean | undefined>): Promise<any[]> {
+    const items: any[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 100; i++) {
+      const r = await req("GET", `${path}?${q({ ...params, limit: PAGE, cursor })}`);
+      if (Array.isArray(r?.items)) items.push(...r.items);
+      cursor = str(r?.next_cursor) || undefined;
+      if (!cursor) break;
+    }
+    return items;
+  }
+  const subscriptionOf = (r: any): WebhookSubscription => ({ id: str(r?.id), url: str(r?.webhook_url), secret: str(r?.secret) });
   const q = (params: Record<string, string | number | boolean | undefined>) =>
     new URLSearchParams(Object.entries(params).flatMap(([k, v]): Array<[string, string]> => (v === undefined || v === "" ? [] : [[k, String(v)]]))).toString();
 
@@ -167,6 +258,66 @@ export function composioApi(base: string, key: () => Promise<string>): ComposioA
         ...(opts.version ? { version: opts.version } : {}),
       });
       return { ok: r?.successful !== false && !r?.error, data: r?.data ?? null, ...(r?.error ? { error: typeof r.error === "string" ? r.error : JSON.stringify(r.error) } : {}) };
+    },
+    async listTriggerTypes(toolkits) {
+      return (await pages("/triggers_types", { toolkit_slugs: toolkits.join(","), toolkit_versions: "latest" })).map(triggerTypeOf).filter((t) => t.slug);
+    },
+    async getTriggerType(slug) {
+      return triggerTypeOf(await req("GET", `/triggers_types/${encodeURIComponent(slug)}`));
+    },
+    async upsertTriggerInstance(slug, opts) {
+      const { status, json } = await call("POST", `/trigger_instances/${encodeURIComponent(slug)}/upsert`, {
+        ...(opts.connectedAccountId ? { connected_account_id: opts.connectedAccountId } : {}),
+        ...(opts.userId ? { user_id: opts.userId } : {}),
+        trigger_config: opts.config,
+        ...(opts.type ? { type: opts.type } : {}),
+        ...(opts.pollingInterval ? { polling_interval: opts.pollingInterval } : {}),
+      });
+      const id = str(json?.trigger_id);
+      if (!id) throw new ComposioError(500, "Composio created no trigger");
+      return { id, type: str(json?.type), fallbackReason: str(json?.fallback_reason) || null, pollingInterval: typeof json?.polling_interval === "number" ? json.polling_interval : null, created: status === 201 };
+    },
+    async listActiveTriggers(filters = {}) {
+      const items = await pages("/trigger_instances/active", {
+        connected_account_ids: filters.connectedAccountIds?.join(","),
+        user_ids: filters.userIds?.join(","),
+        trigger_ids: filters.triggerIds?.join(","),
+        trigger_names: filters.triggerNames?.join(","),
+        show_disabled: filters.showDisabled ? "true" : undefined,
+      });
+      return items
+        .map((t): TriggerInstance => ({ id: str(t?.id), trigger: str(t?.trigger_name), account: str(t?.connected_account_id), config: t?.trigger_config && typeof t.trigger_config === "object" ? t.trigger_config : {}, disabled: !!t?.disabled_at }))
+        .filter((t) => t.id);
+    },
+    async setTriggerEnabled(id, enabled) {
+      await req("PATCH", `/trigger_instances/manage/${encodeURIComponent(id)}`, { status: enabled ? "enable" : "disable" });
+    },
+    async deleteTrigger(id) {
+      await req("DELETE", `/trigger_instances/manage/${encodeURIComponent(id)}`);
+    },
+    async createWebhookSubscription(url) {
+      try {
+        const r = subscriptionOf(await req("POST", "/webhook_subscriptions", { webhook_url: url, enabled_events: [TRIGGER_EVENT], version: "V3" }));
+        if (!r.id) throw new ComposioError(500, "Composio created no webhook subscription");
+        return r;
+      } catch (e) {
+        if (!(e instanceof ComposioError && e.status === 409)) throw e;
+      }
+      // One subscription per project: take the existing one over instead of making a second.
+      const existing = (await pages("/webhook_subscriptions", {}))[0];
+      const id = str(existing?.id);
+      if (!id) throw new ComposioError(409, "Composio says a webhook subscription exists but lists none");
+      await req("PATCH", `/webhook_subscriptions/${encodeURIComponent(id)}`, { webhook_url: url, enabled_events: [TRIGGER_EVENT] });
+      return subscriptionOf(await req("GET", `/webhook_subscriptions/${encodeURIComponent(id)}`));
+    },
+    async getWebhookSubscription(id) {
+      return subscriptionOf(await req("GET", `/webhook_subscriptions/${encodeURIComponent(id)}`));
+    },
+    async realtimeCredentials() {
+      const r = await req("GET", "/internal/sdk/realtime/credentials", undefined, internalRoot);
+      const c = { pusherKey: str(r?.pusher_key), projectId: str(r?.project_id), cluster: str(r?.pusher_cluster) };
+      if (!c.pusherKey || !c.projectId || !c.cluster) throw new ComposioError(500, "Composio gave no realtime credentials");
+      return c;
     },
   };
 }
