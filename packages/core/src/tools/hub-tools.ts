@@ -26,7 +26,7 @@ import { listIntegrations } from "../integrations.ts";
 import type { InstallPreview } from "../plugins/host.ts";
 import { ruleMatches } from "../policy/engine.ts";
 import { hubName, inviteUrl, machineHubUrl } from "../pairing.ts";
-import { UpdateError } from "../self-update.ts";
+import { replicaVersionNote, UpdateError } from "../self-update.ts";
 import { isSetupStep, SETUP_STEPS } from "../setup.ts";
 import { sanitizeToolName } from "./registry.ts";
 import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, skillSaveSummary } from "../taught-skills.ts";
@@ -1038,17 +1038,31 @@ export function registerHubTools(hub: Hub): void {
         "and is back in a minute or two. When it was installed on a server with install.sh, it downloads the new release, checks it, restarts and is back " +
         "in about a minute, and goes back to the old version by itself if the new one does not start. A paired machine " +
         "(id or name) gets this hub's version of its program and restarts in a few seconds; one inside the Piomio app installs the app's update and is back in a few minutes. " +
+        "A hub replica behind this hub (cluster_status; id or name) updates itself to this hub's version: it downloads and checks the release, restarts and is back " +
+        "in about a minute on a server, a few minutes in the desktop app; a paired machine of the same name is the same computer, and both are updated. " +
         "The machines block shows the same Update button.",
-      inputSchema: obj({ machine: { type: "string", description: '"local" for this hub, else a machine\'s id or name' } }),
+      inputSchema: obj({ machine: { type: "string", description: '"local" for this hub, else a machine\'s or a hub replica\'s id or name' } }),
     },
     async (i) => {
       const asked = String(i.machine ?? "").trim() || "local";
       const local = asked === "local" || asked.toLowerCase() === hubName().toLowerCase();
       const m = local ? undefined : hub.machines.find(asked);
-      if (!local && !m) return text(`No machine ${asked}. See machine_list.`, true);
-      const name = m?.name ?? "This hub";
+      const replica = local || m ? undefined : hub.updates.replicaPeer(asked);
+      if (!local && !m && !replica) return text(`No machine or hub replica ${asked}. See machine_list and cluster_status.`, true);
+      const name = m?.name ?? replica?.name ?? "This hub";
+      // A paired machine whose program is behind too: its Update covers both.
+      const nodeBehind = !!m && !!hub.updates.offerFor(m.id, m.info).update;
       try {
-        const r = await hub.updates.update(m?.id ?? "local");
+        const r = await hub.updates.update(m?.id ?? replica?.id ?? "local");
+        if (r.replica)
+          return text(
+            (r.replica.updates === "desktop"
+              ? `The Piomio app on ${r.replica.name} (a hub replica) is updating: it downloads its update and restarts with it, back in a few minutes.`
+              : `The hub replica ${r.replica.name} is updating to Piomio ${r.version}: it downloads and checks the release itself, restarts and is back in about a minute, ` +
+                "and goes back to its version by itself if the new one does not start.") +
+              (nodeBehind ? ` The machine program there is brought to ${r.version} too.` : "") +
+              " You'll hear if it fails.",
+          );
         return text(
           !local
             ? m?.info?.selfUpdate
@@ -1061,13 +1075,18 @@ export function registerHubTools(hub: Hub): void {
       } catch (e: any) {
         if (!(e instanceof UpdateError)) return text(`The update failed: ${e?.message ?? e}`, true);
         const why: Record<string, string> = {
-          notInstalled:
-            "This hub runs neither in the desktop app nor from the server installer (it runs from the source code), so it can't update itself from here: update it with `git pull` and a restart.",
+          notInstalled: replica
+            ? `The hub replica ${name} runs from the source code, so it can't update itself from here: it is updated on that computer with git pull and a restart.`
+            : "This hub runs neither in the desktop app nor from the server installer (it runs from the source code), so it can't update itself from here: update it with `git pull` and a restart.",
           upToDate: `${name} already runs the latest version (${e.version}).`,
           unknown: `No machine ${asked}.`,
           offline: `${name} is offline; it can be updated once it is back.`,
           notSelf: `${name} runs inside an older Piomio app on that computer, which can't take an update from here: ask the person to update it once from its tray menu (Install update); after that it updates from the chat.`,
           noBundle: "This hub has no machine program to send (packages/node/dist/piomio-node.mjs is missing).",
+          replicaOld:
+            `The hub replica ${name} runs a Piomio from before replicas updated from the leader, so it can't be updated from here this once. ` +
+            "On that computer: run the installer again as root on a server (curl -fsSL https://piomio.io/install.sh | sh), or Install update in the desktop app's icon menu. After that it updates from here.",
+          noRelease: `The release ${e.version ?? hub.config.version} has nothing for ${name} yet (no archive for its computer): try again once the release is complete.`,
         };
         return text(why[e.reason] ?? e.message, e.reason !== "upToDate");
       }
@@ -1089,7 +1108,8 @@ export function registerHubTools(hub: Hub): void {
         s
           .map(
             (r) =>
-              `- ${r.name} (${r.id})${r.primary ? " primary" : ""}: ${r.online ? r.role : "offline"}${r.sealed ? ", vault locked" : ""}${r.self ? " — this one" : ""}${r.lastSeenAt && !r.online ? `, last seen ${r.lastSeenAt}` : ""}`,
+              `- ${r.name} (${r.id})${r.primary ? " primary" : ""}: ${r.online ? r.role : "offline"}${r.sealed ? ", vault locked" : ""}` +
+              `${r.version ? `, Piomio ${r.version}` : ""}${r.self ? " — this one" : replicaVersionNote(r, hub.config.version)}${r.lastSeenAt && !r.online ? `, last seen ${r.lastSeenAt}` : ""}`,
           )
           .join("\n") +
           "\nThe primary leads whenever it is up; the others lead only while it is away and give the lead back when it returns. replica_primary changes it.",

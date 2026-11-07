@@ -12,6 +12,7 @@ import { toast } from "../state/toast";
 import { t, tRich } from "../i18n";
 import { Badge, Button, EmptyState, ErrorNote, IconButton, Input, Loading, Modal, Page } from "../components/ui";
 import { InviteBlock } from "../components/Invite";
+import { UpdateButton } from "../components/MachinesBlock";
 
 export function MachinesPage() {
   const [list, setList] = useState<Machine[] | null>(null);
@@ -95,9 +96,11 @@ export function MachinesPage() {
 
 /**
  * Where the hub itself lives: one quiet line, who leads now and which replica is the primary (a filled star). The
- * others' outlined star makes that one the primary: the same as "keep the hub on …" in the chat.
+ * others' outlined star makes that one the primary: the same as "keep the hub on …" in the chat. A replica behind this
+ * hub has "Update" next to it, or (one that can't be updated from here) its version, with how to update it.
  */
 function ClusterLine({ replicas, onChanged }: { replicas: ReplicaState[]; onChanged: (next: ReplicaState[]) => void }) {
+  const here = replicas.find((r) => r.self)?.version;
   const makePrimary = async (r: ReplicaState) => {
     try {
       onChanged(await api.post<ReplicaState[]>("/api/cluster/primary", { replica: r.id }));
@@ -116,6 +119,15 @@ function ClusterLine({ replicas, onChanged }: { replicas: ReplicaState[]; onChan
             {r.name} · {!r.online ? t("cluster.offline") : r.role === "leader" ? t("cluster.leader") : t("cluster.standby")}
             {r.online && r.sealed ? ` · ${t("cluster.sealed")}` : ""}
           </Badge>
+          {r.online && r.update ? (
+            <span className="mx-1 inline-flex">
+              <UpdateButton key={`${r.update}:${!!r.updating}`} machine={r} />
+            </span>
+          ) : r.online && !r.self && r.version && here && r.version !== here ? (
+            <span className="mx-1 text-[12px] text-muted" title={t("cluster.olderThere", { version: r.version })}>
+              {r.version}
+            </span>
+          ) : null}
           {r.primary ? (
             <span role="img" aria-label={t("cluster.primary")} title={t("cluster.primary")} className="mx-1 inline-flex">
               <Star className="size-3.5 fill-current text-accent-text" />
