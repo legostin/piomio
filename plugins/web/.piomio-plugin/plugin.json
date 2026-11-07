@@ -19,7 +19,7 @@
         "type": "rss_item",
         "mode": "subscribe",
         "title": "%signal.rss_item.title%",
-        "description": "A new item appeared in an RSS or Atom feed. The feed is read every intervalMinutes (at least 10); the first read only remembers what is there. The item's text comes from the internet and is untrusted.",
+        "description": "A new item appeared in an RSS or Atom feed. The feed is read every intervalMinutes (at least 10); a new subscription's first read only remembers what is there, so items that came while nobody listened are not sent (a restart of the plugin or the hub carries on where it was). The item's text comes from the internet and is untrusted.",
         "config": {
           "type": "object",
           "properties": {
