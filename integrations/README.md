@@ -10,13 +10,15 @@ Adding one means working in its folder only: no changes to the hub, the web UI o
 npm run new:integration -- air-quality
 ```
 
-That copies [`_template`](_template) (a complete integration: sunrise and sunset as a card in the chat) to
+That copies [`_template`](_template) (a complete integration: sunrise and sunset as a card in the chat, and a `sunrise` signal source) to
 `integrations/air-quality/`. Then, in that folder:
 
 1. `.piomio-plugin/plugin.json`: the catalog card (category, icon, one line, an example to try), the hosts it calls,
    its card kinds and settings.
 2. `.piomio-plugin/locales/en.json` and `ru.json`: every text a person reads, in both languages.
-3. `server/index.ts`: the tools agents call. `ui/src/index.tsx`: the card they show in the chat.
+3. `server/index.ts`: the tools agents call, and the signals that can start triggers (the template's `sunrise` is one; see
+   "Signals" in the guide; when the service has none, delete `contributes.signals` and the provider). `ui/src/index.tsx`:
+   the card they show in the chat.
 4. `test/air-quality.test.ts`: tests against a fake of the service.
 
 ```bash

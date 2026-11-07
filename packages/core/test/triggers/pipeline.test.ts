@@ -874,6 +874,36 @@ describe("the trigger pipeline", () => {
     e.stop();
   });
 
+  it("matches a signal that came by a subscription only to the entries with its config", async () => {
+    const f = setup({
+      triggers: [
+        base({
+          id: "t_two",
+          kind: "signal",
+          on: [
+            { type: "demo.item", config: { sym: "A" }, where: { path: "data.n", gt: 10 } },
+            { type: "demo.item", config: { sym: "B" }, where: { path: "data.n", lt: 5 } },
+          ],
+          script: script(`export default () => ({ note: "kept" })`),
+        }),
+      ],
+    });
+    const e = await f.start();
+    const t = () => e.get("t_two")!;
+    // By A's subscription only A's filter counts (3 would pass B's).
+    expect(await e.pipeline.deliver(t(), [sig(3)], "signal", { via: { config: '{"sym":"A"}' } })).toBeUndefined();
+    expect(await e.pipeline.deliver(t(), [sig(11)], "signal", { via: { config: '{"sym":"A"}' } })).toMatchObject({ outcome: "note", reason: "signal" });
+    expect(await e.pipeline.deliver(t(), [sig(3)], "signal", { via: { config: '{"sym":"B"}' } })).toMatchObject({ outcome: "note" });
+    // By a config it no longer has: left out.
+    expect(await e.pipeline.deliver(t(), [sig(11)], "signal", { via: { config: '{"sym":"C"}' } })).toBeUndefined();
+    // A broadcast of its type: any of its entries of that type.
+    expect(await e.pipeline.deliver(t(), [sig(3)], "signal", { via: {} })).toMatchObject({ outcome: "note" });
+    // Came by a subscription, of a type it has no entry for: left out (only core's own sources pass without one).
+    expect(await e.pipeline.deliver(t(), [sig(3, { type: "demo.other" })], "signal", { via: {} })).toBeUndefined();
+    expect(f.store.stateGet("t_two", "__filtered")).toBe(3);
+    e.stop();
+  });
+
   it("tests the path without an outcome: no note, no task, no state written, its quick checks counted", async () => {
     const f = setup({
       triggers: [

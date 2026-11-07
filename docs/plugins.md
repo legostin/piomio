@@ -70,6 +70,7 @@ my-plugin/
 - `id` uses lowercase letters, digits and dashes and starts with a letter. `server` and `ui` are paths that start with `./` and stay inside the plugin. The `"%key%"` strings are translations, see [Localization](#localization).
 - Tools are named `<toolPrefix>_<name>` (the prefix defaults to the `id` with `-` replaced by `_`).
 - `contributes` declares what the backend registers, and the hub refuses anything undeclared: `tools: true` for `ctx.tools.register`, `brains` and `channels` with the ids for `ctx.brains.register` and `ctx.channels.register`, `hooks` with the hook names for `ctx.hooks.on`, `http: true` for `ctx.http.handle`. `settings` is a JSON Schema that the web UI renders as a form; the values arrive in `ctx.settings`.
+- `contributes.signals` lists the signals the plugin can send to start triggers (see [Signals](#signals)): each one `{ type, mode?, title, description, config?, data?, sample?, external? }`. `type` is lowercase letters, digits and `_`, starting with a letter; the hub shows it as `<id>.<type>`. `mode` is `broadcast` (the default) or `subscribe`. `title` is a `"%key%"` translation, `description` is English for the model. `config` and `data` are JSON Schemas of a subscription's config and of a signal's data, `sample` is a signal's data for test runs. `external` (default `true`) says the data may come from outside; only a built-in plugin's `false` is believed. A declaration whose schema could take more than linear time is refused whole (see [Signals](#signals)).
 - `permissions.network` lists the hosts the plugin may reach (`*` means any). All traffic goes through the core's egress proxy, which lets through only those hosts.
 - `permissions.vault` lists vault item ids or `<type>:*` patterns such as `login:*`. Even an allowed item is handed out only if its scope includes this plugin. The security console can grant a plugin extra items.
 - `permissions.core` lists the core methods the plugin may call: `conversations.post`, `channels.inbound`, `tasks.create` (options beyond the goal: `byAgent`: an agent started it, so the plugin or `parentConversationId` hears the result rather than the person; `tainted`: the goal holds outside content; `skipIfNoBudget`: answer `{ skipped: "budgetExhausted" }` instead of a task that would fail on the agent's spent budget), `tasks.get`, `tasks.list`, `notify`, `approvals.resolve`, `settings.get`, `agents.list`, `ui.emit`, `vault.check`, `machines.list`, `notifications.feedback`, `files.deliver` (writes a file, in base64 chunks, into the `downloads/` folder of a session workspace), `files.fetch` (reads a file from a session workspace, base64), `connections.token` (an access token of the hub's Google sign-in, for a plugin whose `integration.connect` is `google`), `conversations.tell` (a note an agent answers), `speech.transcribe` (the words of a short clip, base64, with the hub's speech-to-text; `{ check: true }` says whether one is set up), `speech.status` and `speech.install` (`{ voice?, stt? }`: the hub's local speech engine, `SpeechStatus` in `packages/shared/src/types.ts`; downloads go on in the background). `ctx.ui.emit` goes through `ui.emit` too, so it needs this permission.
@@ -107,7 +108,7 @@ export default plugin;
 
 Plugins only `import type` from `@piomio/plugin-sdk`: the runner provides the implementation, so a plugin needs no runtime dependency on the SDK. The SDK also exports a `definePlugin` helper, but that is a value import; a typed object as above does the same job.
 
-What `ctx` offers: `pluginId`, `pluginDir`, `dataDir` (a private writable folder), `hubUrl`, `appRoot`, `settings`, `onSettingsChange`, `i18n` (see [Localization](#localization)), `log`, `tools`, `brains`, `channels`, `events.on`, `hooks.on`, `http.handle`, `ui.emit` / `ui.onMessage`, `vault.get`, `storage` (the plugin's key-value store: `get`, `set`, `delete`, `list`), `catalog` (its entries' state with `update`, their sign-in with `onSignIn` / `onSignOut`) and `core.call`. `tools.unregister(name)` takes one of its tools back. A module may also export `deactivate()`.
+What `ctx` offers: `pluginId`, `pluginDir`, `dataDir` (a private writable folder), `hubUrl`, `appRoot`, `settings`, `onSettingsChange`, `i18n` (see [Localization](#localization)), `log`, `tools`, `brains`, `channels`, `events.on`, `hooks.on`, `http.handle`, `ui.emit` / `ui.onMessage`, `vault.get`, `storage` (the plugin's key-value store: `get`, `set`, `delete`, `list`), `catalog` (its entries' state with `update`, their sign-in with `onSignIn` / `onSignOut`), `signals` (`emit` and `provide`, see [Signals](#signals)) and `core.call`. `tools.unregister(name)` takes one of its tools back. A module may also export `deactivate()`.
 
 **Tools.** A handler receives the input and a context (session, agent, workspace, machine) and returns a string or a `ToolResult` (`{ content: [{ type: "text", text }], isError? }`); a thrown error becomes an error result. Besides `effect`, a tool can set `source: true` when its results come from outside (web, mail): reading them marks the session as untrusted. `availability` limits a tool to `interactive` or `background` sessions. For `effect: "external"` you can set `approvalSummary: "Send {text} to {chat}"`, which is how the action appears on the approval card; `{field}` is filled from the tool input. A `local-write` tool whose changes outlive the session (memory, profiles) can set `askWhenTainted: true`: in an untrusted session every call that changes something then waits for the user to approve it on a card in the chat, and the handler gets `ctx.approved` once they do.
 
@@ -118,6 +119,35 @@ What `ctx` offers: `pluginId`, `pluginDir`, `dataDir` (a private writable folder
 **HTTP.** `ctx.http.handle` serves `/api/plugins/<id>/http/*` to the signed-in web UI (`ui.plugin.http`). The same handler is also reachable **without authentication** at `/hooks/<id>/*` for webhooks: such requests have `req.public === true`, and the plugin has to check a secret itself.
 
 **Channels.** A channel is `{ id, label, send(message), status?() }`. `send` receives replies, notifications, approval cards (with approve and deny tokens) and the digest. Incoming user messages go to the hub through `ctx.core.call("channels.inbound", { text, channel, files? })`. `files` are what the user sent along: `{ name?, mimeType?, data (base64), kind?: "photo" | "voice" | "audio" | "video" | "file", durationSec? }`, at most 10 per message and 25 MB each. The hub saves them in the conversation's workspace (`attachments/`) and the agent gets their paths; text may be empty when there are files. `context` (English, at most 2000 characters) goes to the model before the user's words and is not shown in the chat: where a forward came from, what the message replies to.
+
+## Signals
+
+A signal is something that happened which can start a trigger: a new feed item, a reading, a sunrise. Only types in `contributes.signals` can be sent.
+
+```ts
+// Broadcast: sent whenever it happens, from anywhere in the plugin.
+ctx.signals.emit("alert", { level: "high", text }, { key: alertId, subject: "Disk almost full" });
+
+// Subscribe: work only while a trigger listens, once per distinct config.
+ctx.signals.provide("rss_item", {
+  subscribe(sub, emit) {
+    // sub.id is the hub's; sub.config was checked against the declared config schema.
+    const timer = setInterval(async () => {
+      // A failed read is skipped: no unhandled rejection, nothing emitted.
+      const item = await readNewItem(sub.config.url).catch(() => undefined);
+      if (item) emit(item, { key: item.id, subject: item.title });
+    }, 600_000);
+    return { stop: () => clearInterval(timer) };
+  },
+});
+```
+
+- The hub calls `subscribe` when an enabled trigger starts listening with a config no other uses, `stop` when none does, and `subscribe` again (with a new id) when the plugin restarts: keep what was seen in `ctx.storage`, keyed by the whole config. A subscription that comes before its `provide()` starts once the provider is given; the plugin's log says so when none came 30 s after it started. A `subscribe` that throws is tried again later, with growing pauses.
+- `key` names the event: a second signal with the same key reaches a trigger once in 24 hours. `subject` is one line for people and the model.
+- The hub refuses, with the reason in the plugin's log: a type not declared, a subscribe-mode type sent other than by its subscription's `emit`, a key or subject that is no string, data over 256 KB or nested past 50 levels, data its `data` schema refuses, more than 600 signals a minute, and signals whose checks took over a second of the hub's time in a minute. A signal no enabled trigger listens to is taken without its data being checked.
+- Schemas run on the hub against outside content, so a declaration is refused whole when its schema is over 16 KB or 32 levels, uses `uniqueItems`, `$ref`, `$dynamicRef` or `$async`, has an enum of more than 1000 values or more than 100 patterns, or a pattern V8's linear-time engine cannot run (backreferences, lookaround, a counted repeat over 16 such as `{1,32}`: use `minLength`/`maxLength`; `\p{…}` and `\u{…}`, since patterns run without flags). `format` is not checked. Refused declarations are listed with why in `trigger_sources`.
+- An installed plugin's signals are always outside content: the notes they make show no text, and the agents they wake are tainted.
+- The testkit checks signals the same way: `startPlugin` fails on a refused declaration, `subscribeSignal(type, config)` starts a provider (rejecting a config its schema refuses), `signals` lists what was sent and accepted. `web.rss_item` (plugins/web) and the integration template's `sunrise` are examples.
 
 ## Brains
 

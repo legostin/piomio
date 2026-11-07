@@ -7,5 +7,6 @@
   "card.sunrise": "Восход",
   "card.sunset": "Закат",
   "card.day": "День {length}",
-  "card.hours": "{h} ч {m} мин"
+  "card.hours": "{h} ч {m} мин",
+  "signal.sunrise.title": "На восходе солнца"
 }

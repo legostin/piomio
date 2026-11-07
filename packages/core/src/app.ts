@@ -68,6 +68,7 @@ import { deviceUrls, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCom
 import { createCoreCall } from "./core-call.ts";
 import { CoreTriggers, TRIGGERS_ID } from "./signals/core-host.ts";
 import { proxiedGet } from "./signals/net.ts";
+import { SignalSources } from "./signals/sources.ts";
 import { configureHubLocale, coreCatalog, hubLocale, localizePluginValue, LocalizedError, t } from "./i18n.ts";
 import { registerHubTools, slug } from "./tools/hub-tools.ts";
 import { SecretIntake } from "./secrets.ts";
@@ -148,6 +149,8 @@ export class Hub {
   plugins: PluginHost;
   /** The trigger engine (signals/): runs while this hub leads and the Triggers card is on. */
   triggers: CoreTriggers;
+  /** Where triggers' signals come from beyond core's own (signals/sources.ts): plugins' sources; started with the engine. */
+  sources: SignalSources;
   /** This computer's graphics cards, once read (start()). */
   private gpus?: string[];
   mcp: McpEndpoint;
@@ -472,6 +475,29 @@ export class Hub {
       cliBinDirs: () => [...this.userPath.dirs(), ...this.cliTools.binDirs()],
       attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
       onCatalogUpdated: (pluginId, before, after) => this.catalogUpdated(pluginId, before, after),
+      signals: {
+        fromPlugin: (pluginId, m) => this.sources.fromPlugin(pluginId, m),
+        pluginUp: (pluginId) => this.sources.pluginUp(pluginId),
+        pluginDown: (pluginId) => this.sources.pluginDown(pluginId),
+        failed: (pluginId, subscription, error) => this.sources.failed(pluginId, subscription, error),
+      },
+    });
+    // Plugins' signals go to the triggers listening, through the engine's pipeline (CoreTriggers.deliver).
+    this.sources = new SignalSources({
+      plugins: {
+        declared: () => this.plugins.signalSources(),
+        subscribe: (pluginId, id, type, config) => this.plugins.signalSubscribe(pluginId, id, type, config),
+        stop: (pluginId, id) => this.plugins.signalStop(pluginId, id),
+        log: (pluginId, msg) => this.plugins.pluginLog(pluginId, msg),
+      },
+      triggers: () => this.triggers.engine?.list() ?? [],
+      sink: { deliver: (triggerId, signals, reason, o) => this.triggers.deliver(triggerId, signals, reason, o) },
+      bus: this.bus,
+      machines: () => this.machines.list().map((m) => ({ id: m.id, name: m.name, status: m.status })),
+      // As the runner decides it (carriesTaint, cardFromOutside): a task that read the web itself taints only its session.
+      taskTainted: (t) => t.tainted === true || (typeof t.conversationId === "string" && this.store.conversationTainted(t.conversationId)),
+      task: (id) => this.store.getTask(id),
+      redact: (v) => this.vault.redactor.value(v),
     });
     this.triggers = new CoreTriggers({
       db: this.db,
@@ -506,6 +532,7 @@ export class Hub {
       quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
       egress: { proxy: this.egress, port: config.egressPort },
       vault: this.vault,
+      sources: this.sources,
     });
     // The person turned the Triggers card on or off.
     this.bus.on("plugins.updated", () => {

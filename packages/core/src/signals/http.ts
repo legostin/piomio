@@ -8,7 +8,7 @@ import { NotFoundError, QueueFullError, type TriggerEngine } from "./engine.ts";
 import type { ErrorParams, TriggerError } from "./errors.ts";
 import { describeSchedule } from "./schedule.ts";
 import type { Trigger, TriggerInput } from "./types.ts";
-import { normalizeOn, ValidationError } from "./validate.ts";
+import { checkSources, normalizeOn, ValidationError, type SourceNote } from "./validate.ts";
 import { whenText } from "./when.ts";
 
 /** A trigger for the UI and the phone: with when it runs and its last error in the reader's language. */
@@ -35,6 +35,20 @@ const failure = (e: TriggerEngine, req: TriggerHttpRequest, err: TriggerError, s
   ok({ error: e.ctx.i18n.t(`error.${err.code}`, err.params, req.locale), code: err.code, params: err.params }, status);
 const body = (req: TriggerHttpRequest): TriggerInput => (req.body && typeof req.body === "object" ? (req.body as TriggerInput) : {});
 
+/**
+ * The registry's word on what a trigger's `on` would get, as trigger_create and trigger_update check it: a config its
+ * source refuses throws (answered 400); the entries kept without a working source come back as warnings in the
+ * reader's language.
+ */
+function sourceWarnings(e: TriggerEngine, req: TriggerHttpRequest, fields: TriggerInput): Array<SourceNote & { text: string }> {
+  const sources = e.ctx.sources;
+  const check = sources?.check ? (type: string, config: Record<string, unknown>) => sources.check!(type, config) : undefined;
+  return checkSources(check, fields.on).map((n) => ({ ...n, text: e.ctx.i18n.t(`sourceWarning.${n.status}`, { type: n.type, source: n.source ?? "", why: n.why ?? "" }, req.locale) }));
+}
+
+/** A trigger's view, with the warnings about its sources when there are any. */
+const withWarnings = <T extends object>(v: T, warnings: unknown[]) => (warnings.length ? { ...v, warnings } : v);
+
 export async function handleHttp(e: TriggerEngine, req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
   if (req.public) return e.webhook(req);
   const method = req.method.toUpperCase();
@@ -43,7 +57,11 @@ export async function handleHttp(e: TriggerEngine, req: TriggerHttpRequest): Pro
     if (path === "/triggers") {
       if (method === "GET")
         return ok({ triggers: e.list().map((t) => view(e, t, req.locale)), timezone: e.tz, publicUrl: e.publicUrl, agents: await e.agents(), computers: await e.computers() });
-      if (method === "POST") return ok(view(e, await e.create(normalizeOn(body(req), { create: true }), { createdBy: "user" }), req.locale), 201);
+      if (method === "POST") {
+        const fields = normalizeOn(body(req), { create: true });
+        const warnings = sourceWarnings(e, req, fields);
+        return ok(withWarnings(view(e, await e.create(fields, { createdBy: "user" }), req.locale), warnings), 201);
+      }
       return ok({ error: "method not allowed" }, 405);
     }
     const m = /^\/triggers\/([A-Za-z0-9_-]+)(?:\/(run|runs|check|test))?$/.exec(path);
@@ -51,7 +69,11 @@ export async function handleHttp(e: TriggerEngine, req: TriggerHttpRequest): Pro
       const [, id, sub] = m;
       const t = e.require(id);
       if (!sub && method === "GET") return ok(view(e, t, req.locale));
-      if (!sub && method === "PATCH") return ok(view(e, await e.update(id, normalizeOn(body(req))), req.locale));
+      if (!sub && method === "PATCH") {
+        const fields = normalizeOn(body(req));
+        const warnings = sourceWarnings(e, req, fields);
+        return ok(withWarnings(view(e, await e.update(id, fields), req.locale), warnings));
+      }
       if (!sub && method === "DELETE") {
         await e.remove(id);
         return ok({ ok: true });

@@ -13,6 +13,8 @@ import type {
   PluginHttpRequest,
   PluginHttpResponse,
   PluginModule,
+  SignalEmitOptions,
+  SignalProvider,
   ToolHandler,
 } from "./types.ts";
 
@@ -66,6 +68,102 @@ let signInHandler: ((entryId: string) => Promise<{ url: string }> | { url: strin
 let signOutHandler: ((entryId: string) => Promise<void> | void) | undefined;
 let mod: PluginModule | undefined;
 
+// ---------- signals: what the plugin emits, and the hub's subscriptions to its providers ----------
+// The hub checks every signal (its type, its subscription, its size and schema) and refuses with an English error,
+// which goes to the plugin's log. Data that is not JSON, or is far too big, is refused here before it is sent.
+
+/** As the hub's cap (core signals/pipeline.ts SIGNAL_DATA_MAX): bigger data is not sent at all. */
+const SIGNAL_DATA_MAX = 256 * 1024;
+const signalProviders = new Map<string, SignalProvider>();
+/** One of the hub's subscriptions: its provider's handle once it subscribed, and whether the hub stopped it. */
+interface SignalSub {
+  type: string;
+  config: Record<string, unknown>;
+  started: boolean;
+  stopped: boolean;
+  handle?: { stop(): void };
+}
+const signalSubs = new Map<string, SignalSub>();
+let signalLog: (level: string, msg: string) => void = (level, msg) => toStderr(`[${level}] ${msg}`);
+/**
+ * How long after activation a subscription may wait for its provider (a provide() that comes later is fine) before the
+ * plugin's log says none came: the hub takes such a subscription as made, so nothing else would say it does no work.
+ */
+let provideWaitMs = 30_000;
+let activatedAt = Date.now();
+/** Types already said to have no provider: once each. */
+const noProviderSaid = new Set<string>();
+
+/** After the wait, says in the log that subscription `id` still has no provider, unless one came or it was stopped. */
+function watchProvider(id: string, s: SignalSub): void {
+  const wait = Math.max(0, activatedAt + provideWaitMs - Date.now());
+  setTimeout(() => {
+    if (signalSubs.get(id) !== s || s.started || s.stopped || signalProviders.has(s.type) || noProviderSaid.has(s.type)) return;
+    noProviderSaid.add(s.type);
+    signalLog(
+      "warn",
+      `the hub subscribed to ${s.type} (subscription ${id}), but the plugin gave no provider for it ${Math.round(provideWaitMs / 1000)} s after it started: call ctx.signals.provide("${s.type}", { subscribe(sub, emit) { … } }) in activate; until then the source does nothing`,
+    );
+  }, wait).unref();
+}
+
+function sendSignal(type: string, data: unknown, o: SignalEmitOptions | undefined, subscription?: string): void {
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(data === undefined ? null : data);
+  } catch (e: any) {
+    signalLog("warn", `signal ${type} was not sent: its data is not JSON (${e?.message ?? e})`);
+    return;
+  }
+  if (text === undefined) return signalLog("warn", `signal ${type} was not sent: its data is not JSON`);
+  if (Buffer.byteLength(text) > SIGNAL_DATA_MAX) return signalLog("warn", `signal ${type} was not sent: its data is over ${SIGNAL_DATA_MAX / 1024} KB`);
+  const params = {
+    type,
+    data: JSON.parse(text),
+    ...(o?.key !== undefined ? { key: o.key } : {}),
+    ...(o?.subject !== undefined ? { subject: o.subject } : {}),
+    ...(subscription !== undefined ? { subscription } : {}),
+  };
+  void peer.request("signals.emit", params, { timeoutMs: 30_000 }).catch((e: any) => signalLog("warn", `signal ${type} was refused: ${e?.message ?? e}`));
+}
+
+function stopHandle(type: string, handle: { stop(): void } | undefined): void {
+  try {
+    void Promise.resolve(handle?.stop?.()).catch((e) => signalLog("warn", `the ${type} provider failed to stop: ${fmt(e)}`));
+  } catch (e) {
+    signalLog("warn", `the ${type} provider failed to stop: ${fmt(e)}`);
+  }
+}
+
+/** Starts the provider for a subscription; its emit sends by the subscription until the hub stops it. */
+async function startSub(id: string, s: SignalSub): Promise<void> {
+  const p = signalProviders.get(s.type);
+  if (!p || s.started) return;
+  s.started = true;
+  const emit = (data: unknown, o?: SignalEmitOptions) => {
+    if (!s.stopped) sendSignal(s.type, data, o, id);
+  };
+  let handle: { stop(): void };
+  try {
+    handle = await p.subscribe({ id, config: s.config }, emit);
+  } catch (e) {
+    if (signalSubs.get(id) === s) signalSubs.delete(id);
+    throw e;
+  }
+  // Stopped while it subscribed: the handle it gave back is stopped now.
+  if (s.stopped) stopHandle(s.type, handle);
+  else s.handle = handle;
+}
+
+/** Every subscription stops (the plugin is deactivated). */
+function stopAllSubs(): void {
+  for (const [id, s] of signalSubs) {
+    s.stopped = true;
+    signalSubs.delete(id);
+    stopHandle(s.type, s.handle);
+  }
+}
+
 /** Hub events this process hears: one subscription per name, however many handlers (the hub sends each event once). */
 const subscribed = new Set<string>();
 function subscribe(name: string): Promise<void> {
@@ -114,7 +212,9 @@ async function vaultGet(ref: string, opts: Record<string, unknown> | undefined):
   }
 }
 
-peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pluginDir: string; hubUrl: string; appRoot: string; settings: any; locale?: string; messages?: Catalog }) => {
+peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pluginDir: string; hubUrl: string; appRoot: string; settings: any; locale?: string; messages?: Catalog; provideWaitMs?: number }) => {
+  activatedAt = Date.now();
+  if (typeof p.provideWaitMs === "number" && Number.isFinite(p.provideWaitMs) && p.provideWaitMs >= 0) provideWaitMs = p.provideWaitMs;
   hubLocale = isLocale(p.locale) ? p.locale : DEFAULT_LOCALE;
   messages = p.messages ?? {};
   translators.clear();
@@ -122,6 +222,7 @@ peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pl
   mod = (imported.default ?? imported) as PluginModule;
   if (typeof mod.activate !== "function") throw new Error("plugin module must export activate(ctx)");
   const log = (level: string) => (...args: unknown[]) => peer.notify("log", { level, msg: args.map(fmt).join(" ") });
+  signalLog = (level, msg) => log(level)(msg);
   const ctx: PluginContext = {
     pluginId: p.pluginId,
     pluginDir: p.pluginDir,
@@ -190,6 +291,25 @@ peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pl
         void peer.request("register.http", {});
       },
     },
+    signals: {
+      emit(type, data, o) {
+        sendSignal(String(type), data, o);
+      },
+      provide(type, provider) {
+        if (!provider || typeof provider.subscribe !== "function") throw new Error("signals.provide: a provider has subscribe(sub, emit)");
+        const name = String(type);
+        signalProviders.set(name, provider);
+        // Subscriptions the hub made before this provider existed start now; one that fails is the hub's to try again.
+        for (const [id, s] of signalSubs) {
+          if (s.type !== name || s.started) continue;
+          void startSub(id, s).catch((e) => {
+            const error = e instanceof Error ? e.message : fmt(e);
+            signalLog("warn", `the ${name} provider failed to subscribe: ${error}`);
+            peer.notify("signals.failed", { id, error });
+          });
+        }
+      },
+    },
     widgets: {
       show(call, kind, data) {
         const list = call?.callId ? callWidgets.get(call.callId) : undefined;
@@ -229,8 +349,34 @@ peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pl
   return {};
 });
 
+// The hub subscribes to a provider for the triggers that need it: once per id; it answers once the provider did (a
+// subscription for a type with no provider yet waits for provide()).
+peer.handle("signals.subscribe", async (p: { id: string; type: string; config?: Record<string, unknown> }) => {
+  const id = String(p?.id ?? "");
+  if (!id || signalSubs.has(id)) return {};
+  const config = p.config && typeof p.config === "object" && !Array.isArray(p.config) ? p.config : {};
+  const s: SignalSub = { type: String(p.type ?? ""), config, started: false, stopped: false };
+  signalSubs.set(id, s);
+  await startSub(id, s);
+  // No provider yet: taken (one may be given later), but the log says so if none comes.
+  if (!s.started) watchProvider(id, s);
+  return {};
+});
+
+peer.handle("signals.stop", (p: { id: string }) => {
+  const id = String(p?.id ?? "");
+  const s = signalSubs.get(id);
+  if (!s) return {};
+  s.stopped = true;
+  signalSubs.delete(id);
+  // A provider still subscribing gets its handle stopped once it gives it back (startSub).
+  if (s.handle) stopHandle(s.type, s.handle);
+  return {};
+});
+
 peer.handle("plugin.deactivate", async () => {
   try {
+    stopAllSubs();
     await mod?.deactivate?.();
   } finally {
     setTimeout(() => process.exit(0), 50);

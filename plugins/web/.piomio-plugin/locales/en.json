@@ -22,5 +22,6 @@
   "integration.summary": "Web search, reading pages and RSS feeds; Brave or Tavily keys are optional, DuckDuckGo works without one",
   "integration.example": "What is new in the world today?",
   "approval.fetch": "Open {url}",
-  "approval.rss": "Read the feed {url}"
+  "approval.rss": "Read the feed {url}",
+  "signal.rss_item.title": "When a feed has a new item"
 }

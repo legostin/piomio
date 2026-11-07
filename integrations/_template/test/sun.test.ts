@@ -4,7 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { startPlugin, type PluginHarness } from "@piomio/testkit";
-import { clock, dateOf, duration, type DayCard } from "../server/index.ts";
+import { readFileSync } from "node:fs";
+import { clock, dateOf, duration, localDate, nextDay, type DayCard } from "../server/index.ts";
 
 const dir = join(import.meta.dirname, "..");
 
@@ -60,5 +61,93 @@ describe("the integration template", () => {
     expect(r.isError).toBe(true);
     expect(r._meta?.widgets).toBeUndefined();
     expect(r.content.map((c: any) => c.text).join("")).toContain("INVALID_REQUEST");
+  });
+});
+
+describe("the sunrise signal source", () => {
+  let server: Server;
+  let h: PluginHarness;
+  const asked: URL[] = [];
+  const iso = (ms: number) => new Date(ms).toISOString();
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const u = new URL(req.url!, "http://x");
+      asked.push(u);
+      // The first day asked for has its sunrise in a moment; every later one is tomorrow.
+      const at = asked.length === 1 ? Date.now() + 300 : Date.now() + 20 * 3_600_000;
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ status: "OK", results: { sunrise: iso(at), sunset: iso(at + 3_600_000), day_length: 3600 } }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    h = await startPlugin({ dir, settings: { apiUrl: `http://127.0.0.1:${(server.address() as any).port}` } });
+  });
+
+  afterAll(async () => {
+    await h?.stop();
+    server?.close();
+  });
+
+  it("is declared as a subscribe source", () => {
+    expect(JSON.parse(readFileSync(join(dir, ".piomio-plugin", "plugin.json"), "utf8")).contributes.signals[0]).toMatchObject({ type: "sunrise", mode: "subscribe" });
+  });
+
+  it("emits once at sunrise for the configured place, keyed by the date, then waits for the next day", async () => {
+    const id = await h.subscribeSignal("sunrise", { place: "Lisbon", lat: 38.72, lon: -9.14, timezone: "Europe/Lisbon" });
+    const end = Date.now() + 5000;
+    while (!h.signals.length && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+    expect(h.signals).toHaveLength(1);
+    const s = h.signals[0] as any;
+    expect(s).toMatchObject({ type: "sunrise", subject: "Lisbon", data: { place: "Lisbon" } });
+    expect(s.key).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(s.key).toBe(s.data.date);
+    expect(asked[0].searchParams.get("tzid")).toBe("Europe/Lisbon");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(h.signals).toHaveLength(1);
+    // The next day was asked for the day after the first.
+    expect(asked.at(-1)!.searchParams.get("date")).toBe(nextDay(s.key));
+    await h.stopSignal(id);
+  });
+
+  it("refuses a subscription whose time zone does not exist, saying so", async () => {
+    await expect(h.subscribeSignal("sunrise", { place: "Nowhere", lat: 1, lon: 1, timezone: "Not/AZone" })).rejects.toThrow(/"Not\/AZone" is not an IANA time zone/);
+  });
+
+  it("works out dates in the place's time zone", () => {
+    expect(localDate(Date.parse("2026-06-21T23:30:00Z"), "Europe/Lisbon")).toBe("2026-06-22");
+    expect(localDate(Date.parse("2026-06-21T23:30:00Z"), "Not/AZone")).toBeUndefined();
+    expect(nextDay("2026-12-31")).toBe("2027-01-01");
+  });
+});
+
+describe("the sunrise signal source in a polar night", () => {
+  let server: Server;
+  let h: PluginHarness;
+  const asked: URL[] = [];
+
+  beforeAll(async () => {
+    // No sunrise on any day: sunrise-sunset.org answers the epoch for both times then.
+    server = createServer((req, res) => {
+      asked.push(new URL(req.url!, "http://x"));
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ status: "OK", results: { sunrise: "1970-01-01T00:00:01+00:00", sunset: "1970-01-01T00:00:01+00:00", day_length: 0 } }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    h = await startPlugin({ dir, settings: { apiUrl: `http://127.0.0.1:${(server.address() as any).port}` } });
+  });
+
+  afterAll(async () => {
+    await h?.stop();
+    server?.close();
+  });
+
+  it("waits before asking about the next day instead of asking day after day at once", async () => {
+    await h.subscribeSignal("sunrise", { place: "Tromsø", lat: 69.65, lon: 18.96, timezone: "Europe/Oslo" });
+    const end = Date.now() + 5000;
+    while (!asked.length && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(asked).toHaveLength(1);
+    expect(h.signals).toHaveLength(0);
+    expect(h.logs.join("\n")).toMatch(/no sunrise in Tromsø on \d{4}-\d{2}-\d{2}/);
   });
 });

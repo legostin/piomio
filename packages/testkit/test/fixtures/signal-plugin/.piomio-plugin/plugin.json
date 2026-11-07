@@ -1,0 +1,17 @@
+{
+  "id": "signaler",
+  "name": "Signaler",
+  "server": "./server/index.ts",
+  "contributes": {
+    "tools": true,
+    "signals": [
+      { "type": "tick", "title": "Tick", "description": "A tick, when the tick tool says so." },
+      { "type": "count", "mode": "subscribe", "title": "Count", "description": "One signal for each subscription.", "config": { "type": "object", "properties": { "word": { "type": "string" } } } },
+      { "type": "typed", "title": "Typed", "description": "A tick whose n must be a string.", "data": { "type": "object", "properties": { "n": { "type": "string" } }, "required": ["n"] } },
+      { "type": "late", "mode": "subscribe", "title": "Late", "description": "Provided only once provide_late is called." },
+      { "type": "slow", "mode": "subscribe", "title": "Slow", "description": "Takes a while to subscribe." },
+      { "type": "broken", "mode": "subscribe", "title": "Broken", "description": "Provided only once provide_broken is called; it never takes a subscription." }
+    ]
+  },
+  "permissions": {}
+}

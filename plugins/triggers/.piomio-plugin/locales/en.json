@@ -83,6 +83,7 @@
   "ui.reason.webhook": "webhook",
   "ui.reason.heartbeat": "review",
   "ui.reason.manual": "manually",
+  "ui.reason.signal": "signal",
   "ui.status.done": "done",
   "ui.status.off": "off",
   "ui.status.error": "error",

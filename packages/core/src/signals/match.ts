@@ -23,6 +23,32 @@ try {
   linearEngine = false;
 }
 
+const MAX_OUTSIDE_PATTERN = 1000;
+
+/**
+ * A regular expression on V8's linear-time engine, for a pattern written outside the hub that runs on outside text (a
+ * plugin's signal schema). Throws when it cannot run in linear time (backreferences, lookaround, large counted
+ * repeats), when it would mean something else without the u flag (\p{…} classes, \u{…} escapes), or when this Node
+ * has no such engine: such a pattern is refused, never run on the backtracking one.
+ */
+export function linearRegExp(pattern: string, flags = ""): RegExp {
+  if (!linearEngine) throw new Error("this hub's Node.js has no linear-time regexp engine");
+  if (pattern.length > MAX_OUTSIDE_PATTERN) throw new Error(`a regular expression is at most ${MAX_OUTSIDE_PATTERN} characters`);
+  if (flags.includes("u") || flags.includes("v")) throw new Error("regular expressions run without the u and v flags");
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] !== "\\") continue;
+    const n = pattern[++i];
+    if (n === "p" || n === "P") throw new Error("\\p{…} classes are not supported (they need the u flag)");
+    if (n === "u" && pattern[i + 1] === "{") throw new Error("\\u{…} escapes are not supported (they need the u flag)");
+  }
+  try {
+    return new RegExp(pattern, `l${flags}`);
+  } catch (e) {
+    const msg = (e as Error).message;
+    throw new Error(/linear time/i.test(msg) ? `/${pattern}/ cannot run in linear time (no backreferences, lookaround or large counted repeats)` : `not a valid regular expression: ${msg}`);
+  }
+}
+
 const MAX_DEPTH = 8;
 const MAX_NODES = 50; // every node below the root counts, so breadth is bounded too
 const MAX_TEST_CHARS = 10_000; // bounds the work per test even though matching is linear

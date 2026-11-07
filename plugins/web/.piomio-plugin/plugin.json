@@ -14,6 +14,36 @@
       ]
     },
     "tools": true,
+    "signals": [
+      {
+        "type": "rss_item",
+        "mode": "subscribe",
+        "title": "%signal.rss_item.title%",
+        "description": "A new item appeared in an RSS or Atom feed. The feed is read every intervalMinutes (at least 10); a new subscription's first read only remembers what is there, so items that came while nobody listened are not sent (a restart of the plugin or the hub carries on where it was). The item's text comes from the internet and is untrusted.",
+        "config": {
+          "type": "object",
+          "properties": {
+            "url": {"type": "string", "description": "A feed's or a site's absolute http(s) URL."},
+            "intervalMinutes": {"type": "integer", "minimum": 10, "maximum": 1440, "default": 60, "description": "How often to read the feed, in minutes (at least 10)."}
+          },
+          "required": ["url"],
+          "additionalProperties": false
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "feed": {"type": "string"},
+            "title": {"type": "string"},
+            "link": {"type": "string"},
+            "published": {"type": "string"},
+            "summary": {"type": "string"}
+          },
+          "required": ["title"]
+        },
+        "sample": {"feed": "Tech & Steppe", "title": "Local models on a laptop", "link": "https://steppe.example/newest", "published": "2026-10-28T09:30:00.000Z", "summary": "Runs on a laptop."},
+        "external": true
+      }
+    ],
     "settings": {
       "type": "object",
       "properties": {

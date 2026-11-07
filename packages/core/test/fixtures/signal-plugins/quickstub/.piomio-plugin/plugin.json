@@ -1,0 +1,7 @@
+{
+  "id": "quickstub",
+  "name": "Quick stub",
+  "server": "./server/index.ts",
+  "contributes": { "brains": ["kimi"] },
+  "permissions": {}
+}

@@ -107,6 +107,24 @@ export const IntegrationSchema = z.object({
 });
 export type IntegrationInfo = z.infer<typeof IntegrationSchema>;
 
+/** A signal a plugin produces; hub triggers can start on it as `<pluginId>.<type>`. */
+export const SignalDeclSchema = z.object({
+  type: z.string().regex(/^[a-z][a-z0-9_]{0,40}$/, "type: lowercase letters, digits, underscores"),
+  /** broadcast: emitted whenever something happens; subscribe: works only while an enabled trigger subscribes. */
+  mode: z.enum(["broadcast", "subscribe"]).default("broadcast"),
+  /** "%key%" in the plugin's locales. */
+  title: z.string().min(1),
+  /** English, for the model. */
+  description: z.string().min(1).max(1000),
+  /** JSON Schema of the signal's data. */
+  data: z.record(z.string(), z.unknown()).optional(),
+  /** JSON Schema of a subscription's config (subscribe mode). */
+  config: z.record(z.string(), z.unknown()).optional(),
+  sample: z.unknown().optional(),
+  external: z.boolean().default(true),
+});
+export type SignalDecl = z.infer<typeof SignalDeclSchema>;
+
 export const PiomioManifestSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/, "id: lowercase letters, digits, dashes"),
   name: z.string().min(1),
@@ -122,7 +140,17 @@ export const PiomioManifestSchema = z.object({
       tools: z.boolean().default(false),
       brains: z.array(z.string()).default([]),
       channels: z.array(z.string()).default([]),
-      triggers: z.array(z.string()).default([]),
+      /** The signals it produces (PluginContext.signals). The old `triggers` key is accepted and ignored. */
+      signals: z
+        .array(SignalDeclSchema)
+        .default([])
+        .superRefine((list, ctx) => {
+          const seen = new Set<string>();
+          for (const [i, s] of list.entries()) {
+            if (seen.has(s.type)) ctx.addIssue({ code: "custom", path: [i, "type"], message: `signal type "${s.type}" is declared twice` });
+            seen.add(s.type);
+          }
+        }),
       hooks: z.array(z.string()).default([]),
       /** Kinds of cards its tools show in the chat (PluginContext.widgets.show; drawn by ui.widgets.add). */
       widgets: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/)).default([]),
@@ -136,7 +164,7 @@ export const PiomioManifestSchema = z.object({
         })
         .optional(),
     })
-    .default({ tools: false, brains: [], channels: [], triggers: [], hooks: [], widgets: [], http: false }),
+    .default({ tools: false, brains: [], channels: [], signals: [], hooks: [], widgets: [], http: false }),
   permissions: PluginPermissionsSchema,
   /** Shown as a card in the integrations library. */
   integration: IntegrationSchema.optional(),
