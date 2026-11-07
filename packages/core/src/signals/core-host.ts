@@ -5,7 +5,7 @@
 
 import type { CoreMethod, ToolResult } from "@piomio/shared";
 import type { EventBus } from "../bus.ts";
-import type { Db } from "../db.ts";
+import { tx, type Db } from "../db.ts";
 import { hubLocale, tFor } from "../i18n.ts";
 import { pluginKv } from "../plugins/kv.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -86,7 +86,10 @@ export class CoreTriggers {
       try {
         const store = this.store(s);
         // The run lists the plugin kept in storage move into the journal, once, before the engine reads them.
-        migrateRunLists(pluginKv(this.d.db, TRIGGERS_ID), store);
+        migrateRunLists(pluginKv(this.d.db, TRIGGERS_ID), store, {
+          atomically: (fn) => tx(this.d.db, fn),
+          warn: (m) => console.warn(`[piomio] triggers warn: ${m}`),
+        });
         const engine = await startTriggers(this.host(s, store));
         if (this.gen !== gen) {
           engine.stop();

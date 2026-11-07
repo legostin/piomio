@@ -286,11 +286,12 @@ describe("the trigger engine's host in core", () => {
     const s = setup();
     const kv = pluginKv(s.db, "triggers");
     kv.set("initialized", true);
+    kv.set("runs:t_bad", [{ at: "x" }]);
     kv.set("runs:t_old", [{ id: "r_old", at: new Date().toISOString(), reason: "schedule", status: "started" }]);
     await s.ct.start();
     const store = (s.ct.engine as any).ctx.store;
     expect(store.runs("t_old").map((r: { id: string }) => r.id)).toEqual(["r_old"]);
-    expect(kv.list("runs:")).toEqual([]);
+    expect(kv.list("runs:").map((r) => r.key)).toEqual(["runs:t_bad"]);
     expect((s.db.prepare("select count(*) as n from trigger_runs").get() as { n: number }).n).toBe(1);
     s.ct.stop();
     expect(() => store.runs("t_old")).toThrow(/stopped/);

@@ -153,6 +153,7 @@ const MIGRATIONS: string[] = [
   create index signal_notes_by_agent on signal_notes(agent_id, at);
   create table trigger_state(trigger_id text not null, key text not null, value text not null, primary key(trigger_id, key));
   `,
+  `create index signal_notes_by_at on signal_notes(at);`,
 ];
 
 /**

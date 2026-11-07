@@ -107,4 +107,27 @@ describe.each([
     expect(kv.get("trigger:t1")).toEqual({ id: "t1" });
     expect(migrateRunLists(kv, s)).toBe(0);
   });
+
+  it("counts state in bytes, not characters, and refuses an update that grows a key past the cap", () => {
+    const s = make(() => T0);
+    expect(() => s.stateSet("t1", "ru", "я".repeat(600_000))).toThrow(RangeError);
+    s.stateSet("t1", "a", "x".repeat(600_000));
+    s.stateSet("t1", "b", "y".repeat(300_000));
+    expect(() => s.stateSet("t1", "b", "y".repeat(500_000))).toThrow(RangeError);
+    expect(s.stateGet("t1", "b")).toBe("y".repeat(300_000));
+  });
+
+  it("leaves a malformed run list in storage, moves the good ones and says so", () => {
+    const kv = pluginKv(openDb(":memory:"), "triggers");
+    const s = make(() => T0);
+    kv.set("runs:good", [run("g1", T0)]);
+    kv.set("runs:bad", [run("b1", T0), { at: "x" }]);
+    kv.set("runs:odd", "nope");
+    const warned: string[] = [];
+    expect(migrateRunLists(kv, s, { warn: (m) => warned.push(m) })).toBe(1);
+    expect(s.runs("good").map((r) => r.id)).toEqual(["g1"]);
+    expect(s.runs("bad")).toEqual([]);
+    expect(kv.list("runs:").map((r) => r.key)).toEqual(["runs:bad", "runs:odd"]);
+    expect(warned.length).toBe(2);
+  });
 });

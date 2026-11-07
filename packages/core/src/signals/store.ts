@@ -222,19 +222,29 @@ export function memoryStore(now: () => number = Date.now): TriggerStore {
   };
 }
 
-/** The `runs:<id>` lists the triggers plugin kept in storage move into the journal, once; returns how many runs moved. */
-export function migrateRunLists(kv: PluginKv, store: TriggerStore): number {
+/**
+ * The `runs:<id>` lists the triggers plugin kept in storage move into the journal, once; returns how many runs moved.
+ * Each list moves whole (inside `atomically` when given, e.g. one database transaction) or not at all: a malformed
+ * list is reported to `warn` and left in storage, and never stops the others or the engine's start.
+ */
+export function migrateRunLists(kv: PluginKv, store: TriggerStore, opts: { atomically?: <T>(fn: () => T) => T; warn?: (msg: string) => void } = {}): number {
+  const atomically = opts.atomically ?? (<T>(fn: () => T) => fn());
   let n = 0;
   for (const { key, value } of kv.list("runs:")) {
     const id = key.slice("runs:".length);
-    if (Array.isArray(value)) {
-      // Stored newest first: add the oldest first so the journal keeps that order.
-      for (const run of [...(value as TriggerRun[])].reverse()) {
-        store.addRun(id, run);
-        n++;
-      }
+    try {
+      if (!Array.isArray(value)) throw new TypeError("not a list");
+      const runs = value as TriggerRun[];
+      for (const r of runs) if (!r || typeof r !== "object" || typeof r.id !== "string" || typeof r.at !== "string") throw new TypeError("a run has no id or time");
+      atomically(() => {
+        // Stored newest first: add the oldest first so the journal keeps that order.
+        for (const run of [...runs].reverse()) store.addRun(id, run);
+      });
+      kv.delete(key);
+      n += runs.length;
+    } catch (e: any) {
+      opts.warn?.(`${key} was not moved to the journal: ${e?.message ?? e}`);
     }
-    kv.delete(key);
   }
   return n;
 }
