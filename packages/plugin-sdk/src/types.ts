@@ -139,6 +139,21 @@ export interface PluginLogger {
   error(...args: unknown[]): void;
 }
 
+export interface SignalSubscription {
+  id: string;
+  config: Record<string, unknown>;
+}
+export interface SignalEmitOptions {
+  key?: string;
+  subject?: string;
+}
+export interface SignalProvider {
+  subscribe(
+    sub: SignalSubscription,
+    emit: (data: unknown, o?: SignalEmitOptions) => void,
+  ): { stop(): void } | Promise<{ stop(): void }>;
+}
+
 export interface PluginContext {
   pluginId: string;
   pluginDir: string;
@@ -192,6 +207,13 @@ export interface PluginContext {
      * The model only reads the tool's text, so say there that a card is shown.
      */
     show(call: ToolCallContext, kind: string, data: unknown): void;
+  };
+  /** The signals declared in the manifest (contributes.signals); hub triggers can start on them. */
+  signals: {
+    /** A broadcast signal of a declared type. */
+    emit(type: string, data: unknown, o?: SignalEmitOptions): void;
+    /** The provider of a declared subscribe-mode type. */
+    provide(type: string, p: SignalProvider): void;
   };
   ui: {
     /** Push an event to all web clients: they receive {type:"plugin.event", data:{pluginId, channel, payload}}. */
