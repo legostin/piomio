@@ -33,7 +33,7 @@ export function truncateBytes(s: string, max: number): { text: string; truncated
 const truncateChars = (s: string, max: number) => (s.length > max ? `${s.slice(0, max)}\n…[truncated, ${s.length} characters in total]` : s);
 
 /** Fence untrusted text so it cannot close the fence itself. */
-function fenced(tag: string, text: string): string {
+export function fenced(tag: string, text: string): string {
   const safe = text.replaceAll(`${tag}>>>`, `${tag}>>​>`).replaceAll(`<<<${tag}`, `<​<<${tag}`);
   return `<<<${tag}\n${safe}\n${tag}>>>`;
 }
