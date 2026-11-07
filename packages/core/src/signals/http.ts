@@ -21,6 +21,11 @@ export function view(e: TriggerEngine, t: Trigger, locale: Locale = e.ctx.i18n.l
     webhookUrl: e.webhookUrl(t) ?? null,
     scheduleText: describeSchedule(t),
     whenText: whenText(t, tr, locale, e.tz),
+    on: t.on ?? [],
+    batch: t.batch ?? null,
+    script: t.script ?? null,
+    triage: t.triage ?? null,
+    triagePerDay: t.triagePerDay ?? null,
     lastErrorText: t.state.lastError ? (code ? tr(`error.${code}`, t.state.lastErrorParams) : t.state.lastError) : null,
   };
 }

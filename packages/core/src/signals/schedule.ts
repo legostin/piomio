@@ -165,6 +165,7 @@ export function computeNextRun(t: Trigger, tz: string, now: Date): Date | null {
     case "heartbeat":
       return heartbeatNext(t.times ?? [], t.weekdays ?? [], tz, now);
     case "event":
+    case "signal":
       return null;
   }
 }
@@ -180,6 +181,8 @@ export function describeSchedule(t: Trigger): string {
       return `every ${t.intervalMinutes} min: ${t.url}${t.selector ? ` [${t.selector}]` : ""}${t.jsonPath ? ` {${t.jsonPath}}` : ""}`;
     case "event":
       return "webhook";
+    case "signal":
+      return `on ${(t.on ?? []).map((s) => s.type).join(", ")}`;
     case "heartbeat": {
       const wd = t.weekdays?.length === 5 && [1, 2, 3, 4, 5].every((d) => t.weekdays!.includes(d)) ? "weekdays" : (t.weekdays ?? []).map((d) => WEEKDAYS[d]).join(",");
       return `${wd} at ${(t.times ?? []).join(", ")}`;

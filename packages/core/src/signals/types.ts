@@ -1,7 +1,45 @@
 import type { ErrorParams } from "./errors.ts";
+import type { Match } from "./match.ts";
 
-export const TRIGGER_KINDS = ["schedule", "once", "watch", "event", "heartbeat"] as const;
+export const TRIGGER_KINDS = ["schedule", "once", "watch", "event", "heartbeat", "signal"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
+
+/** Sources a trigger carries as its kind and fields; `on` names them only in input (normalizeOn). */
+export const BUILTIN_SOURCES = ["time.cron", "time.at", "web.page", "web.webhook"] as const;
+
+/** A subscription to a signal type, optionally narrowed by a declarative filter. */
+export interface Subscription {
+  type: string;
+  config?: Record<string, unknown>;
+  where?: Match;
+}
+
+/** Something that happened, as the pipeline sees it. */
+export interface Signal {
+  id: string;
+  type: string;
+  source: string;
+  at: string;
+  data: unknown;
+  key?: string;
+  subject?: string;
+  external: boolean;
+}
+
+/** What a trigger's script (or the triage step) decides. */
+export type Verdict = { drop: string } | { note: string } | { wake: string; context?: unknown } | { triage: unknown };
+export type Outcome = "drop" | "note" | "wake";
+
+/** One step of a run through the pipeline, for the journal. */
+export interface StageRecord {
+  stage: "match" | "dedup" | "batch" | "script" | "triage" | "outcome";
+  verdict?: string;
+  why?: string;
+  ms?: number;
+  error?: string;
+  logs?: string[];
+  tokens?: number;
+}
 
 export type RunReason = "schedule" | "catch-up" | "once" | "change" | "webhook" | "heartbeat" | "manual";
 
@@ -27,6 +65,10 @@ export interface TriggerState {
   lastHash?: string;
   lastChangeAt?: string;
   lastFeedback?: { value: "useful" | "less" | "off"; at: string };
+  /** Signals: consecutive failed pipeline runs, the quick-model checks used today, recently seen dedup keys (key -> ms). */
+  errorsInRow?: number;
+  triageToday?: { date: string; count: number };
+  seenKeys?: Record<string, number>;
 }
 
 export interface Trigger {
@@ -61,6 +103,17 @@ export interface Trigger {
   /** heartbeat: local "HH:MM" slots and ISO weekdays (0 = Sunday … 6 = Saturday). */
   times?: string[];
   weekdays?: number[];
+  /** Subscriptions to non-built-in sources (kind "signal" needs at least one). */
+  on?: Subscription[];
+  /** Collect signals for windowSec seconds (at most max) and handle them as one run. */
+  batch?: { windowSec: number; max?: number };
+  /** Code that looks at signals and returns a Verdict; fetches only from `hosts`. */
+  script?: { code: string; hosts: string[] };
+  /** A quick-model check with this brief, run when the script has no verdict (or there is none). */
+  triage?: { brief: string };
+  triagePerDay?: number;
+  /** web.webhook: how the sender is verified (set from the web.webhook config). */
+  verify?: unknown;
   state: TriggerState;
 }
 
@@ -74,6 +127,11 @@ export interface TriggerRun {
   detail?: string;
   code?: string;
   params?: ErrorParams;
+  signals?: Array<{ id: string; type: string; subject?: string }>;
+  stages?: StageRecord[];
+  outcome?: Outcome;
+  noteId?: string;
+  external?: boolean;
 }
 
 /** Fields accepted from tools and the UI for create / update. */
@@ -99,4 +157,12 @@ export interface TriggerInput {
   intervalMinutes?: number;
   times?: string[];
   weekdays?: number[];
+  /** Subscriptions; null clears them. Built-in sources (see BUILTIN_SOURCES) become the kind and its fields in normalizeOn. */
+  on?: Subscription[] | null;
+  batch?: { windowSec: number; max?: number } | null;
+  script?: { code: string; hosts?: string[] } | null;
+  triage?: { brief: string } | null;
+  triagePerDay?: number | null;
+  /** web.webhook: sender verification, set by normalizeOn from the web.webhook config. */
+  verify?: unknown;
 }
