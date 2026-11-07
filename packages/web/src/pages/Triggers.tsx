@@ -95,6 +95,8 @@ function TriggerList({ data, note, load }: ListProps) {
     <Page
       title={t("nav.triggers")}
       subtitle={data ? t("triggers.subtitle", { tz: data.timezone }) : undefined}
+      // At least 10rem wide: where its two buttons leave less (a phone), they wrap below instead of squeezing it.
+      subtitleClassName="basis-40"
       actions={
         <>
           <Button variant="primary" icon={<MessageCircleMore className="size-4" />} onClick={() => ask(t("triggers.ask.new"))}>

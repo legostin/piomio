@@ -350,15 +350,29 @@ export function CodeLine({ children }: { children: string }) {
 /** Pages rendered inside the settings panel drop their big title (the panel header shows it) and the wide margins. */
 export const EmbeddedPage = createContext(false);
 
-export function Page({ title, subtitle, actions, children, className }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+export function Page({
+  title,
+  subtitle,
+  actions,
+  children,
+  className,
+  subtitleClassName,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  /** Extra classes of the subtitle beside the actions in the settings panel (a page whose actions would squeeze it). */
+  subtitleClassName?: string;
+}) {
   const embedded = useContext(EmbeddedPage);
   if (embedded)
     return (
       <div className={cx("px-4 py-4 sm:px-5", className)}>
         {(subtitle || actions) && (
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            {/* At least 10rem wide: where the actions leave less (a phone), they wrap below instead of covering it. */}
-            {subtitle ? <p className="min-w-0 flex-1 basis-40 text-sm text-muted">{subtitle}</p> : <span />}
+            {subtitle ? <p className={cx("min-w-0 flex-1 text-sm text-muted", subtitleClassName)}>{subtitle}</p> : <span />}
             {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
           </div>
         )}
