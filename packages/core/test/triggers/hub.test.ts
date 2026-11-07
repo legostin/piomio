@@ -127,6 +127,22 @@ describe("the hub's trigger engine", () => {
     }
   });
 
+  it("stops when the hub stands down for another replica and starts again when it leads", async () => {
+    await hub.standby();
+    expect(hub.triggers.engine).toBeUndefined();
+    expect(hub.tools.get("trigger_create")).toBeUndefined();
+    expect(egressTokens()).toBe(0);
+    expect((await fetch(`${base}/hooks/triggers/t_any`, { method: "POST" })).status).toBe(404);
+    // A card change on a standby replica does not start it: only the leader runs triggers.
+    hub.bus.emit("plugins.updated", {});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(hub.triggers.engine).toBeUndefined();
+    await hub.lead();
+    expect(hub.triggers.engine).toBeDefined();
+    expect(hub.tools.get("trigger_create")?.descriptor.owner).toBe("triggers");
+    expect(egressTokens()).toBe(1);
+  });
+
   it("follows the card: settings reach the engine, off stops it, on starts it again", async () => {
     hub.plugins.setSettings("triggers", { allowPrivateUrls: true, watchTimeoutSec: 5 });
     expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 5 });
