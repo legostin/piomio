@@ -446,7 +446,7 @@ describe("hub (integration)", () => {
 
   it("sends the digest's card when its writer fails", async () => {
     // A digest waiting for a writer that cannot start: pinned to a brain this hub does not have.
-    const task = hub.runner.createTask({ agentId: "assistant", goal: "Write the digest", title: "Digest", background: true, createdBy: "trigger", deliver: "digest", brainRef: "gone@local" });
+    const task = hub.runner.createTask({ agentId: "assistant", goal: "Write the digest", title: "Digest", background: true, createdBy: "trigger", deliver: "digest", thinking: { brain: "gone@local" } });
     const material = { partOfDay: "day", date: "2026-10-31", items: [{ id: "n_x", title: "Writer failure item", body: "kept whole", time: "10:00" }], sections: [], channels: [], told: [] };
     hub.db
       .prepare("insert into notifications(id, level, kind, title, body, agent_id, task_id, created_at) values ('n_digest_fail', 'digest', 'digest', 'Digest', ?, 'assistant', ?, ?)")
@@ -587,13 +587,13 @@ describe("hub (integration)", () => {
 
   it("tells the person plainly when a schedule's report did not come", async () => {
     // Pinned to a brain this hub does not have: the run cannot start, and the agent has nothing set up to start it with.
-    const task = hub.runner.createTask({ agentId: "assistant", goal: "Brief me", title: "Morning brief", background: true, createdBy: "trigger", triggerId: "t_brief_failing", deliver: "report", brainRef: "gone@local" });
+    const task = hub.runner.createTask({ agentId: "assistant", goal: "Brief me", title: "Morning brief", background: true, createdBy: "trigger", triggerId: "t_brief_failing", deliver: "report", thinking: { brain: "gone@local" } });
     const n = await until(() => hub.notifier.list(50).find((x) => x.taskId === task.id), "the alert");
     expect(n).toMatchObject({
       level: "notify",
       kind: "alert",
       title: "Didn't work out: “Morning brief”",
-      body: "Тестовый ассистент isn't signed in to any brain yet. Sign in from its chat.",
+      body: "Can't start the agent “Тестовый ассистент”: gone@local: not connected.",
       // From the schedule: muting the schedule mutes its failures too.
       triggerId: "t_brief_failing",
     });
@@ -605,7 +605,7 @@ describe("hub (integration)", () => {
   });
 
   it("keeps an ordinary failing schedule quiet", async () => {
-    const task = hub.runner.createTask({ agentId: "assistant", goal: "Check things", title: "Quiet check", background: true, createdBy: "trigger", triggerId: "t_check_failing", brainRef: "gone@local" });
+    const task = hub.runner.createTask({ agentId: "assistant", goal: "Check things", title: "Quiet check", background: true, createdBy: "trigger", triggerId: "t_check_failing", thinking: { brain: "gone@local" } });
     await until(() => hub.store.getTask(task.id)?.status === "failed", "the task to fail");
     // The failure path is synchronous after the status change; give any stray notification a moment to land.
     await new Promise((r) => setTimeout(r, 300));

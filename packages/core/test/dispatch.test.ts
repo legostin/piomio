@@ -235,7 +235,9 @@ describe("agents as entry points (integration)", () => {
     await say(c, `CALL task_delegate {"title":"Here","goal":"hi","machine":"local"}`);
     await idle(c);
     const here = ((await web.req("GET", "/api/tasks")) as Task[]).find((t) => t.title === "Here")!;
-    expect(here.brainRef).toBe("fake@local");
+    expect(here.machineId).toBe("local");
+    expect(here.brainRef).toBeUndefined();
+    expect((await messages(c)).some((m) => textOf(m).includes("It is queued; creation does not mean its brain has started."))).toBe(true);
     // The reply that started it carries its line.
     expect((await messages(c)).some((m) => m.parts.some((p) => p.type === "task" && p.taskId === here.id))).toBe(true);
   });
@@ -245,7 +247,7 @@ describe("agents as entry points (integration)", () => {
     const computers = (await core("triggers", "machines.list", {})) as Array<{ id: string; status: string }>;
     expect(computers[0]).toMatchObject({ id: "local", status: "online" });
     const t = (await core("triggers", "tasks.create", { agentId: "assistant", goal: "measure", title: "Measure", triggerId: "t_m", machine: "local" })) as Task;
-    expect(t).toMatchObject({ brainRef: "fake@local", createdBy: "trigger", triggerId: "t_m" });
+    expect(t).toMatchObject({ machineId: "local", createdBy: "trigger", triggerId: "t_m" });
     await expect(core("triggers", "tasks.create", { agentId: "assistant", goal: "x", machine: "atlantis" })).rejects.toThrow(/No computer "atlantis"/);
     await until(async () => ["done", "failed"].includes((await task(t.id)).status), "the placed task to finish");
   });

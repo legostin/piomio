@@ -127,7 +127,7 @@ describe("work rules (integration)", () => {
       const t = hub.store.getTask(id);
       return t?.status === "queued" && t.error ? t : undefined;
     }, "the task to wait");
-    expect(waiting).toMatchObject({ brainRef: "fake@mach_box", error: "waiting for box to come online, then it starts" });
+    expect(waiting).toMatchObject({ machineId: "mach_box", brainRef: undefined, error: "waiting for box to come online, then it starts" });
     connect();
     const done = await until(() => {
       const t = hub.store.getTask(id) as Task;

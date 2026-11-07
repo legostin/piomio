@@ -141,6 +141,7 @@ const MIGRATIONS: string[] = [
   `alter table devices add column push_handle text;`,
   // Verified same-user host identity: executor ids remain stable, including tasks and workspace routes.
   `create table machine_hosts(machine_id text primary key, host_id text not null);`,
+  `alter table tasks add column machine_id text;`,
 ];
 
 /**

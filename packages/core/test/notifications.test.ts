@@ -33,8 +33,8 @@ describe("notification storage", () => {
       alter table approvals drop column auto; drop table pictures;
       alter table messages drop column quiet;
       alter table devices drop column push_handle;
-      drop table machine_hosts;
-      update schema_version set v = v - 8;`);
+      drop table machine_hosts; alter table tasks drop column machine_id;
+      update schema_version set v = v - 9;`);
     const ins = old.prepare("insert into notifications(id, level, title, body, created_at, delivered_at) values (?,?,?,?,?,?)");
     ins.run("n1", "notify", "A", "a", "2026-10-30T10:00:00.000Z", "2026-10-30T10:00:01.000Z");
     ins.run("n2", "digest", "B", "b", "2026-10-30T11:00:00.000Z", null);
@@ -447,8 +447,9 @@ describe("scheduled reports", () => {
   });
 
   it("puts a failure in one plain sentence", () => {
+    expect(humanFailure("", "no-brain", "Assistant")).toContain("no suitable brains");
     expect(humanFailure("Can't start the agent “Assistant”: claude-code@local: not signed in", "no-brain", "Assistant")).toBe(
-      "Assistant isn't signed in to any brain yet. Sign in from its chat.",
+      "Can't start the agent “Assistant”: claude-code@local: not signed in",
     );
     expect(humanFailure("The page did not load. Then it timed out.", undefined, "Assistant")).toBe("The page did not load.");
     expect(humanFailure("x".repeat(300), undefined, "Assistant")).toHaveLength(200);
