@@ -33,6 +33,7 @@ import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, ski
 import { hasSkill } from "../skills.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { accessView } from "../access/map.ts";
+import { TRIGGERS_WATCH_TIMEOUT } from "../settings.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
 
@@ -49,6 +50,9 @@ export const AGENT_SETTABLE = [
   "approvalMode",
   "voice",
   "transcription",
+  "triggersWatchTimeoutSec",
+  // Turning it on shows the person a card (settings_update), as turning auto mode on does.
+  "triggersAllowPrivateUrls",
 ] as const;
 
 const SECRET_KEY = /key|token|secret|password/i;
@@ -248,7 +252,9 @@ export function registerHubTools(hub: Hub): void {
         "channelMirror true|false (the default agent's replies to messages typed in the web UI also go to Telegram); " +
         'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card); ' +
         'voice {voice: a voice id from hub_speech_status, speed: 0.5–2} (how the hub\'s local voice speaks); ' +
-        'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install). ' +
+        'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install); ' +
+        "triggersWatchTimeoutSec 1–120 (how long a watch trigger waits for its page); " +
+        "triggersAllowPrivateUrls true|false (watch triggers and triggers' scripts may reach addresses on the local network such as localhost, a router or a NAS; turning it on shows the person a card). " +
         "Propose a network host via hub_network_request; only its card or the user settings can change the network allowlist. A custom speech-to-text server can only be changed by the user in settings.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
     },
@@ -263,8 +269,16 @@ export function registerHubTools(hub: Hub): void {
         return text("Refused: a custom speech-to-text server can only be set by the user in the settings panel (gear icon → Settings → Voice).", true);
       const err = validateSettings(patch);
       if (err) return text(err, true);
-      // Asking the person more needs no yes; letting a reviewer decide instead of them does, on a card.
-      if (patch.approvalMode === "auto" && hub.settings.get().approvalMode === "ask" && !ctx.approved) {
+      // Asking the person more needs no yes; letting a reviewer decide instead of them does, on a card, and so does
+      // letting triggers reach the local network.
+      const now = hub.settings.get();
+      const asks = [
+        ...(patch.approvalMode === "auto" && now.approvalMode === "ask" ? [{ summary: t("settings.autoModeCard"), stays: "auto mode stays off", done: "Auto mode is on." }] : []),
+        ...(patch.triggersAllowPrivateUrls === true && !now.triggersAllowPrivateUrls
+          ? [{ summary: t("settings.triggersPrivateCard"), stays: "triggers still cannot reach the local network", done: "Triggers may reach the local network." }]
+          : []),
+      ];
+      if (asks.length && !ctx.approved) {
         const approval = hub.approvals.create({
           sessionId: ctx.sessionId,
           conversationId: ctx.conversationId,
@@ -272,21 +286,22 @@ export function registerHubTools(hub: Hub): void {
           agentId: ctx.agentId,
           tool: HUB_TOOL_PREFIX + "settings_update",
           input: i,
-          summary: t("settings.autoModeCard"),
+          summary: asks.map((a) => a.summary).join("; "),
           effect: "external",
           tainted: ctx.tainted,
         });
         const outcome = await hub.approvals.wait(approval.id, Math.max(120_000, hub.settings.get().approvalInlineWaitSec * 1000));
+        const stays = asks.map((a) => a.stays).join(", ");
         if (outcome === "timeout") {
           try {
             hub.approvals.resolve(approval.id, "deny", { via: "timeout" });
           } catch {
             /* already answered */
           }
-          return text("The person did not answer the card in time: auto mode stays off.", true);
+          return text(`The person did not answer the card in time: ${stays}.`, true);
         }
-        if (outcome !== "approved") return text("The person declined: auto mode stays off.", true);
-        hub.approvals.markExecuted(approval.id, text("Auto mode is on."));
+        if (outcome !== "approved") return text(`The person declined: ${stays}.`, true);
+        hub.approvals.markExecuted(approval.id, text(asks.map((a) => a.done).join(" ")));
       }
       const next = hub.updateSettings(patch, "agent");
       return text(`Settings updated: ${Object.keys(patch).map((k) => `${k}=${JSON.stringify((next as any)[k])}`).join(", ")}`);
@@ -1864,7 +1879,9 @@ function validateSettings(p: Record<string, unknown>): string | undefined {
   if ("digestTimes" in p && (!Array.isArray(p.digestTimes) || !p.digestTimes.every(hhmm))) return 'digestTimes must be a list of "HH:MM".';
   if ("channelMirror" in p && typeof p.channelMirror !== "boolean") return "channelMirror must be true or false.";
   if ("approvalMode" in p && p.approvalMode !== "auto" && p.approvalMode !== "ask") return 'approvalMode must be "auto" or "ask".';
-  for (const [k, min, max] of [["notifyRatePerHour", 0, 100], ["brainConcurrency", 1, 16]] as const) {
+  if ("triggersAllowPrivateUrls" in p && typeof p.triggersAllowPrivateUrls !== "boolean") return "triggersAllowPrivateUrls must be true or false.";
+  const timeout = TRIGGERS_WATCH_TIMEOUT;
+  for (const [k, min, max] of [["notifyRatePerHour", 0, 100], ["brainConcurrency", 1, 16], ["triggersWatchTimeoutSec", timeout.min, timeout.max]] as const) {
     if (k in p && (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max)) return `${k} must be a whole number from ${min} to ${max}.`;
   }
   return undefined;

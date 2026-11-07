@@ -15,7 +15,8 @@ Just say it: "turn on quiet hours from 22:00", "my time zone is Europe/Berlin", 
 - parallel sessions per brain;
 - whether the default agent's replies to what you type in the web UI also go to Telegram;
 - auto mode, or asking you every time (turning auto mode on shows you a card first, see [Approvals and auto mode](approvals.md));
-- speech to text for voice messages (except your own server), and the voice and speed for reading aloud; it also downloads the local speech engine ("install local speech recognition"), see [Voice](#voice).
+- speech to text for voice messages (except your own server), and the voice and speed for reading aloud; it also downloads the local speech engine ("install local speech recognition"), see [Voice](#voice);
+- how long a watch waits for its page, and whether triggers may reach your local network (allowing it shows you a card first), see [Triggers](#triggers).
 
 It also connects plugins and services, changes their settings and makes agents. The rest of the **General** page is yours alone: the network allowlists, the approval timings, the details in Telegram and your own speech-to-text server. The assistant can propose adding a host via a network permission card; other changes to these lists are made in the panel.
 
@@ -51,6 +52,13 @@ The hub's own settings. Change what you need and press **Save** (at the top and 
 - **Notifications per hour** (4, from 0 to 100): the limit on urgent notifications per trigger.
 
 See [Tasks, schedules and the Inbox](tasks.md).
+
+### Triggers
+
+- **Allow watching local network addresses** (off): watches and triggers' scripts may then reach localhost, your router and devices at home such as a NAS. Off, they reach only the internet, so a page or a message can't point a trigger at what is inside your network.
+- **Page load timeout, sec** (30, from 1 to 120): how long a watch waits for its page before the check ends with an error.
+
+On a hub that had the Triggers plugin, what its settings card said is carried over here once. See [Tasks, schedules and the Inbox](tasks.md).
 
 ### Approvals
 
@@ -212,7 +220,7 @@ The list you send replaces the old one, and it applies at once.
 
 ### For development
 
-`PIOMIO_APP_ROOT` (the app's folder), `PIOMIO_PLUGINS` (`all`, `none` or a list of built-in plugins to start), `PIOMIO_DEBUG` (every plugin log line in the hub's log, not only errors), `PIOMIO_DEV_ORIGIN` and `PIOMIO_CONSOLE_DEV_ORIGIN` (dev servers of the UIs), and `PIOMIO_GOOGLE_AUTH_URL`, `PIOMIO_GOOGLE_TOKEN_URL`, `PIOMIO_GOOGLE_REVOKE_URL`, `PIOMIO_GOOGLE_USERINFO_URL`. The desktop app sets `PIOMIO_DESKTOP`, `PIOMIO_DESKTOP_APP` and `PIOMIO_DESKTOP_PORT` itself.
+`PIOMIO_APP_ROOT` (the app's folder), `PIOMIO_PLUGINS` (`all`, `none` or a list of built-in plugins to start; with `none` triggers don't run either, with a list they do), `PIOMIO_DEBUG` (every plugin log line in the hub's log, not only errors), `PIOMIO_DEV_ORIGIN` and `PIOMIO_CONSOLE_DEV_ORIGIN` (dev servers of the UIs), and `PIOMIO_GOOGLE_AUTH_URL`, `PIOMIO_GOOGLE_TOKEN_URL`, `PIOMIO_GOOGLE_REVOKE_URL`, `PIOMIO_GOOGLE_USERINFO_URL`. The desktop app sets `PIOMIO_DESKTOP`, `PIOMIO_DESKTOP_APP` and `PIOMIO_DESKTOP_PORT` itself.
 
 ## Ports
 
