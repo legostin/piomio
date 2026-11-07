@@ -182,12 +182,16 @@ export function statusBadge(tr: Pick<TriggerView, "kind" | "enabled" | "state">)
   return undefined;
 }
 
-/** What the run-now answer says, for a toast, and whether it went well. */
+/**
+ * What the run-now answer says, for a toast, and whether it went well. The hub's `text` is the catalog's message for a
+ * code, in the reader's language; without a code it is the check's own words, labelled as the journal labels them.
+ */
 export function runNowText(r: Partial<TriggerRun> & { text?: string }): { text: string; ok: boolean } {
   if (r.status === "started" && r.outcome === "note") return { text: t("triggers.action.noted"), ok: true };
   if (r.status === "started" && r.outcome === "drop") return { text: t("triggers.action.dropped"), ok: true };
   if (r.status === "started") return { text: t("triggers.action.started"), ok: true };
-  return { text: t("triggers.action.notStarted", { reason: r.text ?? errorMessage(r.code, r.params, r.detail) }), ok: false };
+  const reason = r.code ? (r.text ?? errorMessage(r.code, r.params, r.detail)) : errorMessage(undefined, r.params, r.detail ?? r.text);
+  return { text: t("triggers.action.notStarted", { reason }), ok: false };
 }
 
 /** What a watch's check found, for a toast. */

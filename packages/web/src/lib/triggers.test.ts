@@ -79,8 +79,11 @@ describe("triggers in the web UI", () => {
     expect(runNowText({ status: "started" })).toEqual({ text: "Task started", ok: true });
     expect(runNowText({ status: "started", outcome: "note" }).text).toBe("Checked: kept a note, no task started");
     expect(runNowText({ status: "started", outcome: "drop" }).text).toBe("Checked: nothing worth a task");
-    expect(runNowText({ status: "skipped", text: "The previous run has not finished yet" })).toEqual({ text: "Not started: The previous run has not finished yet", ok: false });
+    // With a code the hub's text is the catalog's, in the reader's language; without one it is the check's own words.
+    expect(runNowText({ status: "skipped", code: "previousRunning", text: "The previous run has not finished yet" })).toEqual({ text: "Not started: The previous run has not finished yet", ok: false });
     expect(runNowText({ status: "skipped", code: "previousRunning" }).text).toBe("Not started: The previous run has not finished yet");
+    expect(runNowText({ status: "error", detail: "script threw: boom", text: "script threw: boom" })).toEqual({ text: "Not started: As the check wrote it: script threw: boom", ok: false });
+    expect(runNowText({ status: "error", text: "script threw: boom" }).text).toBe("Not started: As the check wrote it: script threw: boom");
     expect(checkText({ changed: true })).toEqual({ text: "Something changed: the agent is started", ok: true });
     expect(checkText({ baseline: true }).text).toBe("Remembered the current value");
     expect(checkText({}).text).toBe("No changes");
