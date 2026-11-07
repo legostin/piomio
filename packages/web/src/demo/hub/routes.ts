@@ -6,6 +6,8 @@ import browserEn from "../../../../../plugins/browser/.piomio-plugin/locales/en.
 import browserRu from "../../../../../plugins/browser/.piomio-plugin/locales/ru.json";
 import memoryEn from "../../../../../plugins/memory/.piomio-plugin/locales/en.json";
 import memoryRu from "../../../../../plugins/memory/.piomio-plugin/locales/ru.json";
+import type { TriggerSettings } from "../../lib/triggers";
+import type { CoreSettings } from "../../pages/Settings";
 import { iso } from "../world";
 import type { DemoHub } from "./hub";
 import { DemoError } from "./router";
@@ -13,6 +15,39 @@ import { DemoError } from "./router";
 const UI_PLUGINS: Array<{ id: string; messages: { en: Record<string, string>; ru: Record<string, string> } }> = [
   { id: "browser", messages: { en: browserEn, ru: browserRu } },
   { id: "memory", messages: { en: memoryEn, ru: memoryRu } },
+];
+
+/** GET /api/settings as the hub answers it: what the Settings page and the Triggers section read, and the rest of core's settings. */
+type DemoSettings = CoreSettings &
+  TriggerSettings & { egressPrivateAllow: string[]; channelMirror: boolean; approvalMode: "auto" | "ask"; remoteAccess: boolean };
+
+/** The hosts brains may always reach, as the Settings page lists them (core settings.ts DEFAULT_BRAIN_EGRESS). */
+const BRAIN_EGRESS_BUILT_IN = [
+  "*.anthropic.com",
+  "claude.ai",
+  "*.claude.ai",
+  "*.claude.com",
+  "claude.com",
+  "*.openai.com",
+  "openai.com",
+  "chatgpt.com",
+  "*.chatgpt.com",
+  "kimi.com",
+  "*.kimi.com",
+  "kimi.ai",
+  "*.kimi.ai",
+  "*.googleapis.com",
+  "openrouter.ai",
+  "registry.npmjs.org",
+  "*.npmjs.org",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "github.com",
+  "*.github.com",
+  "*.githubusercontent.com",
+  "*.sentry.io",
+  "statsig.com",
+  "*.statsig.com",
 ];
 
 /** Where the demo's copies of the UI plugins are, next to demo.html. */
@@ -137,10 +172,45 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
   r.route("GET", "/api/commands", () => []);
   r.route("GET", "/api/skills", () => []);
 
-  // ----- hub settings: the Triggers section's Settings part (the demo keeps them for the visit only) -----
-  const settings: Record<string, unknown> = { triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 30 };
-  r.route("GET", "/api/settings", () => settings);
-  r.route("PATCH", "/api/settings", ({ body }) => Object.assign(settings, body ?? {}));
+  // ----- hub settings: the Settings page and the Triggers section's Settings part (changes kept for the visit only) -----
+  /** A change saved during the visit. */
+  const changed: Record<string, unknown> = {};
+  /**
+   * The whole settings, as a new hub has them (core settings.ts defaultSettings, which is server code the demo cannot
+   * import), in the demo world's language, time zone and default agent; typed by what the pages read, so a field one
+   * of them starts to need is missed here at typecheck.
+   */
+  const settings = (): DemoSettings => ({
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    defaultAgent: w().defaultAgent,
+    quietHours: { enabled: true, start: "23:00", end: "08:00" },
+    digestTimes: ["09:00", "19:00"],
+    notifyRatePerHour: 4,
+    brainEgressAllow: [],
+    brainEgressBuiltIn: BRAIN_EGRESS_BUILT_IN,
+    egressPrivateAllow: [],
+    channelApprovalDetails: false,
+    channelMirror: true,
+    brainConcurrency: 2,
+    approvalInlineWaitSec: 45,
+    approvalExpireHours: 24,
+    approvalMode: "auto",
+    language: w().locale,
+    remoteAccess: false,
+    transcription: { provider: "auto" },
+    voice: {},
+    triggersAllowPrivateUrls: false,
+    triggersWatchTimeoutSec: 30,
+    ...changed,
+  });
+  r.route("GET", "/api/settings", settings);
+  // What the General page asks besides: no speech-to-text service is set up, the local speech engine is not in the demo.
+  r.route("GET", "/api/transcription", () => ({ engine: null }));
+  r.route("GET", "/api/speech", refuse);
+  r.route("PATCH", "/api/settings", ({ body }) => {
+    Object.assign(changed, body ?? {});
+    return settings();
+  });
 
   // ----- triggers: the Triggers section and the Tasks page ask /api/triggers; the old plugin address answers the same -----
   const triggerList = () => ({
