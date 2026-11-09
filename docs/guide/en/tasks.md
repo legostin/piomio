@@ -20,6 +20,10 @@ If the right agent or computer is unclear and it matters, the agent asks you one
 
 Creating a task puts it in the queue; it does not confirm that its brain has started. At each start, including a retry, the hub checks installation and sign-in on the selected computer and reads the agent's current settings. If the preferred brain is unavailable, cannot open a session or has reached its limit, the task can use another suitable brain. A brain explicitly required for the task stays mandatory, as does its computer. If no option works, the failure reports the actual reason instead of assuming that you have not signed in.
 
+### Short errands
+
+A short errand (a lookup, a quick check, a figure, a short answer: minutes, nothing to keep) is not shown as a task. The agent's message says **Legost is thinking about “Visits to legost.in”**, and the answer comes to the chat when it's ready. Errands stay out of the Tasks page. Their working thread is removed a day after they finish, and so is their folder, unless a file from it was shown in a chat. An errand that is still going after 15 minutes, or that asks you something, becomes an ordinary task with its task line and a place on the Tasks page.
+
 ### Rules for where work goes
 
 Say once, to any agent, how some kind of work should always go: "run renders on LEGOSTIN-PC", "code goes to Codex", "research is for the researcher". The agent saves it as a rule, and from then on every agent's dialog follows it when it starts tasks: that computer, that agent, that brain. What you say in a request itself wins over a rule. "What rules do we have?" lists them, and "drop the render rule" removes one.

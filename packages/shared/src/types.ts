@@ -610,8 +610,11 @@ export interface Task {
   /**
    * "message": a thread between two agents of the team (team_message); it reads like a conversation, not a job.
    * "goal": a long goal (the /goal command): it keeps going round after round until the agent reports it reached.
+   * "errand": a short job an agent handed off from a chat (task_delegate `quick`): the chat shows the agent thinking on
+   * it, not a task; it stays out of the task list, and its thread goes a day after it finished. One still going after
+   * ERRAND_MINUTES or asking a question becomes an ordinary task (the kind is cleared).
    */
-  kind?: "message" | "goal";
+  kind?: "message" | "goal" | "errand";
   /** A goal's rounds so far (kind "goal"): it pauses every GOAL_ROUNDS of them. */
   rounds?: number;
   /** A thread's other side (kind "message"): the teammate who wrote. `agentId` is the one answering. */

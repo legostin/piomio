@@ -3,7 +3,7 @@
 
 import { taskBrains, taskPlacement } from "./task-routing.ts";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
 import { replyText, replyContext, bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, RpcCodes, RpcError, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
@@ -214,6 +214,12 @@ const OPEN_TASK: TaskStatus[] = ["queued", "running", "waiting_approval", "waiti
 /** Harness built-in tools whose results come from the outside world. */
 const NATIVE_SOURCE_TOOLS = /^(WebFetch|WebSearch|web_search|fetch)$/i;
 const MAX_TASK_CONCURRENCY = 4;
+/** An errand (Task kind "errand") still going this long after it was made is an ordinary task: the person sees it in the list. */
+export const ERRAND_MINUTES = 15;
+/** How long a finished errand's thread stays (for its agent to look back, or to see what went wrong) before it goes. */
+export const ERRAND_KEEP_HOURS = 24;
+/** How often finished errands are looked for. */
+const ERRAND_SWEEP_MS = 10 * 60_000;
 /** Messages to teammates from one conversation since the user last wrote there: more is agents talking among themselves. */
 const MAX_TEAM_MESSAGES = 6;
 /** A thread answered this recently still continues when the agent writes to the same teammate again. */
@@ -337,6 +343,7 @@ export class SessionRunner {
     }
     this.timer = setInterval(() => {
       this.scheduleTasks();
+      this.tidyErrands();
       const s = this.d.settings.get();
       const { remind } = this.d.approvals.sweep(s.approvalExpireHours);
       for (const a of remind) {
@@ -938,6 +945,25 @@ export class SessionRunner {
   }
 
   // ---------- tasks ----------
+
+  private errandsSweptAt = 0;
+
+  /**
+   * Errands keep to their size: one still going after ERRAND_MINUTES or asking a question becomes an ordinary task;
+   * a finished one's thread goes ERRAND_KEEP_HOURS later, with its folder unless a chat shows a file from it.
+   */
+  tidyErrands(now = Date.now()): void {
+    for (const t of this.d.store.errandsToPromote(new Date(now - ERRAND_MINUTES * 60_000).toISOString())) this.d.store.updateTask(t.id, { kind: undefined });
+    if (now - this.errandsSweptAt < ERRAND_SWEEP_MS) return;
+    this.errandsSweptAt = now;
+    for (const t of this.d.store.staleErrands(new Date(now - ERRAND_KEEP_HOURS * 3600_000).toISOString())) {
+      for (const r of this.d.store.db.prepare("select id from sessions where conversation_id = ?").all(t.conversationId) as Array<{ id: string }>) void this.closeLive(r.id);
+      const folder = this.workspacePath({ agentId: t.agentId, taskId: t.id, conversationId: t.conversationId });
+      const shown = this.d.store.filesReferenced(`file:${t.agentId}/${t.id}/`, t.conversationId);
+      this.d.store.deleteTaskData(t.id);
+      if (!shown) rmSync(folder, { recursive: true, force: true });
+    }
+  }
 
   scheduleTasks(): void {
     const now = Date.now();

@@ -97,7 +97,8 @@ export function TasksPage() {
   }, [search]);
 
   const agentNames = useMemo(() => new Map((agentList ?? []).map((a) => [a.id, a.name])), [agentList]);
-  const ofKind = useMemo(() => (list ?? []).filter((task) => kindOf(task) === kind), [list, kind]);
+  // Short errands are the agents' thinking, not tasks: they show in their chat only.
+  const ofKind = useMemo(() => (list ?? []).filter((task) => task.kind !== "errand" && kindOf(task) === kind), [list, kind]);
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: 0, active: 0, waiting: 0, done: 0, failed: 0 };
     for (const task of ofKind) for (const f of Object.keys(FILTERS) as Filter[]) if (FILTERS[f](task.status)) c[f]++;
