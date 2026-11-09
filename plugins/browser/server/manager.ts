@@ -186,6 +186,23 @@ export class BrowserManager {
     this.profileDir = join(ctx.dataDir, "profile");
     this.timers.push(setInterval(() => void this.tick(), 5_000));
     for (const t of this.timers) t.unref();
+    void this.findMachine();
+  }
+
+  /**
+   * The computer this browser runs on (the hub's own), named only when the hub has more than one: its profile, sign-ins
+   * and history are that computer's, and another computer's browser has its own.
+   */
+  machine: string | undefined;
+
+  private async findMachine(): Promise<void> {
+    try {
+      const list = await this.ctx.core.call<Array<{ id: string; name: string }>>("machines.list");
+      this.machine = list.length > 1 ? list[0]?.name : undefined;
+      this.scheduleState();
+    } catch {
+      /* an older hub: nothing to name */
+    }
   }
 
   // ---------- settings and lifecycle ----------
@@ -1290,6 +1307,7 @@ export class BrowserManager {
       loading: !!active && this.loads.has(active),
       ...(active ? await this.navState() : { canGoBack: false, canGoForward: false }),
       searchEngine: this.settings.searchEngine,
+      ...(this.machine ? { machine: this.machine } : {}),
       install: this.installer.status(),
       teach: this.learning.state(),
     });
