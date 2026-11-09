@@ -14,11 +14,10 @@ import { selectReply } from "../../state/replies";
 import { jumpToMessage } from "../../state/reply-navigation";
 import { toast } from "../../state/toast";
 import { showDetails } from "../../state/prefs";
-import { openViewer, saveMedia } from "../../state/viewer";
+import { openFile, openViewer } from "../../state/viewer";
 import { fileHref, mediaKind, partKey } from "../../lib/gallery";
 import { previewSrc, useCachedImage } from "../../lib/media-cache";
 import { toolCall } from "../../lib/approval-summary";
-import { native } from "../../lib/native";
 import { Markdown } from "../../components/markdown";
 import { Badge, Button, cx } from "../../components/ui";
 import { AgentAvatar } from "../../components/AgentAvatar";
@@ -191,7 +190,7 @@ function ChatImage({ href, alt }: { href: string; alt?: string }) {
 
 /**
  * A file in a message. A picture or a video is its own thumbnail and opens the viewer on the chat's media; any other
- * file is a chip that opens it (inside the phone app, the share sheet: the app's web view cannot show it itself).
+ * file is a chip that opens it in the app (a document in the document viewer, anything else saved: never a browser tab).
  */
 function Attachment({ part, message, index }: { part: Extract<MessagePart, { type: "attachment" }>; message: Message; index: number }) {
   const href = fileHref(part.path);
@@ -226,15 +225,10 @@ function Attachment({ part, message, index }: { part: Extract<MessagePart, { typ
   return (
     <div className="my-1.5">
       {isAudio && <audio controls preload="none" src={href} className="mb-1 h-10 w-72 max-w-full" />}
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={(e) => {
-          if (!native) return;
-          e.preventDefault();
-          saveMedia({ key, kind: "image", src: href, name: part.name, download: fileHref(part.path, true) });
-        }}
+      <button
+        type="button"
+        title={part.name || part.path}
+        onClick={() => openFile({ src: href, download: fileHref(part.path, true), name: part.name || part.path.split("/").pop() || part.path, mimeType: part.mimeType, size: part.size })}
         className="press inline-flex max-w-full items-center gap-2 rounded-full border border-hairline bg-surface py-1.5 pr-3.5 pl-2 text-sm text-fg shadow-[0_1px_2px_rgb(70_45_10/0.06)] hover:bg-surface-2"
       >
         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent-text">
@@ -242,7 +236,7 @@ function Attachment({ part, message, index }: { part: Extract<MessagePart, { typ
         </span>
         <span className="min-w-0 truncate font-medium">{voice ? t("message.voice") : part.name || part.path}</span>
         {meta && <span className="shrink-0 text-xs text-muted">{meta}</span>}
-      </a>
+      </button>
       {part.transcript && <p className="mt-1.5 max-w-prose whitespace-pre-wrap">{part.transcript}</p>}
     </div>
   );

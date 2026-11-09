@@ -14,7 +14,7 @@ import { itemHref, itemMediaKind, libraryMedia, libraryQuery, shelves, SHELF_PRE
 import { agents, team } from "../state/app";
 import { closeLibrary, libraryStamp, libraryView, openLibrary } from "../state/library";
 import { ensurePages, pages } from "../state/pages";
-import { openViewer, saveMedia, viewer } from "../state/viewer";
+import { openFile as openInApp, openViewer, viewer } from "../state/viewer";
 import { FullscreenPanel } from "./WindowTitlebar";
 import { PageViewer } from "../pages/chat/PageCard";
 import { QuietImg } from "./picture";
@@ -120,8 +120,7 @@ function Library({ agentId }: { agentId: string }) {
   const openFile = (it: LibraryItem) => {
     const href = itemHref(it);
     if (!href) return;
-    if (native) saveMedia({ key: it.id, kind: "image", src: href, name: it.name, download: itemHref(it, true) });
-    else window.open(href, "_blank", "noopener,noreferrer");
+    openInApp({ src: href, download: itemHref(it, true) ?? href, name: it.name, mimeType: it.mimeType, ...(it.size !== undefined ? { size: it.size } : {}) });
   };
   const fromLabel = (it: LibraryItem) => (it.from === "person" ? t("library.fromYou") : (agentList?.find((a) => a.id === it.agentId)?.name ?? agent?.name ?? ""));
   const openPage = page ? pageList?.find((p) => p.id === page) : undefined;

@@ -332,6 +332,7 @@ export default {
   "viewer.saved": "Saved to Downloads: {name}",
   "viewer.saveFailed": "Couldn't save it: {error}",
   "viewer.open": "Open {name}",
+  "fileViewer.tooLarge": "This file is too big to show here: download it to open.",
   "viewer.video": "Video",
   "markup.tools": "Tools",
   "markup.pen": "Pen",
