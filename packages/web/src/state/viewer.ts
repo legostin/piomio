@@ -3,7 +3,7 @@
 // folder, the phone's share sheet).
 
 import { useSyncExternalStore } from "react";
-import { chatMedia, indexOfKey, type MediaItem } from "../lib/gallery";
+import { chatMedia, docKind, indexOfKey, type MediaItem } from "../lib/gallery";
 import { isImage } from "../lib/attachments";
 import { createStore } from "../lib/store";
 import { native, nativeErrorText } from "../lib/native";
@@ -34,6 +34,35 @@ export function openViewer(source: ViewerSource, key: string, opts: { edit?: boo
 
 export function closeViewer(): void {
   viewer.set(null);
+}
+
+/** A file that is not a picture or a video, opened in the app (FileViewer). */
+export interface OpenFile {
+  /** Where it loads from (the hub's /api/files). */
+  src: string;
+  /** Where it is saved from. */
+  download: string;
+  name: string;
+  mimeType?: string;
+  size?: number;
+}
+
+export const fileViewer = createStore<(OpenFile & { id: number }) | null>(null);
+
+/**
+ * Opens a file in the app: a document (Markdown, text, a PDF) in the document viewer, anything else saved (Downloads
+ * on the desktop and in a browser, the share sheet inside the phone app). Never a new browser tab: outside the app
+ * the hub does not know the person, and the desktop app hands new tabs to the system browser.
+ */
+export function openFile(file: OpenFile): void {
+  const kind = docKind(file.mimeType, file.name);
+  // Inside the phone app a PDF goes to the share sheet, whose preview shows it whole (the web view draws one page).
+  if (!kind || (kind === "pdf" && native)) return saveMedia({ key: file.src, kind: "image", src: file.src, name: file.name, download: file.download });
+  fileViewer.set({ ...file, id: ++seq });
+}
+
+export function closeFile(): void {
+  fileViewer.set(null);
 }
 
 /** The pictures waiting in a composer, as the viewer shows them. */

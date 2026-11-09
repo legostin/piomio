@@ -332,6 +332,7 @@ export default {
   "viewer.saved": "Сохранено в «Загрузки»: {name}",
   "viewer.saveFailed": "Не удалось сохранить: {error}",
   "viewer.open": "Открыть {name}",
+  "fileViewer.tooLarge": "Файл слишком большой, чтобы показать его здесь: скачайте, чтобы открыть.",
   "viewer.video": "Видео",
   "markup.tools": "Инструменты",
   "markup.pen": "Перо",
