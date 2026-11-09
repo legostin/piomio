@@ -25,6 +25,13 @@ export interface NodeDaemonOptions {
   userPath?: BrainHostOptions["userPath"];
   /** How often to look at the CLIs again while none is signed in (client.ts). */
   brainRecheckMs?: number;
+  /**
+   * False: the workspaces folder is kept in step by other means, so this daemon syncs no files with the hub (a hub
+   * replica's own daemon works in its replica's workspaces, which the replica syncs itself: core own-node.ts).
+   */
+  files?: boolean;
+  /** Each brain session's sandbox on this computer (BrainHostOptions.confine). */
+  confine?: BrainHostOptions["confine"];
 }
 
 export interface NodeDaemon {
@@ -49,7 +56,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     (e) => o.log(`gateway: ${e?.message ?? e}`),
   );
   const brains = new BrainHost({
-    home: o.home, policy, gateway, hubUrl: config.hubUrl, bridgeCommand: o.bridgeCommand, log: o.log, userPath: o.userPath,
+    home: o.home, policy, gateway, hubUrl: config.hubUrl, bridgeCommand: o.bridgeCommand, log: o.log, userPath: o.userPath, confine: o.confine,
     // The person's files for a turn, straight from the hub, in the same pieces file sync reads them in.
     fetchFile: async (path, sha) => {
       const peer = service?.leaderPeer();
@@ -97,7 +104,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     self: `${config.name || "machine"}-node`,
     log: (m) => o.log(`files: ${m}`),
   });
-  service.files = files;
+  if (o.files !== false) service.files = files;
   let filesOn = false;
   let pulling = false;
   let hubName = "hub";
@@ -124,7 +131,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
       connectHubs(setup.hubs);
     }
     if (setup.filesName) hubName = setup.filesName;
-    if (setup.files && !filesOn) {
+    if (setup.files && !filesOn && o.files !== false) {
       filesOn = true;
       files.start(4_000);
     }

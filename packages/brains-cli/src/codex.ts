@@ -164,9 +164,10 @@ class CodexSession implements BrainSessionImpl {
 
   /** What the sandbox would not let through, Codex asks for; confined, the hub answers (hub-permission.ts). */
   private ask(): ((tool: string, input: Record<string, unknown>) => Promise<HubAnswer>) | undefined {
-    const confine = this.o.confine;
-    // The front desk asks for nothing more: what its sandbox does not let through is a task's work.
-    return confine && !this.o.frontDesk ? (tool, input) => askHub(this.o.mcp, confine.permissionTool, tool, input) : undefined;
+    const tool = this.o.confine?.permissionTool;
+    // The front desk asks for nothing more: what its sandbox does not let through is a task's work. Confined with
+    // nobody to ask, approval_policy is "never": nothing goes past the sandbox.
+    return tool && !this.o.frontDesk ? (name, input) => askHub(this.o.mcp, tool, name, input) : undefined;
   }
 
   private approvalPolicy(): "never" | "on-request" {

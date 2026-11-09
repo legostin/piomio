@@ -351,19 +351,23 @@ export class Cluster {
 
   // ---------- who we are ----------
 
-  /** This replica's row, its addresses kept fresh (the link may come up later). */
+  /**
+   * This replica's row, its addresses kept fresh (the link may come up later), and the machine that serves its
+   * computer while another replica leads (own-node.ts).
+   */
   private refreshSelf(): void {
     const id = this.identity!.id;
     const urls = this.ownUrls();
     const nodeUrls = this.ownNodeUrls();
+    const machineId = this.hub.ownNode.machineId() ?? null;
     const row = this.hub.db.prepare("select * from replicas where id = ?").get(id) as any;
     if (!row) {
       const max = (this.hub.db.prepare("select coalesce(max(priority), 0) as p from replicas").get() as { p: number }).p;
       this.hub.db
-        .prepare("insert into replicas(id, name, public_key, urls, node_urls, priority, created_at) values (?,?,?,?,?,?,?)")
-        .run(id, this.identity!.name, this.identity!.publicKey, JSON.stringify(urls), JSON.stringify(nodeUrls), max + 1, nowIso());
-    } else if (row.urls !== JSON.stringify(urls) || row.node_urls !== JSON.stringify(nodeUrls)) {
-      this.hub.db.prepare("update replicas set urls = ?, node_urls = ? where id = ?").run(JSON.stringify(urls), JSON.stringify(nodeUrls), id);
+        .prepare("insert into replicas(id, name, public_key, urls, node_urls, priority, created_at, machine_id) values (?,?,?,?,?,?,?,?)")
+        .run(id, this.identity!.name, this.identity!.publicKey, JSON.stringify(urls), JSON.stringify(nodeUrls), max + 1, nowIso(), machineId);
+    } else if (row.urls !== JSON.stringify(urls) || row.node_urls !== JSON.stringify(nodeUrls) || (row.machine_id ?? null) !== machineId) {
+      this.hub.db.prepare("update replicas set urls = ?, node_urls = ?, machine_id = ? where id = ?").run(JSON.stringify(urls), JSON.stringify(nodeUrls), machineId, id);
     }
   }
 
@@ -447,6 +451,8 @@ export class Cluster {
     this.noticeSleep();
     this.refreshSelf();
     this.loadPeers();
+    // Among other replicas, this computer serves as a machine of whichever leads (own-node.ts).
+    void this.hub.ownNode.sync(this.peers.size > 0).catch((e) => console.error("[own-node]", e));
     for (const p of this.peers.values()) this.dial(p);
     await Promise.all(
       [...this.peers.values()].map(async (p) => {

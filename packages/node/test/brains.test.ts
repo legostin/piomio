@@ -70,6 +70,35 @@ describe("BrainHost", () => {
     expect(host.sessionCount).toBe(0);
   });
 
+  it("keeps a session in this computer's sandbox with nobody to ask, when the daemon confines its sessions (a hub replica's own)", async () => {
+    const asked: Array<[string, string]> = [];
+    const confined = new BrainHost({
+      home,
+      policy,
+      hubUrl: "http://hub.test:8080",
+      bridgeCommand: ["bridge-cmd"],
+      confine: (workspace, brainId) => (asked.push([workspace, brainId]), { denyRead: [join(root, "hub-data")], allowRead: [workspace] }),
+    });
+    await confined.create({
+      brainId: "claude-code",
+      // The hub never asks a paired computer to confine; whatever it sends, the daemon's own sandbox applies.
+      opts: { sessionId: "s-confined", agent, workspace: "a/c2", mcp: { url: "", token: "t", bridgeCommand: [] }, systemPrompt: "sys", env: {}, background: false, confine: { denyRead: [], allowRead: ["/"], permissionTool: "native_permission" } },
+    });
+    const events: BrainEvent[] = [];
+    await confined.send({ sessionId: "s-confined", turn: { text: "hi" } }, (e) => events.push(e));
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+    const ws = join(userHome, "piomio-workspace", "a", "c2");
+    expect(asked).toEqual([[ws, "claude-code"]]);
+    const seen = JSON.parse(readFileSync(join(ws, "env.json"), "utf8"));
+    // The file tools leave the allow list and no permission tool asks the hub: past the sandbox, the answer is no.
+    expect(seen.args[seen.args.indexOf("--allowedTools") + 1]).toBe("mcp__piomio");
+    expect(seen.args).not.toContain("--permission-prompt-tool");
+    const settings = JSON.parse(readFileSync(seen.args[seen.args.indexOf("--settings") + 1], "utf8"));
+    expect(settings.sandbox.filesystem).toEqual({ denyRead: [join(root, "hub-data")], allowRead: [ws] });
+    expect(settings.sandbox.allowUnsandboxedCommands).toBe(false);
+    await confined.closeAll();
+  });
+
   it("waits for the person's files to come over from the hub before the turn, and goes on if one never does", async () => {
     const ws = join(userHome, "piomio-workspace", "a", "c2");
     const opts = { sessionId: "s2", agent, workspace: "a/c2", mcp: { url: "http://hub.test/mcp", token: "t", bridgeCommand: [] }, systemPrompt: "sys", env: {}, background: false };

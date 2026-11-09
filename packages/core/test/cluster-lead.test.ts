@@ -114,7 +114,7 @@ describe("setting the primary", () => {
       TZ: "UTC",
     };
     const fixtures = join(import.meta.dirname, "fixtures");
-    hub = new Hub(loadConfig(env, { dataDir: mkdtempSync(join(tmpdir(), "piomio-primary-")), builtinPluginsDir: join(fixtures, "plugins"), builtinAgentsDir: join(fixtures, "agents") }));
+    hub = new Hub(loadConfig(env, { dataDir: mkdtempSync(join(tmpdir(), "piomio-primary-")), builtinPluginsDir: join(fixtures, "plugins"), builtinAgentsDir: join(fixtures, "agents"), ownNode: false }));
     await hub.start();
     expect(() => hub!.cluster.setPrimary("vps")).toThrow(/runs on one machine/);
 

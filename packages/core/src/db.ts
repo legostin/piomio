@@ -155,6 +155,9 @@ const MIGRATIONS: string[] = [
   `,
   `create index if not exists signal_notes_by_at on signal_notes(at);
   create index if not exists signal_notes_by_trigger on signal_notes(trigger_id, at);`,
+  // The machine that serves a hub replica's computer while another replica leads (own-node.ts): its own daemon, or
+  // a piomio-node it verified on the same host. Agents bound to that computer think there whoever leads.
+  `alter table replicas add column machine_id text;`,
 ];
 
 /**
