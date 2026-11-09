@@ -126,15 +126,35 @@ function deeperThan(v: unknown, max: number): boolean {
   return false;
 }
 
+/** Why a signal's data is past the intake's caps (nested past 50 levels, or over 256 KB as JSON); undefined when it is not. */
+export function dataProblem(data: unknown): string | undefined {
+  if (deeperThan(data, SIGNAL_DATA_DEPTH)) return `its data is nested deeper than ${SIGNAL_DATA_DEPTH} levels`;
+  if (sizeOf(data) > SIGNAL_DATA_MAX) return `its data is over ${SIGNAL_DATA_MAX / 1024} KB`;
+  return undefined;
+}
+
 /**
  * A signal as the pipeline takes it in: data nested past 50 levels or over 256 KB as JSON is replaced with
  * `{ truncated: true, reason }` (a script could not pass it on in a verdict, the sandbox could not even be given it).
  */
 export function trimmed(s: Signal): Signal {
-  let reason: string | undefined;
-  if (deeperThan(s.data, SIGNAL_DATA_DEPTH)) reason = `its data is nested deeper than ${SIGNAL_DATA_DEPTH} levels`;
-  else if (sizeOf(s.data) > SIGNAL_DATA_MAX) reason = `its data is over ${SIGNAL_DATA_MAX / 1024} KB`;
+  const reason = dataProblem(s.data);
   return reason ? { ...s, data: { truncated: true, reason } } : s;
+}
+
+/** A value as JSON with every object's keys sorted: two configs that say the same thing are the same text. */
+export function canonicalJson(v: unknown): string {
+  return (
+    JSON.stringify(v, (_k, x: unknown) =>
+      x && typeof x === "object" && !Array.isArray(x)
+        ? Object.fromEntries(
+            Object.keys(x)
+              .sort()
+              .map((k) => [k, (x as Record<string, unknown>)[k]]),
+          )
+        : x,
+    ) ?? "null"
+  );
 }
 
 const wasTrimmed = (s: Signal): boolean => {
@@ -173,6 +193,12 @@ export interface DeliverOptions {
   currentValue?: string;
   /** The caller holds the trigger's lock (the engine's timers, run now): the run is carried out right there. */
   locked?: boolean;
+  /**
+   * The signals came by the trigger's subscriptions (a plugin's source, sources.ts): only its `on` entries of their
+   * type match them, and with `config` (canonicalJson of a subscription's config) only those with that config, so two
+   * entries of one type keep their own filters. Unset: core's own sources, which pass when no entry names their type.
+   */
+  via?: { config?: string };
 }
 
 /** Signals taken in: those that go on, why they were held when they were, and the run once it is written. */
@@ -415,7 +441,7 @@ export class TriggerPipeline {
     let held: Intake["held"];
     const passed: Signal[] = [];
     for (const sig of signals.map(trimmed)) {
-      if (!this.passes(t, sig)) {
+      if (!this.passes(t, sig, o.via)) {
         this.countFiltered(t.id);
         held = "filtered";
       } else if (sig.key !== undefined && this.seen(t.id, sig.key, now, true)) held = "duplicate";
@@ -594,10 +620,14 @@ export class TriggerPipeline {
 
   // ---------- match, dedup, flood ----------
 
-  /** A signal passes when it came by no subscription (core's own sources) or one of its type whose filter it meets. */
-  private passes(t: Trigger, s: Signal): boolean {
-    const subs = (t.on ?? []).filter((x) => x.type === s.type);
-    return !subs.length || subs.some((x) => matches(x.where, s));
+  /**
+   * A signal passes when the trigger has no entry of its type and it came by none (core's own sources), or one of the
+   * entries it came by (`via`: of its type, with that config when one is named) has a filter it meets.
+   */
+  private passes(t: Trigger, s: Signal, via?: DeliverOptions["via"]): boolean {
+    const subs = (t.on ?? []).filter((x) => x.type === s.type && (via?.config === undefined || canonicalJson(x.config ?? {}) === via.config));
+    if (!subs.length) return !via;
+    return subs.some((x) => matches(x.where, s));
   }
 
   private countFiltered(id: string): void {

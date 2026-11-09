@@ -6,7 +6,8 @@ import type { Readable, Writable } from "node:stream";
 export interface RpcTransport {
   send(message: string): void;
   onMessage(cb: (message: string) => void): void;
-  onClose(cb: () => void): void;
+  /** `err`: the transport gave up on what the other side sent (ndjsonTransport: a line past its cap). */
+  onClose(cb: (err?: Error) => void): void;
   close(): void;
 }
 
@@ -45,7 +46,8 @@ export interface RpcPeer {
   /** Fallback for methods without an explicit handler (e.g. prefix routing). */
   handleAny(handler: (method: string, params: any) => unknown | Promise<unknown>): void;
   onNotification(method: string, cb: (params: any) => void): void;
-  onClose(cb: () => void): void;
+  /** `err`: the transport gave up on what the other side sent (a line past its cap). */
+  onClose(cb: (err?: Error) => void): void;
   close(): void;
   readonly closed: boolean;
 }
@@ -57,7 +59,7 @@ export function createRpcPeer(transport: RpcTransport): RpcPeer {
   const handlers = new Map<string, RpcHandler>();
   let anyHandler: ((method: string, params: any) => unknown | Promise<unknown>) | undefined;
   const notificationHandlers = new Map<string, Array<(p: any) => void>>();
-  const closeHandlers: Array<() => void> = [];
+  const closeHandlers: Array<(err?: Error) => void> = [];
 
   const sendObj = (obj: unknown) => {
     if (closed) return;
@@ -68,19 +70,19 @@ export function createRpcPeer(transport: RpcTransport): RpcPeer {
     }
   };
 
-  const failAll = () => {
+  const failAll = (err?: Error) => {
     for (const [, p] of pending) {
       if (p.timer) clearTimeout(p.timer);
-      p.reject(new RpcError(RpcCodes.Closed, "RPC peer closed"));
+      p.reject(new RpcError(RpcCodes.Closed, err ? `RPC peer closed: ${err.message}` : "RPC peer closed"));
     }
     pending.clear();
   };
 
-  transport.onClose(() => {
+  transport.onClose((err) => {
     if (closed) return;
     closed = true;
-    failAll();
-    for (const cb of closeHandlers) cb();
+    failAll(err);
+    for (const cb of closeHandlers) cb(err);
   });
 
   transport.onMessage(async (raw) => {
@@ -177,29 +179,58 @@ export function createRpcPeer(transport: RpcTransport): RpcPeer {
   };
 }
 
-/** NDJSON framing over a pair of streams (child stdio, or process.stdin/stdout). */
-export function ndjsonTransport(input: Readable, output: Writable): RpcTransport {
+/**
+ * The longest line ndjsonTransport takes by default, in characters. Files travel inline in one line (a Telegram download
+ * of up to 20 MB is 27 MB as base64, and one message can carry several), so it is generous; it stays well below V8's
+ * longest string, past which reading the stream would throw and take the process down.
+ */
+export const NDJSON_LINE_MAX = 256 * 1024 * 1024;
+
+/**
+ * NDJSON framing over a pair of streams (child stdio, or process.stdin/stdout). A line past `maxLine` characters is not
+ * read: the transport closes with an error (the plugin host treats that plugin as crashed).
+ */
+export function ndjsonTransport(input: Readable, output: Writable, o: { maxLine?: number } = {}): RpcTransport {
+  const max = o.maxLine ?? NDJSON_LINE_MAX;
   let buffer = "";
+  let over = false;
   const messageCbs: Array<(m: string) => void> = [];
-  const closeCbs: Array<() => void> = [];
+  const closeCbs: Array<(err?: Error) => void> = [];
+  const fireClose = (err?: Error) => {
+    for (const cb of closeCbs.splice(0)) cb(err);
+  };
+  const overflow = () => {
+    over = true;
+    buffer = "";
+    fireClose(new Error(`a message is longer than ${max} characters`));
+    input.destroy();
+  };
   input.setEncoding("utf8");
   input.on("data", (chunk: string) => {
-    buffer += chunk;
+    if (over) return;
+    const nl = chunk.indexOf("\n");
     // The buffer holds no line break before this chunk: a long line arriving in many chunks is not searched again
-    // each time (that made it quadratic).
-    if (!chunk.includes("\n")) return;
+    // each time (that made it quadratic). It is measured before it grows, so it never outgrows the cap.
+    if (nl < 0) {
+      if (buffer.length + chunk.length > max) return overflow();
+      buffer += chunk;
+      return;
+    }
+    if (buffer.length + nl > max) return overflow();
+    buffer += chunk;
     let idx: number;
     while ((idx = buffer.indexOf("\n")) >= 0) {
+      if (idx > max) return overflow();
       const line = buffer.slice(0, idx).trim();
       buffer = buffer.slice(idx + 1);
       if (line) for (const cb of messageCbs) cb(line);
+      if (over) return;
     }
+    if (buffer.length > max) overflow();
   });
-  const fireClose = () => {
-    for (const cb of closeCbs.splice(0)) cb();
-  };
-  input.on("end", fireClose);
-  input.on("close", fireClose);
+  // No arguments: a socket's "close" passes hadError, which is no error of what was read.
+  input.on("end", () => fireClose());
+  input.on("close", () => fireClose());
   output.on("error", () => fireClose());
   return {
     send(message) {

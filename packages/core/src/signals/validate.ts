@@ -3,6 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 import { TriggerError, type ErrorParams } from "./errors.ts";
+import type { SourceCheck } from "./host.ts";
 import { cronError, defaultReport, parseDateTime, timeError } from "./schedule.ts";
 import { networkPattern } from "../egress.ts";
 import { matchError } from "./match.ts";
@@ -213,6 +214,35 @@ function checkOn(v: unknown, kind: TriggerKind): Subscription[] {
     out.push(s);
   }
   return out;
+}
+
+/** An `on` entry the registry has no working source for now, kept with a word for whoever made it. */
+export interface SourceNote {
+  type: string;
+  status: "unknown" | "offline" | "refused";
+  source?: string;
+  why?: string;
+}
+
+/**
+ * The registry's word on each `on` entry that stays in `on` (other sources, after normalizeOn): throws for a config its
+ * source's schema refuses; gives a note for a type no source brings now, a plugin that does not run, a refused
+ * declaration (kept, since a plugin may be off for now). Without a registry, nothing to say.
+ */
+export function checkSources(check: ((type: string, config: Record<string, unknown>) => SourceCheck) | undefined, on: unknown): SourceNote[] {
+  const notes: SourceNote[] = [];
+  if (!check || !Array.isArray(on)) return notes;
+  for (const entry of on) {
+    if (!isObject(entry) || typeof entry.type !== "string") continue;
+    const type = entry.type;
+    const r = check(type, isObject(entry.config) ? entry.config : {});
+    if (r.status === "config")
+      fail("sourceConfig", `The config of ${type} does not fit its source (plugin ${r.source}): ${r.problem}. Its config schema is in trigger_sources.`, { type, source: r.source, problem: r.problem });
+    if (r.status === "unknown") notes.push({ type, status: "unknown" });
+    if (r.status === "offline") notes.push({ type, status: "offline", source: r.source });
+    if (r.status === "refused") notes.push({ type, status: "refused", source: r.source, why: r.why });
+  }
+  return notes;
 }
 
 function checkBatch(v: unknown): { windowSec: number; max?: number } {

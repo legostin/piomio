@@ -6,7 +6,9 @@
 // the agent gives.
 
 import type { TriggerEngine } from "./engine.ts";
-import { triggerSamples } from "./builtin-sources.ts";
+import { BUILTIN_SOURCES_INFO, triggerSamples } from "./builtin-sources.ts";
+import type { TriggerSourceInfo } from "./host.ts";
+import { HUB_SOURCES } from "./hub-sources.ts";
 import type { DryRun } from "./pipeline.ts";
 import { localDate } from "./schedule.ts";
 import type { Signal, Trigger, TriggerInput } from "./types.ts";
@@ -51,8 +53,20 @@ const fail = (code: string, message: string, params?: Record<string, string | nu
 
 const SIGNALS_HELP = `signals is "recent", "sample" or a list of 1 to ${TEST_MAX_SIGNALS} signals, each { type, data, subject?, key?, external? }`;
 
-/** A signal the agent gave, in the pipeline's shape; outside content by default unless its type is the hub's own. */
-function givenSignal(v: unknown, i: number, now: Date): Signal {
+/**
+ * Whether a signal of `type` is outside content when the agent does not say: as its source declares it (core's own,
+ * the hub's, the plugins'), not for a run now, and outside content for a type no source has.
+ */
+function declaredExternal(type: string, others: TriggerSourceInfo[]): boolean {
+  if (type === "manual") return false;
+  const other = others.find((s) => s.type === type) ?? HUB_SOURCES.find((s) => s.type === type);
+  if (other) return other.external ?? true;
+  const builtin = BUILTIN_SOURCES_INFO.find((b) => b.signal === type || b.type === type);
+  return builtin ? !!builtin.external : true;
+}
+
+/** A signal the agent gave, in the pipeline's shape; outside content by default as its source declares it. */
+function givenSignal(v: unknown, i: number, now: Date, others: TriggerSourceInfo[]): Signal {
   if (!isObject(v) || typeof v.type !== "string" || v.type.length > 100 || !SIGNAL_TYPE.test(v.type)) return fail("testSignals", SIGNALS_HELP, { max: TEST_MAX_SIGNALS });
   const type = v.type;
   const text = (x: unknown, max: number) => (typeof x === "string" && x.trim() ? x.trim().slice(0, max) : undefined);
@@ -67,7 +81,7 @@ function givenSignal(v: unknown, i: number, now: Date): Signal {
     data: v.data ?? null,
     ...(subject ? { subject } : {}),
     ...(key ? { key } : {}),
-    external: typeof v.external === "boolean" ? v.external : !(type === "manual" || type === "time.tick" || type.startsWith("hub.")),
+    external: typeof v.external === "boolean" ? v.external : declaredExternal(type, others),
   };
 }
 
@@ -111,7 +125,8 @@ export async function testTrigger(e: TriggerEngine, input: TestInput, o: { defau
   } else if (Array.isArray(mode)) {
     using = "given";
     if (!mode.length || mode.length > TEST_MAX_SIGNALS) fail("testSignals", SIGNALS_HELP, { max: TEST_MAX_SIGNALS });
-    signals = mode.map((v, i) => givenSignal(v, i, now)).slice(0, count(input.n, TEST_MAX_SIGNALS));
+    const others = e.ctx.sources?.list() ?? [];
+    signals = mode.map((v, i) => givenSignal(v, i, now, others)).slice(0, count(input.n, TEST_MAX_SIGNALS));
   } else return fail("testSignals", SIGNALS_HELP, { max: TEST_MAX_SIGNALS });
 
   // As a real run would take them: one batch for a trigger that batches, else one run each.

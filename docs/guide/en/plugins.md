@@ -113,6 +113,10 @@ Box, Outlook, Microsoft Teams, OneDrive, Trello, Jira, Zoom, Calendly, Figma, Sa
 Reddit. For anything else, ask: the agent searches Composio's list (about a thousand apps) and adds those Composio can
 sign in to by itself. Google Calendar, Gmail and the other Google apps connect this way today.
 
+A connected app's events can start a trigger: a new email, a Slack message, a push. How they reach the hub, by a
+webhook in your Composio project or Composio's realtime channel, is in
+[Events from apps connected through Composio](tasks.md#events-from-apps-connected-through-composio).
+
 ## Blender
 
 Turn it on and agents can look at your scene, its objects and files, take screenshots, render and run Python in
@@ -170,9 +174,16 @@ chat, and asks to install it. An approval card lists the name and everything it 
 secrets, the hub actions. Once you allow it, the integration is installed, turned on and listed in the catalog. Ask for
 changes the same way; the agent installs the new version over it.
 
+## Things that start triggers
+
+A plugin can also tell your triggers that something happened: a new item in a feed, a reading from a device, the sun rising. Such a source is listed as `plugin.type`, for example `web.rss_item`, and you use it like any other start for a trigger (see [What can start a trigger](tasks.md#what-can-start-a-trigger)). Ask for it in the chat: "when this blog has a new post, summarize it for me".
+
+Sources that watch something do their work only while a trigger uses them, and stop when the last one is off. The text of a source from a plugin you installed counts as coming from outside: your agent is told not to trust it.
+
 ## For developers
 
 - [docs/plugins.md](https://github.com/legostin/piomio/blob/main/docs/plugins.md): the plugin API, manifests,
   permissions, UI modules.
+- Writing a source: a plugin lists the signals it sends in `contributes.signals` and sends them with `ctx.signals`. The "Signals" section of the [template's guide](https://github.com/legostin/piomio/blob/main/integrations/_template/SKILL.md) covers when to declare one, broadcast against subscribe, the key and subject, and the rules for the data schema; `web.rss_item` and the template's `sunrise` are examples.
 - [integrations/README.md](https://github.com/legostin/piomio/blob/main/integrations/README.md): adding an integration
   (`npm run new:integration -- <id>`) and the template the agents use.

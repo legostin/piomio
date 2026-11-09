@@ -4,6 +4,7 @@
   "integration.summary": "Signs in to Slack, GitHub, Google, Microsoft 365 and other apps for you, through its cloud",
   "integration.example": "Which apps can you connect through Composio?",
   "via.about": "{name} goes through Composio, an outside service. Signing in and every request go through Composio's cloud: the account's keys are kept there, not on your hub, and Composio sees what the agent reads and sends. It needs your own Composio account (free up to 100,000 calls a month).",
+  "signal.event.title": "An event in an app connected through Composio",
   "setup.key.title": "Composio API key",
   "setup.key.hint": "Sign up at platform.composio.dev (free), then Settings → API keys → New key, and paste it here. It stays in your hub's vault.",
   "entry.slack": "Read and search channels, write messages",

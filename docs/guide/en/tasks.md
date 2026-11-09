@@ -125,6 +125,35 @@ Limits: each schedule runs at most 24 times a day unless you raise it; a run is 
 
 To change or stop one, say so: "pause the weather schedule", "delete the price watch". The same is on the **Triggers** page (**Settings** → **Triggers**): **Create trigger**, and on each card the **On** switch, **Run now**, **Check** (for a watch), **Edit**, **History** and **Delete**.
 
+## What can start a trigger
+
+A trigger waits for something to happen. What it waits for comes from one of three places, and one trigger can listen to several:
+
+| Where | What | Examples |
+|---|---|---|
+| Built in | A time, a page or a webhook | a schedule, a one-time reminder, a watched page, an address that takes events |
+| The hub's own events | Something inside Piomio | a task finished or failed, a computer came online or went offline, a channel got a post, an approval is waiting |
+| A plugin | Whatever the plugin watches | a new item in an RSS or Atom feed (`web.rss_item`), a plugin you installed or an agent built |
+| An app through Composio | An event in an app you connected through Composio | a new Gmail message, a Slack message, a GitHub push (`composio.event`) |
+
+Ask in the chat: "when a task of mine fails, tell me on Telegram", "when this blog has a new post, summarize it". The agent can list what is available and sets the trigger up for you. A feed is read at most every 10 minutes. When a trigger starts listening, the first read only remembers what is already there, and then each new item starts the trigger once; items that came out while nothing listened are not sent. A feed that can't be read starts nothing and is tried again later.
+
+Text that comes from the internet or from outside (a page, a webhook, a feed, a plugin you installed) is treated as untrusted: the agent it wakes is told not to follow instructions inside it. The hub's own events are not treated as outside text, with two exceptions: a channel's new post always is, and a finished or failed task, or a waiting approval, is when that task or its conversation read something from outside.
+
+### Events from apps connected through Composio
+
+An app you connected through Composio (see [Apps through Composio](plugins.md#apps-through-composio)) can start a trigger: a new Gmail message, a Slack message, a GitHub push, a new Calendar event, and whatever else Composio offers for that app. Ask in the chat: "when I get an email from the bank, summarize it", "when someone writes in #support, tell me". The agent looks up the app's events and their settings, and sets the trigger up.
+
+- Apps that tell Composio at once (Slack, GitHub…) arrive within seconds. Apps Composio checks on a timer (Gmail, Google Calendar…) take up to their polling interval, 2 minutes at the shortest.
+- When the hub's address, `PIOMIO_PUBLIC_URL`, is an https address the internet can reach (your own domain in front of a server, say), the hub first checks that the address really leads back to it: it asks for a page of its own there and expects its own answer. Only then does it register a webhook in your Composio project, and it checks the signature of every delivery. Until the first signed delivery arrives it also listens the other way, in case the address can't be reached from outside.
+- The hub keeps one webhook in your project. Every 15 minutes it checks that the address still leads back to it and that the webhook is still as it set it up; if not, it listens the other way again and puts the webhook right. When the address stops leading to the hub (you change or remove `PIOMIO_PUBLIC_URL`, or it can't be reached any more), the hub removes its webhook from your project, so your apps' events don't keep going to an address that may not be yours, and registers one again once an address works.
+- Otherwise the events come over Composio's realtime channel. Composio calls it internal, so it may change without notice. Events that happen while the hub is off, or while the channel is reconnecting, are missed on it. The **Access from anywhere** link never carries webhooks, so a hub reached only through it uses this channel, and the hub's log says why.
+- The hub never takes over a webhook you set up in your Composio project yourself. If the project already sends its webhook somewhere else, the hub leaves it as it is and uses the realtime channel; the agent tells you so.
+- Composio keeps one listener per event for each app account, so the hub does too. To listen to two repositories or two channels with the same event, the agent makes one trigger whose settings cover both, if that event's settings allow it, with a check that tells them apart. If your Composio project already listens to that event on that account (you set it up on Composio's site, say), the hub takes it over: it gets the trigger's settings, and it is turned off when the trigger goes.
+- What an app sends is outside content, like a web page.
+- Sign an app out and its triggers stop listening; the hub tries them again with a pause that grows up to 30 minutes, so they pick up once you sign in again. After a new sign-in they move to the new account by themselves. A restart or a move of the hub to another computer doesn't stop them; deleting the trigger does, a few minutes later.
+- Remove the Composio key and the triggers get no events until you store a key again. Turning the Composio plugin off doesn't turn off the events it set up at Composio: they are turned off the next time the plugin runs, or you can turn them off on Composio's site.
+
 ## What a trigger does before it wakes an agent
 
 A trigger doesn't have to wake its agent for everything that comes in. Ask for a check first, in your own words: "watch this webhook and wake me only for failed deploys", "check the shop page every hour, keep a note when the price moves, and wake me only below 500". The agent sets up the check, tests it and tells you what it will do.
@@ -143,7 +172,7 @@ A trigger without a check wakes its agent every time, as before. A trigger can a
 
 The agent can write a short script for the trigger. The script reads and decides; it changes nothing in the hub. It can use the agent's tools that only read (mail, a calendar, a search), reach the sites listed on the trigger, ask a quick model, and remember a few values between runs. A run that fails or is cut short keeps none of what it meant to remember, so the next one starts from the same place. It has no tools that send, post, buy, delete or change anything: whatever needs doing waits for the agent. It reaches only the sites you approved, and it may send requests there, including POST (searches and API queries often take one). Browser, web, voice, transcription, computer, vault and hub tools are closed to scripts. Each run gets 2 seconds of computing, 30 seconds in all and 50 calls.
 
-The sites a script may reach are part of the trigger, and the card that asks about a new one says the script may send requests there. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)).
+The sites a script may reach are part of the trigger, and the card that asks about a new one says the script may send requests there. When the agent wants to add one the trigger didn't have, it is asked like any outside action: on a card for you, or by auto mode's reviewer (see [Approvals and auto mode](approvals.md)). After the agent read something from outside, the same goes for the addresses a trigger listens at, since the address itself is sent to that site: a watched page or a feed on a site the trigger didn't read from before is named on the card.
 
 ### A quick check in your words
 

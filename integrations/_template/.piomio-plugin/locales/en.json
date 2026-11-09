@@ -7,5 +7,6 @@
   "card.sunrise": "Sunrise",
   "card.sunset": "Sunset",
   "card.day": "Day {length}",
-  "card.hours": "{h} h {m} min"
+  "card.hours": "{h} h {m} min",
+  "signal.sunrise.title": "At sunrise"
 }

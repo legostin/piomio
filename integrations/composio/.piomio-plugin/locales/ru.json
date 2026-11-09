@@ -4,6 +4,7 @@
   "integration.summary": "Входит за вас в Slack, GitHub, Google, Microsoft 365 и другие приложения через своё облако",
   "integration.example": "Какие приложения можно подключить через Composio?",
   "via.about": "{name} работает через Composio — внешний сервис. Вход и все запросы идут через облако Composio: ключи от аккаунта хранятся у них, а не на вашем хабе, и Composio видит, что агент читает и отправляет. Нужен свой аккаунт Composio (бесплатно до 100 000 вызовов в месяц).",
+  "signal.event.title": "Событие в приложении, подключённом через Composio",
   "setup.key.title": "API-ключ Composio",
   "setup.key.hint": "Зарегистрируйтесь на platform.composio.dev (бесплатно), затем Settings → API keys → New key и вставьте ключ сюда. Он хранится в хранилище вашего хаба.",
   "entry.slack": "Читать и искать в каналах, писать сообщения",

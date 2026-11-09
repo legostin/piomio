@@ -9,14 +9,18 @@
 // A connected app's main tools become tools of their own (composio_slack_send_message…): a read only when Composio
 // tags it read-only and nothing else, every other one asks; composio_tools_search adds others, composio_tool_run
 // runs one by name.
+//
+// The apps' events are a trigger source too (composio.event, triggers.ts): composio_triggers lists the trigger types
+// of the connected apps, a trigger subscribes to one, and the events come by webhook or Composio's realtime channel.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { PluginContext, PluginModule } from "@piomio/plugin-sdk";
 import type { CatalogEntryState, ToolResult } from "@piomio/shared";
-import { ComposioError, composioApi, DEFAULT_API, type ComposioTool } from "./api.ts";
+import { ComposioError, composioApi, DEFAULT_API, type ComposioTool, type TriggerType } from "./api.ts";
 import { effectOf, resultText, specOf, toolName } from "./tools.ts";
+import { composioTriggers, type ComposioTriggers } from "./triggers.ts";
 
 /** What the plugin keeps about one app. */
 interface App {
@@ -38,6 +42,13 @@ interface App {
 // key is only ever sent to Composio.
 const API = process.env.PIOMIO_COMPOSIO_API || DEFAULT_API;
 const POLL_MS = Math.max(20, Number(process.env.PIOMIO_COMPOSIO_POLL_MS) || 3000);
+/** Tests only: a local stand-in for Pusher's wss://ws-<cluster>.pusher.com, and the realtime channel's first reconnect pause. */
+const PUSHER = process.env.PIOMIO_COMPOSIO_PUSHER || undefined;
+const RECONNECT_MS = Number(process.env.PIOMIO_COMPOSIO_RECONNECT_MS) || undefined;
+/** Tests only: how long a minute is for the triggers' grace, leases, reconcile and warm-up. */
+const MINUTE_MS = Number(process.env.PIOMIO_COMPOSIO_MINUTE_MS) || undefined;
+/** Tests only: where the hub's public address is checked from outside, instead of the address itself. */
+const PROBE_URL = process.env.PIOMIO_COMPOSIO_PROBE_URL || undefined;
 /** Main tools one app gets as tools of its own, at most; and with those composio_tools_search added. */
 const MAX_TOOLS = 30;
 const MAX_APP_TOOLS = 60;
@@ -48,6 +59,9 @@ const PENDING = new Set(["INITIATED", "INITIALIZING"]);
 const APP_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 /** How a service says its token lacks a permission (Google: "Request had insufficient authentication scopes"). */
 const SCOPES_RE = /insufficient[ _](authentication[ _])?scopes?|insufficient[ _]?permissions?|insufficient_scope/i;
+/** composio_triggers' answer, at most (characters), and one type's config schema in it. */
+const TRIGGERS_TEXT_MAX = 24_000;
+const TRIGGER_CONFIG_MAX = 1500;
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
@@ -56,6 +70,24 @@ function manifestApps(pluginDir: string): Array<{ id: string; name: string }> {
   const m = JSON.parse(readFileSync(join(pluginDir, ".piomio-plugin", "plugin.json"), "utf8"));
   return (m?.integration?.entries ?? []).map((e: any) => ({ id: String(e.id), name: String(e.name) }));
 }
+
+/** One trigger type, as composio_triggers shows it. */
+function triggerLine(t: TriggerType, app: string): string {
+  const how = t.types.includes("webhook") ? "instant" : "polled: up to its polling interval, 2 minutes at the shortest";
+  const about = [t.description, t.instructions].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 300);
+  const setup = t.requiresWebhookSetup ? " [needs a Composio address registered by hand at the provider (own OAuth app): avoid unless the user set that up]" : "";
+  return `${t.slug} — ${t.name} (${app}; ${how})${about ? `: ${about}` : ""}${setup}\n  config: ${JSON.stringify(t.config).slice(0, TRIGGER_CONFIG_MAX)}`;
+}
+
+/**
+ * Whether the vault's answer says the key is not there (removed, never stored) rather than that it cannot be read now
+ * (the vault is locked): only the first stops the apps' events.
+ */
+export function keyGone(e: unknown): boolean {
+  return (e as { data?: { key?: unknown } } | null)?.data?.key === "vault.notFound";
+}
+
+let triggers: ComposioTriggers | undefined;
 
 const plugin: PluginModule & { stop?: () => void } = {
   async activate(ctx: PluginContext) {
@@ -84,6 +116,8 @@ const plugin: PluginModule & { stop?: () => void } = {
       return cachedKey;
     };
     const hasKey = () => key().then((k) => !!k, () => false);
+    /** ok; gone: no key in the vault (or an empty one); unknown: it cannot be read now (a locked vault). */
+    const keyPresence = () => key().then((k): "ok" | "gone" | "unknown" => (k ? "ok" : "gone"), (e): "gone" | "unknown" => (keyGone(e) ? "gone" : "unknown"));
     const api = () => composioApi(API, key);
     const save = () => ctx.storage.set("apps", apps);
     const isKnown = (app: string) => known.some((e) => e.id === app);
@@ -242,6 +276,8 @@ const plugin: PluginModule & { stop?: () => void } = {
           delete a.pending;
           delete a.pendingUntil;
           await save();
+          // Its triggers move to the new account.
+          triggers?.accountsChanged();
           if (old && old !== accountId) forget(old);
           await registerTools(app, accountId).catch((e) => ctx.log.warn(`composio: ${app}'s tools: ${(e as Error).message}`));
           report();
@@ -256,11 +292,15 @@ const plugin: PluginModule & { stop?: () => void } = {
 
     /** Where every known account and sign-in in progress is at Composio, and their apps' tools. */
     async function sync() {
-      if (!(await hasKey())) {
+      const presence = await keyPresence();
+      if (presence !== "ok") {
         keyState = "missing";
         report();
+        // A removed key stops the apps' events until one is stored again; a locked vault leaves them as they are.
+        if (presence === "gone") triggers?.keyChanged(false);
         return;
       }
+      triggers?.keyChanged(true);
       keyState = "ok";
       report();
       for (const app of Object.keys(apps)) {
@@ -289,6 +329,8 @@ const plugin: PluginModule & { stop?: () => void } = {
       }
       await save();
       report();
+      // An account that stopped working takes its triggers with it (the hub tries them again later).
+      triggers?.accountsChanged();
     }
     // One sync at a time: the vault's events come in bursts.
     let syncing: Promise<void> = Promise.resolve();
@@ -362,6 +404,7 @@ const plugin: PluginModule & { stop?: () => void } = {
       }
       await save();
       report();
+      triggers?.accountsChanged();
     });
 
     // A key stored, changed or removed, or the vault unlocked: read it again and check everything with it.
@@ -487,13 +530,75 @@ const plugin: PluginModule & { stop?: () => void } = {
       },
     });
 
-    // The catalog first (no request to Composio needed), then where the accounts are.
+    ctx.tools.register({
+      name: "triggers",
+      effect: "read",
+      source: true,
+      description:
+        "The events of the user's apps connected through Composio that a trigger can start on (Composio trigger types: a new Gmail message, a Slack message, a GitHub push…), each with its config schema. " +
+        'To listen to one, trigger_create with on: [{ type: "composio.event", config: { trigger: "<SLUG>", config: { …that type\'s config… } } }] (config.app only when the slug does not start with the app). ' +
+        "Instant ones arrive within seconds; polled ones (Gmail, Google Calendar…) take up to their polling interval, 2 minutes at the shortest. " +
+        "Composio keeps one listener per trigger type per app account: for two repositories or channels of one type, use one trigger whose config covers both, if the type's config allows it, with a filter or script that tells their events apart. " +
+        "An instance of that type the user already had on that account is taken over. " +
+        "Events come by a webhook the hub registers in the user's Composio project when its public https address reaches it (a webhook the user set up there is never changed, and the hub's goes when its address does), else over Composio's realtime channel, where events while the hub is off are missed.",
+      inputSchema: { type: "object", properties: { app: { type: "string", description: "Only this connected app, e.g. gmail (as in composio:gmail)" } } },
+      handler: async (input) => {
+        if (!(await hasKey())) return needKey();
+        const want = String(input?.app ?? "").trim().toLowerCase().replace(/^composio:/, "");
+        const list = want ? connected().filter((a) => a === want) : connected();
+        if (!list.length) {
+          return want
+            ? text(`${nameOf(want)} is not connected through Composio: show its card with hub_integration_connect (id composio:${want}) first.`, true)
+            : text("No app is connected through Composio yet: show an app's card with hub_integration_connect (id composio:<app>) first.", true);
+        }
+        try {
+          const types = await api().listTriggerTypes(list);
+          if (!types.length) return text(`Composio has no events for ${list.map(nameOf).join(", ")}.`);
+          let out = "";
+          let shown = 0;
+          for (const t of types) {
+            const line = triggerLine(t, nameOf(t.toolkit || list[0]!));
+            if (out.length + line.length > TRIGGERS_TEXT_MAX) break;
+            out += `${line}\n`;
+            shown++;
+          }
+          const more = shown < types.length ? `\n…and ${types.length - shown} more: ask for one app (app: …) to see them.` : "";
+          const how = await triggers!.deliveryNote();
+          return text(
+            `${out}${more}\nListen with on: [{ type: "composio.event", config: { trigger, config } }]; a signal's data is the event's payload plus trigger, app and account (a payload field of the same name stays the app's).\n${how}`,
+          );
+        } catch (e) {
+          return failure(e);
+        }
+      },
+    });
+
+    // The apps' events as a trigger source: by webhook when the hub has a public https address, else over Composio's
+    // realtime channel.
+    triggers = composioTriggers({
+      ctx,
+      api,
+      hasKey,
+      account: (app) => (apps[app]?.status === "ACTIVE" ? apps[app]!.accountId : undefined),
+      apps: ids,
+      nameOf,
+      ...(PUSHER ? { pusherBase: PUSHER } : {}),
+      ...(RECONNECT_MS && RECONNECT_MS > 0 ? { reconnectMs: RECONNECT_MS } : {}),
+      ...(MINUTE_MS && MINUTE_MS > 0 ? { minuteMs: MINUTE_MS } : {}),
+      ...(PROBE_URL ? { probeBase: PROBE_URL } : {}),
+    });
+    ctx.signals.provide("event", triggers.provider);
+    ctx.http.handle((req) => triggers!.http(req));
+
+    // The catalog first (no request to Composio needed), then where the accounts are; the triggers' warm-up waits for
+    // that first look.
     keyState = (await hasKey()) ? "ok" : "missing";
     report();
-    void resync();
+    void resync().then(() => triggers?.synced());
   },
-  deactivate() {
+  async deactivate() {
     plugin.stop?.();
+    await triggers?.close();
   },
 };
 

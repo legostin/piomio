@@ -597,6 +597,20 @@ function addressHosts(input: unknown, source: boolean, decides: (host: string) =
   return {};
 }
 
+/**
+ * Every host the addresses in `input` name, read as a trigger's tool input is (addressHosts, not as a source tool's):
+ * "//host" and "https:host" anywhere, the first word of an address field. A trigger's `on` entries are read with it,
+ * since a source fetches the addresses it is given for the trigger (a feed, a watched page). `unreadable` as there.
+ */
+export function addressesIn(input: unknown): { hosts: string[] } | { unreadable: "deep" | "word" | "host" } {
+  const hosts = new Set<string>();
+  const r = addressHosts(input, false, (h) => {
+    hosts.add(h);
+    return false;
+  });
+  return "unreadable" in r ? r : { hosts: [...hosts] };
+}
+
 /** A trigger's tool input the gateway cannot read through for addresses (addressHosts). */
 class Unreadable {
   why: "deep" | "word" | "host";

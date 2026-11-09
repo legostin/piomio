@@ -50,11 +50,27 @@ export interface TriggerSourceInfo {
   type: string;
   description: string;
   source?: string;
+  /** subscribe: it works only while a trigger subscribes, for each config (sources.ts); unset: broadcast. */
+  mode?: "broadcast" | "subscribe";
+  /** JSON Schema of its signals' data. */
+  data?: unknown;
   config?: unknown;
   sample?: unknown;
   external?: boolean;
   online?: boolean;
 }
+
+/**
+ * What a trigger's `on` entry would get from its source (sources.ts check): "ok"; "config" when the source's config
+ * schema refuses the config; "unknown" when no source has the type now (a plugin off or not installed); "offline" when
+ * its plugin does not run; "refused" when the hub refuses its plugin's declaration.
+ */
+export type SourceCheck =
+  | { status: "ok" }
+  | { status: "unknown" }
+  | { status: "offline"; source: string }
+  | { status: "refused"; source: string; why: string }
+  | { status: "config"; source: string; problem: string };
 
 /**
  * A request the watch (watch.ts fetchPage) or a trigger's script (pio.ts) makes: the global fetch, or core's through the
@@ -117,6 +133,16 @@ export interface TriggerHost {
   fetch?: FetchLike;
   /** What scripts and quick checks reach (pipeline.ts); unset: none of it is available. */
   pipeline?: PipelineServices;
-  /** Signal sources beyond core's own (phase 3 registers them); unset: only core's four. */
-  sources?: { list(): TriggerSourceInfo[] };
+  /**
+   * Signal sources beyond core's own (sources.ts: plugins' and the hub's); unset: only core's four. `sync` brings the
+   * plugins' live subscriptions in line with the enabled triggers' `on`, after each change to them and at boot.
+   */
+  sources?: {
+    list(): TriggerSourceInfo[];
+    sync?(): Promise<void>;
+    /** What an `on` entry of `type` with `config` would get (trigger_create and trigger_update check each). */
+    check?(type: string, config: Record<string, unknown>): SourceCheck;
+    /** Sources an enabled plugin declares that the hub refuses, with why (trigger_sources lists them). */
+    refused?(): Array<{ type: string; source: string; why: string }>;
+  };
 }

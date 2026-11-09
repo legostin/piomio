@@ -4,7 +4,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, cpSync, rmSync, renameSync, statSync, readFileSync } from "node:fs";
 import { join, dirname, basename, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import type { Catalog, CatalogEntryState, CoreMethod, Locale, MessagePart, PiomioManifest, PluginLayout, PluginPermissions, ToolCallContext, ToolDescriptor, ToolResult, ToolSpec } from "@piomio/shared";
+import type { Catalog, CatalogEntryState, CoreMethod, Locale, MessagePart, PiomioManifest, PluginLayout, PluginPermissions, SignalDecl, ToolCallContext, ToolDescriptor, ToolResult, ToolSpec } from "@piomio/shared";
 import { createRpcPeer, ndjsonTransport, readPluginLayout, toolPrefixOf, nowIso, ENTRY_ID_RE, type RpcPeer } from "@piomio/shared";
 import { json, type Db } from "../db.ts";
 import { hubLocale, localizePluginValue, LocalizedError, tFor } from "../i18n.ts";
@@ -102,7 +102,22 @@ export interface HostDeps {
   attachPart?: (conversationId: string, part: MessagePart) => void;
   /** A plugin reported its catalog entries (ctx.catalog.update): what they were before and are now. */
   onCatalogUpdated?: (pluginId: string, before: CatalogEntryState[], after: CatalogEntryState[]) => void;
+  /**
+   * The signal sources registry (signals/sources.ts): what plugins emit goes to it (refused with an English error the
+   * plugin logs), and it hears when a plugin starts (its subscriptions are made again) and stops.
+   */
+  signals?: {
+    fromPlugin(pluginId: string, m: { type: string; data: unknown; key?: string; subject?: string; subscription?: string }): { ok: true } | { ok: false; error: string };
+    pluginUp(pluginId: string): Promise<void>;
+    pluginDown(pluginId: string): void;
+    /** A provider failed a subscription it had taken (the runner's signals.failed). */
+    failed(pluginId: string, subscription: string, error: string): void;
+  };
 }
+
+/** How long a plugin has to answer the hub's subscribe to one of its signal providers, and a stop. */
+const SIGNAL_SUBSCRIBE_TIMEOUT_MS = 30_000;
+const SIGNAL_STOP_TIMEOUT_MS = 10_000;
 
 /** Entries one plugin may report, at most. */
 const MAX_CATALOG_ENTRIES = 200;
@@ -296,7 +311,7 @@ export class PluginHost {
     // Builtin brain plugins run harness CLIs (claude, codex) with a persistent home where the CLI logins live
     // (config.brainHome: the user's own home in the desktop app); everything else gets its data dir as its home.
     const isBrainHost = rec.source === "builtin" && rec.layout.manifest.contributes.brains.length > 0;
-    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, pluginEgress(rec.granted.network, isBrainHost));
+    const proxyToken = this.d.egress.issueToken(`plugin:${id}`, pluginEgress(rec.granted.network, isBrainHost, ownUrlFor(rec.source, rec.layout.manifest, cfg.publicUrl)));
     const proxyUrl = `http://${proxyToken}:x@127.0.0.1:${cfg.egressPort}`;
     const home = isBrainHost ? cfg.brainHome : dataDir;
     mkdirSync(dataDir, { recursive: true });
@@ -324,6 +339,12 @@ export class PluginHost {
     const peer = createRpcPeer(ndjsonTransport(child.stdout!, child.stdin!));
     const running: Running = { child, peer, stopping: false, unsubs: [] };
     this.running.set(id, running);
+    // The stream broke on what the plugin sent (a message past the line cap): it is treated as a crashed plugin.
+    peer.onClose((err) => {
+      if (!err || running.stopping) return;
+      this.log(rec, "error", `its messages could not be read: ${err.message}`);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    });
 
     child.stderr!.setEncoding("utf8");
     child.stderr!.on("data", (chunk: string) => {
@@ -362,6 +383,9 @@ export class PluginHost {
       rec.status = "running";
       rec.lastError = undefined;
       this.d.audit.append("core", "plugin.start", id);
+      // Its signal providers get the subscriptions the enabled triggers need (again, after a restart).
+      if (rec.layout.manifest.contributes.signals?.length && this.d.signals)
+        void this.d.signals.pluginUp(id).catch((e) => this.log(rec, "warn", `signal subscriptions failed: ${e?.message ?? e}`));
     } catch (e: any) {
       rec.status = "error";
       rec.lastError = e.message;
@@ -431,6 +455,8 @@ export class PluginHost {
     this.httpPlugins.delete(id);
     this.uiMessageTargets.delete(id);
     this.d.egress.revokeOwner(`plugin:${id}`);
+    // Its providers' subscriptions went with its process.
+    this.d.signals?.pluginDown(id);
     const before = this.catalogs.get(id);
     this.catalogs.delete(id);
     if (before?.length) this.d.onCatalogUpdated?.(id, before, []);
@@ -534,6 +560,36 @@ export class PluginHost {
       return {};
     });
 
+    // A signal (ctx.signals.emit, or a provider's emit by its subscription). An undeclared type is denied, audited once
+    // per type (a plugin may emit often); the registry checks the rest and routes it. Known secrets are taken out there.
+    const deniedSignals = new Set<string>();
+    peer.handle("signals.emit", (p: { type?: unknown; data?: unknown; key?: unknown; subject?: unknown; subscription?: unknown }) => {
+      const type = typeof p?.type === "string" ? p.type.slice(0, 64) : "";
+      if (!(m.contributes.signals ?? []).some((s) => s.type === type)) {
+        const what = `signal "${type}" is not declared in contributes.signals`;
+        if (deniedSignals.size < 50 && !deniedSignals.has(type)) {
+          deniedSignals.add(type);
+          this.d.audit.append(`plugin:${id}`, "plugin.permission-denied", what);
+        }
+        throw new Error(`plugin ${id} is not allowed: ${what}`);
+      }
+      const r = this.d.signals?.fromPlugin(id, {
+        type,
+        data: p.data,
+        ...(p.key !== undefined ? { key: p.key as string } : {}),
+        ...(p.subject !== undefined ? { subject: p.subject as string } : {}),
+        ...(p.subscription !== undefined ? { subscription: String(p.subscription) } : {}),
+      }) ?? { ok: true };
+      if (!r.ok) throw new Error(r.error);
+      return {};
+    });
+    // A provider failed a subscription after the plugin took it (provided late, and its subscribe threw).
+    peer.onNotification("signals.failed", (p: { id?: unknown; error?: unknown }) => {
+      const sub = String(p?.id ?? "").slice(0, 64);
+      const error = String(p?.error ?? "failed").slice(0, 2000);
+      if (sub) this.d.signals?.failed(id, sub, error);
+    });
+
     peer.handle("events.subscribe", (p: { names: BusEventName[] }) => {
       for (const name of p.names) {
         const unsub = this.d.bus.on(name, (payload) => {
@@ -595,6 +651,42 @@ export class PluginHost {
       if (ctx?.conversationId) this.d.attachPart?.(ctx.conversationId, { type: "widget", plugin: rec.id, kind, data });
     }
     return Object.keys(meta).length ? { ...result, _meta: meta } : { content: result.content, ...(result.isError ? { isError: true } : {}) };
+  }
+
+  // ---------- Signal sources ----------
+
+  /** The signals each enabled plugin the hub loads declares (contributes.signals), and whether it runs. */
+  signalSources(): Array<{ pluginId: string; decls: SignalDecl[]; running: boolean; builtin: boolean; title(key: string, locale?: Locale): string }> {
+    const filter = this.d.config.plugins;
+    return this.list()
+      .filter((r) => r.enabled && r.layout?.manifest.contributes.signals?.length && (filter === "all" || (Array.isArray(filter) && filter.includes(r.id))))
+      .map((r) => ({
+        pluginId: r.id,
+        decls: r.layout!.manifest.contributes.signals,
+        running: r.status === "running" && this.running.has(r.id),
+        builtin: r.source === "builtin",
+        title: (key: string, locale?: Locale) => localizePluginValue(r.layout, key, locale ?? hubLocale()),
+      }));
+  }
+
+  /** A line in a plugin's own log (the registry's failed subscriptions and refused declarations). */
+  pluginLog(id: string, msg: string, level: "warn" | "error" = "warn"): void {
+    const rec = this.records.get(id);
+    if (rec) this.log(rec, level, msg);
+  }
+
+  /** Start one of a running plugin's providers for a subscription (its id is the hub's). */
+  async signalSubscribe(id: string, subscription: string, type: string, config: Record<string, unknown>): Promise<void> {
+    const r = this.running.get(id);
+    if (!r || r.peer.closed || r.stopping) throw new Error(`plugin ${id} is not running`);
+    await r.peer.request("signals.subscribe", { id: subscription, type, config }, { timeoutMs: SIGNAL_SUBSCRIBE_TIMEOUT_MS });
+  }
+
+  /** Stop a subscription; nothing to do when the plugin no longer runs (it went with the process). */
+  async signalStop(id: string, subscription: string): Promise<void> {
+    const r = this.running.get(id);
+    if (!r || r.peer.closed || r.stopping) return;
+    await r.peer.request("signals.stop", { id: subscription }, { timeoutMs: SIGNAL_STOP_TIMEOUT_MS });
   }
 
   // ---------- Catalog entries ----------
@@ -823,11 +915,31 @@ export class PluginHost {
 }
 
 /**
- * The hosts a plugin's process reaches: what it was granted, and for a built-in brain plugin its CLIs' own model APIs
- * too (listing models, signing in: a Codex there was refused chatgpt.com hundreds of times a day).
+ * The hub's public address for a plugin that may check it reaches the hub before it gives it to an outside service: a
+ * built-in one whose webhooks (contributes.http) feed a subscribe-mode signal source (Composio's). Undefined for any
+ * other, which then cannot reach the hub's own public host through the egress proxy.
  */
-export function pluginEgress(granted: string[], brainHost: boolean): string[] {
-  return brainHost ? [...new Set([...granted, ...BRAIN_MODEL_EGRESS])] : granted;
+export function ownUrlFor(source: PluginRecord["source"], manifest: PiomioManifest, publicUrl: string | undefined): string | undefined {
+  const c = manifest.contributes;
+  return source === "builtin" && c.http && (c.signals ?? []).some((s) => s.mode === "subscribe") ? publicUrl : undefined;
+}
+
+/**
+ * The hosts a plugin's process reaches: what it was granted; for a built-in brain plugin its CLIs' own model APIs
+ * too (listing models, signing in: a Codex there was refused chatgpt.com hundreds of times a day); and for a plugin
+ * ownUrlFor gives the hub's public address (`ownUrl`), that address's host when it is https, so the plugin can check
+ * the address really reaches the hub before it gives it to an outside service.
+ */
+export function pluginEgress(granted: string[], brainHost: boolean, ownUrl?: string): string[] {
+  let own: string | undefined;
+  try {
+    const u = ownUrl ? new URL(ownUrl) : undefined;
+    if (u?.protocol === "https:") own = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    /* not an address */
+  }
+  if (!brainHost && !own) return granted;
+  return [...new Set([...granted, ...(brainHost ? BRAIN_MODEL_EGRESS : []), ...(own ? [own] : [])])];
 }
 
 export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string> {
