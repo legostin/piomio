@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Compass } from "lucide-react";
 import { Favicon } from "./chrome.tsx";
-import { host, send, type BrowserState, type Site } from "./host.ts";
+import { host, send, t, type BrowserState, type Site } from "./host.ts";
 import { Omnibox } from "./omnibox.tsx";
 
 export function NewTabPage({ state, search }: { state: BrowserState | null; search: boolean }) {
@@ -19,6 +19,7 @@ export function NewTabPage({ state, search }: { state: BrowserState | null; sear
       <div className="obb-ntp-mark" aria-hidden>
         <Compass />
       </div>
+      {state?.machine && <div className="obb-ntp-machine obb-muted">{t("ui.machine.where", { machine: state.machine })}</div>}
       {search && <Omnibox state={state} variant="hero" />}
       {sites.length > 0 && (
         <div className="obb-tiles">

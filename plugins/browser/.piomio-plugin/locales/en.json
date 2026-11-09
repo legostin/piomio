@@ -152,5 +152,7 @@
   "ui.files.failed": "The file did not reach the page: {detail}",
   "approval.open": "Browser: open {url}",
   "approval.tabs": "Browser: open {url} in a new tab",
-  "approval.download": "Browser: download {url}"
+  "approval.download": "Browser: download {url}",
+  "ui.machine.hint": "This browser runs on {machine}. Its sign-ins and history are that computer's own: a browser on another computer has its own.",
+  "ui.machine.where": "The browser on {machine}"
 }
