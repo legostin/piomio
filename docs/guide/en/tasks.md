@@ -121,9 +121,11 @@ You never write the cron line yourself: the agent turns your words into it. Time
 
 A schedule can name a computer. If that computer is offline when it is due, the run doesn't start and you get **“…” did not run**. A schedule can also follow a skill you taught (see [The browser and teach mode](browser.md)).
 
-Limits: each schedule runs at most 24 times a day unless you raise it; a run is skipped while the previous one is still going; runs missed while the hub was off catch up once; addresses on your local network can't be watched unless you turn on **Allow watching local network addresses** in the Triggers plugin's settings. A watched page that takes more than 10 seconds to read (very large or very deeply nested) is not compared: its check ends with an error on the card.
+Limits: each schedule runs at most 24 times a day unless you raise it; a run is skipped while the previous one is still going; runs missed while the hub was off catch up once; addresses on your local network can't be watched unless you turn on **Allow watching local network addresses** (open **Settings** at the bottom of the **Triggers** section, see [Triggers](settings.md#triggers)). A watched page that takes more than 10 seconds to read (very large or very deeply nested) is not compared: its check ends with an error on the card.
 
-To change or stop one, say so: "pause the weather schedule", "delete the price watch". The same is on the **Triggers** page (**Settings** → **Triggers**): **Create trigger**, and on each card the **On** switch, **Run now**, **Check** (for a watch), **Edit**, **History** and **Delete**.
+To change or stop one, say so: "pause the weather schedule", "delete the price watch". The same is on the **Triggers** page (**Settings** → **Assistant** → **Triggers**): **New trigger**, and on each card the **On** switch, **Run now**, **Check** (for a watch), **Change in the chat**, **Edit in a form**, the **Journal** and **Delete**.
+
+If you had turned the old Triggers plugin off, the update to the version where triggers are part of Piomio turns each of your triggers off instead, so nothing that was paused starts or catches up by itself, and tells you so once in the Inbox. Turn on the ones you want in the chat ("turn on the morning brief") or with their **On** switch.
 
 ## What can start a trigger
 

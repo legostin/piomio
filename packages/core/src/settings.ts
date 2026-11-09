@@ -35,6 +35,24 @@ export interface CoreSettings {
   transcription: TranscriptionSettings;
   /** The local engine's voice and speed (speech/): unset, the hub language's default voice at normal speed. */
   voice: VoiceSettings;
+  /** Watch triggers and triggers' scripts may reach addresses on the local network (signals/watch.ts, signals/pio.ts). */
+  triggersAllowPrivateUrls: boolean;
+  /** How long a watch trigger waits for its page, in seconds (TRIGGERS_WATCH_TIMEOUT). */
+  triggersWatchTimeoutSec: number;
+}
+
+/** The range of triggersWatchTimeoutSec, in seconds. */
+export const TRIGGERS_WATCH_TIMEOUT = { min: 1, max: 120 } as const;
+
+/** What is wrong with the trigger settings in a patch: the catalog key of the reason and its params; undefined when nothing is. */
+export function triggerSettingsProblem(p: Record<string, unknown>): { key: string; params?: Record<string, number> } | undefined {
+  if ("triggersAllowPrivateUrls" in p && typeof p.triggersAllowPrivateUrls !== "boolean") return { key: "settings.badTriggersAllowPrivate" };
+  if ("triggersWatchTimeoutSec" in p) {
+    const n = p.triggersWatchTimeoutSec;
+    const { min, max } = TRIGGERS_WATCH_TIMEOUT;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < min || n > max) return { key: "settings.badTriggersWatchTimeout", params: { min, max } };
+  }
+  return undefined;
 }
 
 /** The brains' CLIs themselves: their sign-in and model APIs. Never asked about, even after outside content (egress.ts). */
@@ -90,6 +108,8 @@ export function defaultSettings(timezone: string, language: Locale = localeFromE
     remoteAccess: false,
     transcription: DEFAULT_TRANSCRIPTION,
     voice: DEFAULT_VOICE_SETTINGS,
+    triggersAllowPrivateUrls: false,
+    triggersWatchTimeoutSec: 30,
   };
 }
 

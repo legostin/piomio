@@ -1,9 +1,9 @@
 // The trigger model's signal fields: subscriptions, script, triage, batch, and the built-in source mapping.
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { format } from "@piomio/shared";
+import en from "../../../web/src/i18n/en.ts";
+import ru from "../../../web/src/i18n/ru.ts";
 import { coreCatalog } from "../../src/i18n.ts";
 import { TRIGGER_KINDS, type Trigger } from "../../src/signals/types.ts";
 import { whenText } from "../../src/signals/when.ts";
@@ -188,17 +188,15 @@ describe("old triggers", () => {
 });
 
 describe("the Triggers page's words", () => {
-  const catalog = (lang: string) =>
-    JSON.parse(readFileSync(join(import.meta.dirname, "../../../../plugins/triggers/.piomio-plugin/locales", `${lang}.json`), "utf8")) as Record<string, string>;
-  it("names every kind, the outcomes that start nothing and the codes the pipeline writes, and labels a check's own words", () => {
-    for (const lang of ["en", "ru"]) {
-      const c = catalog(lang);
+  it("names every kind, the outcomes that start nothing, and labels a check's own words", () => {
+    for (const [lang, c] of [["en", en], ["ru", ru]] as const) {
+      const words = c as Record<string, string>;
       for (const kind of TRIGGER_KINDS) {
-        expect(c[`ui.kind.${kind}`], `${lang} ui.kind.${kind}`).toBeTruthy();
-        expect(c[`ui.kindHint.${kind}`], `${lang} ui.kindHint.${kind}`).toBeTruthy();
+        expect(words[`triggers.kind.${kind}`], `${lang} triggers.kind.${kind}`).toBeTruthy();
+        expect(words[`triggers.kindHint.${kind}`], `${lang} triggers.kindHint.${kind}`).toBeTruthy();
       }
-      for (const key of ["ui.run.note", "ui.run.drop", "ui.card.noted", "ui.card.dropped", "error.queueFull"]) expect(c[key], `${lang} ${key}`).toBeTruthy();
-      expect(c["ui.run.asWritten"], lang).toContain("{text}");
+      for (const key of ["triggers.run.note", "triggers.run.drop", "triggers.error.queueFull"]) expect(words[key], `${lang} ${key}`).toBeTruthy();
+      expect(words["triggers.run.asWritten"], lang).toContain("{text}");
     }
   });
 });

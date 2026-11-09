@@ -3,7 +3,7 @@ title: Plugins and integrations
 description: The Plugins catalog, what comes built in, connecting services like Notion, Linear, Granola and the apps behind Composio, MCP servers, Claude Code and Codex plugins, and integrations your agents build for you.
 ---
 
-Almost everything Piomio does beyond the chat is a plugin: the browser, memory, reminders, Telegram, the weather,
+Almost everything Piomio does beyond the chat is a plugin: the browser, memory, Telegram, the weather,
 your Notion. Services you connect and abilities you turn on are called integrations. They all live in one catalog,
 and you can set every one of them up by asking the assistant.
 
@@ -49,14 +49,13 @@ Press a row to open the plugin's page:
 
 ## What comes with Piomio
 
-These are on from the start:
+Reminders, schedules, page watches and webhooks (triggers) are part of Piomio itself, not a plugin: see [Tasks, schedules and the Inbox](tasks.md). These plugins are on from the start:
 
 | Plugin | What it does |
 |---|---|
 | **Browser** | The agents' own browser, with a live view you can take over. See [The browser and teach mode](browser.md). |
 | **Web** | Reads web pages and RSS feeds, and searches the web: through the browser, or Brave, Tavily or your own SearXNG. |
 | **Memory** | The team's long-term memory about you, which you can see and change. |
-| **Triggers** | Reminders, schedules, page watches and webhooks that start work by themselves. See [Tasks, schedules and the Inbox](tasks.md). |
 | **Telegram** | Chat with your agents in Telegram. Needs a bot of your own: see [Telegram](telegram.md). |
 | **Yandex Maps and 2GIS** | Adds both apps to "Open in…" on the maps agents show in the chat. |
 | **Claude Code**, **Codex**, **Kimi Code** | The brains. See [Brains and sign-in](brains.md). |

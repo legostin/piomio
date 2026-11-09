@@ -11,7 +11,7 @@ import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
 import { EventBus } from "./bus.ts";
 import { Store } from "./store.ts";
-import { DEFAULT_BRAIN_EGRESS, Settings, type CoreSettings } from "./settings.ts";
+import { DEFAULT_BRAIN_EGRESS, Settings, triggerSettingsProblem, type CoreSettings } from "./settings.ts";
 import { VaultService } from "./vault/service.ts";
 import { AuditLog } from "./audit.ts";
 import { RuleStore } from "./policy/rules.ts";
@@ -67,7 +67,7 @@ import { InviteRegistry } from "./invites.ts";
 import { deviceTls, type DeviceTls } from "./devices-tls.ts";
 import { deviceUrls, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
 import { createCoreCall } from "./core-call.ts";
-import { CoreTriggers, TRIGGERS_ID } from "./signals/core-host.ts";
+import { CoreTriggers } from "./signals/core-host.ts";
 import { proxiedGet } from "./signals/net.ts";
 import { SignalSources } from "./signals/sources.ts";
 import { configureHubLocale, coreCatalog, hubLocale, localizePluginValue, LocalizedError, t } from "./i18n.ts";
@@ -148,7 +148,7 @@ export class Hub {
   /** "New channel" and "Add agent" chats (setup-chats.ts). */
   setupChats: SetupChats;
   plugins: PluginHost;
-  /** The trigger engine (signals/): runs while this hub leads and the Triggers card is on. */
+  /** The trigger engine (signals/): part of the hub, it runs while this hub leads (unless PIOMIO_PLUGINS is "none"). */
   triggers: CoreTriggers;
   /** Where triggers' signals come from beyond core's own (signals/sources.ts): plugins' sources; started with the engine. */
   sources: SignalSources;
@@ -507,13 +507,17 @@ export class Hub {
       db: this.db,
       bus: this.bus,
       tools: this.tools,
-      card: {
-        get: () => {
-          const r = this.plugins.get(TRIGGERS_ID);
-          const allowed = config.plugins === "all" || (Array.isArray(config.plugins) && config.plugins.includes(TRIGGERS_ID));
-          return r && allowed ? { enabled: r.enabled, settings: r.settings } : undefined;
-        },
-        onSettings: (cb) => this.plugins.onSettings(TRIGGERS_ID, cb),
+      // Part of the hub: it runs on the leader. A plugin list names plugins to start, which triggers no longer are; "none"
+      // is the bare hub, without them too.
+      wanted: () => this.leading && !this.stopping && config.plugins !== "none",
+      settings: {
+        get: () => this.settings.get(),
+        update: (patch) => void this.updateSettings(patch, "core"),
+        onChange: (cb) =>
+          this.bus.on("settings.updated", (e) => {
+            const keys = (e as { keys?: unknown }).keys;
+            if (!Array.isArray(keys) || keys.some((k) => k === "triggersAllowPrivateUrls" || k === "triggersWatchTimeoutSec")) cb();
+          }),
       },
       coreCall,
       hubUrl: config.internalUrl,
@@ -537,10 +541,6 @@ export class Hub {
       egress: { proxy: this.egress, port: config.egressPort },
       vault: this.vault,
       sources: this.sources,
-    });
-    // The person turned the Triggers card on or off.
-    this.bus.on("plugins.updated", () => {
-      if (this.leading && !this.stopping) void this.triggers.sync().catch((e) => console.log(`[piomio] triggers: ${e?.message ?? e}`));
     });
     this.voiceProviders = new VoiceProviders(this.plugins, this.speech, this.transcriber);
     this.mcp = new McpEndpoint(this.gateway, this.store, config.version);
@@ -712,6 +712,8 @@ export class Hub {
       if (typeof v === "string") throw new LocalizedError("settings.badVoice", { reason: v }, 400);
       p.voice = v;
     }
+    const triggers = triggerSettingsProblem(p);
+    if (triggers) throw new LocalizedError(triggers.key, triggers.params, 400);
     const before = this.settings.get().language;
     this.audit.append(actor, "settings.update", undefined, { keys: Object.keys(p) });
     const next = this.settings.update(p as Partial<CoreSettings>);

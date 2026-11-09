@@ -136,7 +136,9 @@ function ChatRoute({ id }: { id: string }) {
 function Routes() {
   const [location] = useLocation();
   const { routes } = usePluginRegistry();
-  const pluginRoute = matchRoute(routes, location);
+  // A core section's address is the section's, even where a plugin has a page there too (the old Triggers page).
+  const section = sectionForPath(location);
+  const pluginRoute = section ? undefined : matchRoute(routes, location);
   if (pluginRoute) {
     // Pages plugins put in the navigation open in the settings panel; other plugin routes are full views.
     const navRoute = routes.find((r) => r.key === pluginRoute.key && r.nav && !r.path.includes(":"));
@@ -155,7 +157,6 @@ function Routes() {
       </>
     );
   }
-  const section = sectionForPath(location);
   if (section) return <OpenSection section={section} />;
   return (
     <Switch>

@@ -31,10 +31,11 @@ describe("signals from a plugin", () => {
   beforeAll(async () => {
     const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
     const config = loadConfig(
-      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), PIOMIO_PLUGINS: "triggers,pinger,quickstub", TZ: "UTC" },
+      // A list of plugins to start: the trigger engine is the hub's own and runs without being named in it.
+      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), PIOMIO_PLUGINS: "pinger,quickstub", TZ: "UTC" },
       {
         dataDir: mkdtempSync(join(tmpdir(), "owl-signal-plugins-")),
-        builtinPluginsDirs: [join(fixtures, "triggers-card"), join(fixtures, "signal-plugins")],
+        builtinPluginsDirs: [join(fixtures, "signal-plugins")],
         builtinAgentsDir: join(fixtures, "agents"),
       },
     );

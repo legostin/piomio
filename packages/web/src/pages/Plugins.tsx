@@ -4,7 +4,6 @@
 // the technical view (permissions, capabilities, logs, restart, removal). Installing from a link ends the catalog.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { useLocation } from "wouter";
 import { ArrowRight, CheckCircle2, ChevronRight, Download, GitBranch, Power, RotateCw, Search, ShieldAlert, Sparkles, Trash2, TriangleAlert } from "lucide-react";
 import type { CatalogSection, IntegrationView } from "@piomio/shared";
 import { api, errorText } from "../lib/api";
@@ -13,10 +12,10 @@ import { formatTime, type Tone } from "../lib/format";
 import { chatStep, filterCatalog, findEntry, hasSwitch, hueOf, isOn, popularEntries, rowState } from "../lib/catalog";
 import { STATUS_TONE } from "../lib/integrations";
 import { hubEvents } from "../state/app";
-import { askInChat } from "../state/ask";
+import { useAsk } from "../state/ask";
 import { loadCatalog, useCatalog } from "../state/catalog";
 import { loadIntegrations } from "../state/integrations";
-import { closePanel, openPanelItem, panel, panelBack } from "../state/panel";
+import { openPanelItem, panel, panelBack } from "../state/panel";
 import { toast } from "../state/toast";
 import { t, type MessageKey } from "../i18n";
 import { pluginLoad } from "../plugins/host";
@@ -104,15 +103,6 @@ const STATUS_LINE: Partial<Record<IntegrationView["status"], MessageKey>> = {
 export function PluginsPage() {
   const p = useStore(panel);
   return p.item ? <PluginPage key={p.item} id={p.item} /> : <PluginCatalog />;
-}
-
-/** Opens the assistant's dialog with `text` as the person's words; the panel steps aside where it covers the chat. */
-function useAsk() {
-  const [, navigate] = useLocation();
-  return (text: string) => {
-    if (window.matchMedia("(max-width: 1279px)").matches) closePanel();
-    askInChat(undefined, text, navigate).catch((e) => toast(errorText(e), "error"));
-  };
 }
 
 /** A plugin's icon on its category's tint, or the service's own logo. */

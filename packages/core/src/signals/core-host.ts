@@ -1,19 +1,22 @@
 // The trigger engine's host in core (host.ts): plugin_kv under "triggers" for its storage (where the plugin kept it),
 // core's own calls, the hub bus, the tool registry (tools named trigger_*, owned by "triggers" as the plugin's were),
-// the Triggers card's switch and settings, and page loads through the egress proxy. Its pipeline reaches the agents'
-// read tools through the gateway, the quick model, and a fetch of its own per script run through the egress proxy. The
-// hub starts it while it leads and stops it when it stands down; it runs only while the Triggers card exists and is on.
+// the hub's two trigger settings (settings.ts), and page loads through the egress proxy. Its pipeline reaches the
+// agents' read tools through the gateway, the quick model, and a fetch of its own per script run through the egress
+// proxy. Triggers are part of the hub: it starts the engine while it leads (unless PIOMIO_PLUGINS is "none") and stops
+// it when it stands down. The Triggers card the plugin had is not needed; what it saved is carried over once, and a
+// card the person had turned off leaves each trigger off.
 
 import type { CoreMethod, ToolResult } from "@piomio/shared";
 import type { QuickModel } from "../bare-ask.ts";
 import type { EventBus } from "../bus.ts";
-import { tx, type Db } from "../db.ts";
+import { json, tx, type Db } from "../db.ts";
 import type { EgressProxy } from "../egress.ts";
 import { hubLocale, tFor } from "../i18n.ts";
-import { pluginKv } from "../plugins/kv.ts";
+import { pluginKv, type PluginKv } from "../plugins/kv.ts";
+import { TRIGGERS_WATCH_TIMEOUT, type CoreSettings } from "../settings.ts";
 import type { ToolGateway } from "../tools/gateway.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import type { TriggerEngine } from "./engine.ts";
+import { INITIAL_OFF, type TriggerEngine } from "./engine.ts";
 import type { FetchLike, PipelineServices, TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { startTriggers } from "./index.ts";
 import { proxiedGet } from "./net.ts";
@@ -21,21 +24,30 @@ import type { DeliverOptions } from "./pipeline.ts";
 import { gatewayReads } from "./pio.ts";
 import type { SignalSources } from "./sources.ts";
 import { migrateRunLists, sqlStore, type NoteQuery, type NoteRow, type TriggerStore } from "./store.ts";
-import type { RunReason, Signal, TriggerRun } from "./types.ts";
+import type { RunReason, Signal, Trigger, TriggerRun } from "./types.ts";
 
-/** The Triggers card's id: its storage, its webhook addresses (/hooks/triggers/…) and its UI events carry it. */
+/** The triggers plugin's id, which the engine keeps: its storage, its tools' owner, its webhook addresses (/hooks/triggers/…) and its UI events carry it. */
 export const TRIGGERS_ID = "triggers";
 /** Its tools are named trigger_<name>, as the plugin's were (manifest toolPrefix "trigger"). */
 const TOOL_PREFIX = "trigger";
+/** The meta key that records the Triggers card's saved settings were carried over into the hub settings. */
+export const TRIGGERS_CARRIED = "triggers.settings_carried";
+
+/** The hub settings the engine reads. */
+export type TriggerSettings = Pick<CoreSettings, "triggersAllowPrivateUrls" | "triggersWatchTimeoutSec">;
 
 export interface CoreTriggersDeps {
   db: Db;
   bus: EventBus;
   tools: ToolRegistry;
-  /** The Triggers card in Plugins: undefined when the hub has none (or its plugin filter leaves it out). */
-  card: {
-    get(): { enabled: boolean; settings: Record<string, unknown> } | undefined;
-    onSettings(cb: (settings: Record<string, unknown>) => void): () => void;
+  /** Whether the engine should run now: the hub leads and its plugin filter is not "none" (app.ts). Unset: always. */
+  wanted?: () => boolean;
+  /** The hub settings (settings.ts): read at each start, written once by the card's carry-over, heard when they change. */
+  settings: {
+    get(): TriggerSettings;
+    update(patch: Partial<TriggerSettings>): void;
+    /** Hear a change of these settings; returns the way to stop hearing it. */
+    onChange(cb: () => void): () => void;
   };
   /** Core calls as a plugin makes them (core-call.ts), on behalf of "triggers". */
   coreCall: (pluginId: string, method: CoreMethod, params: unknown) => Promise<unknown>;
@@ -95,13 +107,16 @@ export class CoreTriggers {
     this.d = d;
   }
 
-  /** The Triggers card exists and is on. */
+  /** The hub wants it running: it leads and PIOMIO_PLUGINS is not "none". No Triggers card is needed. */
   wanted(): boolean {
-    return !!this.d.card.get()?.enabled;
+    return this.d.wanted?.() ?? true;
   }
 
   /** Start the engine when it should run and does not; a call while it starts waits for that start. */
   start(): Promise<void> {
+    // Whether or not it runs (so Settings shows them): what the card left moves into the hub, once, before the engine
+    // reads its triggers. A paused card that could not be carried over keeps the engine from starting until it is.
+    if (!this.carryOver()) return Promise.reject(new Error("the Triggers card's pause was not carried over"));
     if (this.engine || !this.wanted()) return this.starting ?? Promise.resolve();
     // A start still running after a stop() is stale: the new one waits for it to take its registrations back.
     if (this.starting && this.startGen === this.gen) return this.starting;
@@ -157,10 +172,51 @@ export class CoreTriggers {
     this.session = undefined;
   }
 
-  /** Start or stop it to match the card (the person turned Triggers on or off). */
-  async sync(): Promise<void> {
-    if (this.wanted()) await this.start();
-    else this.stop();
+  /**
+   * What the Triggers card left (its plugins row, which an older hub wrote and this one leaves in place) into the hub,
+   * once: recorded in meta (replicated, as plugin_kv is), so a later change is never overwritten and a replica that
+   * leads later does not do it again. Its saved settings go into the hub settings; what it did not save, or saved in a
+   * form the engine would not have used, stays as the hub has it. A card the person had turned off kept every trigger
+   * from running: each one is turned off instead, in the same step as the record and before the engine reads them, and
+   * the person is told once of those this turned off (none: nothing to tell). A failure is retried next start; false when the card's pause may not have been carried
+   * over, and the engine must not start (it would run what the person had paused).
+   */
+  private carryOver(): boolean {
+    const db = this.d.db;
+    let paused: boolean | undefined;
+    try {
+      if (db.prepare("select 1 from meta where key = ?").get(TRIGGERS_CARRIED)) return true;
+      const row = db.prepare("select enabled, settings from plugins where id = ?").get(TRIGGERS_ID) as { enabled: number; settings: string | null } | undefined;
+      paused = !!row && !row.enabled;
+      const card = json<unknown>(row?.settings, {});
+      const patch = cardSettings(card && typeof card === "object" ? (card as Record<string, unknown>) : {});
+      const now = this.d.settings.get();
+      const changed = Object.fromEntries(Object.entries(patch).filter(([k, v]) => now[k as keyof TriggerSettings] !== v)) as Partial<TriggerSettings>;
+      if (Object.keys(changed).length) this.d.settings.update(changed);
+      const off = tx(db, () => {
+        const out = paused ? pauseAll(pluginKv(db, TRIGGERS_ID)) : undefined;
+        db.prepare("insert into meta(key, value) values (?, ?) on conflict(key) do update set value = excluded.value").run(TRIGGERS_CARRIED, new Date().toISOString());
+        return out;
+      });
+      if (off?.count) this.tellPaused(off);
+      return true;
+    } catch (e: any) {
+      console.warn(`[piomio] triggers warn: what the Triggers card left was not carried over: ${e?.message ?? e}`);
+      // A card that was on starts as before; one that was off, or a row that could not be read, waits for the next start.
+      return paused === false;
+    }
+  }
+
+  /** The person hears once, in the hub language, that the triggers the pause held are each off now and how to turn them on. */
+  private tellPaused(off: { count: number; example: string | undefined }): void {
+    const t = tFor(hubLocale());
+    void this.d
+      .coreCall(TRIGGERS_ID, "notify", {
+        level: "notify",
+        title: t("triggers.notify.paused.title", { n: off.count }),
+        body: t("triggers.notify.paused.body", { n: off.count, example: off.example ?? "" }),
+      })
+      .catch((e: any) => console.warn(`[piomio] triggers warn: notify failed: ${e?.message ?? e}`));
   }
 
   /** An agent's notes (store.ts), for the turns' `[Signals]` block; none while the engine does not run. */
@@ -187,7 +243,7 @@ export class CoreTriggers {
     return e.pipeline.deliver(t, signals, reason, o.via ? { via: o.via } : {});
   }
 
-  /** Its HTTP API (/api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
+  /** Its HTTP API (/api/triggers/*, and the old plugin's address /api/plugins/triggers/http/*) and webhooks (/hooks/triggers/*): 404 while it does not run. */
   async http(req: TriggerHttpRequest): Promise<TriggerHttpResponse> {
     const handler = this.engine ? this.session?.handler : undefined;
     if (!handler) return { status: 404, body: { error: "not found" } };
@@ -276,11 +332,16 @@ export class CoreTriggers {
         ask: (prompt, o) => open(() => (d.quick ? d.quick.ask(prompt, o) : Promise.reject(new Error("no quick model on this hub"))), true),
       },
     };
+    // The hub settings under the names the engine reads (engine.ts readEngineSettings), as the card's form had them.
+    const engineSettings = () => {
+      const hs = d.settings.get();
+      return { allowPrivateUrls: hs.triggersAllowPrivateUrls, watchTimeoutSec: hs.triggersWatchTimeoutSec };
+    };
     return {
       pluginId: TRIGGERS_ID,
       hubUrl: d.hubUrl,
-      settings: { ...(d.card.get()?.settings ?? {}) },
-      onSettingsChange: (cb) => keep(d.card.onSettings(cb)),
+      settings: engineSettings(),
+      onSettingsChange: (cb) => keep(d.settings.onChange(() => void (s.closed || cb(engineSettings())))),
       i18n: { locale: hubLocale, t: (key, params, locale) => tFor(locale ?? hubLocale())(`triggers.${key}`, params) },
       log: { debug() {}, info() {}, warn: say("warn"), error: say("error") },
       tools: {
@@ -289,7 +350,7 @@ export class CoreTriggers {
           const { handler, name: short, fullName, effectOf, describe, ...spec } = r;
           const name = fullName ?? `${TOOL_PREFIX}_${short}`;
           // As the plugin runner did: a string is the text, a throw is an error result.
-          // Owned by the card, as the plugin's were: "always allow", the catalog's uses and its tool list go by the owner.
+          // Owned by "triggers", as the plugin's were: "always allow" and the uses counted go by the owner.
           // A call's own effect (a new script host is an outside action) and its card's text go to the registry as a
           // core tool's do.
           d.tools.register(
@@ -335,4 +396,41 @@ export class CoreTriggers {
         : {}),
     };
   }
+}
+
+/**
+ * A paused card's triggers, each turned off where the engine keeps them (it only reads them later): nothing of theirs
+ * runs, catches up, answers a webhook or listens to a source until the person turns it on, and a reminder whose time
+ * passed is not spent. An engine that never ran (no "initialized") makes its default review off too (engine.ts
+ * INITIAL_OFF). Returns how many this step turned off (on before, off now) and the first one's name, for the note:
+ * one the person had turned off, or a reminder that already fired, is not theirs to turn on again.
+ */
+function pauseAll(kv: PluginKv): { count: number; example: string | undefined } {
+  let count = 0;
+  let example: string | undefined;
+  for (const { key, value } of kv.list("trigger:")) {
+    // What the engine would not load (engine.ts start) is no trigger; what it would not run (enabled unset) stays.
+    const t = value as Partial<Trigger> | null;
+    if (!t || typeof t !== "object" || !t.id || !t.kind || t.enabled !== true) continue;
+    kv.set(key, { ...t, enabled: false });
+    count++;
+    example ??= typeof t.name === "string" && t.name ? t.name : t.id;
+  }
+  if (!kv.get("initialized")) kv.set(INITIAL_OFF, true);
+  return { count, example };
+}
+
+/**
+ * The card's saved settings as hub settings, read the way the engine read them (engine.ts readEngineSettings): only
+ * `true` allowed private addresses; a timeout of at least a second counted, at most TRIGGERS_WATCH_TIMEOUT.max. What it
+ * would not have used is left out, so the hub's value stays.
+ */
+function cardSettings(card: Record<string, unknown>): Partial<TriggerSettings> {
+  const out: Partial<TriggerSettings> = {};
+  if (typeof card.allowPrivateUrls === "boolean") out.triggersAllowPrivateUrls = card.allowPrivateUrls;
+  const v = card.watchTimeoutSec;
+  const n = typeof v === "number" || (typeof v === "string" && v.trim()) ? Number(v) : NaN;
+  // A whole number of seconds, as the hub setting is.
+  if (Number.isFinite(n) && n >= TRIGGERS_WATCH_TIMEOUT.min) out.triggersWatchTimeoutSec = Math.min(Math.round(n), TRIGGERS_WATCH_TIMEOUT.max);
+  return out;
 }

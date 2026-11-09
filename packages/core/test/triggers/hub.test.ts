@@ -1,15 +1,17 @@
-// The hub runs the trigger engine itself: the tools under the card's name, the old webhook address, the card's switch
-// and settings, standing down and leading again.
+// The hub runs the trigger engine itself, with no Triggers card: the tools under the plugin's old name, its API at
+// /api/triggers and the plugin's old addresses, its two hub settings (carried over once from the card's saved ones),
+// standing down and leading again.
 
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolCallContext } from "@piomio/shared";
+import type { Approval, ToolCallContext } from "@piomio/shared";
 import { freePort } from "@piomio/testkit";
 import { Hub, loadConfig } from "../../src/index.ts";
-import { listIntegrations, popularIds } from "../../src/integrations.ts";
+import { hubDbFile, openDb } from "../../src/db.ts";
+import { TRIGGERS_CARRIED } from "../../src/signals/core-host.ts";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 
@@ -23,20 +25,74 @@ const until = async <T>(fn: () => T | Promise<T>, what: string, timeoutMs = 8000
   }
 };
 
+/**
+ * A hub on a fresh data folder (or `dataDir`, to start one again on it); `card`: the Triggers card's saved settings in
+ * its plugins row, as an older hub left them, `cardOff` that the person had turned the card off, `kv` what the plugin
+ * kept in its storage.
+ */
+async function startHub(
+  o: { card?: Record<string, unknown>; cardOff?: boolean; kv?: Record<string, unknown>; env?: Record<string, string>; dataDir?: string } = {},
+): Promise<Hub> {
+  const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
+  const dataDir = o.dataDir ?? mkdtempSync(join(tmpdir(), "owl-triggers-hub-"));
+  if (o.card || o.kv) {
+    const db = openDb(hubDbFile(dataDir));
+    if (o.card)
+      db.prepare("insert into plugins(id, dir, source, enabled, granted, installed_at, settings) values (?, ?, ?, ?, ?, ?, ?)").run(
+        "triggers",
+        "/gone/plugins/triggers",
+        "builtin",
+        o.cardOff ? 0 : 1,
+        "{}",
+        "2026-10-01T00:00:00Z",
+        JSON.stringify(o.card),
+      );
+    for (const [key, value] of Object.entries(o.kv ?? {}))
+      db.prepare("insert into plugin_kv(plugin_id, key, value) values ('triggers', ?, ?)").run(key, JSON.stringify(value));
+    db.close();
+  }
+  const config = loadConfig(
+    { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), TZ: "UTC", ...o.env },
+    // No Triggers card among the built-in plugins: the engine is the hub's own.
+    { dataDir, builtinPluginsDirs: [], builtinAgentsDir: join(fixtures, "agents") },
+  );
+  const hub = new Hub(config);
+  await hub.start();
+  return hub;
+}
+
 describe("the hub's trigger engine", () => {
   let hub: Hub;
   let base = "";
   const call: ToolCallContext = { sessionId: "s", conversationId: "c", agentId: "assistant", callId: "x", tainted: false, background: false, workspace: tmpdir(), machineId: "local" };
+  const textOf = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((c) => c.text ?? "").join("\n");
+
+  // Signed in as the person, the way the web UI is (once, on first use).
+  let cookie = "";
+  let csrf = "";
+  const raw = async (method: string, path: string, body?: unknown) => {
+    if (!cookie) {
+      const setup = await fetch(base + "/api/auth/setup", { method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify({ token: hub.auth.setupToken, password: "triggers-pass-1" }) });
+      cookie = setup.headers.get("set-cookie")!.split(";")[0];
+      csrf = ((await (await fetch(base + "/api/bootstrap", { headers: { origin: base, cookie } })).json()) as { csrf: string }).csrf;
+    }
+    const r = await fetch(base + path, {
+      method,
+      headers: { origin: base, cookie, "x-csrf": csrf, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: r.status, json: (await r.json()) as any };
+  };
+  const api = async (method: string, path: string, body?: unknown) => {
+    const r = await raw(method, path, body);
+    expect(r.status, `${method} ${path}: ${JSON.stringify(r.json)}`).toBeLessThan(400);
+    return r.json;
+  };
 
   beforeAll(async () => {
-    const [port, consolePort, egressPort] = [await freePort(), await freePort(), await freePort()];
-    const config = loadConfig(
-      { PIOMIO_PORT: String(port), PIOMIO_DEVICES: "0", PIOMIO_CONSOLE_PORT: String(consolePort), PIOMIO_EGRESS_PORT: String(egressPort), TZ: "UTC" },
-      { dataDir: mkdtempSync(join(tmpdir(), "owl-triggers-hub-")), builtinPluginsDirs: [join(fixtures, "triggers-card")], builtinAgentsDir: join(fixtures, "agents") },
-    );
-    hub = new Hub(config);
-    await hub.start();
-    base = config.publicUrl;
+    // An older hub's Triggers card had local network addresses allowed.
+    hub = await startHub({ card: { allowPrivateUrls: true } });
+    base = hub.config.publicUrl;
     await until(() => hub.triggers.engine, "the trigger engine to start");
   });
 
@@ -47,7 +103,10 @@ describe("the hub's trigger engine", () => {
   /** Egress tokens the trigger engine's page loads hold. */
   const egressTokens = () => [...((hub.egress as any).grants as Map<string, { owner: string }>).values()].filter((g) => g.owner === "plugin:triggers").length;
 
-  it("has the trigger tools, owned by the Triggers card as the plugin's were", async () => {
+  it("has the trigger tools with no Triggers card, owned by \"triggers\" as the plugin's were", async () => {
+    expect(hub.plugins.get("triggers")).toBeUndefined();
+    // The old card's leftover row (its settings are migrated from it) is no plugin: not listed, no error.
+    expect(hub.plugins.list().map((p) => p.id)).not.toContain("triggers");
     expect(hub.tools.get("trigger_create")?.descriptor.owner).toBe("triggers");
     expect(hub.tools.get("trigger_run_now")?.descriptor.effect).toBe("local-write");
     // The person can still "always allow" them (the hub's own tools cannot be).
@@ -55,15 +114,86 @@ describe("the hub's trigger engine", () => {
     expect((always.content[0] as { text: string }).text).toContain("Allowed: trigger_update runs without approval");
   });
 
-  it("credits the card with its tools' uses in the catalog, on or off", async () => {
-    for (let i = 0; i < 3; i++) hub.audit.append("agent:assistant", "policy.decision", "trigger_list", { decision: "allow" });
-    expect(popularIds(hub, await listIntegrations(hub, "en"))).toContain("triggers");
-    // Off, its tools are gone: their earlier uses are matched by the card's tool prefix.
-    await hub.plugins.setEnabled("triggers", false);
-    await until(() => !hub.tools.get("trigger_list"), "the tools to go");
-    expect(popularIds(hub, await listIntegrations(hub, "en"))).toContain("triggers");
-    await hub.plugins.setEnabled("triggers", true);
-    await until(() => hub.triggers.engine && hub.tools.get("trigger_list"), "the engine to start again");
+  it("carried the card's saved settings over into the hub settings once, recorded in meta", async () => {
+    expect(hub.settings.get()).toMatchObject({ triggersAllowPrivateUrls: true, triggersWatchTimeoutSec: 30 });
+    expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 30 });
+    expect(hub.db.prepare("select value from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+    expect(hub.audit.list({ action: "settings.update" }).some((a) => a.actor === "core" && JSON.stringify(a.data).includes("triggersAllowPrivateUrls"))).toBe(true);
+    // Turned off since: a new start (leading again, a restart) does not bring the card's value back.
+    hub.updateSettings({ triggersAllowPrivateUrls: false }, "user");
+    expect(hub.triggers.engine!.settings.allowPrivateUrls).toBe(false);
+    hub.triggers.stop();
+    await hub.triggers.start();
+    expect(hub.settings.get().triggersAllowPrivateUrls).toBe(false);
+    expect(hub.triggers.engine!.settings.allowPrivateUrls).toBe(false);
+  });
+
+  it("serves its API at /api/triggers and at the plugin's old address", async () => {
+    const made = await api("POST", "/api/triggers", { kind: "event", name: "From the page", prompt: "Look." });
+    const id = String(made.id ?? made.trigger?.id);
+    expect(id).toMatch(/^t_/);
+    const list = await api("GET", "/api/triggers");
+    expect(list.triggers.map((t: { id: string }) => t.id)).toContain(id);
+    expect(list.timezone).toBe("UTC");
+    expect((await api("GET", `/api/triggers/${id}`)).name).toBe("From the page");
+    expect((await api("PATCH", `/api/triggers/${id}`, { name: "Renamed" })).name).toBe("Renamed");
+    expect((await api("GET", `/api/triggers/${id}/runs`)).runs).toEqual([]);
+    // The plugin's address answers the same (the iOS app, the plugin's page).
+    const old = await api("GET", "/api/plugins/triggers/http/triggers");
+    expect(old.triggers.map((t: { id: string }) => t.id)).toEqual(list.triggers.map((t: { id: string }) => t.id));
+    expect((await api("GET", `/api/plugins/triggers/http/triggers/${id}`)).name).toBe("Renamed");
+    // Not found, and not signed in.
+    expect((await raw("GET", "/api/triggers/t_none")).status).toBe(404);
+    expect((await fetch(`${base}/api/triggers`, { headers: { origin: base } })).status).toBe(401);
+    expect((await api("DELETE", `/api/triggers/${id}`)).ok).toBe(true);
+  });
+
+  it("takes its settings from the hub settings: the Settings page's change reaches it, a wrong value is refused", async () => {
+    const s = await api("GET", "/api/settings");
+    expect(s).toMatchObject({ triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 30 });
+    await api("PATCH", "/api/settings", { triggersWatchTimeoutSec: 5, triggersAllowPrivateUrls: true });
+    expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 5 });
+    for (const bad of [{ triggersWatchTimeoutSec: 0 }, { triggersWatchTimeoutSec: 121 }, { triggersWatchTimeoutSec: 2.5 }, { triggersAllowPrivateUrls: "yes" }]) {
+      const r = await raw("PATCH", "/api/settings", bad);
+      expect(r.status, JSON.stringify(bad)).toBe(400);
+      expect(r.json.error).toEqual(expect.any(String));
+    }
+    expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 5 });
+    await api("PATCH", "/api/settings", { triggersWatchTimeoutSec: 30, triggersAllowPrivateUrls: false });
+    expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: false, watchTimeoutSec: 30 });
+  });
+
+  it("lets the assistant change them in the chat: the timeout at once, local network addresses only after the person's yes on a card", async () => {
+    const was = hub.settings.get();
+    hub.settings.update({ approvalMode: "ask" });
+    const answer = (decision: "approve" | "deny") =>
+      new Promise<Approval>((resolve) => {
+        const off = hub.bus.on("approval.created", (a: Approval) => {
+          off();
+          setTimeout(() => resolve(hub.approvals.resolve(a.id, decision, { via: "web" })), 10);
+        });
+      });
+    try {
+      const conv = hub.store.agentConversation("assistant").id;
+      const session = hub.store.createSession({ conversationId: conv, agentId: "assistant", brainRef: "fake@local", background: false }).row.id;
+      const update = (patch: Record<string, unknown>) => hub.gateway.call(session, "hub_settings_update", { patch });
+      expect(textOf(await update({ triggersWatchTimeoutSec: 12 }))).toContain("triggersWatchTimeoutSec=12");
+      expect(hub.triggers.engine!.settings.watchTimeoutSec).toBe(12);
+      expect(textOf(await update({ triggersWatchTimeoutSec: 500 }))).toContain("from 1 to 120");
+      // Letting triggers reach the local network asks the person first: declined, nothing changes.
+      const [no, denied] = await Promise.all([update({ triggersAllowPrivateUrls: true }), answer("deny")]);
+      expect(denied.summary).toMatch(/local network/i);
+      expect(textOf(no)).toContain("declined");
+      expect(hub.settings.get().triggersAllowPrivateUrls).toBe(false);
+      const [yes] = await Promise.all([update({ triggersAllowPrivateUrls: true }), answer("approve")]);
+      expect(textOf(yes)).toContain("triggersAllowPrivateUrls=true");
+      expect(hub.triggers.engine!.settings.allowPrivateUrls).toBe(true);
+      // Taking it back needs no yes.
+      expect(textOf(await update({ triggersAllowPrivateUrls: false }))).toContain("triggersAllowPrivateUrls=false");
+      expect(hub.triggers.engine!.settings.allowPrivateUrls).toBe(false);
+    } finally {
+      hub.updateSettings({ approvalMode: was.approvalMode, triggersWatchTimeoutSec: 30, triggersAllowPrivateUrls: false }, "user");
+    }
   });
 
   it("answers a webhook at its old address and starts the agent's task", async () => {
@@ -86,7 +216,6 @@ describe("the hub's trigger engine", () => {
       const conv = hub.store.agentConversation("assistant").id;
       const session = hub.store.createSession({ conversationId: conv, agentId: "assistant", brainRef: "fake@local", background: false }).row.id;
       const code = "export default () => ({ note: 'seen' })";
-      const textOf = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((c) => c.text ?? "").join("\n");
       // No host: a change like any other, made at once.
       const plain = await hub.gateway.call(session, "trigger_create", { kind: "event", name: "Plain", prompt: "Look.", script: { code } });
       expect(textOf(plain)).toContain("Created trigger");
@@ -120,7 +249,6 @@ describe("the hub's trigger engine", () => {
     hub.settings.update({ approvalMode: "ask", approvalInlineWaitSec: 0.2 });
     try {
       const conv = hub.store.agentConversation("assistant").id;
-      const textOf = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((c) => c.text ?? "").join("\n");
       const watch = (name: string) => ({ kind: "watch", name, prompt: "Look at the price.", url: "https://shop.example.invalid/item", enabled: false });
       const plain = hub.store.createSession({ conversationId: conv, agentId: "assistant", brainRef: "fake@local", background: false }).row.id;
       expect(textOf(await hub.gateway.call(plain, "trigger_create", watch("Plain watch")))).toContain("Created trigger");
@@ -160,6 +288,11 @@ describe("the hub's trigger engine", () => {
     hub.vault.upsert({ id: "gh-hook", type: "secret", name: "Hook key", fields: { value: "hookkey" } });
     const made = await hub.triggers.http({ method: "POST", path: "/triggers", query: {}, headers: {}, public: false, locale: "en", body: { kind: "event", name: "GH", prompt: "Look.", verify: { kind: "github", secretRef: "vault://gh-hook" } } });
     const id = ((made.body as any).trigger?.id ?? (made.body as any).id) as string;
+    // The Triggers page learns from the view how the sender is checked: the kind and the vault reference, never the key.
+    expect((made.body as any).verify).toEqual({ kind: "github", secretRef: "vault://gh-hook" });
+    const listed = await hub.triggers.http({ method: "GET", path: "/triggers", query: {}, headers: {}, public: false, locale: "en" });
+    expect((listed.body as any).triggers.find((x: { id: string }) => x.id === id).verify).toEqual({ kind: "github", secretRef: "vault://gh-hook" });
+    expect(JSON.stringify(listed.body)).not.toContain("hookkey");
     // Spacing the parsed JSON would lose: only the raw bytes carry it.
     const raw = '{ "action":  "opened",\n "n": 1 }';
     const sig = (k: string) => "sha256=" + createHmac("sha256", k).update(raw).digest("hex");
@@ -180,83 +313,89 @@ describe("the hub's trigger engine", () => {
     hub.vault.seal();
   });
 
-  it("turned on from its card in a chat, tells the agent its tool names", async () => {
-    await hub.plugins.setEnabled("triggers", false);
-    await until(() => !hub.triggers.engine, "the engine to stop");
-    // Signed in as the person, the way the web UI is.
-    let cookie = "";
-    const api = async (method: string, path: string, body?: unknown, csrf = "") => {
-      const r = await fetch(base + path, {
-        method,
-        headers: { origin: base, ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : {}), ...(csrf ? { "x-csrf": csrf } : {}) },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-      cookie = r.headers.get("set-cookie")?.split(";")[0] ?? cookie;
-      expect(r.status).toBeLessThan(400);
-      return r.json();
-    };
-    await api("POST", "/api/auth/setup", { token: hub.auth.setupToken, password: "triggers-pass-1" });
-    const { csrf } = await api("GET", "/api/bootstrap");
-    const conv = hub.store.agentConversation("assistant");
-    const told = vi.spyOn(hub.runner, "tellAgent").mockImplementation(() => {});
-    try {
-      await api("POST", "/api/integrations/triggers/enabled", { enabled: true, conversationId: conv.id }, csrf);
-      expect(told).toHaveBeenCalledWith(conv.id, expect.stringMatching(/its tools are available now: .*trigger_create/));
-    } finally {
-      told.mockRestore();
-    }
-    await until(() => hub.triggers.engine, "the engine to start again");
-  });
-
-  it("a settings listener that throws stops neither the others nor the audit line", () => {
-    const heard: unknown[] = [];
-    const offBad = hub.plugins.onSettings("triggers", () => {
-      throw new Error("listener broke");
-    });
-    const offGood = hub.plugins.onSettings("triggers", (x) => void heard.push(x));
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const before = hub.audit.list({ action: "plugin.settings" }).length;
-    try {
-      expect(() => hub.plugins.setSettings("triggers", { watchTimeoutSec: 7 })).not.toThrow();
-      expect(heard).toEqual([{ watchTimeoutSec: 7 }]);
-      expect(hub.triggers.engine!.settings.watchTimeoutSec).toBe(7);
-      expect(hub.audit.list({ action: "plugin.settings" }).length).toBe(before + 1);
-      expect(err).toHaveBeenCalledWith(expect.stringContaining("listener broke"));
-    } finally {
-      err.mockRestore();
-      offBad();
-      offGood();
-    }
-  });
-
   it("stops when the hub stands down for another replica and starts again when it leads", async () => {
     await hub.standby();
     expect(hub.triggers.engine).toBeUndefined();
     expect(hub.tools.get("trigger_create")).toBeUndefined();
     expect(egressTokens()).toBe(0);
     expect((await fetch(`${base}/hooks/triggers/t_any`, { method: "POST" })).status).toBe(404);
-    // A card change on a standby replica does not start it: only the leader runs triggers.
+    // A settings change or a plugin change on a standby replica does not start it: only the leader runs triggers.
+    hub.updateSettings({ triggersWatchTimeoutSec: 9 }, "user");
     hub.bus.emit("plugins.updated", {});
     await new Promise((r) => setTimeout(r, 50));
     expect(hub.triggers.engine).toBeUndefined();
     await hub.lead();
     expect(hub.triggers.engine).toBeDefined();
+    expect(hub.triggers.engine!.settings.watchTimeoutSec).toBe(9);
     expect(hub.tools.get("trigger_create")?.descriptor.owner).toBe("triggers");
     expect(egressTokens()).toBe(1);
   });
+});
 
-  it("follows the card: settings reach the engine, off stops it, on starts it again", async () => {
-    hub.plugins.setSettings("triggers", { allowPrivateUrls: true, watchTimeoutSec: 5 });
-    expect(hub.triggers.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 5 });
-    expect(egressTokens()).toBe(1);
-    await hub.plugins.setEnabled("triggers", false);
-    await until(() => !hub.triggers.engine, "the engine to stop");
-    expect(hub.tools.get("trigger_create")).toBeUndefined();
-    expect((await fetch(`${base}/hooks/triggers/t_any`, { method: "POST" })).status).toBe(404);
-    // Its page loads' egress token goes with it, and a new one comes with the next start.
-    expect(egressTokens()).toBe(0);
-    await hub.plugins.setEnabled("triggers", true);
-    await until(() => hub.triggers.engine && hub.tools.get("trigger_create"), "the engine to start again");
-    expect(egressTokens()).toBe(1);
+describe("the trigger engine and PIOMIO_PLUGINS", () => {
+  it("does not run on a hub with no plugins at all (PIOMIO_PLUGINS=none), and still carries the card's settings over", async () => {
+    const hub = await startHub({ env: { PIOMIO_PLUGINS: "none" }, card: { watchTimeoutSec: 60 } });
+    try {
+      expect(hub.triggers.wanted()).toBe(false);
+      expect(hub.triggers.engine).toBeUndefined();
+      expect(hub.tools.get("trigger_create")).toBeUndefined();
+      expect(hub.settings.get().triggersWatchTimeoutSec).toBe(60);
+    } finally {
+      await hub.stop();
+    }
+  });
+});
+
+describe("a hub whose Triggers card the person had turned off", () => {
+  const base = { agentId: "assistant", maxRunsPerDay: 24, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true };
+  const kv = {
+    initialized: true,
+    // Due while the card was off: a hub that ran it would catch it up at once.
+    "trigger:t_brief": { ...base, id: "t_brief", kind: "schedule", name: "Morning brief", prompt: "Brief me.", enabled: true, cron: "0 9 * * *", state: { nextRunAt: "2026-10-02T09:00:00.000Z" } },
+    "trigger:t_hook": { ...base, id: "t_hook", kind: "event", name: "Deploys", prompt: "Look at the deploy.", enabled: true, secret: "s3cret", report: false, state: {} },
+  };
+  const paused = (hub: Hub) => hub.notifier.list().filter((n) => n.title === "Your triggers stay off");
+  const triggerTasks = (hub: Hub) => hub.store.listTasks({ limit: 50 }).filter((t) => t.triggerId);
+
+  it("keeps them off after the upgrade: no catch-up, the webhook refused, the person told once", async () => {
+    let hub = await startHub({ card: {}, cardOff: true, kv });
+    const dataDir = hub.config.dataDir;
+    try {
+      const engine = await until(() => hub.triggers.engine, "the trigger engine to start");
+      await until(() => (engine as any).booted, "the engine's boot");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(triggerTasks(hub)).toEqual([]);
+      expect(engine.list().map((t) => [t.id, t.enabled])).toEqual([
+        ["t_brief", false],
+        ["t_hook", false],
+      ]);
+      const r = await fetch(`${hub.config.publicUrl}/hooks/triggers/t_hook`, { method: "POST", headers: { "x-piomio-secret": "s3cret", "content-type": "application/json" }, body: "{}" });
+      expect(r.status).toBe(409);
+      expect(paused(hub)).toHaveLength(1);
+      expect(paused(hub)[0].body).toContain("each of your 2 triggers is off now");
+    } finally {
+      await hub.stop();
+    }
+    // Started again on the same data: told nothing more, nothing runs.
+    hub = await startHub({ dataDir });
+    try {
+      const engine = await until(() => hub.triggers.engine, "the trigger engine to start again");
+      await until(() => (engine as any).booted, "the engine's boot");
+      expect(paused(hub)).toHaveLength(1);
+      expect(triggerTasks(hub)).toEqual([]);
+    } finally {
+      await hub.stop();
+    }
+  });
+
+  it("a card that was on changes nothing: the schedule due meanwhile catches up", async () => {
+    const hub = await startHub({ card: {}, kv });
+    try {
+      await until(() => triggerTasks(hub).find((t) => t.triggerId === "t_brief"), "the schedule's catch-up");
+      expect(hub.triggers.engine!.get("t_hook")?.enabled).toBe(true);
+      expect(paused(hub)).toEqual([]);
+    } finally {
+      await hub.stop();
+    }
   });
 });

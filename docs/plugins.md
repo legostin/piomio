@@ -2,7 +2,7 @@
 
 [Русский](plugins.ru.md)
 
-Almost everything in Piomio is a plugin: brains (Claude Code, Codex, APIs), channels (Telegram), the browser, memory, web search, triggers. The core only wires them together and enforces security. Integrations (services and abilities: the weather, calendars, maps…) are plugins too and live in [`integrations/`](../integrations/README.md), each in its own folder, started from a template with `npm run new:integration -- <id>`.
+Almost everything in Piomio is a plugin: brains (Claude Code, Codex, APIs), channels (Telegram), the browser, memory, web search. The core only wires them together and enforces security; triggers are part of the core too (`packages/core/src/signals/`), and plugins can feed them signals (see [Signals](#signals)). Integrations (services and abilities: the weather, calendars, maps…) are plugins too and live in [`integrations/`](../integrations/README.md), each in its own folder, started from a template with `npm run new:integration -- <id>`.
 
 A plugin can add:
 
@@ -67,7 +67,7 @@ my-plugin/
 }
 ```
 
-- `id` uses lowercase letters, digits and dashes and starts with a letter. `server` and `ui` are paths that start with `./` and stay inside the plugin. The `"%key%"` strings are translations, see [Localization](#localization).
+- `id` uses lowercase letters, digits and dashes and starts with a letter. It can't be the id of a built-in plugin or `triggers`, which the hub's own trigger engine keeps. `server` and `ui` are paths that start with `./` and stay inside the plugin. The `"%key%"` strings are translations, see [Localization](#localization).
 - Tools are named `<toolPrefix>_<name>` (the prefix defaults to the `id` with `-` replaced by `_`).
 - `contributes` declares what the backend registers, and the hub refuses anything undeclared: `tools: true` for `ctx.tools.register`, `brains` and `channels` with the ids for `ctx.brains.register` and `ctx.channels.register`, `hooks` with the hook names for `ctx.hooks.on`, `http: true` for `ctx.http.handle`. `settings` is a JSON Schema that the web UI renders as a form; the values arrive in `ctx.settings`.
 - `contributes.signals` lists the signals the plugin can send to start triggers (see [Signals](#signals)): each one `{ type, mode?, title, description, config?, data?, sample?, external? }`. `type` is lowercase letters, digits and `_`, starting with a letter; the hub shows it as `<id>.<type>`. `mode` is `broadcast` (the default) or `subscribe`. `title` is a `"%key%"` translation, `description` is English for the model. `config` and `data` are JSON Schemas of a subscription's config and of a signal's data, `sample` is a signal's data for test runs. `external` (default `true`) says the data may come from outside; only a built-in plugin's `false` is believed. A declaration whose schema could take more than linear time is refused whole (see [Signals](#signals)).
