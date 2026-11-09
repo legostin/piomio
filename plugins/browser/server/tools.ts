@@ -225,7 +225,7 @@ export function registerTools(ctx: PluginContext, mgr: BrowserManager): void {
   reg(
     "open",
     "read",
-    `Open a URL in the active browser tab (persistent profile: the user's logins are kept). Returns what happened and the page title/URL. Then use browser_snapshot to see interactive elements or browser_get_text to read the page. ${CAPTCHA_HINT}`,
+    `Open a URL in the active browser tab (persistent profile on the hub's computer: sign-ins made in this browser are kept). Returns what happened and the page title/URL. Then use browser_snapshot to see interactive elements or browser_get_text to read the page. ${CAPTCHA_HINT}`,
     { url: { type: "string", description: "http(s) URL; a bare domain like example.com is opened over https." } },
     ["url"],
     async (input, call) => {
@@ -252,6 +252,8 @@ export function registerTools(ctx: PluginContext, mgr: BrowserManager): void {
         const info = await mgr.evalIn<any>(page.mainFrame(), "info").catch(() => null);
         if (info) mgr.setCaptcha(!!info.captcha);
         const parts = [`Opened${status && status >= 400 ? ` (HTTP ${status})` : ""}.`];
+        // Several computers: sign-ins are this one's; to sign in, the person takes control of this browser.
+        if (mgr.machine) parts.push(`(This browser runs on ${mgr.machine}: sites the user signed in to in a browser on another computer are not signed in here. If one asks to sign in, tell the user it is the browser on ${mgr.machine}.)`);
         if (info?.captcha) parts.push(CAPTCHA_NOTE);
         return parts.join("\n");
       });

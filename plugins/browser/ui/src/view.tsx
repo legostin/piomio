@@ -8,7 +8,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { ArrowLeft, ArrowRight, History, Keyboard as KeyboardIcon, RotateCw, X } from "lucide-react";
 import { Badge, Button, EmptyState, Spinner } from "@piomio/ui";
 import type { LiveViewProps } from "@piomio/ui";
-import { ControlButton, IconButton, MoreMenu } from "./chrome.tsx";
+import { ControlButton, IconButton, MachineChip, MoreMenu } from "./chrome.tsx";
 import { FileAsk } from "./files.tsx";
 import { HighlightButton, HighlightLayer, useHighlight } from "./highlight.tsx";
 import { HistoryPanel } from "./history.tsx";
@@ -214,6 +214,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
           {body(false)}
           {state?.running && !teach && (
             <div className="obb-pstatus">
+              <MachineChip machine={state.machine} />
               {(control || state.busy) && <span className={`obb-dot${control ? " is-user" : ""}`} aria-hidden />}
               <span className="obb-trunc">{status}</span>
             </div>
@@ -253,6 +254,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
           {back}
           {forward}
           {reload}
+          <MachineChip machine={state?.machine} />
           <Omnibox state={state} variant="bar" inputRef={omniRef} />
           <IconButton label={t("ui.history.title")} pressed={panel === "history"} onClick={() => setPanel(panel === "history" ? null : "history")}>
             <History />

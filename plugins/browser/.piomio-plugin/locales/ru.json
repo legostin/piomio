@@ -152,5 +152,7 @@
   "ui.files.failed": "Файл не дошёл до страницы: {detail}",
   "approval.open": "Браузер: открыть {url}",
   "approval.tabs": "Браузер: открыть {url} в новой вкладке",
-  "approval.download": "Браузер: скачать {url}"
+  "approval.download": "Браузер: скачать {url}",
+  "ui.machine.hint": "Этот браузер работает на «{machine}». Входы на сайты и история у него свои: у браузера на другом компьютере — свои.",
+  "ui.machine.where": "Браузер на «{machine}»"
 }
