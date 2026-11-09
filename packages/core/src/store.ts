@@ -69,7 +69,7 @@ const taskFrom = (r: any): Task => ({
   error: r.error ?? undefined,
   resumeAt: r.resume_at ?? undefined,
   question: r.question ?? undefined,
-  ...(r.kind === "message" || r.kind === "goal" ? { kind: r.kind as "message" | "goal" } : {}),
+  ...(r.kind === "message" || r.kind === "goal" || r.kind === "errand" ? { kind: r.kind as NonNullable<Task["kind"]> } : {}),
   ...(r.kind === "goal" ? { rounds: r.rounds ?? 0 } : {}),
   ...(r.from_agent ? { from: r.from_agent } : {}),
   ...(r.tainted ? { tainted: true } : {}),
@@ -251,6 +251,51 @@ export class Store {
     return ids;
   }
 
+  /**
+   * Finished errands (Task kind "errand") last changed before `before`, with no unfinished task of their own: their
+   * threads may go.
+   */
+  staleErrands(before: string): Task[] {
+    return this.db
+      .prepare(
+        "select * from tasks t where t.kind = 'errand' and t.status in ('done', 'failed', 'cancelled') and t.updated_at < ? " +
+          "and not exists (select 1 from tasks c where c.parent_task_id = t.id and c.status not in ('done', 'failed', 'cancelled')) limit 100",
+      )
+      .all(before)
+      .map(taskFrom);
+  }
+
+  /** Errands still going (not finished) created before `before`, or asking whoever started them: they become ordinary tasks. */
+  errandsToPromote(before: string): Task[] {
+    return this.db
+      .prepare("select * from tasks where kind = 'errand' and status not in ('done', 'failed', 'cancelled') and (created_at < ? or status = 'waiting_input' or question is not null)")
+      .all(before)
+      .map(taskFrom);
+  }
+
+  /** Whether a message outside `exceptConversation` points at a file under `prefix` (a `file:` source under the workspaces root). */
+  filesReferenced(prefix: string, exceptConversation: string): boolean {
+    const like = `%${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    return !!this.db.prepare("select 1 from messages where conversation_id != ? and parts like ? escape '\\' limit 1").get(exceptConversation, like);
+  }
+
+  /** A task's thread goes for good: its conversation with messages, sessions, approvals and notifications, and the task. */
+  deleteTaskData(taskId: string): void {
+    const task = this.getTask(taskId);
+    if (!task) return;
+    this.db.exec("begin");
+    try {
+      for (const table of ["messages", "sessions", "approvals", "notifications"]) this.db.prepare(`delete from ${table} where conversation_id = ?`).run(task.conversationId);
+      this.db.prepare("delete from conversations where id = ?").run(task.conversationId);
+      this.db.prepare("delete from notifications where task_id = ?").run(taskId);
+      this.db.prepare("delete from tasks where id = ?").run(taskId);
+      this.db.exec("commit");
+    } catch (e) {
+      this.db.exec("rollback");
+      throw e;
+    }
+  }
+
   /** Finished messages from the agent or the system after the user's read marker. */
   unreadCount(id: string): number {
     const r = this.db
@@ -418,8 +463,8 @@ export class Store {
     return this.db.prepare("select * from tasks order by created_at desc limit ?").all(limit).map(taskFrom);
   }
 
-  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds">>): Task | undefined {
-    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", machineId: "machine_id", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds" };
+  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds" | "kind">>): Task | undefined {
+    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", machineId: "machine_id", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds", kind: "kind" };
     for (const [k, col] of Object.entries(cols)) {
       if (k in patch) this.db.prepare(`update tasks set ${col} = ? where id = ?`).run((patch as any)[k] ?? null, id);
     }

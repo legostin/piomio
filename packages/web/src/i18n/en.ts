@@ -547,6 +547,7 @@ export default {
   "task.expand": "More",
   "task.collapse": "Collapse",
   "task.goalRound": "round {n} of {of}",
+  "task.errandThinking": "is thinking about “{title}”",
   "task.subtaskOf": "Subtask of a {parent}",
   "task.parent": "parent task",
   "task.notStarted": "The agent hasn't started on this task yet.",

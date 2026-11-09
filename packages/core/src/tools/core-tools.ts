@@ -2,7 +2,7 @@
 
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import type { BehindEntry, ImageItem, InboxEntry, LibraryItem, LibraryKind, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ToolDescriptor, ToolResult } from "@piomio/shared";
+import type { BehindEntry, ImageItem, InboxEntry, LibraryItem, LibraryKind, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ThinkingChoice, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { brainsFor, isThinkingPreset, MAP_ICONS, sameBrain, truncate } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
 import type { SkillIndex } from "../skills.ts";
@@ -25,7 +25,7 @@ export interface CoreToolDeps {
   store: Store;
   notifier: Notifier;
   agents: AgentRegistry;
-  createTask: (t: { agentId: string; goal: string; title: string; parentConversationId?: string; parentTaskId?: string; background: boolean; createdBy: "agent"; machineId?: string; tainted?: boolean }) => { id: string; title: string };
+  createTask: (t: { agentId: string; goal: string; title: string; parentConversationId?: string; parentTaskId?: string; background: boolean; createdBy: "agent"; machineId?: string; tainted?: boolean; thinking?: ThinkingChoice; kind?: "errand" }) => { id: string; title: string };
   /** The live line between tasks and whoever started them (SessionRunner). */
   tasks: TaskLine;
   /** The team's rules for where work goes (work-rules.ts). */
@@ -333,6 +333,11 @@ export function registerCoreTools(d: CoreToolDeps): void {
           depth: { type: "string", enum: ["fast", "balanced", "deep"], description: "How hard to think: fast for simple errands (a cheap quick model), balanced for everyday work, deep for hard problems (the most capable model, thinking long). The hub picks the brain and model for it." },
           about: { type: "string", enum: ["code", "analysis", "writing", "research", "errand"], description: "What the work is mostly about, so the hub picks a model good at it (code goes to a coding model)." },
           brain: { type: "string", description: "Only to insist on one brain (\"Brains here\" in your instructions); normally leave it to the hub." },
+          quick: {
+            type: "boolean",
+            description:
+              "A short errand (a lookup, a quick check, a figure, a short answer: minutes, nothing to keep): the user sees you thinking on it in the chat instead of a task, it stays out of their task list, and its working thread is removed a day after it finished. Leave it off for work with steps, files to keep, or anything long. One that runs past 15 minutes or asks a question becomes an ordinary task by itself.",
+          },
         },
         required: ["goal"],
       },
@@ -372,6 +377,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
         createdBy: "agent",
         ...(place ? { machineId: place.machineId } : {}),
         ...(depth || brain || skill ? { thinking } : {}),
+        ...(i.quick === true ? { kind: "errand" as const } : {}),
         // Instructions from a session that read outside content may carry it: the task starts marked too.
         ...(ctx.tainted ? { tainted: true } : {}),
       });
@@ -380,7 +386,8 @@ export function registerCoreTools(d: CoreToolDeps): void {
       const how = [brain, depth, i.about].filter(Boolean).join(", ");
       // Placed on a computer that is off: it waits for it (tell the user so).
       const wait = place?.offline ? ` ${place.machineName} is offline now: the task starts when it comes online.` : "";
-      return text(`Task created: ${t.id} “${t.title}”${where}${how ? ` (${how})` : ""}.${wait} It is queued; creation does not mean its brain has started. Its questions and result will arrive here as messages.`);
+      const errand = i.quick === true ? " A quick errand: the user sees you thinking on it, not a task." : "";
+      return text(`Task created: ${t.id} “${t.title}”${where}${how ? ` (${how})` : ""}.${errand}${wait} It is queued; creation does not mean its brain has started. Its questions and result will arrive here as messages.`);
     },
   );
 

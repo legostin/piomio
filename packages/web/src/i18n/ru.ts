@@ -547,6 +547,7 @@ export default {
   "task.expand": "Подробнее",
   "task.collapse": "Свернуть",
   "task.goalRound": "ход {n} из {of}",
+  "task.errandThinking": "думает над «{title}»",
   "task.subtaskOf": "Подзадача для {parent}",
   "task.parent": "родительской задачи",
   "task.notStarted": "Агент ещё не начал работу над задачей.",
