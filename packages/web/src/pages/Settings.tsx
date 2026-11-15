@@ -17,7 +17,8 @@ import { PluginSetupCard } from "../components/SecretCards";
 import { BrowserLanguageSelect } from "../components/LanguageSelect";
 import { Button, Card, ErrorNote, Field, Input, Loading, Page, Select, TagInput, Toggle } from "../components/ui";
 
-interface CoreSettings {
+/** What the page reads of GET /api/settings (the demo hub answers it with a new hub's values, demo/hub/routes.ts). */
+export interface CoreSettings {
   timezone: string;
   defaultAgent: string;
   quietHours: { enabled: boolean; start: string; end: string };

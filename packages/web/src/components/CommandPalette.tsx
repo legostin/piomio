@@ -13,7 +13,7 @@ import { usePluginRegistry } from "../plugins/slots";
 import { liveWindowActions } from "../plugins/liveview";
 import { Icon } from "./icon";
 import { cx } from "./ui";
-import { SECTIONS } from "./nav";
+import { SECTIONS, takenBySection } from "./nav";
 import { addAgent, openPanel } from "../state/panel";
 import { t } from "../i18n";
 
@@ -89,7 +89,7 @@ export function CommandPalette() {
     out.push({ id: "settings", title: t("nav.settings"), group: goTo, icon: "settings", run: () => openPanel("home") });
     for (const n of SECTIONS) out.push({ id: `section:${n.id}`, title: t(n.label), group: goTo, run: () => openPanel(n.id), icon: undefined });
     for (const r of routes)
-      if (!r.path.includes(":")) out.push({ id: `route:${r.key}`, title: r.title, group: t("palette.group.plugins"), icon: r.icon, run: () => navigate(r.path.replace(/\/\*$/, "")) });
+      if (!r.path.includes(":") && !takenBySection(r.path)) out.push({ id: `route:${r.key}`, title: r.title, group: t("palette.group.plugins"), icon: r.icon, run: () => navigate(r.path.replace(/\/\*$/, "")) });
     for (const c of commands) out.push({ id: `cmd:${c.key}`, title: c.title, group: t("palette.group.command", { plugin: c.pluginId }), icon: "zap", run: c.run });
     if (s) {
       out.push({ id: "console", title: t("common.securityConsole"), group: goTo, icon: "shield-check", run: () => void window.open(s.consoleUrl, "_blank", "noopener") });

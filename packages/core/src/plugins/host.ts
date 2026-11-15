@@ -20,6 +20,7 @@ import { linkUserKeychains } from "./keychains.ts";
 import { pluginKv } from "./kv.ts";
 import { compilePluginUi } from "./ui-compile.ts";
 import { BRAIN_MODEL_EGRESS } from "../settings.ts";
+import { TRIGGERS_ID } from "../signals/core-host.ts";
 
 /**
  * What model access through plain API keys means for the builtin plugins (Config.apiKeys): without it the API brain
@@ -33,6 +34,11 @@ export const UNRELEASED: Readonly<Record<string, (c: Config) => boolean>> = { pi
 export function heldBack(id: string, c: Config): boolean {
   return (!c.apiKeys && HELD_BACK_WITHOUT_KEYS.includes(id)) || (id in UNRELEASED && !UNRELEASED[id](c));
 }
+/**
+ * Ids of what is part of the hub itself: the trigger engine keeps the id the Triggers plugin had (its storage, its
+ * tools' owner, its HTTP and webhook addresses), so no plugin may take it, installed or found on disk.
+ */
+export const CORE_IDS: readonly string[] = [TRIGGERS_ID];
 const KEY_PARTS: Record<string, { vault: string[]; settings: string[] }> = { "brain-codex": { vault: ["openai_api_key"], settings: ["apiKeyRef"] } };
 
 /** A builtin layout without its key parts: those vault items out of its permissions, those settings out of its form. */
@@ -179,8 +185,6 @@ export class PluginHost {
   private staging = new Map<string, { dir: string; commitHash?: string; layout: PluginLayout; source: string }>();
   /** What each running plugin last reported about its catalog entries. */
   private catalogs = new Map<string, CatalogEntryState[]>();
-  /** Core work that belongs to a plugin's card hears its settings change (signals/core-host.ts). */
-  private settingsListeners = new Map<string, Set<(settings: Record<string, unknown>) => void>>();
 
   constructor(deps: HostDeps) {
     this.d = deps;
@@ -207,6 +211,10 @@ export class PluginHost {
         return;
       }
       const id = layout.manifest.id;
+      if (CORE_IDS.includes(id)) {
+        console.error(`[plugins] skip ${dir}: "${id}" is part of the hub itself, not a plugin`);
+        return;
+      }
       if (source === "builtin" && heldBack(id, this.d.config)) {
         seen.add(id);
         return;
@@ -762,14 +770,6 @@ export class PluginHost {
 
   // ---------- settings ----------
 
-  /** Hear a plugin's settings change; returns the way to stop hearing it. */
-  onSettings(id: string, cb: (settings: Record<string, unknown>) => void): () => void {
-    let set = this.settingsListeners.get(id);
-    if (!set) this.settingsListeners.set(id, (set = new Set()));
-    set.add(cb);
-    return () => void set.delete(cb);
-  }
-
   setSettings(id: string, settings: Record<string, unknown>): void {
     const rec = this.records.get(id);
     if (!rec) throw new Error(`unknown plugin ${id}`);
@@ -777,14 +777,6 @@ export class PluginHost {
     this.d.db.prepare("update plugins set settings = ? where id = ?").run(JSON.stringify(settings), id);
     const r = this.running.get(id);
     if (r && !r.peer.closed) r.peer.notify("settings.changed", { settings });
-    // Core work that hears them (signals/core-host.ts): one that throws stops neither the others nor the audit line.
-    for (const cb of this.settingsListeners.get(id) ?? []) {
-      try {
-        cb(settings);
-      } catch (e) {
-        this.log(rec, "error", `a settings listener failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
     this.d.audit.append("user", "plugin.settings", id);
   }
 
@@ -834,8 +826,16 @@ export class PluginHost {
       cpSync(src, dir, { recursive: true, filter: (p) => !p.includes(`${"node_modules"}`) });
     }
     const layout = readPluginLayout(dir);
-    if (this.records.get(layout.manifest.id)?.source === "builtin" || HELD_BACK_WITHOUT_KEYS.includes(layout.manifest.id) || layout.manifest.id in UNRELEASED) {
-      throw new LocalizedError("plugin.builtinCannotReplace", { id: layout.manifest.id });
+    const id = layout.manifest.id;
+    const refused = CORE_IDS.includes(id)
+      ? "plugin.coreId"
+      : this.records.get(id)?.source === "builtin" || HELD_BACK_WITHOUT_KEYS.includes(id) || id in UNRELEASED
+        ? "plugin.builtinCannotReplace"
+        : undefined;
+    if (refused) {
+      // Nothing of a refused install stays in staging.
+      rmSync(dir, { recursive: true, force: true });
+      throw new LocalizedError(refused, { id });
     }
     // A card's source without its build (an integration an agent made): the hub compiles it.
     compilePluginUi(dir, layout.uiEntry);

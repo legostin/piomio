@@ -2,9 +2,12 @@
 // chat where the agent has already asked its first question; the chat becomes what it made. Other requests go to the
 // right agent's dialog in the person's words.
 import type { Conversation, SetupPurpose } from "@piomio/shared";
-import { api } from "../lib/api";
+import { useLocation } from "wouter";
+import { api, errorText } from "../lib/api";
 import { agentPath } from "../lib/team";
 import { conversations, refreshTeam, sendMessage, session, team } from "./app";
+import { closePanel } from "./panel";
+import { toast } from "./toast";
 
 /** A new setup chat ("New channel", "Add agent"), opened. */
 export async function startSetup(purpose: SetupPurpose, navigate: (path: string) => void): Promise<void> {
@@ -28,4 +31,16 @@ export async function askInChat(agentId: string | undefined, text: string, navig
   navigate(agentPath(id, s?.defaultAgent));
   const member = members.find((m) => m.agentId === id);
   if (member) await sendMessage(member.conversationId, text);
+}
+
+/**
+ * For a section of the settings panel: `ask(text, agentId)` opens that agent's dialog (the default agent's without one)
+ * with `text` as the person's words; the panel steps aside where it covers the chat (below 1280px).
+ */
+export function useAsk(): (text: string, agentId?: string) => void {
+  const [, navigate] = useLocation();
+  return (text, agentId) => {
+    if (window.matchMedia("(max-width: 1279px)").matches) closePanel();
+    askInChat(agentId, text, navigate).catch((e) => toast(errorText(e), "error"));
+  };
 }
