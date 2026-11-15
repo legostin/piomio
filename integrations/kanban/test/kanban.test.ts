@@ -282,6 +282,8 @@ describe("agents taking cards by themselves", () => {
     await h.invoke("pickup", { on: true, agent: "coder" });
     await until(() => expect(hub.tasks).toHaveLength(1));
     expect(hub.tasks[0].title).toBe(`${good}: The one`);
+    // The card moves once the hub has answered with the task: a moment after the task was asked for.
+    await until(async () => expect((await tile(good)).columnType).toBe("active"));
     const t = await tile(good);
     expect(t.columnType).toBe("active");
     expect(t.assignee).toBe("coder");

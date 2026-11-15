@@ -2,7 +2,7 @@
 // never again (a restart, another replica), nor when the plugin is on already.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hub, loadConfig } from "../src/index.ts";
@@ -11,17 +11,6 @@ import { OFFERS_KEY, pendingOffers } from "../src/plugins/offers.ts";
 import type { PluginRecord } from "../src/plugins/host.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const port = (s.address() as { port: number }).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 const record = (id: string, o: { source?: "builtin" | "installed"; enabled?: boolean; offer?: string }): PluginRecord =>
   ({ id, source: o.source ?? "builtin", enabled: !!o.enabled, layout: { manifest: { offer: o.offer } } }) as unknown as PluginRecord;
