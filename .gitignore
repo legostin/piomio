@@ -22,3 +22,6 @@ packages/web/dist-demo/
 packages/site/dist/
 
 packages/web/src/demo/static/pages/
+
+# The Piomio application's Telegram API keys, written by `npm run telegram:app-keys` (never committed).
+integrations/telegram-account/app-keys.json

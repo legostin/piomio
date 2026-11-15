@@ -316,8 +316,12 @@ describe("trigger scripts in the sandbox", () => {
       [`export default () => { let a = []; for (let i = 0; i < 1e5; i++) a = [a]; return { note: String(a) } }`, noHost],
       [`export default () => { const f = (n) => f(n + 1); f(0) }`, noHost],
     ];
+    // Running QuickJS's stack out takes about half a second on a fast computer, and counts as the script's time: on a
+    // slow or busy one (CI) it can pass the usual 2 s, and the run would end as "out of CPU time" before its nesting is
+    // found. These cases are about the nesting, so they get the time to reach it.
+    const roomy = limits({ cpuMs: 15_000 });
     for (const [code, h] of cases) {
-      const r = await runScript(code, input(), h);
+      const r = await runScript(code, input(), h, roomy);
       expect(r.verdict, code).toBeUndefined();
       expect(r.error, code).toMatch(/nested too deeply/);
       expect((await runScript(`export default () => ({ note: "clean" })`, input(), noHost)).verdict).toEqual({ note: "clean" });
@@ -426,6 +430,8 @@ describe("trigger scripts in the sandbox", () => {
       `export default async (s, pio) => { const res = await pio.fetch("https://deep.example.com"); try { res.json() } catch (e) { return { note: "caught" } } return { note: "parsed" } }`,
       input(),
       host,
+      // Time to reach QuickJS's stack limit on a slow computer (see the deep nesting cases above).
+      limits({ cpuMs: 15_000 }),
     );
     // QuickJS's own stack check fired (a SyntaxError the script can catch), not V8's inside the WASM.
     expect(r.error).toBeUndefined();
@@ -456,7 +462,7 @@ describe("trigger scripts in the sandbox", () => {
     expect(own.error).toMatch(/^my stack overflow \(at trigger\.mjs:1:\d+\)$/);
     const mem = await runScript(`export default () => { throw new RangeError("out of memory") }`, input(), noHost);
     expect(mem.error).toMatch(/^RangeError: out of memory \(at trigger\.mjs:1:\d+\)$/);
-    const real = await runScript(`export default () => { const f = () => f(); f() }`, input(), noHost);
+    const real = await runScript(`export default () => { const f = () => f(); f() }`, input(), noHost, limits({ cpuMs: 15_000 }));
     expect(real.error).toMatch(/^the script nested too deeply: InternalError: stack overflow/);
   });
 

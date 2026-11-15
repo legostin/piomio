@@ -237,6 +237,15 @@ export interface PluginContext {
      * the hub until the vault changes ("vault.updated", "vault.state"), so a plugin may simply ask when it needs the item.
      */
     get(ref: string, opts?: { domain?: string; reason?: string }): Promise<Record<string, string>>;
+    /**
+     * Store a secret the plugin made itself (the session key of an account it signed in to): it never goes into
+     * storage or settings. Only an item listed in permissions.vault by its exact id, and only the plugin's own: a new
+     * item can be read by this plugin alone, and an item anything else may read is refused. `fields` are a few named
+     * strings (64 KB in all); `name` is what the person sees in the vault's list. Fails while the vault is locked.
+     */
+    put(ref: string, fields: Record<string, string>, opts?: { name?: string }): Promise<void>;
+    /** Remove a secret the plugin stored with `put` (the account was signed out); nothing happens when it is not there. */
+    remove(ref: string): Promise<void>;
   };
   storage: {
     get<T = unknown>(key: string): Promise<T | undefined>;

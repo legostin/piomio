@@ -71,6 +71,7 @@ Already use Claude Code, Codex or Kimi Code? It can install Piomio for you: see 
 - [Machines and other computers](machines.md): joining computers and servers, and what agents may do there.
 - [The iPhone app](phone.md): pairing your phone and approving on it.
 - [Telegram](telegram.md): your own bot for chats, notifications and approvals.
+- [Your Telegram account](telegram-account.md): agents read the chats you open to them, read only by default.
 - [Access from anywhere](anywhere.md): one private link to your hub.
 - [Updates](updates.md): how each kind of install gets new versions.
 

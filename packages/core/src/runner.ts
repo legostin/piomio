@@ -1047,6 +1047,9 @@ export class SessionRunner {
   }
 
   scheduleTasks(): void {
+    // A look left for the next tick (a turn or a task that ended) may come after the hub stopped and closed the
+    // database: stop() clears the timers, but not what was already queued with setImmediate.
+    if (this.stopped) return;
     const now = Date.now();
     const candidates = this.d.store
       .listTasks({ status: ["queued", "paused"], limit: 100 })

@@ -149,6 +149,22 @@ export function cleanCatalogReport(entries: unknown): CatalogEntryState[] {
   return out;
 }
 
+/** A secret a plugin stores itself (vault.put), at most. */
+const MAX_PLUGIN_SECRET_BYTES = 64 * 1024;
+
+/** The fields of a secret a plugin stores: a few named strings, or undefined for anything else. */
+export function cleanVaultFields(fields: unknown): Record<string, string> | undefined {
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) return undefined;
+  const entries = Object.entries(fields as Record<string, unknown>);
+  if (!entries.length || entries.length > 16) return undefined;
+  let bytes = 0;
+  for (const [k, v] of entries) {
+    if (!/^[A-Za-z][\w.-]{0,63}$/.test(k) || typeof v !== "string" || !v) return undefined;
+    bytes += Buffer.byteLength(v);
+  }
+  return bytes > MAX_PLUGIN_SECRET_BYTES ? undefined : (Object.fromEntries(entries) as Record<string, string>);
+}
+
 /** A widget's data as stored in the conversation, at most. */
 export const MAX_WIDGET_BYTES = 64 * 1024;
 /** Widgets one tool call can show. */
@@ -615,6 +631,34 @@ export class PluginHost {
       const allowed = [...rec.granted.vault, ...rec.extraVault].some((g) => g === itemId || g === "*" || (meta && g === `${meta.type}:*`));
       if (!allowed) deny(`vault item ${itemId} not in permissions.vault`);
       return this.d.vault.access(p.ref, { actor: `plugin:${id}`, pluginId: id, domain: p.domain });
+    });
+
+    // A secret the plugin made itself (the session key of an account it signed in to) goes into the vault, not into
+    // its storage. Only an item named in permissions.vault by its exact id, and only one that is the plugin's own: a
+    // new item is scoped to this plugin, and an item that anything else may read is never overwritten or removed.
+    const ownItem = (ref: unknown): string => {
+      const itemId = String(ref ?? "").replace(/^vault:\/\//, "");
+      if (![...rec.granted.vault, ...rec.extraVault].includes(itemId)) deny(`vault item ${itemId} not in permissions.vault`);
+      const meta = this.d.vault.getMeta(itemId);
+      if (meta && !(meta.scope.plugins.length === 1 && meta.scope.plugins[0] === id)) deny(`vault item ${itemId} is not this plugin's own`);
+      return itemId;
+    };
+    peer.handle("vault.put", (p: { ref: string; fields: unknown; name?: unknown }) => {
+      const itemId = ownItem(p.ref);
+      const fields = cleanVaultFields(p.fields);
+      if (!fields) throw new Error(`vault item ${itemId}: fields must be a few named strings, 64 KB in all`);
+      const name = typeof p.name === "string" && p.name.trim() ? p.name.trim().slice(0, 120) : (this.d.vault.getMeta(itemId)?.name ?? `${m.id}: ${itemId}`);
+      this.d.vault.upsert({ id: itemId, type: "secret", name, fields, scope: { plugins: [id] } });
+      this.d.audit.append(`plugin:${id}`, "vault.upsert", itemId, { via: "plugin" });
+      return {};
+    });
+    peer.handle("vault.remove", (p: { ref: string }) => {
+      const itemId = ownItem(p.ref);
+      if (this.d.vault.getMeta(itemId)) {
+        this.d.vault.remove(itemId);
+        this.d.audit.append(`plugin:${id}`, "vault.remove", itemId, { via: "plugin" });
+      }
+      return {};
     });
 
     const kv = pluginKv(this.d.db, id);

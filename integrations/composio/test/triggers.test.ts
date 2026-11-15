@@ -931,8 +931,16 @@ describe("an app's account changes", () => {
     fake.accounts.set(newAccount, "ACTIVE");
     const newTi = await until(() => fake.instanceOf(GMAIL, newAccount), "the instance on the new account");
     expect(fake.upserts.at(-1)).toEqual({ slug: GMAIL, body: { connected_account_id: newAccount, trigger_config: { labelIds: "INBOX" } } });
-    expect((await post(h, JSON.stringify(message(newTi, "msg_new", { subject: "To the new account" }, GMAIL, newAccount)))).status).toBe(200);
+    // Composio has the new instance a moment before the plugin holds it (the upsert's answer is still on its way): an
+    // event in between names an instance nobody here listens to yet and is left out. So it is sent until it lands;
+    // the plugin passes one event on once, however often it comes.
+    const event = JSON.stringify(message(newTi, "msg_new", { subject: "To the new account" }, GMAIL, newAccount));
+    for (let n = 0; n < 100 && !h.signals.some((s) => s.key === "log_msg_new"); n++) {
+      expect((await post(h, event)).status).toBe(200);
+      await settle(50);
+    }
     await until(() => h.signals.find((s) => s.key === "log_msg_new"), "the event on the new account");
+    expect(h.signals.filter((s) => s.key === "log_msg_new")).toHaveLength(1);
     expect(h.signals.find((s) => s.key === "log_msg_new")).toMatchObject({ subscription: id, data: { account: newAccount } });
     // The old instance goes after its grace.
     await until(() => fake.patches.some((p) => p.id === oldTi && p.status === "disable"), "the old instance disabled");

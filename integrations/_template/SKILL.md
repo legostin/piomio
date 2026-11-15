@@ -87,6 +87,13 @@ and set `"connect": "setup"` in `integration`. In the code: `const { value } = a
 when a tool needs it; when it is missing, answer that the user should connect the integration (hub_plugin_setup shows
 the card).
 
+A secret the integration makes itself (the session key of an account it signs in to, not a key the person pastes) goes
+into the vault too: `await ctx.vault.put("vault://<id>_session", { value }, { name })`, and `ctx.vault.remove(ref)` when
+the account is signed out. List the id in `permissions.vault`; the item can then be read by this integration alone.
+Such an integration has `"connect": "setup"`, its own card (a settings section in `ui/`, which the setup card shows)
+and says how it stands with a catalog entry under its own id: `ctx.catalog.update([{ id: ctx.pluginId, status:
+"connected" | "needs-setup" | "broken", connect: "setup", account? }])` (see `integrations/telegram-account`).
+
 ## Signals
 
 A signal is something that happened, which can start the person's triggers (a new feed item, a sensor reading, a

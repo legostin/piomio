@@ -21,6 +21,7 @@
     "build:site": "node packages/site/scripts/build.mjs",
     "check:site": "node packages/site/scripts/check.mjs",
     "new:integration": "node scripts/new-integration.mjs",
+    "telegram:app-keys": "node scripts/telegram-app-keys.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p packages/pages-kit/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",

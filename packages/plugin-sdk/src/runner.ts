@@ -337,6 +337,13 @@ peer.handle("plugin.activate", async (p: { pluginId: string; dataDir: string; pl
     },
     vault: {
       get: (ref, opts) => vaultGet(ref, opts),
+      put: async (ref, fields, opts) => {
+        await peer.request("vault.put", { ref, fields, ...opts });
+        vaultMissing.delete(vaultIdOf(ref));
+      },
+      remove: async (ref) => {
+        await peer.request("vault.remove", { ref });
+      },
     },
     storage: {
       get: (key) => peer.request("storage.get", { key }),
