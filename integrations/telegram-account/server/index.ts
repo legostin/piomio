@@ -84,8 +84,7 @@ const plugin: PluginModule = {
             return ok(acc.status());
           case "POST /signin": {
             if (acc.status().state === "no-app") return fail(409, "http.noApp", req.locale);
-            void acc.startSignIn();
-            await new Promise((r) => setTimeout(r, 50));
+            await acc.startSignIn();
             if (acc.status().state === "locked") return fail(409, "http.locked", req.locale);
             // The code arrives within a second or two: answer with it rather than with "connecting".
             for (let n = 0; n < 60 && acc.status().state === "connecting"; n++) await new Promise((r) => setTimeout(r, 100));

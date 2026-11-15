@@ -84,6 +84,10 @@ export class Account {
   private me: (TgAccount & { connectedAt: string }) | undefined;
   private qr: { svg: string; expiresAt: string } | undefined;
   private vault: "uninitialized" | "sealed" | undefined;
+  /** A sign-in was asked for and is checking the vault: a second ask meanwhile starts nothing. */
+  private starting = false;
+  private resuming: Promise<void> | undefined;
+  private resumeAgain = false;
   private signIn: { abort: AbortController; password?: (v: string) => void; wrong: boolean; timer?: ReturnType<typeof setTimeout> } | undefined;
   private mode_: Mode = "read";
   private access_: Access = emptyAccess();
@@ -159,9 +163,30 @@ export class Account {
     void this.resume().catch((e) => this.ctx.log.warn(`telegram-account: ${message(e)}`));
   }
 
-  /** Open the saved session, if there is one. Called at start and when the vault opens or changes. */
-  async resume(): Promise<void> {
-    if (this.stopped || !this.keys || this.tg || this.signIn || this.state === "connecting") return;
+  /**
+   * Open the saved session, if there is one. Called at start and when the vault opens or changes. One at a time: a
+   * call while another runs is answered by one more run after it, so a vault that opened meanwhile is not missed.
+   */
+  resume(): Promise<void> {
+    if (this.resuming) {
+      this.resumeAgain = true;
+      return this.resuming;
+    }
+    const run = (async () => {
+      do {
+        this.resumeAgain = false;
+        await this.resumeOnce();
+      } while (this.resumeAgain && !this.stopped);
+    })().finally(() => {
+      this.resuming = undefined;
+    });
+    this.resuming = run;
+    return run;
+  }
+
+  private async resumeOnce(): Promise<void> {
+    // A sign-in under way (or about to start) owns the state: it is not a session to open.
+    if (this.stopped || !this.keys || this.tg || this.signIn || this.starting) return;
     if (this.retry) clearTimeout(this.retry);
     if (!(await this.vaultOpen())) return;
     let session: string | undefined;
@@ -259,20 +284,38 @@ export class Account {
     }
   }
 
-  /** Start the QR sign-in: the status then carries the code, and "password" if the account asks for one. */
+  /**
+   * Start the QR sign-in: the status then carries the code, and "password" if the account asks for one. Resolves
+   * once the sign-in is under way (the state is "connecting") or could not start (the vault is not open: "locked");
+   * the sign-in itself goes on after that, and the status tells how it ends.
+   */
   async startSignIn(): Promise<void> {
     if (!this.keys) throw new Error("this build has no Telegram application keys");
-    if (this.connected || this.signIn) return;
+    if (this.connected || this.signIn || this.starting) return;
     if (this.retry) clearTimeout(this.retry);
-    if (!(await this.vaultOpen())) return;
+    this.starting = true;
+    let open: boolean;
+    try {
+      // A look for a saved session that is still running (the plugin has just started) finishes first: it must not
+      // write its "signed out" over a sign-in, and what it finds may make the sign-in needless.
+      await this.resuming?.catch(() => {});
+      open = !this.connected && (await this.vaultOpen());
+    } finally {
+      this.starting = false;
+    }
+    if (!open || this.stopped) return;
     const signIn: NonNullable<Account["signIn"]> = { abort: new AbortController(), wrong: false };
     this.signIn = signIn;
+    this.set("connecting");
+    void this.runSignIn(signIn);
+  }
+
+  private async runSignIn(signIn: NonNullable<Account["signIn"]>): Promise<void> {
     const giveUp = (ms: number) => {
       if (signIn.timer) clearTimeout(signIn.timer);
       signIn.timer = setTimeout(() => signIn.abort.abort(), ms);
     };
     giveUp(SIGN_IN_TIMEOUT_MS);
-    this.set("connecting");
     let tg: TgClient | undefined;
     let signedIn = false;
     try {
