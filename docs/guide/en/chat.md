@@ -64,6 +64,8 @@ A small chip after the time of each reply (**How this reply was made**) shows wh
 
 When the answer is one of a few clear options, the agent puts buttons under its message: "Mornings", "Twice a day", "Yes". A tap sends the option's words as your message, and the buttons settle on your pick. You can always type something else instead.
 
+Claude Code's own questions and plans come the same way. When it asks you something in the middle of its work, the question appears in its message with the options as buttons, and the work waits for your answer: a tap or your own words. A plan it wants you to approve comes with **Go ahead** and **Don’t**; write what to change instead, and it reworks the plan and shows it again. It waits up to 10 minutes: after that the buttons stay, and your answer is simply your next message. Inside a task nobody is there to answer, so the agent asks through the task's question and its plans go ahead by themselves.
+
 ### Live cards
 
 Many things appear as cards inside the agent's messages, and the cards change in place as things move on:
