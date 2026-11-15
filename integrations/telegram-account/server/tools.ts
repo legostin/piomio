@@ -19,6 +19,9 @@ const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "t
 export const MAX_DOWNLOAD_BYTES = 40 * 1024 * 1024;
 const DELIVER_CHUNK = 4 * 1024 * 1024;
 const MAX_TEXT = 4096;
+/** A search across the account reads this many messages a page, and at most this many pages. */
+const SEARCH_PAGE = 100;
+const SEARCH_PAGES = 10;
 const MAX_SEND_FILES = 10;
 
 const NOT_OPEN = "No such chat among the chats open to you. telegram_account_chats lists them; the person decides which chats agents may see (telegram_account_request_access asks them).";
@@ -240,20 +243,33 @@ export function registerTools(ctx: PluginContext, account: Account, requests: Re
         if (String(input.chat ?? "").trim()) {
           const chat = await openChat(tg, input.chat);
           if (!chat) return text(NOT_OPEN, true);
-          const list = await tg.search(query, { chatId: chat.id, limit });
+          const list = (await tg.search(query, { chatId: chat.id, limit })).messages;
           return text(list.length ? `${chat.title} (id ${chat.id}), ${list.length} found, newest first:\n${list.map(messageLine).join("\n")}` : `Nothing found in ${chat.title}.`);
         }
-        // Across the account: Telegram searches everything, so more is asked for and the closed chats are dropped here.
+        // Across the account: Telegram searches every chat, newest first, and the closed chats are dropped here. Newer
+        // matches in closed chats must not hide an older one in an open chat, so the search goes on page by page
+        // until enough open ones are found or Telegram has no more; a bounded number of pages, and the answer says
+        // so when that bound ended it.
         const chats = new Map((await tg.chats(2000)).map((c) => [c.id, c]));
-        const found = await tg.search(query, { limit: Math.min(limit * 5, 200) });
         const lines: string[] = [];
-        for (const m of found) {
-          const chat = chats.get(m.chatId);
-          if (!chat || !canRead(account.access, chat)) continue;
-          lines.push(`${chat.title} (id ${chat.id}) ${messageLine(m)}`);
-          if (lines.length >= limit) break;
+        let from: unknown;
+        let exhausted = false;
+        for (let page = 0; page < SEARCH_PAGES && lines.length < limit; page++) {
+          const got = await tg.search(query, { limit: SEARCH_PAGE, ...(from !== undefined ? { from } : {}) });
+          for (const m of got.messages) {
+            const chat = chats.get(m.chatId);
+            if (!chat || !canRead(account.access, chat)) continue;
+            lines.push(`${chat.title} (id ${chat.id}) ${messageLine(m)}`);
+            if (lines.length >= limit) break;
+          }
+          if (got.next === undefined || !got.messages.length) {
+            exhausted = true;
+            break;
+          }
+          from = got.next;
         }
-        return text(lines.length ? `${lines.length} found in the open chats, newest first:\n${lines.join("\n")}` : "Nothing found in the open chats.");
+        const partial = !exhausted && lines.length < limit ? " The search stopped before reaching the oldest messages: to go further back, search one chat (pass chat)." : "";
+        return text(lines.length ? `${lines.length} found in the open chats, newest first:\n${lines.join("\n")}${partial ? `\n${partial.trim()}` : ""}` : `Nothing found in the open chats.${partial}`);
       }),
   });
 

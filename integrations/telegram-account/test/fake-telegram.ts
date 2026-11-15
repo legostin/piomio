@@ -32,13 +32,15 @@ interface State {
   open: number;
   scan?: () => void;
   passwords: string[];
+  /** How many search requests Telegram got. */
+  searches: number;
   onMessage: Set<(m: TgMessage, chat: TgChat) => void>;
   onSignedOut: Set<() => void>;
   nextId: number;
 }
 
 const file = process.env.TELEGRAM_ACCOUNT_TEST_FIXTURE!;
-const state: State = { fixture: JSON.parse(readFileSync(file, "utf8")), sent: [], loggedOut: 0, open: 0, passwords: [], onMessage: new Set(), onSignedOut: new Set(), nextId: 9000 };
+const state: State = { fixture: JSON.parse(readFileSync(file, "utf8")), sent: [], loggedOut: 0, open: 0, passwords: [], searches: 0, onMessage: new Set(), onSignedOut: new Set(), nextId: 9000 };
 
 const body = (req: import("node:http").IncomingMessage) =>
   new Promise<any>((resolve) => {
@@ -66,7 +68,7 @@ const control = createServer(async (req, res) => {
       for (const cb of [...state.onSignedOut]) cb();
       return send({ ok: true });
     case "/state":
-      return send({ sent: state.sent, loggedOut: state.loggedOut, open: state.open, sessions: state.fixture.sessions, passwords: state.passwords });
+      return send({ sent: state.sent, loggedOut: state.loggedOut, open: state.open, sessions: state.fixture.sessions, passwords: state.passwords, searches: state.searches });
     default:
       res.writeHead(404).end();
   }
@@ -127,9 +129,12 @@ const factory: TgClientFactory = () => {
     async history(chatId, { limit, beforeId }) {
       return sorted(chatId).filter((m) => !beforeId || m.id < beforeId).slice(0, limit).map(strip);
     },
-    async search(query, { chatId, limit }) {
+    async search(query, { chatId, limit, from }) {
       const all = chatId ? sorted(chatId) : Object.keys(state.fixture.messages).flatMap(sorted).sort((a, b) => b.date.localeCompare(a.date));
-      return all.filter((m) => m.text.toLowerCase().includes(query.toLowerCase())).slice(0, limit).map(strip);
+      const hits = all.filter((m) => m.text.toLowerCase().includes(query.toLowerCase()));
+      const at = typeof from === "number" ? from : 0;
+      state.searches++;
+      return { messages: hits.slice(at, at + limit).map(strip), ...(at + limit < hits.length ? { next: at + limit } : {}) };
     },
     async download(chatId, messageId, maxBytes) {
       const m = (state.fixture.messages[chatId] ?? []).find((x) => x.id === messageId);

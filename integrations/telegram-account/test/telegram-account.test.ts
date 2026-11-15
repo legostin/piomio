@@ -299,6 +299,26 @@ describe("what agents can do with a connected account", () => {
     expect(await r.h.invokeText("search", { query: "recipe", chat: "Family" })).toContain("#12");
   });
 
+  it("finds an older match in an open chat behind many newer ones in closed chats", async () => {
+    // 250 newer matches, all in a closed chat (channels are not open here): more than one page of what Telegram returns.
+    for (let i = 0; i < 250; i++) await r.control("/incoming", { chatId: NEWS.id, message: { text: `needle ${i}`, date: `2026-11-16T10:${String(i % 60).padStart(2, "0")}:00.000Z` } });
+    await r.control("/incoming", { chatId: FAMILY.id, message: { text: "the needle in the open chat", sender: "Mom", date: "2026-11-10T10:00:00.000Z" } });
+    const before = (await r.control("/state")).searches;
+    const found = await r.h.invokeText("search", { query: "needle" });
+    expect(found.split("\n")).toEqual(["1 found in the open chats, newest first:", expect.stringMatching(/^Family \(id -1001\) #\d+ 2026-11-10 10:00 Mom: the needle in the open chat$/)]);
+    // It went on past the first page, and stopped when Telegram had no more.
+    expect((await r.control("/state")).searches - before).toBe(3);
+    expect(found).not.toContain("stopped before");
+
+    // More newer matches than the search reads through: the answer says it did not reach the oldest ones.
+    for (let i = 0; i < 800; i++) await r.control("/incoming", { chatId: NEWS.id, message: { text: `needle more ${i}`, date: "2026-11-17T10:00:00.000Z" } });
+    const far = await r.h.invokeText("search", { query: "needle" });
+    expect(far).toBe("Nothing found in the open chats. The search stopped before reaching the oldest messages: to go further back, search one chat (pass chat).");
+    // One chat is searched whole, whatever the others hold.
+    expect(await r.h.invokeText("search", { query: "needle", chat: FAMILY.id })).toContain("the needle in the open chat");
+    expect(far).not.toMatch(/City news|\d{3,}/);
+  });
+
   it("brings an attachment into the agent's folder", async () => {
     const res = await r.h.invoke("download", { chat: FAMILY.id, message: 12 }, { sessionId: "s1" });
     expect(res.isError).toBeFalsy();

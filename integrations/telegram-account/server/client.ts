@@ -40,6 +40,12 @@ export interface TgMessage {
   media?: TgMedia;
 }
 
+/** One page of found messages. `next`, when there are more, is what `from` takes to go on from here. */
+export interface TgPage {
+  messages: TgMessage[];
+  next?: unknown;
+}
+
 export interface TgAccount {
   id: string;
   name: string;
@@ -79,8 +85,8 @@ export interface TgClient {
   chat(ref: string): Promise<TgChat | undefined>;
   /** Messages of a chat, newest first; `beforeId` pages back. Reading marks nothing as read. */
   history(chatId: string, o: { limit: number; beforeId?: number }): Promise<TgMessage[]>;
-  /** Messages with the words, newest first: in one chat, or in every chat of the account. */
-  search(query: string, o: { chatId?: string; limit: number }): Promise<TgMessage[]>;
+  /** Messages with the words, newest first, a page at a time: in one chat, or in every chat of the account. */
+  search(query: string, o: { chatId?: string; limit: number; from?: unknown }): Promise<TgPage>;
   /** A message's attachment; undefined when it has none. Rejects with FileTooLarge over `maxBytes`. */
   download(chatId: string, messageId: number, maxBytes: number): Promise<TgFile | undefined>;
   sendText(chatId: string, text: string, o?: { replyTo?: number }): Promise<TgMessage>;

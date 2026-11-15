@@ -47,6 +47,8 @@ describe("always the person's call", () => {
     const tool = (name: string, input: unknown, summary = name): AutoAction => ({ tool: name, input, summary, kind: "tool", effect: "external", why: "an external action" });
     expect(alwaysPerson(tool("composio_tool_run", { tool: "GMAIL_SEND_EMAIL" }))).toBe("a message to people");
     expect(alwaysPerson(tool("telegram_send", { text: "hi" }))).toBe("a message to people");
+    // The Telegram account integration's send: a message from the person's own account is never the reviewer's.
+    expect(alwaysPerson(tool("telegram_account_send", { chat: "-1001", title: "Family", text: "On my way" }, "Send a Telegram message to Family: On my way"))).toBe("a message to people");
     expect(alwaysPerson(tool("browser_submit", { label: "Отправить", site: "https://mail.example.com" }))).toMatch(/message/);
     expect(alwaysPerson(tool("browser_submit", { label: "Оформить заказ", site: "https://ozon.kz" }))).toBe("money");
     expect(alwaysPerson(tool("browser_submit", { label: "Save", site: "https://example.com" }))).toBeUndefined();

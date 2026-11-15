@@ -218,10 +218,13 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
       return page.map(messageOf);
     },
 
-    async search(query, { chatId, limit }) {
+    async search(query, { chatId, limit, from }) {
       if (chatId) await known(chatId);
-      const page: unknown[] = chatId ? await run(() => tg.searchMessages({ chatId: peerId(chatId), query, limit })) : await run(() => tg.searchGlobal({ query, limit }));
-      return page.map(messageOf);
+      const offset = from === undefined ? {} : { offset: from as any };
+      const page: unknown[] & { next?: unknown } = chatId
+        ? await run(() => tg.searchMessages({ chatId: peerId(chatId), query, limit, ...offset }))
+        : await run(() => tg.searchGlobal({ query, limit, ...offset }));
+      return { messages: page.map(messageOf), ...(page.next !== undefined ? { next: page.next } : {}) };
     },
 
     async download(chatId, messageId, maxBytes) {
