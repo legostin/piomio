@@ -660,6 +660,8 @@ export class Hub {
       machineName: (id) => this.runner.computerName(id),
       egress: this.egressGuard,
       given: (s) => this.gateway.egressGiven(s),
+      askPerson: (ctx, text, options, waitMs) => this.runner.askPerson(ctx.conversationId, ctx.sessionId, text, options, waitMs),
+      callInput: (ctx, toolUseId) => this.runner.toolCallInput(ctx.conversationId, toolUseId),
     });
     registerPageTools({
       registry: this.tools,

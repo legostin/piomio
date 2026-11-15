@@ -3,7 +3,9 @@
 // requests its sandbox raises ("codex.command", "codex.fileChange", "codex.permissions"); the Kimi brain for Kimi's
 // permission requests ("kimi.<tool>"). The answer is Claude Code's
 // format, a JSON text: {"behavior":"allow","updatedInput":…} or {"behavior":"deny","message":…}. When the person
-// has to say yes, the hub shows the same approval card as for an external action and waits for it.
+// has to say yes, the hub shows the same approval card as for an external action and waits for it. What Claude Code
+// puts to the person rather than asks leave for (AskUserQuestion, a plan to approve: native-questions.ts) goes to
+// them in the chat, and the answer is the call's result.
 import type { ApprovalAsk, ToolResult } from "@piomio/shared";
 import { parseBrainRef, truncate } from "@piomio/shared";
 import { homedir } from "node:os";
@@ -21,6 +23,7 @@ import { ruleMatches } from "../policy/engine.ts";
 import { t } from "../i18n.ts";
 import { classifyClaudeTool, classifyKimiTool, confinement, decideNative, grantFolder, realOr, shownPath, simpleCommand, type NativeAction } from "../native-permissions.ts";
 import { shownCommand } from "../policy/commands.ts";
+import { askPlan, askQuestions, planOf, type AskWhere, type PersonAnswer, type Unanswered } from "../native-questions.ts";
 import { foldersOn, localFolderPaths } from "../agent-folders.ts";
 
 export const NATIVE_PERMISSION_TOOL = "native_permission";
@@ -52,6 +55,10 @@ export interface NativePermissionDeps {
   /** What a tainted session may open on the web without a review (policy/egress.ts), and what the person gave it. */
   egress?: EgressGuard;
   given?: (s: { conversationId: string; taskId?: string }) => EgressGiven;
+  /** Puts a question to the person in the reply the session is writing, and waits for their answer (SessionRunner.askPerson). */
+  askPerson?: (ctx: import("@piomio/shared").ToolCallContext, text: string, options: string[], waitMs: number) => Promise<PersonAnswer | Unanswered>;
+  /** What the brain passed to its own tool in the call asked about, as its reply shows it (SessionRunner.toolCallInput). */
+  callInput?: (ctx: import("@piomio/shared").ToolCallContext, toolUseId: string) => unknown;
 }
 
 const answer = (o: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(o) }] });
@@ -126,6 +133,8 @@ function askOf(a: NativeAction): ApprovalAsk {
 export function registerNativePermission(d: NativePermissionDeps): void {
   /** Folders a yes opened for reading, by session: the rest of a repository is read without asking again. */
   const opened = new Map<string, Set<string>>();
+  /** Sessions told to write their plan out in the reply: their CLI could not save it for the person to see. */
+  const planInReply = new Set<string>();
   const open = (sessionId: string, a: NativeAction) => {
     // The folder where the file really is: a link never opens more (the whole home) than the read did.
     const dir = a.kind === "read" ? grantFolder(realOr(a.path), realOr(homedir())) : undefined;
@@ -144,11 +153,30 @@ export function registerNativePermission(d: NativePermissionDeps): void {
       },
     },
     async (raw, ctx) => {
-      const i = (raw ?? {}) as { tool_name?: unknown; input?: unknown };
+      const i = (raw ?? {}) as { tool_name?: unknown; input?: unknown; tool_use_id?: unknown };
       const tool = String(i.tool_name ?? "");
       const given = i.input && typeof i.input === "object" ? (i.input as Record<string, unknown>) : {};
       // Codex runs every command as `zsh -lc '<script>'`: the person's rules, the card and the reviewer see the script.
       const input = tool === "codex.command" && typeof given.command === "string" ? { ...given, command: shownCommand(given.command) } : given;
+      // Claude Code's questions and plans are for the person, not a permission to decide: they answer in the chat.
+      if (tool === "AskUserQuestion" || tool === "ExitPlanMode") {
+        const wait = Math.max(WAIT_MS, d.settings.get().approvalInlineWaitSec * 1000);
+        const ask = d.askPerson && !ctx.background ? (text: string, options: string[]) => d.askPerson!(ctx, text, options, wait) : undefined;
+        const where: AskWhere = { ...(ask ? { ask } : {}), task: !!ctx.taskId };
+        const words = { several: t("native.ask.several"), approve: t("native.plan.approve"), decline: t("native.plan.decline"), plan: t("native.plan.ask") };
+        const plan = () => {
+          const written = typeof i.tool_use_id === "string" ? (d.callInput?.(ctx, i.tool_use_id) as { plan?: unknown } | undefined)?.plan : undefined;
+          // Told once; the next call asks the person about the plan in the reply.
+          const inReply = planInReply.delete(ctx.sessionId);
+          if (ask && !ctx.taskId && !inReply && !planOf(input, written)) planInReply.add(ctx.sessionId);
+          return askPlan(input, where, words, { written, inReply });
+        };
+        const said = tool === "AskUserQuestion" ? await askQuestions(input, where, words) : await plan();
+        if (said) {
+          d.audit.append(`agent:${ctx.agentId}`, "native.question", tool, { sessionId: ctx.sessionId, answered: said.behavior === "allow", input: d.redactor.value(input) });
+          return answer(said);
+        }
+      }
       // Claude's networked sandbox asks about Bash even when it stays inside the workspace. With egress available,
       // such a command may publish: give it the same review as Codex's `untrusted` command approvals. The CLI's
       // no-network front desk retains its existing handling.

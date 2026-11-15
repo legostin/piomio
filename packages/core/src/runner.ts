@@ -9,6 +9,7 @@ import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, 
 import { replyText, replyContext, bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, RpcCodes, RpcError, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
 import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { confinement } from "./native-permissions.ts";
+import type { PersonAnswer, Unanswered } from "./native-questions.ts";
 import { foldersOn, localFolderPaths } from "./agent-folders.ts";
 import { NATIVE_PERMISSION_TOOL } from "./tools/native-permission.ts";
 import type { Config } from "./config.ts";
@@ -201,6 +202,13 @@ interface ActiveTurn {
   row: SessionRow;
   /** Close the reply so far and go on in a new message (after the message that just joined). */
   split(): void;
+  /** Words the hub adds to the reply for the agent (a question its CLI put to the person). */
+  say(text: string): void;
+  /** Change the parts of the message being written (a card that was answered goes or rests). */
+  rework(change: (parts: MessagePart[]) => MessagePart[]): void;
+  /** Where this turn's reply goes besides the web UI, and whether it is a quiet look (never sent on). */
+  replyChannel?: string;
+  quiet?: boolean;
   channels: Set<string>;
   voiceInterrupt(heard: Map<string, number>): boolean;
   flush(): void;
@@ -274,6 +282,8 @@ export class SessionRunner {
   private live = new Map<string, Live>();
   private queues = new Map<string, Promise<unknown>>();
   private activeTurns = new Map<string, ActiveTurn>();
+  /** By conversation: the question a brain's CLI put to the person and waits on (askPerson). */
+  private questions = new Map<string, { messageId?: string; options: string[]; settle: (a: PersonAnswer | Unanswered) => void; done: Promise<void> }>();
   private voiceContext = new Map<string, string>();
   private runningTasks = new Set<string>();
   private brainLoad = new Map<string, number>();
@@ -388,7 +398,7 @@ export class SessionRunner {
   async userMessage(
     conversationId: string,
     text: string,
-    opts: { channel?: string; attachments?: AttachmentPart[]; replyTo?: string; context?: string; onCapture?: (c: CaptureResult) => void } = {},
+    opts: { channel?: string; attachments?: AttachmentPart[]; replyTo?: string; context?: string; onCapture?: (c: CaptureResult) => void; choice?: number } = {},
   ): Promise<Message> {
     const conv = this.d.store.getConversation(conversationId);
     if (!conv) throw new LocalizedError("conversation.notFound");
@@ -430,6 +440,9 @@ export class SessionRunner {
     // The hub's own commands ("/brain", "/task …") are answered here; "/schedule …" goes on as a request to the agent.
     const command = await this.d.commands?.run(conv, hooked.payload.text, { channel: opts.channel });
     if (command && "done" in command) return msg;
+    // The answer to a question the brain's CLI is waiting on (askPerson): it goes back as that call's result and the
+    // turn goes on from there, so it is neither more input for the turn nor a turn of its own.
+    if (!attachments.length && hooked.payload.text.trim() && this.answerQuestion(conversationId, hooked.payload.text.trim(), opts)) return msg;
     const expanded = command?.prompt ?? this.d.skills.expandCommand(hooked.payload.text) ?? hooked.payload.text;
     const voiceContext = this.voiceContext.get(conversationId);
     this.voiceContext.delete(conversationId);
@@ -715,7 +728,75 @@ export class SessionRunner {
     const parts = m.parts.slice();
     parts[at] = { ...part, chosen: index };
     this.d.store.updateMessage(m.id, { parts });
-    return this.userMessage(m.conversationId, part.options[index], { channel });
+    return this.userMessage(m.conversationId, part.options[index], { channel, choice: index });
+  }
+
+  /**
+   * A question the brain's own CLI puts to the person in the middle of its turn (Claude Code's AskUserQuestion, a plan
+   * to approve): the words join the reply being written, with quick replies under them, and the turn waits. The
+   * answer is the option they tap or whatever they write next; without one in `waitMs` the buttons stay, and a later
+   * answer is their next message. "nobody": no turn of this session is running here (or it ended meanwhile).
+   */
+  async askPerson(conversationId: string, sessionId: string, text: string, options: string[], waitMs: number): Promise<PersonAnswer | Unanswered> {
+    // One question at a time: the next waits for the answer to the one before.
+    for (let before = this.questions.get(conversationId); before; before = this.questions.get(conversationId)) await before.done;
+    const a = this.activeTurns.get(conversationId);
+    if (!a || a.stopped || a.sessionId !== sessionId) return "nobody";
+    // A tap names its message's one set of quick replies (choose): after an earlier set the question starts a new message.
+    const at = this.streamingMessage.get(conversationId);
+    if (at && this.d.store.getMessage(at)?.parts.some((p) => p.type === "choices")) a.split();
+    a.say(text);
+    this.attachPart(conversationId, { type: "choices", options });
+    let settle!: (r: PersonAnswer | Unanswered) => void;
+    const result = new Promise<PersonAnswer | Unanswered>((resolve) => (settle = resolve));
+    const timer = setTimeout(() => entry.settle("timeout"), waitMs);
+    timer.unref?.();
+    const entry = {
+      messageId: this.streamingMessage.get(conversationId),
+      options,
+      settle: (r: PersonAnswer | Unanswered) => {
+        clearTimeout(timer);
+        if (this.questions.get(conversationId) === entry) this.questions.delete(conversationId);
+        settle(r);
+      },
+      done: result.then(() => {}),
+    };
+    this.questions.set(conversationId, entry);
+    // The channels (the phone) get the question now: the reply itself goes there only when the turn ends.
+    const conv = this.d.store.getConversation(conversationId);
+    if (conv && conv.kind !== "group" && !a.quiet) void this.deliver(conv, [text, ...options.map((o) => `• ${o}`)].join("\n"), { replyChannel: a.replyChannel }, undefined, a.row).catch(() => {});
+    return result;
+  }
+
+  /** What the brain passed to one of its own tools in the reply being written: its CLI may hand the hub less of it. */
+  toolCallInput(conversationId: string, callId: string): unknown {
+    const id = this.streamingMessage.get(conversationId);
+    const call = id ? this.d.store.getMessage(id)?.parts.find((p) => p.type === "tool_call" && p.id === callId) : undefined;
+    return call?.type === "tool_call" ? call.input : undefined;
+  }
+
+  /** The person's message answers the question waiting in this conversation, when there is one. */
+  private answerQuestion(conversationId: string, text: string, opts: { channel?: string; choice?: number }): boolean {
+    const q = this.questions.get(conversationId);
+    if (!q) return false;
+    // Typed instead of tapped: the buttons rest on the option with those words, or go when the answer is their own.
+    const typed = q.options.findIndex((o) => o.trim().toLowerCase() === text.toLowerCase());
+    const choice = opts.choice ?? (typed >= 0 ? typed : undefined);
+    const a = this.activeTurns.get(conversationId);
+    if (q.messageId && opts.choice === undefined) {
+      const rest = (parts: MessagePart[]) => (choice === undefined ? parts.filter((p) => p.type !== "choices") : parts.map((p) => (p.type === "choices" ? { ...p, chosen: choice } : p)));
+      const m = this.d.store.getMessage(q.messageId);
+      // The message is usually the one being written, whose parts the turn holds; input that joined since closed it.
+      if (a && this.streamingMessage.get(conversationId) === q.messageId) a.rework(rest);
+      else if (m) this.d.store.updateMessage(m.id, { parts: rest(m.parts) });
+    }
+    // The reply goes on below the person's answer, and to the channel it came from.
+    if (a) {
+      a.split();
+      if (opts.channel && opts.channel !== WEB_CHANNEL) a.channels.add(opts.channel);
+    }
+    q.settle({ text, ...(choice !== undefined ? { choice } : {}) });
+    return true;
   }
 
   /** The user saved (or dismissed) a secret card after its tool call stopped waiting: tell the agent and let it go on. */
@@ -2663,7 +2744,18 @@ export class SessionRunner {
       handle: live.handle,
       row,
       channels,
+      replyChannel,
+      quiet,
       flush: () => flush(true),
+      say: (text) => {
+        const last = parts[parts.length - 1];
+        onEvent({ type: "text", delta: last?.type === "text" && last.text.trim() ? `\n\n${text}` : text });
+        flush(true);
+      },
+      rework: (change) => {
+        parts = change(mergeAttached(parts, current()));
+        this.d.store.updateMessage(msg.id, { parts }, true);
+      },
       voiceInterrupt: (heard) => {
         if (!made.slice(voiceFrom).some((id) => heard.has(id))) return false;
         if (voiceFrozen) return true;
@@ -2803,6 +2895,8 @@ export class SessionRunner {
     } finally {
       if (images.finish()) imageWarning("Generated image transfer was incomplete; it was not shown.");
       this.activeTurns.delete(conv.id);
+      // The turn ended under a question its CLI was waiting on (stopped, the brain went away): nobody waits any more.
+      this.questions.get(conv.id)?.settle("nobody");
       this.streamingMessage.delete(conv.id);
       activity?.end(turnKey);
     }
