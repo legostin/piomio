@@ -32,6 +32,13 @@ installer names, Linux archives and the hub's `/api/auth/state` and download lin
 The publishing job requires Windows, macOS DMG/PKG, both Linux architectures, signatures and checksums before
 creating the release. A late older build is published with `--latest=false`, never downgrading the updater feed.
 
+Each build job also runs `scripts/telegram-app-keys.mjs`: the repository secrets `TELEGRAM_API_ID` and
+`TELEGRAM_API_HASH` (the Piomio application's keys from my.telegram.org → API development tools) become
+`integrations/telegram-account/app-keys.json` in the runner's checkout, which the installers carry and the Telegram
+account integration signs in with. The file is git-ignored and never committed; a build without the secrets (a fork's
+pull request) has no keys, and its integration says so. For a local build, run
+`TELEGRAM_API_ID=… TELEGRAM_API_HASH=… npm run telegram:app-keys` once in the checkout before `npm run package:desktop`.
+
 The website's download version and assets already come from GitHub's latest published release. The docs now use
 that same release to select their current major/minor line, even when main's package version is stale. The source
 manifest is only the offline fallback. The publish job of `release-tags.yml` starts `site.yml` once the release is

@@ -1,0 +1,13 @@
+{
+  "name": "@piomio/plugin-telegram-account",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram account: the person's own account for their agents, read only until they allow more",
+  "dependencies": {
+    "@mtcute/core": "^0.32.8",
+    "@mtcute/wasm": "^0.32.8",
+    "@mtcute/web": "^0.32.8",
+    "qrcode-generator": "^2.0.4"
+  }
+}

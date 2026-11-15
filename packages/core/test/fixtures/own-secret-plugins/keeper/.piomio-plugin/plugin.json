@@ -1,0 +1,10 @@
+{
+  "id": "keeper",
+  "name": "Keeper",
+  "builtin": true,
+  "defaultEnabled": false,
+  "server": "./server/index.ts",
+  "contributes": { "tools": true },
+  "integration": { "category": "other", "icon": "key", "connect": "setup", "summary": "Signs in to an account itself" },
+  "permissions": { "vault": ["keeper_session", "shared_key"] }
+}

@@ -39,6 +39,13 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: node scripts/release-version.mjs
+      # The Piomio application's Telegram API keys go into the build (the Telegram account integration signs in with
+      # them); without the secrets (a fork's PR) the build has none and the integration says so.
+      - name: Put the Telegram application keys into the build
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: node scripts/telegram-app-keys.mjs
       - run: npm run build:ui -w @piomio/desktop
       - run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
       # The update files are signed with the project's key; without the secret (a fork's PR) they are left out.
@@ -115,6 +122,13 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: node scripts/release-version.mjs
+      # The Piomio application's Telegram API keys go into the build (the Telegram account integration signs in with
+      # them); without the secrets (a fork's PR) the build has none and the integration says so.
+      - name: Put the Telegram application keys into the build
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: node scripts/telegram-app-keys.mjs
       # Signed with the project's update key, which hubs check before they update; a fork's PR builds without the .sig.
       - run: node packaging/linux/build.mjs --arch ${{ matrix.arch }}
         env:
@@ -176,6 +190,13 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: node scripts/release-version.mjs
+      # The Piomio application's Telegram API keys go into the build (the Telegram account integration signs in with
+      # them); without the secrets (a fork's PR) the build has none and the integration says so.
+      - name: Put the Telegram application keys into the build
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: node scripts/telegram-app-keys.mjs
       - run: npm run build:ui -w @piomio/desktop
       - run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
       # A keychain of the run's own holds the Developer ID; the build finds it by APPLE_SIGNING_IDENTITY, and the team

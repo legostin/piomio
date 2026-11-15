@@ -112,7 +112,8 @@ function viaFor(r: PluginRecord, via: IntegrationVia | undefined, name: string, 
  * is off, only the manifest's, off; while it is broken, all broken; before it reports, waiting for its key or a sign-in.
  */
 function entryViews(hub: Hub, r: PluginRecord, integ: IntegrationInfo, own: IntegrationView, locale: Locale): IntegrationView[] {
-  const reported = r.enabled ? (hub.plugins.catalogOf(r.id) ?? []) : [];
+  // An entry under the plugin's own id is the state of the plugin's own card (see listIntegrations), not a card.
+  const reported = r.enabled ? (hub.plugins.catalogOf(r.id) ?? []).filter((e) => e.id !== r.id) : [];
   const state = new Map(reported.map((e) => [e.id, e]));
   const known = new Set(integ.entries.map((e) => e.id));
   const entries = [
@@ -186,6 +187,13 @@ export async function listIntegrations(hub: Hub, locale: Locale, opts: { all?: b
       const down = channels.find((c) => !c.connected);
       if (missing || down) Object.assign(view, { status: "needs-setup", ...(down?.detail ? { detail: down.detail } : {}) });
       else if (channels[0]?.detail) view.account = channels[0].detail;
+      // A plugin that signs in to an account itself (no key to paste: a QR code on its own card) says how that stands
+      // with an entry under its own id: connected with the account's name, waiting for the sign-in, or broken.
+      const self = r.enabled && view.status === "connected" ? hub.plugins.catalogOf(r.id)?.find((e) => e.id === r.id) : undefined;
+      if (self) {
+        delete view.account;
+        Object.assign(view, { status: self.status, ...(self.account ? { account: self.account } : {}), ...(self.detail ? { detail: localizePluginValue(r.layout, self.detail, locale) } : {}) });
+      }
     }
     // Its MCP servers: one that failed to start says why; a sign-in is connected once every server of the plugin is.
     const servers = r.enabled ? hub.mcpClients.list().filter((s) => s.source === r.id) : [];

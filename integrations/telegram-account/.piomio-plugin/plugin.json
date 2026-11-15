@@ -1,0 +1,62 @@
+{
+  "id": "telegram-account",
+  "name": "%name%",
+  "version": "0.1.0",
+  "author": "Piomio",
+  "description": "%description%",
+  "builtin": true,
+  "defaultEnabled": false,
+  "server": "./server/index.ts",
+  "ui": "./ui/dist/index.js",
+  "contributes": {
+    "tools": true,
+    "http": true,
+    "widgets": ["account", "request"],
+    "signals": [
+      {
+        "type": "message",
+        "mode": "subscribe",
+        "title": "%signal.message.title%",
+        "description": "A new incoming message in a chat of the person's own Telegram account that they opened to agents. Chats they have not opened never send one.",
+        "config": {
+          "type": "object",
+          "properties": {
+            "chat": {"type": "string", "pattern": "^-?[0-9]+$", "maxLength": 20, "description": "Only this chat: its id from telegram_account_chats. Without it, every chat open to agents."}
+          },
+          "additionalProperties": false
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "chat": {
+              "type": "object",
+              "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "kind": {"type": "string", "enum": ["private", "group", "channel", "bot"]}},
+              "required": ["id", "title", "kind"]
+            },
+            "message": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "integer"},
+                "date": {"type": "string", "description": "ISO time"},
+                "sender": {"type": "string"},
+                "text": {"type": "string"},
+                "attachment": {"type": "string", "description": "photo, video, audio, voice, document, sticker or other, when the message has one"}
+              },
+              "required": ["id", "date", "text"]
+            }
+          },
+          "required": ["chat", "message"]
+        },
+        "sample": {"chat": {"id": "-1001234567890", "title": "Family", "kind": "group"}, "message": {"id": 4821, "date": "2026-11-15T09:30:00.000Z", "sender": "Anna", "text": "Dinner at seven?"}},
+        "external": true
+      }
+    ]
+  },
+  "integration": {"category": "communication", "icon": "send", "logo": "./logo.png", "connect": "setup", "summary": "%integration.summary%", "example": "%integration.example%"},
+  "permissions": {
+    "network": ["*.web.telegram.org"],
+    "vault": ["telegram_account_session"],
+    "core": ["ui.emit", "vault.check", "files.deliver", "files.fetch", "conversations.tell"],
+    "ui": ["settings.section"]
+  }
+}

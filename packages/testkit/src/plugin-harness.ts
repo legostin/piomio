@@ -46,6 +46,8 @@ export interface PluginHarness {
   coreCalls: Array<{ method: string; params: any }>;
   /** Ids of every vault.get that reached the "hub", in order. */
   vaultGets: string[];
+  /** The vault's items by id: what the test gave, what setVault stored and what the plugin stored itself (ctx.vault.put). */
+  vault: Record<string, Record<string, string>>;
   /**
    * The signals the plugin sent (ctx.signals.emit, or a provider's emit with its subscription's id), in order. What the
    * hub refuses is refused here with the hub's checks (@piomio/core/signal-check) and not recorded: a type its manifest
@@ -219,6 +221,26 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     }
     return item;
   });
+  // What the plugin stores itself (ctx.vault.put / remove): kept in the same map, and told like any other change.
+  const vaultChanged = (id: string) => {
+    if (subscriptions.has("vault.updated")) peer.notify("event", { name: "vault.updated", payload: { ids: [id] } });
+  };
+  peer.handle("vault.put", (p: { ref: string; fields: Record<string, string> }) => {
+    const id = p.ref.replace(/^vault:\/\//, "");
+    if (!layout.manifest.permissions.vault.includes(id)) throw new Error(`permission denied: vault item ${id} not in permissions.vault`);
+    vault[id] = { ...p.fields };
+    vaultChanged(id);
+    return {};
+  });
+  peer.handle("vault.remove", (p: { ref: string }) => {
+    const id = p.ref.replace(/^vault:\/\//, "");
+    if (!layout.manifest.permissions.vault.includes(id)) throw new Error(`permission denied: vault item ${id} not in permissions.vault`);
+    if (id in vault) {
+      delete vault[id];
+      vaultChanged(id);
+    }
+    return {};
+  });
   peer.handle("storage.get", (p: { key: string }) => kv.get(p.key) ?? null);
   peer.handle("storage.set", (p: { key: string; value: unknown }) => {
     kv.set(p.key, p.value);
@@ -276,6 +298,7 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     logs,
     coreCalls,
     vaultGets,
+    vault,
     signals,
     signalFailures,
     async subscribeSignal(type, config = {}, id = `sub_test_${++subscriptionCount}`) {
