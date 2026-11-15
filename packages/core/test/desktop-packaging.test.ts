@@ -64,9 +64,13 @@ describe("desktop launcher", () => {
     expect(wanted(join(root, "plugins", "claude-only"), root)).toBe(true);
     expect(wanted(join(root, "integrations", "weather"), root)).toBe(true);
     expect(wanted(join(root, "integrations", "README.md"), root)).toBe(true);
-    // Every plugin and integration in this checkout ships.
+    // Every plugin and integration in this checkout ships. A folder with no package.json and no manifest is only
+    // build output a removed plugin left in a local checkout (git ignores it), never one that ships.
+    const isPlugin = (dir: string) =>
+      ["package.json", ".piomio-plugin/plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"].some((f) => existsSync(join(dir, f)));
     for (const top of ["plugins", "integrations"])
-      for (const d of readdirSync(join(ROOT, top), { withFileTypes: true })) if (d.isDirectory()) expect(wanted(join(ROOT, top, d.name)), `${top}/${d.name}`).toBe(true);
+      for (const d of readdirSync(join(ROOT, top), { withFileTypes: true }))
+        if (d.isDirectory() && isPlugin(join(ROOT, top, d.name))) expect(wanted(join(ROOT, top, d.name)), `${top}/${d.name}`).toBe(true);
   });
 
   it("keeps data in the user's profile", () => {
