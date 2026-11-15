@@ -183,7 +183,7 @@ export function classifyHttpError(status: number, headers: Record<string, string
     return new LlmError("limit", `${provider}: ${message}`, { status, resetAt: resetAtFromHeaders(headers) });
   }
   if (/egress to .* is not allowed/.test(message)) {
-    return new LlmError("network", `The hub's network policy blocks this host (${message}). Add the host to the "brainEgressAllow" hub setting.`, {
+    return new LlmError("network", `The hub's network policy blocks this host (${message}). Allow it on the network card in the chat, or add it in the hub's settings.`, {
       status,
       key: "error.egressDenied",
       params: { message },

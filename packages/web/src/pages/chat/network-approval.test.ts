@@ -22,6 +22,12 @@ describe("network permission card", () => {
     expect(html).not.toContain("Always allow");
     expect(html.match(/<button/g)).toHaveLength(2);
   });
+  it("a host inside the person's network says so, shows where it resolves and what always does", () => {
+    const html = render({ ...part, ask: { ...part.ask!, host: "jira.corp.example", private: true, addresses: ["10.20.30.40"] } });
+    for (const word of ["Address in your network", "jira.corp.example", "10.20.30.40", "private hosts", "Allow once", "Always allow", "Deny"]) expect(html).toContain(word);
+    expect(html).not.toContain("allowlist for all agents and ports");
+    expect(html.match(/<button/g)).toHaveLength(3);
+  });
   it("warns for a raw IP and removes buttons after the request expires", () => {
     const ip = { ...part, ask: { ...part.ask!, host: "1.1.1.1", ipLiteral: true } };
     expect(render(ip)).toContain("Its owner may change");

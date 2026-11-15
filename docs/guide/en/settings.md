@@ -64,6 +64,7 @@ See [Approvals and auto mode](approvals.md).
 
 - **Parallel sessions per brain** (2, from 1 to 16): how many tasks and agent threads run at once on one brain on one computer. The rest wait in line; your own conversations never wait.
 - **Extra allowed hosts**: where brains may connect besides the default list (Anthropic, OpenAI, Kimi, GitHub, npm and the like). Wildcards like `*.example.com` work. The built-in list is visible here too. New public hosts can be proposed in chat via a network permission card; Always allow adds the host here. Remove an entry and save to stop new connections using that permanent permission.
+- **Addresses in my network**: hosts inside your own network (home, office, a VPN) that agents may open, such as `jira.corp.example`, `*.corp.example`, `nas.local` or `192.168.1.10`. Everything else there stays closed. When an agent reaches for such a host, a network card in its chat asks you, and Always allow adds the host here; a wildcard is yours to type. Remove an entry and save to close the host again. See [The network filter](security.md#the-network-filter).
 
 ### Voice
 
@@ -113,16 +114,6 @@ Only in the desktop app: **Quit Piomio** stops it until you open it again, and *
 | Replies to Telegram (`channelMirror`) | on | in the chat: "don't send my web conversations to Telegram" |
 | Approval mode (`approvalMode`) | auto mode | in the chat, see [Approvals and auto mode](approvals.md) |
 | Access from anywhere (`remoteAccess`) | off | its card, or "turn on access from anywhere", see [Access from anywhere](anywhere.md) |
-| Private hosts (`egressPrivateAllow`) | empty | only through the API, below |
-
-`egressPrivateAllow` lists the hosts on your local network that plugins and brains may reach, such as `searxng` or `nas.local`: the egress filter refuses private addresses otherwise. To set it, open the chat in your browser, open the browser's developer console on that tab and run:
-
-```js
-const { csrf } = await (await fetch("/api/bootstrap")).json();
-await (await fetch("/api/settings", { method: "PATCH", headers: { "content-type": "application/json", "x-csrf": csrf }, body: JSON.stringify({ egressPrivateAllow: ["searxng", "nas.local"] }) })).json();
-```
-
-The list you send replaces the old one, and it applies at once.
 
 ## Environment variables
 

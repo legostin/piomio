@@ -153,7 +153,7 @@ The others follow the same pattern: `moonshot_api_key`, `deepseek_api_key`, `zhi
 
 ### Your own model server
 
-`api:custom` talks to `http://127.0.0.1:11434/v1` (Ollama) with the model `llama3.1` until you change them: ask the assistant, or set **OpenAI-compatible server URL** and **OpenAI-compatible server model** in the **API brain** plugin's settings. A server on the same computer is always reachable. One elsewhere on your network has to be allowed: add its host to **Extra allowed hosts** in **Settings** → **General** → **Brains** (`brainEgressAllow`). Because its address is a private one, it also has to be in `egressPrivateAllow`, which has no field yet ([Settings and environment variables](settings.md)).
+`api:custom` talks to `http://127.0.0.1:11434/v1` (Ollama) with the model `llama3.1` until you change them: ask the assistant, or set **OpenAI-compatible server URL** and **OpenAI-compatible server model** in the **API brain** plugin's settings. A server on the same computer is always reachable. One elsewhere on your network has to be allowed: when the brain first reaches it, a network card, **Address in your network**, asks you in the chat; or add its host under **Settings** → **General** → **Brains** → **Addresses in my network** ([Settings and environment variables](settings.md)).
 
 ### Keys that work either way
 
