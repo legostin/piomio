@@ -5,7 +5,7 @@
   "settings.headless.description": "auto — a window if there is a display (Linux with DISPLAY, e.g. Xvfb), otherwise headless; always — always headless; never — always with a window",
   "settings.idleMinutes.title": "Close after inactivity, minutes",
   "settings.allowLocalNetwork.title": "Allow the agent to open local addresses",
-  "settings.allowLocalNetwork.description": "localhost, 192.168.*, 10.* and the like. By default the agent cannot open addresses of this server or the local network",
+  "settings.allowLocalNetwork.description": "localhost, 192.168.*, 10.* and the like, without asking. By default the agent cannot open addresses of this computer, and a host of your own network only after you allow it on a network card",
   "settings.takeoverWaitSec.title": "Agent wait during takeover, seconds",
   "settings.takeoverWaitSec.description": "How long an agent tool waits for you to hand control of the browser back",
   "settings.maxDownloadMb.title": "Maximum download size, MB",

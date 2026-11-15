@@ -219,6 +219,36 @@ describe("web_fetch", () => {
   });
 });
 
+describe("behind the hub's proxy", () => {
+  const lookup = async (h: string) => (h === "jira.corp.example" ? ["10.20.30.40"] : h === "rebind.example" ? ["127.0.0.1"] : h === "meta.example" ? ["169.254.169.254"] : ["93.184.216.34"]);
+  const page = (calls: string[]) => (async (u: any) => {
+    calls.push(String(u));
+    return new Response("inside", { status: 200, headers: { "content-type": "text/plain" } });
+  }) as typeof fetch;
+
+  it("a host of the person's own network is the hub's to decide: the fetch goes to its proxy", async () => {
+    const calls: string[] = [];
+    const got = await guardedFetch("http://jira.corp.example/x", { hubDecides: true, lookup, fetchImpl: page(calls) });
+    expect(got.text).toBe("inside");
+    expect(calls).toEqual(["http://jira.corp.example/x"]);
+  });
+
+  it("what the hub's proxy did not let through is explained, with the way to ask the person", async () => {
+    const refused = (async () => { throw new TypeError("fetch failed"); }) as typeof fetch;
+    await expect(guardedFetch("http://jira.corp.example/x", { hubDecides: true, lookup, fetchImpl: refused })).rejects.toThrow(/private address \(10\.20\.30\.40\).*hub_network_request/s);
+    // A public host that fails is not explained as a permission.
+    await expect(guardedFetch("http://public.example/", { hubDecides: true, lookup, fetchImpl: refused })).rejects.toThrow("fetch failed");
+  });
+
+  it("this computer and metadata addresses stay closed here, hub or not; and a network address without the hub", async () => {
+    const calls: string[] = [];
+    for (const url of ["http://rebind.example/", "http://meta.example/", "http://127.0.0.1:8081/", "http://localhost/"])
+      await expect(guardedFetch(url, { hubDecides: true, lookup: async (h) => (h === "localhost" ? ["127.0.0.1"] : lookup(h)), fetchImpl: page(calls) }), url).rejects.toThrow(/private or internal address/);
+    await expect(guardedFetch("http://jira.corp.example/x", { lookup, fetchImpl: page(calls) })).rejects.toThrow(/private or internal address/);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("web_rss", () => {
   let h: PluginHarness;
   beforeAll(async () => {

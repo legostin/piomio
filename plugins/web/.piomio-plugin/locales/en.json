@@ -6,7 +6,7 @@
   "settings.searxngUrl.title": "SearXNG address",
   "settings.searxngUrl.description": "For example, http://searxng:8080 (the json format must be enabled in the instance settings)",
   "settings.allowPrivate.title": "Allow local addresses",
-  "settings.allowPrivate.description": "Let web_fetch reach local network addresses (10.x, 192.168.x, 127.x, etc.). Unsafe: enable only if you know why you need it.",
+  "settings.allowPrivate.description": "Let web_fetch reach every local address, this computer's included (10.x, 192.168.x, 127.x, etc.). Unsafe: enable only if you know why you need it. A host of your own network that you allowed on a network card, or in Settings under Addresses in my network, opens without this.",
   "settings.userAgent.title": "User-Agent",
   "settings.userAgent.description": "User-Agent header for requests (optional)",
   "settings.braveBaseUrl.title": "Brave API address",

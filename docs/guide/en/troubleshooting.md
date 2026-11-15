@@ -233,9 +233,9 @@ Chromium needs system libraries, which the installer puts in only on the first i
 /home/piomio/.local/lib/piomio/current/runtime/bin/node /home/piomio/.local/lib/piomio/current/node_modules/playwright/cli.js install-deps chromium
 ```
 
-### "… resolves to a private address; add it to egressPrivateAllow to allow"
+### "… resolves to a private address … inside the person's network"
 
-A plugin or a brain tried to reach a host on your local network, which the egress filter refuses. If that host is yours, add it to `egressPrivateAllow`, see [Settings without a field](settings.md#settings-without-a-field).
+An agent's tool or command reached for a host inside your network (an office or home server, a VPN), which is closed until you allow it. The agent's chat shows a card, **Address in your network**: press **Allow once** or **Always allow**. No card in sight? Ask the agent to open the host again. To open several at once, such as `*.corp.example`, add them under **Settings** → **General** → **Brains** → **Addresses in my network**. The hub's computer has to be on that network, or its VPN, itself. See [The network filter](security.md#the-network-filter).
 
 ## Agents and access
 

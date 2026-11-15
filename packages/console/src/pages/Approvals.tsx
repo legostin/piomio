@@ -194,7 +194,7 @@ function ApprovalCard({ a, highlighted, now }: { a: ApprovalView; highlighted: b
         )}
 
         {a.ask?.kind === "network" && <Callout tone="warn" title={t("approvals.network.scope")}>
-          {t(a.ask.ipLiteral ? "approvals.network.ip" : "approvals.network.always")}
+          {t(a.ask.private ? "approvals.network.private" : a.ask.ipLiteral ? "approvals.network.ip" : "approvals.network.always", { addresses: a.ask.addresses?.join(", ") ?? "" })}
         </Callout>}
         <ToolLine tool={a.tool} description={a.toolDescription} />
         <InputView input={a.input} />

@@ -180,11 +180,21 @@ export function registerHubTools(hub: Hub): void {
 
   reg({
     name: "network_request", effect: "read",
-    description: "Ask the person to allow a public host for this local brain session. Uses the network card: once for this session, always in the host allowlist, or deny. Never grants permission to publish, send or run commands. Waits up to 10 minutes without opening a connection to that host. Private/LAN/metadata addresses are refused. Also use this after a proxy 403 to get a clear outcome. Never automatically retry expired or denied access.",
-    inputSchema: obj({ host: { type: "string", description: "Exact DNS name or public IP, without a URL or wildcard" }, port: { type: "integer", minimum: 1, maximum: 65535 } }, ["host"]),
+    description:
+      "Ask the person to allow a host. Uses the network card: once for this session, always, or deny. " +
+      "A public host: for this local brain session's shell (always: the host allowlist). " +
+      "A host inside the person's own network (it resolves to a private address: an office or home server, a VPN, a NAS): for your shell and for the tools that open addresses (web_fetch, the browser); only the person answers that card (always: their list of private hosts). " +
+      "The hub shows the same card by itself when a tool or a command reaches for such a host, so call this after a refusal that names a private address, or when the person asks you to open one. " +
+      "Never grants permission to publish, send or run commands. Waits up to 10 minutes without opening a connection to that host. This computer itself (localhost), link-local and metadata addresses are refused. Also use this after a proxy 403 to get a clear outcome. Never automatically retry expired or denied access, and never tell the person to edit a network setting by its name: the card is how they allow a host.",
+    inputSchema: obj({ host: { type: "string", description: "Exact DNS name or IP, without a URL or wildcard" }, port: { type: "integer", minimum: 1, maximum: 65535 } }, ["host"]),
   }, async (i, ctx) => {
-    await hub.egress.requestHost(ctx.sessionId, String(i.host ?? ""), Number(i.port ?? 443));
-    return text(`Network access to ${i.host}:${i.port ?? 443} is allowed. Commands and external actions still need their own approval.`);
+    const host = String(i.host ?? "");
+    const port = Number(i.port ?? 443);
+    if (hub.egress.hasSession(ctx.sessionId)) await hub.egress.requestHost(ctx.sessionId, host, port);
+    // No shell behind the hub's proxy (a dialog, a brain on another computer): only a host inside the person's network is theirs to open here.
+    else if (!(await hub.egress.requestPrivate({ sessionId: ctx.sessionId, conversationId: ctx.conversationId, agentId: ctx.agentId, taskId: ctx.taskId }, host, port)))
+      return text(`${host} is a public host: web_fetch and the browser reach it without a permission, and this session has no shell behind the hub's proxy to allow it for.`);
+    return text(`Network access to ${host}:${port} is allowed. Commands and external actions still need their own approval.`);
   });
 
   reg({
@@ -249,12 +259,14 @@ export function registerHubTools(hub: Hub): void {
         'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card); ' +
         'voice {voice: a voice id from hub_speech_status, speed: 0.5–2} (how the hub\'s local voice speaks); ' +
         'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install). ' +
-        "Propose a network host via hub_network_request; only its card or the user settings can change the network allowlist. A custom speech-to-text server can only be changed by the user in settings.",
+        "Propose a network host (a public one, or one inside the person's network) via hub_network_request; only its card or the user settings can change the network lists. A custom speech-to-text server can only be changed by the user in settings.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
     },
     async (i, ctx) => {
       const patch = (i.patch && typeof i.patch === "object" ? i.patch : {}) as Record<string, unknown>;
       const refused = Object.keys(patch).filter((k) => !(AGENT_SETTABLE as readonly string[]).includes(k));
+      if (refused.some((k) => k === "brainEgressAllow" || k === "egressPrivateAllow"))
+        return text(`Refused: ${refused.join(", ")}. The network lists are the person's. To open a host, call hub_network_request with it: the person answers on its card (once or always). Do not send them to the settings for it.`, true);
       if (refused.length) return text(`Refused: ${refused.join(", ")} can only be changed by the user in the settings panel (gear icon → Settings).`, true);
       if (!Object.keys(patch).length) return text("Nothing to change.", true);
       // A server of the agent's choosing would receive the person's voice: that one stays with the person.

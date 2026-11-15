@@ -165,6 +165,33 @@ export function isPrivateHost(hostname: string): boolean {
   return !h.includes(".");
 }
 
+/** This computer itself and link-local addresses (cloud metadata lives there): never the hub's to open for an agent. */
+export function isThisComputerHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (!h) return true;
+  if (isIPv4(h)) {
+    const [a, b] = h.split(".").map(Number);
+    return a === 0 || a === 127 || (a === 169 && b === 254);
+  }
+  if (isIPv6(h)) {
+    if (h === "::1" || h === "::") return true;
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(h);
+    if (mapped) return isThisComputerHost(mapped[1]);
+    return /^fe[89ab]/.test(h);
+  }
+  return h === "localhost" || h.endsWith(".localhost");
+}
+
+/**
+ * Whether the agent may not open this host. Behind the hub's proxy (`viaHub`) a host in a network of the person's own
+ * is the hub's to decide: it asks them on a network card and refuses the connection otherwise, so only this computer
+ * is closed here. Without the proxy nothing stands behind this check, and the whole local network stays closed.
+ */
+export function closedToAgent(hostname: string, o: { allowLocalNetwork: boolean; viaHub: boolean }): boolean {
+  if (o.allowLocalNetwork) return false;
+  return o.viaHub ? isThisComputerHost(hostname) : isPrivateHost(hostname);
+}
+
 /** Accepts "example.com", "localhost:3000", full http(s) URLs and about:blank. Throws a ToolError with a code for the pane. */
 export function normalizeUrl(input: string): URL {
   const s = String(input ?? "").trim();

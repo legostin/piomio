@@ -1,6 +1,6 @@
 {
   "name": "API-интеллект",
-  "description": "Собственная петля агента поверх API: Anthropic (Messages API), OpenAI, OpenRouter и любые OpenAI-совместимые серверы (Ollama, LM Studio, vLLM). Ссылки на интеллект: api:anthropic, api:openai, api:openrouter, api:custom. Запросы к моделям идут через сетевой прокси сессии интеллекта: чтобы подключить сервер в локальной сети, добавьте его хост в настройку хаба «brainEgressAllow» (localhost доступен всегда).",
+  "description": "Собственная петля агента поверх API: Anthropic (Messages API), OpenAI, OpenRouter и любые OpenAI-совместимые серверы (Ollama, LM Studio, vLLM). Ссылки на интеллект: api:anthropic, api:openai, api:openrouter, api:custom. Запросы к моделям идут через сетевой прокси сессии интеллекта: чтобы подключить сервер в локальной сети, разрешите его хост на сетевой карточке, которую хаб покажет в чате, или впишите его в настройках в поле «Адреса в моей сети» (localhost доступен всегда).",
   "settings.defaultVariant.title": "Вариант по умолчанию",
   "settings.defaultVariant.description": "Используется для ссылки «api» без варианта.",
   "settings.anthropicModel.title": "Модель Anthropic по умолчанию",
@@ -41,7 +41,7 @@
   "error.mcpUnavailable": "MCP-шлюз хаба недоступен: {detail}",
   "error.refusal": "Модель отказалась отвечать.",
   "error.refusalDetail": "Модель отказалась отвечать ({detail}).",
-  "error.egressDenied": "Доступ к хосту запрещён политикой сети хаба ({message}). Добавьте хост в настройку «brainEgressAllow».",
+  "error.egressDenied": "Доступ к хосту запрещён политикой сети хаба ({message}). Разрешите его на сетевой карточке в чате или впишите в настройках хаба.",
   "error.keyRejected": "Ключ API отклонён ({provider}, {status}): {message}",
   "error.notFound": "{provider}: модель или адрес не найдены (404): {message}",
   "error.api": "{provider}: ошибка API {status}: {message}",

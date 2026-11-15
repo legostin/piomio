@@ -738,7 +738,7 @@ describe("hub (integration)", () => {
 
     expect(await say(chat, "hub_settings_update", { patch: { digestTimes: ["08:30"], timezone: "Europe/Berlin" } })).toMatch(/Settings updated/);
     expect((await web.req("GET", "/api/settings")).digestTimes).toEqual(["08:30"]);
-    expect(await say(chat, "hub_settings_update", { patch: { brainEgressAllow: ["evil.example"] } })).toMatch(/only be changed by the user/);
+    expect(await say(chat, "hub_settings_update", { patch: { brainEgressAllow: ["evil.example"] } })).toMatch(/network lists are the person.s.*hub_network_request/);
     expect((await web.req("GET", "/api/settings")).brainEgressAllow).toEqual([]);
 
     expect(await say(chat, "hub_agent_save", { name: "Helper", avatar: { color: "pink", shape: "star" }, brains: ["fake@local"], prompt: "Help." })).toMatch(/helper created/);

@@ -6,7 +6,7 @@
   "settings.searxngUrl.title": "Адрес SearXNG",
   "settings.searxngUrl.description": "Например, http://searxng:8080 (в настройках инстанса должен быть включён формат json)",
   "settings.allowPrivate.title": "Разрешить локальные адреса",
-  "settings.allowPrivate.description": "Разрешить web_fetch обращаться к адресам локальной сети (10.x, 192.168.x, 127.x и т. п.). Небезопасно: включайте, только если понимаете зачем.",
+  "settings.allowPrivate.description": "Разрешить web_fetch обращаться к любым локальным адресам, включая сам этот компьютер (10.x, 192.168.x, 127.x и т. п.). Небезопасно: включайте, только если понимаете зачем. Хост своей сети, разрешённый на сетевой карточке или в настройках в поле «Адреса в моей сети», открывается и без этого.",
   "settings.userAgent.title": "User-Agent",
   "settings.userAgent.description": "Заголовок User-Agent для запросов (необязательно)",
   "settings.braveBaseUrl.title": "Адрес API Brave",
