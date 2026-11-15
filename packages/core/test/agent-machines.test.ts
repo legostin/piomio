@@ -153,6 +153,41 @@ describe("agents bound to computers (integration)", () => {
     }
   });
 
+  it("thinks on another replica's computer through the machine that serves it, named by the replica (own-node.ts)", async () => {
+    // The VPS leads; the Mac's hub is on standby and its own daemon (here the machine "box") serves its computer.
+    hub.db.prepare("insert into replicas(id, name, public_key, priority, created_at, machine_id) values (?,?,?,?,?,?)").run("rep_box", "box-hub", "x", 2, new Date().toISOString(), "mach_box");
+    try {
+      const list = (await web.req("GET", "/api/computers")) as Computer[];
+      expect(list.find((x) => x.id === "rep_box")).toEqual({ id: "rep_box", aliases: ["mach_box"], name: "box", online: true });
+      expect(list.some((x) => x.id === "mach_box")).toBe(false);
+      expect(hub.machines.canonical("mach_box")).toBe("rep_box");
+
+      // By the machine's id or by the computer's name, the binding keeps the replica: the same id whoever leads.
+      await web.req("PUT", "/api/agents/coder", { machines: ["mach_box"] });
+      expect(hub.agents.get("coder")!.machines).toEqual(["rep_box"]);
+      await web.req("PUT", "/api/agents/coder", { machines: ["box"] });
+      expect(hub.agents.get("coder")!.machines).toEqual(["rep_box"]);
+
+      const c = await dialogOf("coder");
+      await say(c, "through the box");
+      await idle(c);
+      expect(await lastAssistant(c)).toBe("fake heard: through the box");
+      expect(hub.store.activeSession(c, "coder")!.brainRef).toBe("fake@mach_box");
+
+      // Its machine gone, the computer is off, under the name the list shows.
+      disconnect();
+      hub.runner.waits = { ...hub.runner.waits, dialogMs: 0 };
+      await say(c, "still there?");
+      await idle(c);
+      expect(errorOf((await messages(c)).at(-1)!)).toMatch(/^Coder works only on box, and it is not online now/);
+    } finally {
+      hub.runner.waits = { ...hub.runner.waits, dialogMs: 30 * 60_000 };
+      connect();
+      hub.db.prepare("delete from replicas where id = 'rep_box'").run();
+      await web.req("PUT", "/api/agents/coder", { machines: ["mach_box"] });
+    }
+  });
+
   it("takes the hub's own computer as local or by its name", async () => {
     await web.req("PUT", "/api/agents/coder", { machines: ["local"] });
     try {

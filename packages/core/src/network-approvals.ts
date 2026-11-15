@@ -9,7 +9,7 @@ import type { AuditLog } from "./audit.ts";
 import type { AgentRegistry } from "./agents.ts";
 import { agentName } from "./agents.ts";
 import { hubLocale, t } from "./i18n.ts";
-import { NETWORK_APPROVAL_WAIT_MS, networkPattern, type EgressProxy, type NetworkRequest } from "./egress.ts";
+import { NETWORK_APPROVAL_WAIT_MS, networkPattern, privatePattern, type EgressProxy, type NetworkRequest } from "./egress.ts";
 import type { AutoMode } from "./policy/auto.ts";
 
 export function wireNetworkApprovals(d: {
@@ -30,6 +30,15 @@ export function wireNetworkApprovals(d: {
   approvals.onNetworkRemember = (a) => {
     // Already on the allowlist: "always" cannot widen it, the once decision stands.
     if (a.ask?.listed) return;
+    if (a.ask?.private) {
+      // A host inside the person's network goes on the private list alone, as the exact host the card showed.
+      const host = privatePattern(a.ask.host ?? "");
+      if (host.startsWith("*.")) throw new Error("A network card may authorize only its exact destination");
+      settings.update({ egressPrivateAllow: [...new Set([...settings.get().egressPrivateAllow, host])] });
+      audit.append("user", "egress.private.always", host, { approvalId: a.id, sessionId: a.sessionId, port: a.ask.port, addresses: a.ask.addresses });
+      approvals.bus.emit("settings.updated", { keys: ["egressPrivateAllow"] });
+      return;
+    }
     const host = networkPattern(a.ask?.host ?? "");
     if (host.startsWith("*.")) throw new Error("A network card may authorize only its exact destination");
     const current = settings.get().brainEgressAllow;
@@ -51,14 +60,16 @@ export function wireNetworkApprovals(d: {
     const question = {
       sessionId: r.sessionId, conversationId: r.conversationId, taskId: r.taskId, agentId: r.agentId,
       tool: "hub_network_request", input: { host: r.host, port: r.port },
-      summary: t("network.ask", { host: r.host, port: r.port }),
+      summary: r.private ? t("network.askPrivate", { host: r.host, port: r.port, addresses: r.private.join(", ") }) : t("network.ask", { host: r.host, port: r.port }),
       ask: { kind: "network" as const, detail: `${r.host}:${r.port}`, host: r.host, port: r.port, ipLiteral: !!isIP(r.host),
-        agent: agent ? agentName(agent, hubLocale()) : r.agentId, ...(task ? { task: task.title } : {}), ...(r.listed ? { listed: true } : {}) },
+        agent: agent ? agentName(agent, hubLocale()) : r.agentId, ...(task ? { task: task.title } : {}), ...(r.listed ? { listed: true } : {}),
+        ...(r.private ? { private: true, addresses: r.private } : {}) },
       effect: "read" as const, tainted: session.tainted,
     };
     // The person allowed this destination after auto mode had stopped it.
     if (approvals.takeAllowance(r.sessionId, question.tool, (i) => !!i && typeof i === "object" && (i as any).host === r.host && (i as any).port === r.port)) return;
-    if (d.auto && settings.get().approvalMode !== "ask") {
+    // The person's own network is theirs to open: no reviewer answers for it.
+    if (d.auto && settings.get().approvalMode !== "ask" && !r.private) {
       const why = r.listed
         ? `the session has read outside content: what its commands send to ${r.host} leaves this computer`
         : "a host outside the brain allowlist";

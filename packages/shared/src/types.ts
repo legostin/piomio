@@ -164,6 +164,9 @@ export interface ApprovalAsk {
   ipLiteral?: boolean;
   /** A host on the allowlist, asked about because the session has read outside content: no "always" to offer. */
   listed?: boolean;
+  /** A host inside the person's own network (`addresses`: what it resolves to): "always" puts it on the private list. */
+  private?: boolean;
+  addresses?: string[];
   agent?: string;
   task?: string;
   /** Server deadline for a live network permission; does not promise that a TCP client stays connected. */
@@ -610,8 +613,11 @@ export interface Task {
   /**
    * "message": a thread between two agents of the team (team_message); it reads like a conversation, not a job.
    * "goal": a long goal (the /goal command): it keeps going round after round until the agent reports it reached.
+   * "errand": a short job an agent handed off from a chat (task_delegate `quick`): the chat shows the agent thinking on
+   * it, not a task; it stays out of the task list, and its thread goes a day after it finished. One still going after
+   * ERRAND_MINUTES or asking a question becomes an ordinary task (the kind is cleared).
    */
-  kind?: "message" | "goal";
+  kind?: "message" | "goal" | "errand";
   /** A goal's rounds so far (kind "goal"): it pauses every GOAL_ROUNDS of them. */
   rounds?: number;
   /** A thread's other side (kind "message"): the teammate who wrote. `agentId` is the one answering. */
@@ -920,7 +926,11 @@ export interface BrainSessionOptions {
     denyRead: string[];
     allowRead: string[];
     allowWrite?: string[];
-    permissionTool: string;
+    /**
+     * Unset: nothing goes past the sandbox; what it does not let through is refused on this computer. A hub replica's
+     * own daemon (core own-node.ts) asks nobody: the leader would judge such a request by its own computer's paths.
+     */
+    permissionTool?: string;
     /** Local sandbox routes these hosts to the authenticated hub proxy. ["*"] lets the hub ask about new hosts. */
     network?: { allowedDomains: string[] };
   };
@@ -1164,10 +1174,12 @@ export interface WorkRule {
 
 /**
  * A computer an agent may be bound to (AgentDef.machines): the hub's own (`id` its replica id in a cluster, else
- * "local"), a paired machine, or another replica of the hub (`standby`: it is not leading, so nothing runs there now).
+ * "local"), a paired machine, or another replica of the hub, by its replica id whoever leads. Such a replica's
+ * computer thinks through the machine that serves it while another one leads (its alias); with none it is `standby`:
+ * nothing runs there now.
  */
 export interface Computer {
-  /** Existing executor ids on this computer; refs keep using them. */
+  /** Existing executor ids on this computer (machines that serve it); refs keep using them. */
   aliases?: string[];
   id: string;
   name: string;

@@ -259,7 +259,8 @@ export function sandboxSettings(confine: NonNullable<BrainSessionOptions["confin
       failIfUnavailable: true,
       // A networked command can publish even while staying in its folder. Keep the hub's command review in play.
       autoAllowBashIfSandboxed: !allowedDomains,
-      allowUnsandboxedCommands: true,
+      // With nobody to ask, a command never retries outside the sandbox.
+      allowUnsandboxedCommands: !!confine.permissionTool,
       filesystem: { denyRead: confine.denyRead, allowRead: confine.allowRead, ...(confine.allowWrite?.length ? { allowWrite: confine.allowWrite } : {}) },
       // Keep Claude's proxy: it enforces the OS boundary and uses HTTP(S)_PROXY as its authenticated upstream.
       // httpProxyPort would replace that proxy, and sandbox clients would no longer supply the hub's credential.
@@ -361,8 +362,9 @@ class ClaudeCodeSession implements BrainSessionImpl {
     const all = withHubTools(this.p.allowedTools?.() ?? DEFAULT_CLAUDE_TOOLS);
     const tools = (confine ? all.filter((x) => CONFINED_ALLOWED.test(x)) : all).filter((x) => !this.o.frontDesk || !FRONT_DESK_DENIED.includes(x));
     const asks = !confine && !this.o.frontDesk && !!this.o.askTool && !!this.p.asks?.();
+    // Confined with nobody to ask (no permission tool), what needs a yes is refused: there is no prompt tool to ask.
     const mode = confine
-      ? ["--permission-mode", "acceptEdits", "--permission-prompt-tool", `mcp__piomio__${confine.permissionTool}`, "--settings", join(this.dir, "settings.json")]
+      ? ["--permission-mode", "acceptEdits", ...(confine.permissionTool ? ["--permission-prompt-tool", `mcp__piomio__${confine.permissionTool}`] : []), "--settings", join(this.dir, "settings.json")]
       : asks
         ? ["--permission-mode", "default", "--permission-prompt-tool", `mcp__piomio__${this.o.askTool}`]
         : ["--permission-mode", "dontAsk"];

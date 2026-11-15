@@ -124,7 +124,7 @@ Tap a picture or a video in the chat to open the viewer. It holds all the chat's
 - swipe or the arrows go to the next item, and a drag down or **Close** closes it;
 - **Download** saves the file (the desktop app puts it in Downloads, the iPhone app opens the share sheet), and **Open the original** opens the file itself.
 
-Other files show as a chip that opens the file.
+Other files show as a chip. A document opens inside the app: Markdown drawn, other text and code as it is, a PDF in its own viewer (on the iPhone, a PDF opens the share sheet, whose preview shows it whole); **Download** saves it. Any other file is saved at once, the same way.
 
 ### The library
 

@@ -12,6 +12,7 @@ import { AuthScreen } from "./pages/Auth";
 import { Layout, TopBar } from "./components/Layout";
 import { Toasts } from "./components/Toasts";
 import { MediaViewer } from "./components/viewer/MediaViewer";
+import { FileViewer } from "./components/viewer/FileViewer";
 import { FirstRunGate } from "./components/FirstRun";
 import { Button, EmptyState } from "./components/ui";
 import { OwlMark } from "./components/OwlMark";
@@ -54,6 +55,7 @@ export function App() {
       {p.kind === "ready" && <FirstRunGate>{mobileMode ? <MobileApp /> : <ReadyApp />}</FirstRunGate>}
       {p.kind === "ready" && <LibrarySheet />}
       {p.kind === "ready" && <MediaViewer />}
+      {p.kind === "ready" && <FileViewer />}
       <Toasts />
     </>
   );

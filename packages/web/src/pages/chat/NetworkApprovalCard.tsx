@@ -1,6 +1,6 @@
 import type { MessagePart } from "@piomio/shared";
 import { useEffect, useState } from "react";
-import { Globe } from "lucide-react";
+import { Globe, Network } from "lucide-react";
 import { ApprovalActions } from "./ApprovalActions";
 import { t } from "../../i18n";
 import { api, errorText } from "../../lib/api";
@@ -28,15 +28,16 @@ export function NetworkApprovalCard({ part }: { part: Extract<MessagePart, { typ
     finally { setRetrying(false); }
   };
   return (
-    <section className="w-full max-w-md rounded-2xl border border-warning/35 bg-surface p-3.5 shadow-card" aria-label={t("message.network.title")}>
-      <div className="flex items-center gap-2 text-sm font-semibold"><Globe className="size-4" />{t("message.network.title")}</div>
+    <section className="w-full max-w-md rounded-2xl border border-warning/35 bg-surface p-3.5 shadow-card" aria-label={t(ask.private ? "message.network.privateTitle" : "message.network.title")}>
+      <div className="flex items-center gap-2 text-sm font-semibold">{ask.private ? <Network className="size-4" /> : <Globe className="size-4" />}{t(ask.private ? "message.network.privateTitle" : "message.network.title")}</div>
       <div className="mt-2 break-all font-mono text-sm">{ask.host}:{ask.port}</div>
+      {ask.private && !!ask.addresses?.length && <div className="mt-1 break-all font-mono text-xs text-muted">{t("message.network.resolves", { addresses: ask.addresses.join(", ") })}</div>}
       <div className="mt-2 text-xs text-muted">{t("message.network.agent", { agent: ask.agent ?? "" })}</div>
       {ask.task && <div className="mt-1 break-words text-xs text-muted">{t("message.network.task", { task: ask.task })}</div>}
       <p className="mt-2 text-xs text-muted">{t("message.network.scope")}</p>
       {pending && seconds !== undefined && <p className="mt-1 text-xs text-muted" role="timer">{t("message.network.remaining", { minutes: Math.floor(seconds / 60), seconds: seconds % 60 })}</p>}
-      <p className="mt-1 text-xs text-muted">{t(ask.listed ? "message.network.listed" : "message.network.always")}</p>
-      {ask.ipLiteral && <p role="note" className="mt-2 text-xs font-medium text-warning">{t("message.network.ip")}</p>}
+      <p className="mt-1 text-xs text-muted">{t(ask.private ? "message.network.privateAlways" : ask.listed ? "message.network.listed" : "message.network.always")}</p>
+      {ask.ipLiteral && !ask.private && <p role="note" className="mt-2 text-xs font-medium text-warning">{t("message.network.ip")}</p>}
       {pending ? <ApprovalActions approvalId={part.approvalId} network always={!ask.listed} /> : <div className="mt-2 text-sm">{t(`approvalStatus.${status}`)}</div>}
       {status === "expired" && <p className="mt-1 text-xs text-muted">{t(ask.networkClosedReason === "connection_closed" ? "message.network.disconnected" : ask.networkClosedReason === "session_ended" ? "message.network.sessionEnded" : ask.networkClosedReason === "timeout" || (part.status === "pending" && !pending) ? "message.network.timedOut" : "message.network.expired")}</p>}
       {["expired", "denied"].includes(status) && (

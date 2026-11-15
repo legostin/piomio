@@ -1,5 +1,7 @@
 // A task the agent started (a `task` part): one quiet line in its reply with who works on it, where, and how it goes,
 // kept live by "task.updated". It opens the task; the work itself stays there.
+// A short errand (Task kind "errand") is no task to the person: "<agent> is thinking about …" while it goes, nothing once
+// it finished (the agent's answer follows in the chat).
 // A message to a teammate (a `task` part with `text`) shows as the message itself: who wrote to whom, what, how it
 // goes, and the answer right under it once it came. It opens the thread.
 
@@ -36,6 +38,19 @@ export function TaskLine({ taskId, text, reply, from }: { taskId: string; text?:
   if (text !== undefined) return <MessageLine task={task} text={text} reply={reply} from={from ?? task.from} agentList={agentList} />;
   const agent = agentList?.find((a) => a.id === task.agentId);
   const name = agent?.name ?? task.agentId;
+  if (task.kind === "errand") {
+    if (task.status === "done" || task.status === "failed" || task.status === "cancelled") return null;
+    const step = task.status === "running" && work ? stepText(work) : undefined;
+    return (
+      <div title={step} className="flex w-full max-w-md items-center gap-2 py-0.5 text-[13px]">
+        <AgentAvatar avatar={agent?.avatar} id={task.agentId} name={name} size={22} running />
+        <span className="min-w-0 flex-1 truncate text-muted">
+          <span className="font-medium text-fg">{name}</span> {t("task.errandThinking", { title: task.title })}
+        </span>
+        <span className="live-dot size-1.5 shrink-0 rounded-full" />
+      </div>
+    );
+  }
   const machineId = task.machineId ?? (task.brainRef ? brainMachine(task.brainRef) : "local");
   const where = machineId === "local" ? undefined : (machines?.find((m) => m.id === machineId)?.name ?? machineId);
   const st = taskStatus(task.status);

@@ -95,6 +95,9 @@ const CSS = `
 .obb-ntp .obb-omni-field:focus-within{border-color:var(--accent)}
 .obb-ntp-mark{display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:18px;background:var(--accent-soft);color:var(--accent-text)}
 .obb-ntp-mark svg{width:28px;height:28px}
+.obb-ntp-machine{font-size:13px;text-align:center;max-width:min(560px,100%)}
+.obb-machine{display:inline-flex;align-items:center;gap:5px;flex:none;max-width:140px;height:26px;padding:0 9px;border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:12px;cursor:default}
+.obb-machine svg{width:13px;height:13px;flex:none}
 .obb-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;width:min(560px,100%)}
 .obb-tile{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;padding:14px 6px 10px;border:0;border-radius:14px;background:transparent;color:inherit;font:inherit;cursor:pointer}
 .obb-tile:hover{background:var(--surface-2)}

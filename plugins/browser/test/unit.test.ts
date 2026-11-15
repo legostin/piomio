@@ -6,6 +6,7 @@ import {
   findChrome,
   launchArgs,
   windowedUserAgent,
+  closedToAgent,
   isPrivateHost,
   normalizeUrl,
   proxyFromEnv,
@@ -99,6 +100,16 @@ describe("urls", () => {
     for (const h of ["example.com", "8.8.8.8", "172.32.0.1", "2001:4860:4860::8888"]) expect(isPrivateHost(h), h).toBe(false);
     // WHATWG URL normalizes numeric hosts, so decimal tricks are caught too.
     expect(isPrivateHost(new URL("http://2130706433/").hostname)).toBe(true);
+  });
+
+  it("behind the hub's proxy only this computer is closed here: a network of the person's own is the hub's to decide", () => {
+    const hub = { allowLocalNetwork: false, viaHub: true };
+    for (const h of ["localhost", "app.localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254", "[::1]", "::ffff:127.0.0.1", "fe80::1"]) expect(closedToAgent(h, hub), h).toBe(true);
+    for (const h of ["192.168.1.10", "10.1.2.3", "100.100.1.1", "nas", "nas.local", "fd12::1", "jira.corp.example", "example.com"]) expect(closedToAgent(h, hub), h).toBe(false);
+    // Without the proxy nothing stands behind this check, so it keeps the whole local network closed.
+    for (const h of ["192.168.1.10", "nas.local", "localhost"]) expect(closedToAgent(h, { allowLocalNetwork: false, viaHub: false }), h).toBe(true);
+    expect(closedToAgent("example.com", { allowLocalNetwork: false, viaHub: false })).toBe(false);
+    for (const h of ["localhost", "192.168.1.10"]) expect(closedToAgent(h, { allowLocalNetwork: true, viaHub: true }), h).toBe(false);
   });
 
   it("normalizes user input", () => {

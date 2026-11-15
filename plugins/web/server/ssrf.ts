@@ -1,7 +1,7 @@
 // SSRF guard: refuse URLs whose host resolves to private, loopback, link-local or otherwise internal addresses.
 
 import { lookup as dnsLookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 
 export type LookupFn = (host: string) => Promise<string[]>;
 
@@ -91,7 +91,22 @@ export function isPrivateAddress(ip: string): boolean {
   return false;
 }
 
-export class BlockedUrlError extends Error {}
+export class BlockedUrlError extends Error {
+  /** Every private address the host resolves to is in a network of the person's own, which the hub may have opened. */
+  lan?: { host: string; addresses: string[] };
+}
+
+/** Networks of the person's own (home, office, VPN, tailnet): the hub's proxy knows which hosts there they opened. */
+const lanNets = new BlockList();
+for (const [a, p] of [["10.0.0.0", 8], ["100.64.0.0", 10], ["172.16.0.0", 12], ["192.168.0.0", 16]] as const) lanNets.addSubnet(a, p, "ipv4");
+lanNets.addSubnet("fc00::", 7, "ipv6");
+
+export function isLanAddress(ip: string): boolean {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  const addr = mapped ? mapped[1] : ip.split("%")[0];
+  const v = isIP(addr);
+  return v === 4 ? lanNets.check(addr, "ipv4") : v === 6 ? lanNets.check(addr, "ipv6") : false;
+}
 
 /** Only http/https URLs whose host resolves exclusively to public addresses. */
 export async function assertPublicUrl(url: URL, lookup: LookupFn = defaultLookup): Promise<void> {
@@ -107,6 +122,9 @@ export async function assertPublicUrl(url: URL, lookup: LookupFn = defaultLookup
     }
   }
   if (!addrs.length) throw new Error(`Cannot resolve host ${host}`);
-  const bad = addrs.find(isPrivateAddress);
-  if (bad) throw new BlockedUrlError(`Refusing to fetch ${url.origin}: ${host} resolves to a private or internal address (${bad})`);
+  const inside = addrs.filter(isPrivateAddress);
+  if (!inside.length) return;
+  const blocked = new BlockedUrlError(`Refusing to fetch ${url.origin}: ${host} resolves to a private or internal address (${inside[0]})`);
+  if (inside.every(isLanAddress)) blocked.lan = { host, addresses: inside };
+  throw blocked;
 }

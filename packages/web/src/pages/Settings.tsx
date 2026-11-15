@@ -25,6 +25,7 @@ export interface CoreSettings {
   digestTimes: string[];
   notifyRatePerHour: number;
   brainEgressAllow: string[];
+  egressPrivateAllow: string[];
   brainEgressBuiltIn?: string[];
   channelApprovalDetails: boolean;
   brainConcurrency: number;
@@ -299,6 +300,9 @@ export function SettingsPage() {
                 <div className="mt-2 break-words font-mono">{form.brainEgressBuiltIn?.join(", ")}</div>
               </details>
               <TagInput value={form.brainEgressAllow} onChange={(v) => set("brainEgressAllow", v)} placeholder="api.example.com" />
+            </Field>
+            <Field group label={t("settings.egressPrivate")} hint={t("settings.egressPrivateHint")}>
+              <TagInput value={form.egressPrivateAllow ?? []} onChange={(v) => set("egressPrivateAllow", v)} placeholder="jira.corp.example" />
             </Field>
           </div>
         </Card>

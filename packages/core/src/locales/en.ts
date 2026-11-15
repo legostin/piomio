@@ -4,9 +4,11 @@
 export default {
   "message.invalidReply": "The original message is unavailable for reply",
   "network.ask": "Allow network access to {host}:{port}?",
+  "network.askPrivate": "Allow access to {host}:{port} inside your network ({addresses})?",
   "network.retryUnavailable": "This network request cannot be renewed. Ask the agent for a new request.",
   "network.retryMessage": "Request fresh network permission for {host}:{port} if it is still needed for this work. The old request is closed; this message does not approve it. Use a new permission card in your current session before connecting. Do not replay the old connection or automatically retry denied access.",
   "network.badList": "Enter host names or public IPs, optionally with a leading *. wildcard. URLs, ports and private addresses are not allowed.",
+  "network.badPrivateList": "Enter host names, *.domain wildcards or IP addresses of your own network. URLs, paths and ports are not allowed.",
 
   // auth
   "auth.required": "Sign-in required",

@@ -14,6 +14,10 @@ learns to do it for you.
   a browser: the live view shows **Installing Chromium**, and the agent's step waits for it.
 - **Its own profile.** Sign-ins and cookies stay between runs, in the hub's data folder
   (`plugins-data/browser/profile`). It is not your everyday Chrome: your own sign-ins and bookmarks are not in it.
+- **One per computer.** The browser runs on the computer whose hub leads, and each computer keeps its own profile:
+  a site you signed in to in the Mac's browser is not signed in in the VPS's. With more than one computer, the
+  browser's toolbar and new tab show which computer's browser it is (**The browser on vps**), and the agent says so
+  when a site asks to sign in.
 - **No window of its own** on a Mac or a PC: you see it in the live view. On a Linux machine with a display (`DISPLAY`
   set, Xvfb too), it runs with a window. The **Headless mode** setting changes that.
 - It closes after 30 minutes without use and starts again when an agent needs it.

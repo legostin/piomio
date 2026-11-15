@@ -55,7 +55,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const p = useStore(panel);
   const taskList = useStore(tasks);
   useEffect(() => ensureTasks(), []);
-  const activeTasks = (taskList ?? []).filter((x) => ACTIVE_STATUSES.includes(x.status)).length;
+  const activeTasks = (taskList ?? []).filter((x) => x.kind !== "errand" && ACTIVE_STATUSES.includes(x.status)).length;
   const tasksOpen = p.open && p.section === "tasks";
   // The plugins' live views (the agents' browser): opened from here at any time, not only when an agent works there.
   const { liveViews } = usePluginRegistry();

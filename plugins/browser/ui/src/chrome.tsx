@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { Copy, ExternalLink, Globe, GraduationCap, Hand, Loader2, MoreHorizontal } from "lucide-react";
+import { Copy, ExternalLink, Globe, GraduationCap, Hand, Loader2, Monitor, MoreHorizontal } from "lucide-react";
 import { host, iconSrc, openOutside, send, t } from "./host.ts";
 
 export function IconButton(props: {
@@ -150,5 +150,16 @@ export function ControlButton({ control, short }: { control: boolean; short?: bo
       <Hand aria-hidden />
       {label}
     </button>
+  );
+}
+
+/** Which computer this browser runs on (the hub has several): its sign-ins and history are that computer's own. */
+export function MachineChip({ machine }: { machine?: string }) {
+  if (!machine) return null;
+  return (
+    <span className="obb-machine" title={t("ui.machine.hint", { machine })}>
+      <Monitor aria-hidden />
+      <span className="obb-trunc">{machine}</span>
+    </span>
   );
 }

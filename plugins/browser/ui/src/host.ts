@@ -33,6 +33,8 @@ export interface BrowserState {
   canGoBack?: boolean;
   canGoForward?: boolean;
   searchEngine?: string;
+  /** The computer this browser runs on, when the hub has several: its sign-ins are that computer's. */
+  machine?: string;
   install?: InstallStatus;
   /** The person is showing an agent a task (teach mode); null otherwise. */
   teach?: TeachState | null;

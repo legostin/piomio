@@ -34,6 +34,20 @@ export function mediaKind(mimeType: string | undefined): MediaKind | undefined {
   return undefined;
 }
 
+const TEXT_EXT = /\.(txt|log|csv|tsv|json|jsonl|ya?ml|toml|xml|ini|conf|env|sh|zsh|bash|py|js|mjs|cjs|ts|tsx|jsx|go|rs|rb|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sql|css|scss|html?|svg|diff|patch)$/i;
+
+/**
+ * How the in-app viewer shows a file that is not a picture or a video: Markdown drawn, other text as it is, a PDF in
+ * the browser's own viewer. Undefined: it is saved instead.
+ */
+export function docKind(mimeType: string | undefined, name: string | undefined): "markdown" | "text" | "pdf" | undefined {
+  const n = name ?? "";
+  if (/\.(md|markdown)$/i.test(n) || mimeType === "text/markdown") return "markdown";
+  if (/\.pdf$/i.test(n) || mimeType === "application/pdf") return "pdf";
+  if (TEXT_EXT.test(n) || mimeType?.startsWith("text/") || /^application\/(json|xml|x-yaml|yaml|toml|x-sh)/i.test(mimeType ?? "")) return "text";
+  return undefined;
+}
+
 /** A workspace file as the page loads it, and as it is saved. */
 export function fileHref(path: string, download = false): string {
   return `/api/files?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;

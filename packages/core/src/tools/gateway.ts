@@ -50,6 +50,11 @@ export interface GatewayDeps {
   /** Which pictures the hub may fetch when the person sees them (policy/pictures.ts). */
   pictures?: Pictures;
   /**
+   * The addresses a tool of `owner` is about to open: for one inside the person's network that nobody has allowed, the
+   * person is asked on a network card (egress.ts requestPrivate). Returns why it stays closed, or undefined to go on.
+   */
+  privateHosts?: (s: SessionRow, owner: string, urls: string[]) => Promise<string | undefined>;
+  /**
    * Plugins whose tools drive an app on the hub's own computer (manifest integration.localApp, Blender): a session
    * whose brain runs on another computer does not get them, so its work uses that computer's own app.
    */
@@ -225,6 +230,17 @@ export class ToolGateway {
     // keeps every such call asked about.
     const effect = agent.policyProfile === "strict" ? undefined : entry.effectOf?.(input, ctx);
     const tool = effect && effect !== entry.descriptor.effect ? { ...entry.descriptor, effect } : entry.descriptor;
+
+    // An address inside the person's network is theirs to open, before anything else is decided about the call. A
+    // background run of an agent that may only suggest has nobody to ask: its tool says what it could not reach.
+    const reach = tool.owner !== "core" && this.d.privateHosts && !(s.background && agent.initiative < 2 && !skillRun) ? urlsIn(input) : [];
+    if (reach.length) {
+      const closed = await this.d.privateHosts!(s, tool.owner, reach);
+      if (closed) {
+        this.d.audit.append(`agent:${s.agentId}`, "tool.denied", name, { reason: closed });
+        return { content: [{ type: "text", text: closed }], isError: true, _meta: { status: "denied" } };
+      }
+    }
 
     const settings = this.d.settings.get();
     const asked = this.asked(s, tool, input);

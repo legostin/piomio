@@ -20,7 +20,7 @@ import {
   decideHeadless,
   findChrome,
   formatSize,
-  isPrivateHost,
+  closedToAgent,
   launchArgs,
   proxyFromEnv,
   readSettings,
@@ -186,6 +186,23 @@ export class BrowserManager {
     this.profileDir = join(ctx.dataDir, "profile");
     this.timers.push(setInterval(() => void this.tick(), 5_000));
     for (const t of this.timers) t.unref();
+    void this.findMachine();
+  }
+
+  /**
+   * The computer this browser runs on (the hub's own), named only when the hub has more than one: its profile, sign-ins
+   * and history are that computer's, and another computer's browser has its own.
+   */
+  machine: string | undefined;
+
+  private async findMachine(): Promise<void> {
+    try {
+      const list = await this.ctx.core.call<Array<{ id: string; name: string }>>("machines.list");
+      this.machine = list.length > 1 ? list[0]?.name : undefined;
+      this.scheduleState();
+    } catch {
+      /* an older hub: nothing to name */
+    }
   }
 
   // ---------- settings and lifecycle ----------
@@ -814,10 +831,15 @@ export class BrowserManager {
     await p.waitForLoadState("networkidle", { timeout: Math.max(300, deadline - Date.now()) }).catch(() => {});
   }
 
+  /** This computer always; the rest of the local network too when no hub proxy stands behind the browser (util closedToAgent). */
+  private closed(hostname: string): boolean {
+    return closedToAgent(hostname, { allowLocalNetwork: this.settings.allowLocalNetwork, viaHub: !!proxyFromEnv(process.env) });
+  }
+
   /** Agent navigation guard: no localhost / LAN unless allowed in settings. */
   guardUrl(u: URL): void {
     if (u.protocol === "about:") return;
-    if (!this.settings.allowLocalNetwork && isPrivateHost(u.hostname)) {
+    if (this.closed(u.hostname)) {
       throw new ToolError(
         `${u.hostname} belongs to the local network or this server, so it is closed to the agent. ` +
           "The user can allow such addresses in the Browser plugin settings (allowLocalNetwork) or open the address themselves in the browser's live view.",
@@ -840,7 +862,7 @@ export class BrowserManager {
     } catch {
       return null;
     }
-    if ((u.protocol !== "http:" && u.protocol !== "https:") || !isPrivateHost(u.hostname)) return null;
+    if ((u.protocol !== "http:" && u.protocol !== "https:") || !this.closed(u.hostname)) return null;
     const navigated = p === before.page ? p.url() !== before.url : !before.pages.has(p);
     if (!navigated) return null;
     if (p === before.page) await p.goto("about:blank").catch(() => {});
@@ -1290,6 +1312,7 @@ export class BrowserManager {
       loading: !!active && this.loads.has(active),
       ...(active ? await this.navState() : { canGoBack: false, canGoForward: false }),
       searchEngine: this.settings.searchEngine,
+      ...(this.machine ? { machine: this.machine } : {}),
       install: this.installer.status(),
       teach: this.learning.state(),
     });

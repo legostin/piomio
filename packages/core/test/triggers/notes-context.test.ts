@@ -1,5 +1,5 @@
 // Notes reach agents: the [Signals] block before a turn (outside content only counted), and signals_recent.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +30,15 @@ const note = (over: Partial<NoteRow>): NoteRow => ({
 });
 
 describe("signalsBlock", () => {
+  // Note times show without a date on the day they were made: pin "today" to the notes' day.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-07T12:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("lists internal notes newest first and collapses outside ones to a count", () => {
     const block = signalsBlock(
       [
