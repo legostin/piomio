@@ -2,7 +2,7 @@ import { VoiceProviders } from "./speech/providers.ts";
 // Hub composition root: builds every core service, wires them together, starts/stops servers.
 
 import { wireNetworkApprovals } from "./network-approvals.ts";
-import { networkPattern } from "./egress.ts";
+import { NetworkDenied, networkPattern, privatePattern } from "./egress.ts";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, TaskStatus, ThinkingView } from "@piomio/shared";
@@ -11,7 +11,7 @@ import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
 import { EventBus } from "./bus.ts";
 import { Store } from "./store.ts";
-import { DEFAULT_BRAIN_EGRESS, Settings, type CoreSettings } from "./settings.ts";
+import { DEFAULT_BRAIN_EGRESS, Settings, triggerSettingsProblem, type CoreSettings } from "./settings.ts";
 import { VaultService } from "./vault/service.ts";
 import { AuditLog } from "./audit.ts";
 import { RuleStore } from "./policy/rules.ts";
@@ -67,7 +67,7 @@ import { InviteRegistry } from "./invites.ts";
 import { deviceTls, type DeviceTls } from "./devices-tls.ts";
 import { deviceUrls, inviteUrl, machineHubUrl, pairingLink, qrSvg, serverJoinCommand } from "./pairing.ts";
 import { createCoreCall } from "./core-call.ts";
-import { CoreTriggers, TRIGGERS_ID } from "./signals/core-host.ts";
+import { CoreTriggers } from "./signals/core-host.ts";
 import { proxiedGet } from "./signals/net.ts";
 import { SignalSources } from "./signals/sources.ts";
 import { configureHubLocale, coreCatalog, hubLocale, localizePluginValue, LocalizedError, t } from "./i18n.ts";
@@ -148,7 +148,7 @@ export class Hub {
   /** "New channel" and "Add agent" chats (setup-chats.ts). */
   setupChats: SetupChats;
   plugins: PluginHost;
-  /** The trigger engine (signals/): runs while this hub leads and the Triggers card is on. */
+  /** The trigger engine (signals/): part of the hub, it runs while this hub leads (unless PIOMIO_PLUGINS is "none"). */
   triggers: CoreTriggers;
   /** Where triggers' signals come from beyond core's own (signals/sources.ts): plugins' sources; started with the engine. */
   sources: SignalSources;
@@ -281,6 +281,7 @@ export class Hub {
       machineName: (id) => this.runner.computerName(id),
       egress: this.egressGuard,
       pictures: this.pictures,
+      privateHosts: (s, owner, urls) => this.askPrivateHosts(s, owner, urls),
       hubOnly: (owner) => !!this.plugins.get(owner)?.layout?.manifest.integration?.localApp,
       // "%key%" approval summaries resolve against the owner's messages in the hub language.
       localize: (owner, text) =>
@@ -507,13 +508,17 @@ export class Hub {
       db: this.db,
       bus: this.bus,
       tools: this.tools,
-      card: {
-        get: () => {
-          const r = this.plugins.get(TRIGGERS_ID);
-          const allowed = config.plugins === "all" || (Array.isArray(config.plugins) && config.plugins.includes(TRIGGERS_ID));
-          return r && allowed ? { enabled: r.enabled, settings: r.settings } : undefined;
-        },
-        onSettings: (cb) => this.plugins.onSettings(TRIGGERS_ID, cb),
+      // Part of the hub: it runs on the leader. A plugin list names plugins to start, which triggers no longer are; "none"
+      // is the bare hub, without them too.
+      wanted: () => this.leading && !this.stopping && config.plugins !== "none",
+      settings: {
+        get: () => this.settings.get(),
+        update: (patch) => void this.updateSettings(patch, "core"),
+        onChange: (cb) =>
+          this.bus.on("settings.updated", (e) => {
+            const keys = (e as { keys?: unknown }).keys;
+            if (!Array.isArray(keys) || keys.some((k) => k === "triggersAllowPrivateUrls" || k === "triggersWatchTimeoutSec")) cb();
+          }),
       },
       coreCall,
       hubUrl: config.internalUrl,
@@ -537,10 +542,6 @@ export class Hub {
       egress: { proxy: this.egress, port: config.egressPort },
       vault: this.vault,
       sources: this.sources,
-    });
-    // The person turned the Triggers card on or off.
-    this.bus.on("plugins.updated", () => {
-      if (this.leading && !this.stopping) void this.triggers.sync().catch((e) => console.log(`[piomio] triggers: ${e?.message ?? e}`));
     });
     this.voiceProviders = new VoiceProviders(this.plugins, this.speech, this.transcriber);
     this.mcp = new McpEndpoint(this.gateway, this.store, config.version);
@@ -685,6 +686,35 @@ export class Hub {
     this.runner.tellAgent(origin.conversationId, `[System] The user connected Google as ${account.account}${what}; it works now. Carry on with what it was needed for.`);
   }
 
+  /**
+   * A tool is about to open these addresses. Only what runs behind this hub's proxy counts (a plugin's process, a local
+   * MCP server's): a service elsewhere opens them from its own network. For a host inside the person's network that
+   * nobody has allowed, the person is asked; anything else (a public host, one that does not resolve, this computer)
+   * is left to the tool, which says what happened.
+   */
+  private async askPrivateHosts(s: { id: string; conversationId: string; agentId: string; taskId?: string }, owner: string, urls: string[]): Promise<string | undefined> {
+    if (!this.egress.hasOwner(`plugin:${owner}`) && !this.egress.hasOwner(owner)) return undefined;
+    const seen = new Set<string>();
+    for (const raw of urls) {
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        continue;
+      }
+      if ((u.protocol !== "http:" && u.protocol !== "https:") || seen.has(u.host)) continue;
+      seen.add(u.host);
+      const host = u.hostname.replace(/^\[|\]$/g, "");
+      try {
+        await this.egress.requestPrivate({ sessionId: s.id, conversationId: s.conversationId, agentId: s.agentId, taskId: s.taskId }, host, Number(u.port || (u.protocol === "https:" ? 443 : 80)));
+      } catch (e) {
+        if (e instanceof NetworkDenied)
+          return `${e.message}. ${host} is inside the person's network and stays closed to you. Tell the person this outcome; do not try to reach it another way, and do not ask them to change a setting: if they want it open, hub_network_request shows them the card again.`;
+      }
+    }
+    return undefined;
+  }
+
   /** Every settings change (web UI or the assistant's hub tools): validation, audit, language broadcast, live UI refresh. */
   updateSettings(patch: Record<string, unknown>, actor: string): CoreSettings {
     const p = { ...patch };
@@ -693,6 +723,12 @@ export class Hub {
         if (!Array.isArray(p.brainEgressAllow) || p.brainEgressAllow.length > 500 || !p.brainEgressAllow.every((v) => typeof v === "string")) throw new Error();
         p.brainEgressAllow = [...new Set(p.brainEgressAllow.map(networkPattern))];
       } catch { throw new LocalizedError("network.badList", undefined, 400); }
+    }
+    if ("egressPrivateAllow" in p) {
+      try {
+        if (!Array.isArray(p.egressPrivateAllow) || p.egressPrivateAllow.length > 500 || !p.egressPrivateAllow.every((v) => typeof v === "string")) throw new Error();
+        p.egressPrivateAllow = [...new Set(p.egressPrivateAllow.map(privatePattern))];
+      } catch { throw new LocalizedError("network.badPrivateList", undefined, 400); }
     }
     if ("language" in p) {
       const l = normalizeLocale(p.language);
@@ -712,10 +748,13 @@ export class Hub {
       if (typeof v === "string") throw new LocalizedError("settings.badVoice", { reason: v }, 400);
       p.voice = v;
     }
+    const triggers = triggerSettingsProblem(p);
+    if (triggers) throw new LocalizedError(triggers.key, triggers.params, 400);
     const before = this.settings.get().language;
     this.audit.append(actor, "settings.update", undefined, { keys: Object.keys(p) });
     const next = this.settings.update(p as Partial<CoreSettings>);
     if ("brainEgressAllow" in p) this.audit.append(actor, "egress.allow.update", undefined, { hosts: next.brainEgressAllow });
+    if ("egressPrivateAllow" in p) this.audit.append(actor, "egress.private.update", undefined, { hosts: next.egressPrivateAllow });
     if (next.language !== before) {
       this.plugins.broadcastLocale(next.language);
       this.machines.broadcastLocale(next.language);

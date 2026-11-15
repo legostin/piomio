@@ -55,7 +55,7 @@ describe("egress proxy", () => {
   it("refuses private destinations even for wildcard grants unless allowed in settings", async () => {
     const denied = await viaProxy(proxyPort, token, `http://localhost:${upstreamPort}/`);
     expect(denied.status).toBe(403);
-    expect(denied.body).toMatch(/private address/);
+    expect(denied.body).toMatch(/this computer/);
     proxy.privateAllow = () => ["localhost"];
     const ok = await viaProxy(proxyPort, token, `http://localhost:${upstreamPort}/`);
     expect(ok).toEqual({ status: 200, body: "hello from lan" });

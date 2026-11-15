@@ -140,11 +140,13 @@ describe("network cards and proxy", () => {
     expect(settings.get().brainEgressAllow).toEqual([]);
   });
 
-  it("never offers private/metadata destinations or plugin requests; flags public IPs", async () => {
+  it("never offers local/metadata destinations as ordinary permissions; a host inside the network gets its own card; flags public IPs", async () => {
     for (const host of ["127.0.0.1", "169.254.169.254", "::1", "nas.local"]) await expect(ask(host)).rejects.toThrow();
-    vi.mocked(proxy.resolveTarget).mockResolvedValue(["10.0.0.1"]);
-    await expect(ask("private.example")).rejects.toThrow("private address");
     expect(approvals.list()).toHaveLength(0);
+    vi.mocked(proxy.resolveTarget).mockResolvedValue(["10.0.0.1"]);
+    const inside = ask("private.example"); const closed = expect(inside).rejects.toThrow("user declined");
+    const own = await pending(); expect(own.ask).toMatchObject({ private: true, addresses: ["10.0.0.1"] });
+    approvals.resolve(own.id, "deny", { via: "web" }); await closed;
     vi.mocked(proxy.resolveTarget).mockResolvedValue(["1.1.1.1"]);
     const ip = ask("1.1.1.1"); const failed = expect(ip).rejects.toThrow("user declined");
     const card = await pending(); expect(card.ask?.ipLiteral).toBe(true);

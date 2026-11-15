@@ -39,7 +39,7 @@ export type BusEvents = {
   "plugins.updated": Record<string, never>;
   "brains.updated": Record<string, never>;
   "agents.updated": Record<string, never>;
-  /** An agent was deleted for good: plugins drop what they keep for it (the triggers plugin, its schedules). */
+  /** An agent was deleted for good: the trigger engine drops its triggers, and plugins what they keep for it. */
   "agent.removed": { agentId: string };
   /** Skills came or went, or who has one changed (skills.ts SkillHolders). */
   "skills.updated": Record<string, never>;

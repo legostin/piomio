@@ -5,7 +5,7 @@
   "settings.headless.description": "auto — окно, если есть дисплей (Linux с DISPLAY, например Xvfb), иначе без окна; always — всегда без окна; never — всегда с окном",
   "settings.idleMinutes.title": "Закрывать после простоя, минут",
   "settings.allowLocalNetwork.title": "Разрешить агенту локальные адреса",
-  "settings.allowLocalNetwork.description": "localhost, 192.168.*, 10.* и т. п. По умолчанию агент не может открывать адреса этого сервера и локальной сети",
+  "settings.allowLocalNetwork.description": "localhost, 192.168.*, 10.* и т. п., без вопросов. По умолчанию агент не может открывать адреса этого компьютера, а хост вашей сети — только после вашего разрешения на сетевой карточке",
   "settings.takeoverWaitSec.title": "Ожидание агента при перехвате, секунд",
   "settings.takeoverWaitSec.description": "Сколько инструмент агента ждёт, пока вы вернёте управление браузером",
   "settings.maxDownloadMb.title": "Максимальный размер скачиваемого файла, МБ",

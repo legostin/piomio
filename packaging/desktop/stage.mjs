@@ -6,7 +6,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -28,15 +28,31 @@ const NODE_DISTS = {
   "linux-arm64": [{ file: `node-v${NODE_VERSION}-linux-arm64.tar.gz`, into: "runtime" }],
 };
 
-/** What runs in an installed app; tests, sources of the built UIs and dev configs stay behind. */
-export function wanted(src) {
-  const rel = relative(ROOT, src).split(sep).join("/");
+/** The manifests that make a folder a plugin (shared/src/manifest.ts readPluginLayout). */
+const MANIFESTS = [".piomio-plugin", ".claude-plugin", ".codex-plugin"];
+
+/** Whether `dir` is a folder with a plugin manifest; a file is no plugin folder. */
+function pluginFolder(dir) {
+  try {
+    if (!statSync(dir).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
+  return MANIFESTS.some((m) => existsSync(join(dir, m, "plugin.json")));
+}
+
+/** What runs in an installed app; tests, sources of the built UIs and dev configs stay behind. `root`: the checkout. */
+export function wanted(src, root = ROOT) {
+  const rel = relative(root, src).split(sep).join("/");
   if (rel === "") return true;
   const parts = rel.split("/");
   if (parts.includes("node_modules")) return false;
   const [top, pkg, sub] = parts;
   // The integration template is the agents' make-integration skill: it ships whole, sources and test included.
   if (top === "integrations" && pkg === "_template") return true;
+  // A folder there without a manifest is no plugin to the hub (plugins/host.ts discover): a removed plugin's build
+  // output left in a local checkout (plugins/triggers/ui/dist) stays behind with it.
+  if ((top === "plugins" || top === "integrations") && pkg && pluginFolder(join(root, top, pkg)) === false) return false;
   if (parts.includes("test") || parts.includes("e2e")) return false;
   if (/\.test\.[cm]?[jt]sx?$/.test(rel)) return false;
   if (top === "packages" && (pkg === "web" || pkg === "console" || pkg === "pages-kit") && sub && sub !== "dist" && sub !== "package.json") return false;
@@ -161,7 +177,7 @@ export async function stage({ target, skipBuild = false }) {
   mkdirSync(app, { recursive: true });
 
   for (const f of ["package.json", "package-lock.json"]) cpSync(join(ROOT, f), join(app, f));
-  for (const d of ["agents", "packages", "plugins", "integrations"]) cpSync(join(ROOT, d), join(app, d), { recursive: true, filter: wanted });
+  for (const d of ["agents", "packages", "plugins", "integrations"]) cpSync(join(ROOT, d), join(app, d), { recursive: true, filter: (src) => wanted(src) });
   for (const f of ["launch.mjs", "resolve.mjs"]) cpSync(join(ROOT, "packaging", "desktop", f), join(app, "packaging", "desktop", f));
   if (target.startsWith("linux-")) for (const f of ["start.mjs", "piomio", "install.sh"]) cpSync(join(ROOT, "packaging", "linux", f), join(app, "packaging", "linux", f));
   for (const need of ["packages/web/dist/index.html", "packages/console/dist/index.html", "packages/pages-kit/dist/kit.js", "packages/node/dist/piomio-node.mjs"]) {

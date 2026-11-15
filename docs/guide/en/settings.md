@@ -15,7 +15,8 @@ Just say it: "turn on quiet hours from 22:00", "my time zone is Europe/Berlin", 
 - parallel sessions per brain;
 - whether the default agent's replies to what you type in the web UI also go to Telegram;
 - auto mode, or asking you every time (turning auto mode on shows you a card first, see [Approvals and auto mode](approvals.md));
-- speech to text for voice messages (except your own server), and the voice and speed for reading aloud; it also downloads the local speech engine ("install local speech recognition"), see [Voice](#voice).
+- speech to text for voice messages (except your own server), and the voice and speed for reading aloud; it also downloads the local speech engine ("install local speech recognition"), see [Voice](#voice);
+- how long a watch waits for its page, and whether triggers may reach your local network (allowing it shows you a card first), see [Triggers](#triggers).
 
 It also connects plugins and services, changes their settings and makes agents. The rest of the **General** page is yours alone: the network allowlists, the approval timings, the details in Telegram and your own speech-to-text server. The assistant can propose adding a host via a network permission card; other changes to these lists are made in the panel.
 
@@ -25,7 +26,7 @@ It also connects plugins and services, changes their settings and makes agents. 
 
 | Group | Sections |
 |---|---|
-| **Assistant** | **Agents**, **Skills & commands**, and pages plugins add ([Agents and the team](agents.md)) |
+| **Assistant** | **Agents**, **Skills & commands**, **Triggers** ([below](#triggers)), and pages plugins add ([Agents and the team](agents.md)) |
 | **Activity** | **Tasks**, **Inbox** ([Tasks, schedules and the Inbox](tasks.md)) |
 | **Connections** | **Plugins** ([Plugins and integrations](plugins.md)), **Brains** ([Brains and sign-in](brains.md)), **Machines** ([Machines and other computers](machines.md)), **Devices** ([The iPhone app](phone.md)), **MCP servers** |
 | **General** | **General** (below), **Security console** ([Security model](security.md)), **Sign out** |
@@ -64,6 +65,7 @@ See [Approvals and auto mode](approvals.md).
 
 - **Parallel sessions per brain** (2, from 1 to 16): how many tasks and agent threads run at once on one brain on one computer. The rest wait in line; your own conversations never wait.
 - **Extra allowed hosts**: where brains may connect besides the default list (Anthropic, OpenAI, Kimi, GitHub, npm and the like). Wildcards like `*.example.com` work. The built-in list is visible here too. New public hosts can be proposed in chat via a network permission card; Always allow adds the host here. Remove an entry and save to stop new connections using that permanent permission.
+- **Addresses in my network**: hosts inside your own network (home, office, a VPN) that agents may open, such as `jira.corp.example`, `*.corp.example`, `nas.local` or `192.168.1.10`. Everything else there stays closed. When an agent reaches for such a host, a network card in its chat asks you, and Always allow adds the host here; a wildcard is yours to type. Remove an entry and save to close the host again. See [The network filter](security.md#the-network-filter).
 
 ### Voice
 
@@ -106,6 +108,15 @@ Each plugin with settings has a card here: its keys, typed straight into the vau
 
 Only in the desktop app: **Quit Piomio** stops it until you open it again, and **Reset Piomio…** deletes everything it keeps on this computer after asking. See [Install on a Mac or PC](install.md).
 
+## Triggers
+
+The **Triggers** section keeps two hub settings of its own: open **Settings** at the bottom of the list, change what you need and press **Save**.
+
+- **Allow watching local network addresses** (off): watches and triggers' scripts may then reach localhost, your router and devices at home such as a NAS. Off, they reach only the internet, so a page or a message can't point a trigger at what is inside your network.
+- **Page load timeout, sec** (30, from 1 to 120): how long a watch waits for its page before the check ends with an error.
+
+On a hub that had the Triggers plugin, what its settings card said is carried over here once. If you had turned that plugin off, each of your triggers is turned off instead and you get a note about it once in the Inbox: turn on the ones you want. See [Tasks, schedules and the Inbox](tasks.md).
+
 ## Settings without a field
 
 | Setting | Default | How to change it |
@@ -113,16 +124,6 @@ Only in the desktop app: **Quit Piomio** stops it until you open it again, and *
 | Replies to Telegram (`channelMirror`) | on | in the chat: "don't send my web conversations to Telegram" |
 | Approval mode (`approvalMode`) | auto mode | in the chat, see [Approvals and auto mode](approvals.md) |
 | Access from anywhere (`remoteAccess`) | off | its card, or "turn on access from anywhere", see [Access from anywhere](anywhere.md) |
-| Private hosts (`egressPrivateAllow`) | empty | only through the API, below |
-
-`egressPrivateAllow` lists the hosts on your local network that plugins and brains may reach, such as `searxng` or `nas.local`: the egress filter refuses private addresses otherwise. To set it, open the chat in your browser, open the browser's developer console on that tab and run:
-
-```js
-const { csrf } = await (await fetch("/api/bootstrap")).json();
-await (await fetch("/api/settings", { method: "PATCH", headers: { "content-type": "application/json", "x-csrf": csrf }, body: JSON.stringify({ egressPrivateAllow: ["searxng", "nas.local"] }) })).json();
-```
-
-The list you send replaces the old one, and it applies at once.
 
 ## Environment variables
 
@@ -212,7 +213,7 @@ The list you send replaces the old one, and it applies at once.
 
 ### For development
 
-`PIOMIO_APP_ROOT` (the app's folder), `PIOMIO_PLUGINS` (`all`, `none` or a list of built-in plugins to start), `PIOMIO_DEBUG` (every plugin log line in the hub's log, not only errors), `PIOMIO_DEV_ORIGIN` and `PIOMIO_CONSOLE_DEV_ORIGIN` (dev servers of the UIs), and `PIOMIO_GOOGLE_AUTH_URL`, `PIOMIO_GOOGLE_TOKEN_URL`, `PIOMIO_GOOGLE_REVOKE_URL`, `PIOMIO_GOOGLE_USERINFO_URL`. The desktop app sets `PIOMIO_DESKTOP`, `PIOMIO_DESKTOP_APP` and `PIOMIO_DESKTOP_PORT` itself.
+`PIOMIO_APP_ROOT` (the app's folder), `PIOMIO_PLUGINS` (`all`, `none` or a list of built-in plugins to start; with `none` triggers don't run either, with a list they do), `PIOMIO_DEBUG` (every plugin log line in the hub's log, not only errors), `PIOMIO_DEV_ORIGIN` and `PIOMIO_CONSOLE_DEV_ORIGIN` (dev servers of the UIs), and `PIOMIO_GOOGLE_AUTH_URL`, `PIOMIO_GOOGLE_TOKEN_URL`, `PIOMIO_GOOGLE_REVOKE_URL`, `PIOMIO_GOOGLE_USERINFO_URL`. The desktop app sets `PIOMIO_DESKTOP`, `PIOMIO_DESKTOP_APP` and `PIOMIO_DESKTOP_PORT` itself.
 
 ## Ports
 

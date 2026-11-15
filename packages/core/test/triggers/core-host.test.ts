@@ -1,17 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { PiomioManifestSchema, toolPrefixOf, type ToolCallContext } from "@piomio/shared";
+import type { ToolCallContext } from "@piomio/shared";
 import { EventBus } from "../../src/bus.ts";
 import { openDb } from "../../src/db.ts";
 import { pluginKv } from "../../src/plugins/kv.ts";
-import { CoreTriggers, type CoreTriggersDeps } from "../../src/signals/core-host.ts";
+import { CoreTriggers, TRIGGERS_CARRIED, type CoreTriggersDeps, type TriggerSettings } from "../../src/signals/core-host.ts";
 import type { TriggerHttpRequest } from "../../src/signals/host.ts";
 import { scriptSandbox } from "../../src/signals/sandbox.ts";
 import { sqlStore } from "../../src/signals/store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 
-type Card = { enabled: boolean; settings: Record<string, unknown> } | undefined;
+/** The hub around the engine: whether it wants it running (it leads, PIOMIO_PLUGINS is not "none") and its two settings. */
+type HubSide = { wanted?: boolean; settings?: Partial<TriggerSettings> };
 
 /** A promise that waits until it is let go. */
 function latch() {
@@ -22,17 +21,25 @@ function latch() {
 
 /** `before`: awaited before a core call is answered (a latch holds it). */
 function setup(
-  card: Card | null = { enabled: true, settings: {} },
+  hub: HubSide = {},
   fetch?: () => any,
   before?: (method: string) => Promise<void> | undefined,
   pipeline: Pick<CoreTriggersDeps, "gateway" | "quick" | "egress"> = {},
+  db = openDb(":memory:"),
 ) {
-  const db = openDb(":memory:");
   const bus = new EventBus();
   const tools = new ToolRegistry();
-  const settingsListeners = new Set<(s: Record<string, unknown>) => void>();
+  const settingsListeners = new Set<() => void>();
   const calls: Array<{ pluginId: string; method: string; params: any }> = [];
-  let current: Card = card ?? undefined;
+  let wanted = hub.wanted ?? true;
+  let current: TriggerSettings = { triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 30, ...hub.settings };
+  /** What the engine's host wrote into the hub settings (the card's carry-over). */
+  const updates: Array<Partial<TriggerSettings>> = [];
+  /** The hub settings change (Settings, an agent): its listeners hear it, as updateSettings's bus event reaches them. */
+  const setSettings = (patch: Partial<TriggerSettings>) => {
+    current = { ...current, ...patch };
+    for (const cb of [...settingsListeners]) cb();
+  };
   const ct = new CoreTriggers({
     db,
     bus,
@@ -40,9 +47,14 @@ function setup(
     hubUrl: "http://127.0.0.1:8080",
     ...(fetch ? { fetch } : {}),
     ...pipeline,
-    card: {
+    wanted: () => wanted,
+    settings: {
       get: () => current,
-      onSettings: (cb) => {
+      update: (patch) => {
+        updates.push(patch);
+        setSettings(patch);
+      },
+      onChange: (cb) => {
         settingsListeners.add(cb);
         return () => void settingsListeners.delete(cb);
       },
@@ -56,7 +68,22 @@ function setup(
       return [];
     },
   });
-  return { db, bus, tools, ct, calls, settingsListeners, setCard: (c: Card) => void (current = c) };
+  return { db, bus, tools, ct, calls, settingsListeners, updates, setSettings, setWanted: (w: boolean) => void (wanted = w) };
+}
+
+/** A database with the Triggers card's plugins row, its saved settings as the plugin host kept them; `enabled` 0: the person had turned it off. */
+function cardRow(settings: unknown, enabled = 1) {
+  const db = openDb(":memory:");
+  db.prepare("insert into plugins(id, dir, source, enabled, granted, installed_at, settings) values (?, ?, ?, ?, ?, ?, ?)").run(
+    "triggers",
+    "/gone/plugins/triggers",
+    "builtin",
+    enabled,
+    "{}",
+    "2026-10-01T00:00:00Z",
+    typeof settings === "string" ? settings : JSON.stringify(settings),
+  );
+  return db;
 }
 
 const call: ToolCallContext = { sessionId: "s", conversationId: "c", agentId: "assistant", callId: "x", tainted: false, background: false, workspace: "/tmp", machineId: "local" };
@@ -71,7 +98,7 @@ const until = async (fn: () => unknown, what: string, timeoutMs = 5000) => {
 };
 
 describe("the trigger engine's host in core", () => {
-  it("runs on the plugin's storage, with its tools named trigger_* and owned by the Triggers card", async () => {
+  it("runs on the plugin's storage, with its tools named trigger_* and owned by \"triggers\" as the plugin's were", async () => {
     const s = setup();
     await s.ct.start();
     // Owned by "triggers", as the plugin's were: "always allow", the catalog's uses and the card's tool list go by it.
@@ -122,26 +149,28 @@ describe("the trigger engine's host in core", () => {
     s.ct.stop();
   });
 
-  it("stops when the card is switched off, takes its tools back, and starts again", async () => {
+  it("stops, takes its tools and listeners back, and starts again", async () => {
     const s = setup();
     await s.ct.start();
-    s.setCard({ enabled: false, settings: {} });
-    await s.ct.sync();
+    expect(s.settingsListeners.size).toBe(1);
+    s.ct.stop();
     expect(s.ct.engine).toBeUndefined();
     expect(triggerTools(s.tools)).toEqual([]);
     expect(s.settingsListeners.size).toBe(0);
     expect((await s.ct.http(req({}))).status).toBe(404);
-    s.setCard({ enabled: true, settings: {} });
-    await s.ct.sync();
+    await s.ct.start();
     expect(s.ct.engine).toBeDefined();
     expect(triggerTools(s.tools)).toHaveLength(8);
     s.ct.stop();
   });
 
-  it("names its tools with the card's own tool prefix, which counts a turned-off card's earlier uses", () => {
-    const file = join(import.meta.dirname, "..", "..", "..", "..", "plugins", "triggers", ".piomio-plugin", "plugin.json");
-    const manifest = PiomioManifestSchema.parse(JSON.parse(readFileSync(file, "utf8")));
-    expect(toolPrefixOf(manifest)).toBe("trigger");
+  it("names its tools with the prefix the plugin's card used, which counts the earlier uses", async () => {
+    const s = setup();
+    await s.ct.start();
+    const names = triggerTools(s.tools).map((t) => t.name);
+    expect(names).toHaveLength(8);
+    for (const n of names) expect(n).toMatch(/^trigger_[a-z_]+$/);
+    s.ct.stop();
   });
 
   it("keeps debug and info quiet and sends warnings and errors to the hub's console", async () => {
@@ -164,19 +193,215 @@ describe("the trigger engine's host in core", () => {
     }
   });
 
-  it("does not run without the Triggers card", async () => {
-    const s = setup(null);
+  it("does not run while the hub does not want it (a standby, or PIOMIO_PLUGINS=none), and needs no Triggers card otherwise", async () => {
+    const s = setup({ wanted: false });
+    expect(s.ct.wanted()).toBe(false);
     await s.ct.start();
     expect(s.ct.engine).toBeUndefined();
     expect(triggerTools(s.tools)).toEqual([]);
+    expect(s.settingsListeners.size).toBe(0);
+    s.setWanted(true);
+    await s.ct.start();
+    expect(s.ct.engine).toBeDefined();
+    s.ct.stop();
   });
 
-  it("hands the card's settings to the engine, now and when they change", async () => {
-    const s = setup({ enabled: true, settings: { allowPrivateUrls: true } });
+  it("hands the hub's trigger settings to the engine, now and when they change", async () => {
+    const s = setup({ settings: { triggersAllowPrivateUrls: true } });
     await s.ct.start();
-    expect(s.ct.engine!.settings.allowPrivateUrls).toBe(true);
-    for (const cb of s.settingsListeners) cb({ allowPrivateUrls: false, watchTimeoutSec: 10 });
+    expect(s.ct.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 30 });
+    s.setSettings({ triggersAllowPrivateUrls: false, triggersWatchTimeoutSec: 10 });
     expect(s.ct.engine!.settings).toEqual({ allowPrivateUrls: false, watchTimeoutSec: 10 });
+    s.ct.stop();
+    // Stopped, it hears nothing more.
+    expect(s.settingsListeners.size).toBe(0);
+  });
+
+  it("carries the Triggers card's saved settings over into the hub settings once, recorded in meta", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({ allowPrivateUrls: true, watchTimeoutSec: 500 }));
+    await s.ct.start();
+    // Out of range, as the engine read it: at most 120 seconds.
+    expect(s.updates).toEqual([{ triggersAllowPrivateUrls: true, triggersWatchTimeoutSec: 120 }]);
+    expect(s.ct.engine!.settings).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 120 });
+    expect(s.db.prepare("select value from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+    // The card's row is left as it was.
+    const row = s.db.prepare("select settings from plugins where id = 'triggers'").get() as { settings: string };
+    expect(JSON.parse(row.settings)).toEqual({ allowPrivateUrls: true, watchTimeoutSec: 500 });
+    s.ct.stop();
+    // Changed in the hub settings since: a later start carries nothing over again.
+    s.setSettings({ triggersAllowPrivateUrls: false });
+    await s.ct.start();
+    expect(s.updates).toHaveLength(1);
+    expect(s.ct.engine!.settings.allowPrivateUrls).toBe(false);
+    s.ct.stop();
+  });
+
+  it("carries over only what the card saved and the hub can use, and records it even when that is nothing", async () => {
+    const junk = setup({}, undefined, undefined, {}, cardRow({ allowPrivateUrls: "yes", watchTimeoutSec: 0 }));
+    await junk.ct.start();
+    expect(junk.updates).toEqual([]);
+    expect(junk.ct.engine!.settings).toEqual({ allowPrivateUrls: false, watchTimeoutSec: 30 });
+    expect(junk.db.prepare("select 1 from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+    junk.ct.stop();
+    // The same as the hub has: nothing to write.
+    const same = setup({}, undefined, undefined, {}, cardRow({ allowPrivateUrls: false, watchTimeoutSec: 30 }));
+    await same.ct.start();
+    expect(same.updates).toEqual([]);
+    same.ct.stop();
+    // A number as text, as the engine read it, and the other key left alone.
+    const text = setup({}, undefined, undefined, {}, cardRow({ watchTimeoutSec: "45" }));
+    await text.ct.start();
+    expect(text.updates).toEqual([{ triggersWatchTimeoutSec: 45 }]);
+    text.ct.stop();
+    // A row that is not JSON, and no card at all: nothing carried, the start goes on.
+    for (const s of [setup({}, undefined, undefined, {}, cardRow("not json")), setup()]) {
+      await s.ct.start();
+      expect(s.updates).toEqual([]);
+      expect(s.ct.engine).toBeDefined();
+      expect(s.db.prepare("select 1 from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+      s.ct.stop();
+    }
+  });
+
+  it("carries over even while it does not run, so the Settings page shows the card's values", async () => {
+    const s = setup({ wanted: false }, undefined, undefined, {}, cardRow({ allowPrivateUrls: true }));
+    await s.ct.start();
+    expect(s.ct.engine).toBeUndefined();
+    expect(s.updates).toEqual([{ triggersAllowPrivateUrls: true }]);
+  });
+
+  /** What an older hub's paused Triggers card left: a schedule and a reminder whose time passed meanwhile, a webhook, one already off. */
+  const pausedKv = (db: ReturnType<typeof openDb>) => {
+    const kv = pluginKv(db, "triggers");
+    const base = { agentId: "assistant", maxRunsPerDay: 24, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true };
+    kv.set("initialized", true);
+    kv.set("trigger:t_brief", { ...base, id: "t_brief", kind: "schedule", name: "Morning brief", prompt: "Brief me.", enabled: true, cron: "0 9 * * *", state: { nextRunAt: "2026-10-02T09:00:00.000Z" } });
+    kv.set("trigger:t_call", { ...base, id: "t_call", kind: "once", name: "Call mom", prompt: "Remind me to call mom.", enabled: true, at: "2026-10-03T10:00:00.000Z", state: { nextRunAt: "2026-10-03T10:00:00.000Z" } });
+    kv.set("trigger:t_hook", { ...base, id: "t_hook", kind: "event", name: "Deploys", prompt: "Look at the deploy.", enabled: true, secret: "s3cret", report: false, state: {} });
+    kv.set("trigger:t_old", { ...base, id: "t_old", kind: "schedule", name: "Old", prompt: "Old.", enabled: false, cron: "0 8 * * *", state: {} });
+    return kv;
+  };
+  const booted = (s: ReturnType<typeof setup>) => until(() => (s.ct.engine as any)?.booted, "the engine's boot");
+
+  it("a Triggers card the person had turned off: every trigger is off before the engine reads them, nothing catches up, the person is told once", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    const kv = pausedKv(s.db);
+    await s.ct.start();
+    await booted(s);
+    await new Promise((r) => setTimeout(r, 50));
+    // No catch-up for the schedule or the reminder whose time passed while the card was off.
+    expect(s.calls.filter((c) => c.method === "tasks.create")).toEqual([]);
+    for (const id of ["t_brief", "t_call", "t_hook", "t_old"]) {
+      expect(s.ct.engine!.get(id)?.enabled, id).toBe(false);
+      expect((kv.get(`trigger:${id}`) as any).enabled, id).toBe(false);
+    }
+    // The reminder is not spent: turned on again, it still has its time.
+    expect((kv.get("trigger:t_call") as any).state.done).toBeUndefined();
+    // A webhook answers as an off trigger's does.
+    expect((await s.ct.http(req({ method: "POST", path: "/t_hook", headers: { "x-piomio-secret": "s3cret" }, body: { a: 1 }, public: true }))).status).toBe(409);
+    // Told once, in the hub language, of the three it turned off (not the one already off) and how to turn them on.
+    const told = s.calls.filter((c) => c.method === "notify");
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ pluginId: "triggers", params: { level: "notify" } });
+    expect(told[0].params.title).toBe("Your triggers stay off");
+    expect(told[0].params.body).toContain("each of your 3 triggers is off now");
+    expect(told[0].params.body).toContain("“turn on Morning brief”");
+    expect(told[0].params.body).toContain("Settings → Assistant → Triggers");
+    // The card's row is left as it was; a later start (leading again, a restart) neither turns them off again nor tells again.
+    expect((s.db.prepare("select enabled from plugins where id = 'triggers'").get() as { enabled: number }).enabled).toBe(0);
+    await s.ct.engine!.update("t_brief", { enabled: true });
+    s.ct.stop();
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.get("t_brief")?.enabled).toBe(true);
+    expect(s.calls.filter((c) => c.method === "notify")).toHaveLength(1);
+    s.ct.stop();
+  });
+
+  it("tells only of the triggers it turned off: not one the person had turned off, nor a reminder that already fired", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    const kv = pluginKv(s.db, "triggers");
+    const base = { agentId: "assistant", maxRunsPerDay: 24, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true };
+    kv.set("initialized", true);
+    // First in key order, so an example taken from every trigger would name it.
+    kv.set("trigger:t_a", { ...base, id: "t_a", kind: "once", name: "Dentist", prompt: "Remind me.", enabled: false, at: "2026-10-03T10:00:00.000Z", state: { done: true } });
+    kv.set("trigger:t_b", { ...base, id: "t_b", kind: "schedule", name: "Weather", prompt: "Weather.", enabled: true, cron: "0 7 * * *", state: { nextRunAt: "2026-10-02T07:00:00.000Z" } });
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.list().map((t) => [t.id, t.enabled])).toEqual([
+      ["t_a", false],
+      ["t_b", false],
+    ]);
+    const told = s.calls.filter((c) => c.method === "notify");
+    expect(told).toHaveLength(1);
+    expect(told[0].params.title).toBe("Your trigger stays off");
+    expect(told[0].params.body).toContain("your trigger is off now");
+    expect(told[0].params.body).toContain("“turn on Weather”");
+    expect(told[0].params.body).not.toContain("Dentist");
+    s.ct.stop();
+  });
+
+  it("tells nothing when every trigger was already off", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    const kv = pluginKv(s.db, "triggers");
+    kv.set("initialized", true);
+    kv.set("trigger:t_old", {
+      id: "t_old", kind: "schedule", name: "Old", prompt: "Old.", agentId: "assistant", enabled: false, maxRunsPerDay: 24, cron: "0 8 * * *",
+      createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", createdBy: "user", report: true, state: {},
+    });
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.get("t_old")?.enabled).toBe(false);
+    expect(s.calls.some((c) => c.method === "notify")).toBe(false);
+    expect(s.db.prepare("select 1 from meta where key = ?").get(TRIGGERS_CARRIED)).toBeTruthy();
+    s.ct.stop();
+  });
+
+  it("a card that was off before the engine ever ran: its default review is made off too, and nothing is told", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    await s.ct.start();
+    await booted(s);
+    const all = s.ct.engine!.list();
+    expect(all.map((t) => [t.kind, t.enabled])).toEqual([["heartbeat", false]]);
+    expect(all[0].state.nextRunAt).toBeUndefined();
+    // It was never on: nothing was turned off.
+    expect(s.calls.some((c) => c.method === "notify")).toBe(false);
+    // The marker is spent: the engine's later starts go as on any hub.
+    expect(pluginKv(s.db, "triggers").get("initialOff")).toBeNull();
+    s.ct.stop();
+  });
+
+  it("a card that was on changes nothing: the schedule whose time passed catches up, nobody is told", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 1));
+    pausedKv(s.db);
+    await s.ct.start();
+    await until(() => s.calls.some((c) => c.method === "tasks.create"), "the schedule's catch-up");
+    expect(s.ct.engine!.get("t_brief")?.enabled).toBe(true);
+    expect(s.ct.engine!.get("t_hook")?.enabled).toBe(true);
+    expect(s.calls.some((c) => c.method === "notify" && c.params.title === "Your triggers stay off")).toBe(false);
+    s.ct.stop();
+  });
+
+  it("does not start the engine when a paused card could not be carried over, and does on the next start", async () => {
+    const s = setup({}, undefined, undefined, {}, cardRow({}, 0));
+    pausedKv(s.db);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The meta table refuses the record once (a full disk, say).
+    s.db.exec("create trigger meta_full before insert on meta begin select raise(abort, 'disk full'); end");
+    try {
+      await expect(s.ct.start()).rejects.toThrow();
+      expect(s.ct.engine).toBeUndefined();
+      // Nothing half done: the triggers are as the card left them, to be turned off on the next try.
+      expect((pluginKv(s.db, "triggers").get("trigger:t_brief") as any).enabled).toBe(true);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("disk full"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+    s.db.exec("drop trigger meta_full");
+    await s.ct.start();
+    await booted(s);
+    expect(s.ct.engine!.get("t_brief")?.enabled).toBe(false);
+    expect(s.calls.filter((c) => c.method === "tasks.create")).toEqual([]);
     s.ct.stop();
   });
 
@@ -207,7 +432,7 @@ describe("the trigger engine's host in core", () => {
 
   it("a stop while it starts cuts off what the start still does: no engine, no tools, no listeners, no writes", async () => {
     const held = latch();
-    const s = setup(undefined, undefined, (m) => (m === "settings.get" ? held.wait : undefined));
+    const s = setup({}, undefined, (m) => (m === "settings.get" ? held.wait : undefined));
     const started = s.ct.start();
     await until(() => s.calls.some((c) => c.method === "settings.get"), "the start to ask for the hub settings");
     s.ct.stop();
@@ -242,7 +467,7 @@ describe("the trigger engine's host in core", () => {
   it("a stop during a watch's page load: the check that finishes later starts no task and writes nothing", async () => {
     const held = latch();
     let loading = false;
-    const s = setup({ enabled: true, settings: { allowPrivateUrls: true } }, () => ({
+    const s = setup({ settings: { triggersAllowPrivateUrls: true } }, () => ({
       fetch: async () => {
         loading = true;
         await held.wait;
@@ -270,7 +495,7 @@ describe("the trigger engine's host in core", () => {
 
   it("a start that throws is not stuck: the next start runs", async () => {
     let n = 0;
-    const s = setup(undefined, () => {
+    const s = setup({}, () => {
       if (n++ === 0) throw new Error("no fetch yet");
       return { fetch: async () => new Response("") };
     });
@@ -283,7 +508,7 @@ describe("the trigger engine's host in core", () => {
 
   it("makes its page loads afresh on every start and lets them go when it stops (the egress token, the sockets)", async () => {
     const made: Array<{ released: number }> = [];
-    const s = setup(undefined, () => {
+    const s = setup({}, () => {
       const m = { released: 0 };
       made.push(m);
       return { fetch: async () => new Response(""), release: () => void m.released++ };
@@ -318,7 +543,7 @@ describe("the trigger engine's host in core", () => {
   it("gives a trigger's script its agent's read tools, the quick model and an egress token of each run's own", async () => {
     const reads: unknown[] = [];
     const tokens: Array<{ owner: string; allow: string[]; context: unknown; revoked: boolean }> = [];
-    const s = setup(undefined, undefined, undefined, {
+    const s = setup({}, undefined, undefined, {
       gateway: {
         callRead: async (as, name, input) => {
           reads.push({ as, name, input });

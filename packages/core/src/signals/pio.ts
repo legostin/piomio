@@ -50,7 +50,7 @@ export interface PioDeps {
   fetch: FetchLike;
   /** The run's input is outside content (an external signal): the run starts external. */
   external?: boolean;
-  /** The person allowed private network addresses (the Triggers card's allowPrivateUrls). */
+  /** The person allowed private network addresses (the hub setting triggersAllowPrivateUrls). */
   allowPrivate: boolean;
   quick: QuickModel;
   /** Takes one quick-model check from the day's triagePerDay; false when none is left. */
@@ -144,7 +144,7 @@ export function pioFor(d: PioDeps): PioRun {
       await assertFetchable(u.href, d.allowPrivate);
     } catch (e) {
       if ((e as { code?: string }).code !== "privateHost") throw e;
-      throw new Error(`pio.fetch: ${u.hostname} is on an internal network, which a trigger's script may not reach unless the person allows private addresses (allowPrivateUrls on the Triggers card)`);
+      throw new Error(`pio.fetch: ${u.hostname} is on an internal network, which a trigger's script may not reach unless the person allows private addresses (the hub setting triggersAllowPrivateUrls, under Settings at the bottom of the Triggers section)`);
     }
   }
 

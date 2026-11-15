@@ -100,7 +100,7 @@ export interface TriggerHost {
   pluginId: string;
   /** The hub's own address, for webhook URLs when it has no public one. */
   hubUrl: string;
-  /** The Triggers card's settings (allowPrivateUrls, watchTimeoutSec). */
+  /** The hub's trigger settings (settings.ts triggersAllowPrivateUrls, triggersWatchTimeoutSec) as allowPrivateUrls and watchTimeoutSec. */
   settings: Record<string, any>;
   onSettingsChange(cb: (settings: Record<string, any>) => void): void;
   i18n: {

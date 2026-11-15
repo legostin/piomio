@@ -1,6 +1,6 @@
 {
   "name": "API brain",
-  "description": "Our own agent loop over APIs: Anthropic (Messages API), OpenAI, OpenRouter and any OpenAI-compatible server (Ollama, LM Studio, vLLM). Brain refs: api:anthropic, api:openai, api:openrouter, api:custom. Model requests go through the brain session's network proxy: to use a server on your local network, add its host to the \"brainEgressAllow\" hub setting (localhost is always reachable).",
+  "description": "Our own agent loop over APIs: Anthropic (Messages API), OpenAI, OpenRouter and any OpenAI-compatible server (Ollama, LM Studio, vLLM). Brain refs: api:anthropic, api:openai, api:openrouter, api:custom. Model requests go through the brain session's network proxy: to use a server on your local network, allow its host on the network card the hub shows in the chat, or add it under Settings → Addresses in my network (localhost is always reachable).",
   "settings.defaultVariant.title": "Default variant",
   "settings.defaultVariant.description": "Used for the \"api\" ref without a variant.",
   "settings.anthropicModel.title": "Default Anthropic model",
@@ -41,7 +41,7 @@
   "error.mcpUnavailable": "The hub's MCP gateway is unavailable: {detail}",
   "error.refusal": "The model declined to respond.",
   "error.refusalDetail": "The model declined to respond ({detail}).",
-  "error.egressDenied": "The hub's network policy blocks this host ({message}). Add the host to the \"brainEgressAllow\" hub setting.",
+  "error.egressDenied": "The hub's network policy blocks this host ({message}). Allow it on the network card in the chat, or add it in the hub's settings.",
   "error.keyRejected": "API key rejected ({provider}, {status}): {message}",
   "error.notFound": "{provider}: model or URL not found (404): {message}",
   "error.api": "{provider}: API error {status}: {message}",

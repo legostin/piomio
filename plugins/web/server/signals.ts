@@ -7,7 +7,7 @@
 
 import { createHash } from "node:crypto";
 import type { PluginContext, SignalProvider } from "@piomio/plugin-sdk";
-import { guardedFetch, DEFAULT_USER_AGENT } from "./fetch.ts";
+import { behindHub, guardedFetch, DEFAULT_USER_AGENT } from "./fetch.ts";
 import { findFeeds, parseFeed, type FeedItem, type ParsedFeed } from "./rss.ts";
 
 /** Items one poll emits at most (the newest); older new ones are marked seen without a signal. */
@@ -69,7 +69,7 @@ export function stateKey(config: Record<string, unknown>): string {
 
 /** The feed at `url`, or the first feed a page there points to. Throws with the reason when it cannot be read. */
 async function readFeed(url: string, s: RssSettings): Promise<ParsedFeed> {
-  const opts = { allowPrivate: !!s.allowPrivate, userAgent: s.userAgent || DEFAULT_USER_AGENT };
+  const opts = { allowPrivate: !!s.allowPrivate, hubDecides: behindHub(), userAgent: s.userAgent || DEFAULT_USER_AGENT };
   let page = await guardedFetch(url, opts);
   if (page.status >= 400) throw new Error(`HTTP ${page.status} ${page.statusText} at ${page.url}`.trim());
   let feed = parseFeed(page.text, page.url);

@@ -9,6 +9,11 @@ export const DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; piomio/0.1; personal
 
 export interface FetchOptions {
   allowPrivate?: boolean;
+  /**
+   * The hub's proxy stands between this fetch and the network (behindHub): a host in a network of the person's own is
+   * the hub's to decide, since it knows which ones they opened. This computer and link-local addresses never are.
+   */
+  hubDecides?: boolean;
   userAgent?: string;
   timeoutMs?: number;
   maxBytes?: number;
@@ -31,6 +36,11 @@ export interface FetchedPage {
 
 const REDIRECT = new Set([301, 302, 303, 307, 308]);
 
+/** This process reaches the network through the hub's proxy: the hub starts every plugin so (core plugins/host.ts). */
+export function behindHub(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!env.PIOMIO_PLUGIN_ID && env.NODE_USE_ENV_PROXY === "1" && !!(env.HTTPS_PROXY || env.https_proxy) && !!(env.HTTP_PROXY || env.http_proxy);
+}
+
 export async function guardedFetch(rawUrl: string, o: FetchOptions = {}): Promise<FetchedPage> {
   let url: URL;
   try {
@@ -46,17 +56,34 @@ export async function guardedFetch(rawUrl: string, o: FetchOptions = {}): Promis
   try {
     for (let hop = 0; ; hop++) {
       if (url.protocol !== "http:" && url.protocol !== "https:") throw new BlockedUrlError(`Only http and https URLs are supported (got ${url.protocol})`);
-      if (!o.allowPrivate) await assertPublicUrl(url, lookup);
-      const res = await fetchImpl(url, {
-        method: "GET",
-        redirect: "manual",
-        signal,
-        headers: {
-          "user-agent": o.userAgent || DEFAULT_USER_AGENT,
-          accept: "text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-          "accept-language": "ru,en;q=0.8",
-        },
-      });
+      let inside: BlockedUrlError["lan"];
+      if (!o.allowPrivate) {
+        try {
+          await assertPublicUrl(url, lookup);
+        } catch (e) {
+          if (!o.hubDecides || !(e instanceof BlockedUrlError) || !e.lan) throw e;
+          inside = e.lan;
+        }
+      }
+      let res: Response;
+      try {
+        res = await fetchImpl(url, {
+          method: "GET",
+          redirect: "manual",
+          signal,
+          headers: {
+            "user-agent": o.userAgent || DEFAULT_USER_AGENT,
+            accept: "text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+            "accept-language": "ru,en;q=0.8",
+          },
+        });
+      } catch (e) {
+        if (!inside || signal.aborted) throw e;
+        throw new BlockedUrlError(
+          `Could not open ${url.origin}: ${inside.host} resolves to a private address (${inside.addresses.join(", ")}) inside the person's network, and the hub did not let the connection through. ` +
+            "If they have not allowed this host, call hub_network_request with it: the person answers on its card. If they have, the host is down or out of reach from the hub's computer.",
+        );
+      }
       if (REDIRECT.has(res.status)) {
         const location = res.headers.get("location");
         await res.body?.cancel().catch(() => {});

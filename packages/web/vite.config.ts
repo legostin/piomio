@@ -32,7 +32,7 @@ function devImportMap(): Plugin {
 
 const ROOT = resolve(import.meta.dirname, "../..");
 /** UI plugins the demo hub lists in its bootstrap (src/demo/hub/routes.ts). */
-const DEMO_UI_PLUGINS = ["browser", "memory", "triggers"];
+const DEMO_UI_PLUGINS = ["browser", "memory"];
 /** Logos of the integrations the demo shows, from the plugins that ship them (served as logos/<id>.png). */
 const DEMO_LOGOS: Record<string, string> = {
   notion: "integrations/notion/logo.png",

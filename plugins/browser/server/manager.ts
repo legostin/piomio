@@ -20,7 +20,7 @@ import {
   decideHeadless,
   findChrome,
   formatSize,
-  isPrivateHost,
+  closedToAgent,
   launchArgs,
   proxyFromEnv,
   readSettings,
@@ -831,10 +831,15 @@ export class BrowserManager {
     await p.waitForLoadState("networkidle", { timeout: Math.max(300, deadline - Date.now()) }).catch(() => {});
   }
 
+  /** This computer always; the rest of the local network too when no hub proxy stands behind the browser (util closedToAgent). */
+  private closed(hostname: string): boolean {
+    return closedToAgent(hostname, { allowLocalNetwork: this.settings.allowLocalNetwork, viaHub: !!proxyFromEnv(process.env) });
+  }
+
   /** Agent navigation guard: no localhost / LAN unless allowed in settings. */
   guardUrl(u: URL): void {
     if (u.protocol === "about:") return;
-    if (!this.settings.allowLocalNetwork && isPrivateHost(u.hostname)) {
+    if (this.closed(u.hostname)) {
       throw new ToolError(
         `${u.hostname} belongs to the local network or this server, so it is closed to the agent. ` +
           "The user can allow such addresses in the Browser plugin settings (allowLocalNetwork) or open the address themselves in the browser's live view.",
@@ -857,7 +862,7 @@ export class BrowserManager {
     } catch {
       return null;
     }
-    if ((u.protocol !== "http:" && u.protocol !== "https:") || !isPrivateHost(u.hostname)) return null;
+    if ((u.protocol !== "http:" && u.protocol !== "https:") || !this.closed(u.hostname)) return null;
     const navigated = p === before.page ? p.url() !== before.url : !before.pages.has(p);
     if (!navigated) return null;
     if (p === before.page) await p.goto("about:blank").catch(() => {});

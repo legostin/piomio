@@ -5,6 +5,7 @@ export const en = {
   "approvals.network.scope": "Once: this host and port for the current session (up to 10 minutes while the request is live)",
   "approvals.network.always": "Always adds the host for all agents. External actions still need separate approval.",
   "approvals.network.ip": "This is an IP address; its owner may change. Always trusts this address for all agents.",
+  "approvals.network.private": "This host is inside your own network ({addresses}). Always adds it to your private hosts for all agents and their tools.",
 
   // ---------- app ----------
   "app.title": "Security console · Piomio",

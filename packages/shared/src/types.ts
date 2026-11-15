@@ -164,6 +164,9 @@ export interface ApprovalAsk {
   ipLiteral?: boolean;
   /** A host on the allowlist, asked about because the session has read outside content: no "always" to offer. */
   listed?: boolean;
+  /** A host inside the person's own network (`addresses`: what it resolves to): "always" puts it on the private list. */
+  private?: boolean;
+  addresses?: string[];
   agent?: string;
   task?: string;
   /** Server deadline for a live network permission; does not promise that a TCP client stays connected. */

@@ -33,6 +33,7 @@ import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, ski
 import { hasSkill } from "../skills.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { accessView } from "../access/map.ts";
+import { TRIGGERS_WATCH_TIMEOUT } from "../settings.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
 
@@ -49,6 +50,9 @@ export const AGENT_SETTABLE = [
   "approvalMode",
   "voice",
   "transcription",
+  "triggersWatchTimeoutSec",
+  // Turning it on shows the person a card (settings_update), as turning auto mode on does.
+  "triggersAllowPrivateUrls",
 ] as const;
 
 const SECRET_KEY = /key|token|secret|password/i;
@@ -180,11 +184,21 @@ export function registerHubTools(hub: Hub): void {
 
   reg({
     name: "network_request", effect: "read",
-    description: "Ask the person to allow a public host for this local brain session. Uses the network card: once for this session, always in the host allowlist, or deny. Never grants permission to publish, send or run commands. Waits up to 10 minutes without opening a connection to that host. Private/LAN/metadata addresses are refused. Also use this after a proxy 403 to get a clear outcome. Never automatically retry expired or denied access.",
-    inputSchema: obj({ host: { type: "string", description: "Exact DNS name or public IP, without a URL or wildcard" }, port: { type: "integer", minimum: 1, maximum: 65535 } }, ["host"]),
+    description:
+      "Ask the person to allow a host. Uses the network card: once for this session, always, or deny. " +
+      "A public host: for this local brain session's shell (always: the host allowlist). " +
+      "A host inside the person's own network (it resolves to a private address: an office or home server, a VPN, a NAS): for your shell and for the tools that open addresses (web_fetch, the browser); only the person answers that card (always: their list of private hosts). " +
+      "The hub shows the same card by itself when a tool or a command reaches for such a host, so call this after a refusal that names a private address, or when the person asks you to open one. " +
+      "Never grants permission to publish, send or run commands. Waits up to 10 minutes without opening a connection to that host. This computer itself (localhost), link-local and metadata addresses are refused. Also use this after a proxy 403 to get a clear outcome. Never automatically retry expired or denied access, and never tell the person to edit a network setting by its name: the card is how they allow a host.",
+    inputSchema: obj({ host: { type: "string", description: "Exact DNS name or IP, without a URL or wildcard" }, port: { type: "integer", minimum: 1, maximum: 65535 } }, ["host"]),
   }, async (i, ctx) => {
-    await hub.egress.requestHost(ctx.sessionId, String(i.host ?? ""), Number(i.port ?? 443));
-    return text(`Network access to ${i.host}:${i.port ?? 443} is allowed. Commands and external actions still need their own approval.`);
+    const host = String(i.host ?? "");
+    const port = Number(i.port ?? 443);
+    if (hub.egress.hasSession(ctx.sessionId)) await hub.egress.requestHost(ctx.sessionId, host, port);
+    // No shell behind the hub's proxy (a dialog, a brain on another computer): only a host inside the person's network is theirs to open here.
+    else if (!(await hub.egress.requestPrivate({ sessionId: ctx.sessionId, conversationId: ctx.conversationId, agentId: ctx.agentId, taskId: ctx.taskId }, host, port)))
+      return text(`${host} is a public host: web_fetch and the browser reach it without a permission, and this session has no shell behind the hub's proxy to allow it for.`);
+    return text(`Network access to ${host}:${port} is allowed. Commands and external actions still need their own approval.`);
   });
 
   reg({
@@ -248,13 +262,17 @@ export function registerHubTools(hub: Hub): void {
         "channelMirror true|false (the default agent's replies to messages typed in the web UI also go to Telegram); " +
         'approvalMode "ask" (the person answers every approval card: when they say "ask me everything") or "auto" (auto mode: a reviewer model decides instead of a card; turning it on shows the person a card); ' +
         'voice {voice: a voice id from hub_speech_status, speed: 0.5–2} (how the hub\'s local voice speaks); ' +
-        'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install). ' +
-        "Propose a network host via hub_network_request; only its card or the user settings can change the network allowlist. A custom speech-to-text server can only be changed by the user in settings.",
+        'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install); ' +
+        "triggersWatchTimeoutSec 1–120 (how long a watch trigger waits for its page); " +
+        "triggersAllowPrivateUrls true|false (watch triggers and triggers' scripts may reach addresses on the local network such as localhost, a router or a NAS; turning it on shows the person a card). " +
+        "Propose a network host (a public one, or one inside the person's network) via hub_network_request; only its card or the user settings can change the network lists. A custom speech-to-text server can only be changed by the user in settings.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
     },
     async (i, ctx) => {
       const patch = (i.patch && typeof i.patch === "object" ? i.patch : {}) as Record<string, unknown>;
       const refused = Object.keys(patch).filter((k) => !(AGENT_SETTABLE as readonly string[]).includes(k));
+      if (refused.some((k) => k === "brainEgressAllow" || k === "egressPrivateAllow"))
+        return text(`Refused: ${refused.join(", ")}. The network lists are the person's. To open a host, call hub_network_request with it: the person answers on its card (once or always). Do not send them to the settings for it.`, true);
       if (refused.length) return text(`Refused: ${refused.join(", ")} can only be changed by the user in the settings panel (gear icon → Settings).`, true);
       if (!Object.keys(patch).length) return text("Nothing to change.", true);
       // A server of the agent's choosing would receive the person's voice: that one stays with the person.
@@ -263,8 +281,16 @@ export function registerHubTools(hub: Hub): void {
         return text("Refused: a custom speech-to-text server can only be set by the user in the settings panel (gear icon → Settings → Voice).", true);
       const err = validateSettings(patch);
       if (err) return text(err, true);
-      // Asking the person more needs no yes; letting a reviewer decide instead of them does, on a card.
-      if (patch.approvalMode === "auto" && hub.settings.get().approvalMode === "ask" && !ctx.approved) {
+      // Asking the person more needs no yes; letting a reviewer decide instead of them does, on a card, and so does
+      // letting triggers reach the local network.
+      const now = hub.settings.get();
+      const asks = [
+        ...(patch.approvalMode === "auto" && now.approvalMode === "ask" ? [{ summary: t("settings.autoModeCard"), stays: "auto mode stays off", done: "Auto mode is on." }] : []),
+        ...(patch.triggersAllowPrivateUrls === true && !now.triggersAllowPrivateUrls
+          ? [{ summary: t("settings.triggersPrivateCard"), stays: "triggers still cannot reach the local network", done: "Triggers may reach the local network." }]
+          : []),
+      ];
+      if (asks.length && !ctx.approved) {
         const approval = hub.approvals.create({
           sessionId: ctx.sessionId,
           conversationId: ctx.conversationId,
@@ -272,21 +298,22 @@ export function registerHubTools(hub: Hub): void {
           agentId: ctx.agentId,
           tool: HUB_TOOL_PREFIX + "settings_update",
           input: i,
-          summary: t("settings.autoModeCard"),
+          summary: asks.map((a) => a.summary).join("; "),
           effect: "external",
           tainted: ctx.tainted,
         });
         const outcome = await hub.approvals.wait(approval.id, Math.max(120_000, hub.settings.get().approvalInlineWaitSec * 1000));
+        const stays = asks.map((a) => a.stays).join(", ");
         if (outcome === "timeout") {
           try {
             hub.approvals.resolve(approval.id, "deny", { via: "timeout" });
           } catch {
             /* already answered */
           }
-          return text("The person did not answer the card in time: auto mode stays off.", true);
+          return text(`The person did not answer the card in time: ${stays}.`, true);
         }
-        if (outcome !== "approved") return text("The person declined: auto mode stays off.", true);
-        hub.approvals.markExecuted(approval.id, text("Auto mode is on."));
+        if (outcome !== "approved") return text(`The person declined: ${stays}.`, true);
+        hub.approvals.markExecuted(approval.id, text(asks.map((a) => a.done).join(" ")));
       }
       const next = hub.updateSettings(patch, "agent");
       return text(`Settings updated: ${Object.keys(patch).map((k) => `${k}=${JSON.stringify((next as any)[k])}`).join(", ")}`);
@@ -1864,7 +1891,9 @@ function validateSettings(p: Record<string, unknown>): string | undefined {
   if ("digestTimes" in p && (!Array.isArray(p.digestTimes) || !p.digestTimes.every(hhmm))) return 'digestTimes must be a list of "HH:MM".';
   if ("channelMirror" in p && typeof p.channelMirror !== "boolean") return "channelMirror must be true or false.";
   if ("approvalMode" in p && p.approvalMode !== "auto" && p.approvalMode !== "ask") return 'approvalMode must be "auto" or "ask".';
-  for (const [k, min, max] of [["notifyRatePerHour", 0, 100], ["brainConcurrency", 1, 16]] as const) {
+  if ("triggersAllowPrivateUrls" in p && typeof p.triggersAllowPrivateUrls !== "boolean") return "triggersAllowPrivateUrls must be true or false.";
+  const timeout = TRIGGERS_WATCH_TIMEOUT;
+  for (const [k, min, max] of [["notifyRatePerHour", 0, 100], ["brainConcurrency", 1, 16], ["triggersWatchTimeoutSec", timeout.min, timeout.max]] as const) {
     if (k in p && (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max)) return `${k} must be a whole number from ${min} to ${max}.`;
   }
   return undefined;
