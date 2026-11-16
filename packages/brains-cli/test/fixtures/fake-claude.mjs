@@ -99,6 +99,11 @@ if (!login) {
       if (msg.type === "control_request") {
         if (msg.request?.subtype === "set_model") model = msg.request.model;
         if (msg.request?.subtype === "apply_flag_settings" && msg.request.settings?.effortLevel) effort = msg.request.settings.effortLevel;
+        // What it is connected to (FAKE_MCP_STATUS, as Claude Code's mcpServers), without a turn.
+        if (msg.request?.subtype === "mcp_status") {
+          out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: { mcpServers: JSON.parse(process.env.FAKE_MCP_STATUS ?? "[]") } } });
+          continue;
+        }
         out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id } });
         continue;
       }

@@ -110,9 +110,17 @@ function summary(a: NativeAction): string {
       return t("native.write", { path: shownPath(a.path) });
     case "fetch":
       return a.url ? truncate(t("native.fetch", { url: a.url }), 300) : t("native.other", { tool: a.tool });
-    default:
-      return t("native.other", { tool: a.tool });
+    default: {
+      const c = connectionTool(a.tool);
+      return c ? t("native.connection", c) : t("native.other", { tool: a.tool });
+    }
   }
+}
+
+/** A tool of one of the CLI's own connections (`mcp__<server>__<tool>`, brain-connections.ts), as a card names it. */
+export function connectionTool(tool: string): { connection: string; tool: string } | undefined {
+  const m = /^mcp__(.+?)__(.+)$/.exec(tool);
+  return m ? { connection: m[1].replace(/^claude_ai_/, "").replace(/_/g, " "), tool: m[2] } : undefined;
 }
 
 /** What the card says: the command or path as is, and the agent's own reason when it gave one. */

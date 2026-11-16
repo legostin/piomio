@@ -34,6 +34,21 @@ describe("BrainHost", () => {
     await expect(host.probe({ brainId: "gemini" })).rejects.toThrow(/Unknown brain/);
   });
 
+  it("offers the CLI's own connections only while the owner's policy lets the hub turn them on", async () => {
+    const forbidden = new PolicyStore(join(root, "node-no-connections"), { userHome });
+    const raw = JSON.parse(readFileSync(forbidden.file, "utf8"));
+    expect(raw.brains["claude-code"].connections).toBe(true);
+    raw.brains["claude-code"].command = ENV_CLAUDE;
+    raw.brains["claude-code"].connections = false;
+    writeFileSync(forbidden.file, JSON.stringify(raw));
+    const closed = new BrainHost({ home: join(root, "node-no-connections"), policy: forbidden, hubUrl: "http://hub.test:8080", bridgeCommand: ["bridge-cmd"] });
+    // Nothing is asked of the CLI at all.
+    expect(await closed.connections({ brainId: "claude-code" })).toEqual({ connections: [], supported: false });
+    // Kimi Code has no connections of its own.
+    expect(await host.connections({ brainId: "kimi" })).toEqual({ connections: [], supported: false });
+    await expect(host.connections({ brainId: "codex" })).rejects.toThrow(/disabled/);
+  });
+
   it("runs sessions in the workspace with the owner's tools and only harmless hub env", async () => {
     await host.create({
       brainId: "claude-code",

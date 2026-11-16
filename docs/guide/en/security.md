@@ -89,7 +89,7 @@ Access does not break quietly:
 - a service that can't be reached (the hub started before the network, the Mac slept, the service restarted) reconnects by itself, its sign-in kept: in 5 s, 15 s, 1 min, 5 min, then every 10 min. A call made meanwhile waits a moment for it. You are asked to sign in again only when the service itself refuses the sign-in;
 - the proxy tells "not allowed" from "cannot reach" (no internet, a host down), and only real refusals go into the audit log as refusals;
 - a Codex that fails to start is started again and, failing again, says why; it no longer drops to a mode where its commands have no network;
-- agents' Codex sessions see only the hub's tools: your own Codex MCP servers, plugins and ChatGPT apps (Computer Use and the like) are off there, because they ran outside the hub's checks. They stay as they are in your own Codex.
+- agents' Claude Code and Codex sessions see the hub's tools and nothing else of what the CLI has: your own MCP servers, plugins and account connectors (Gmail, Computer Use and the like) are off there, because they run outside the hub's checks. They stay as they are in your own CLI. You can turn one on for agents, per brain and computer, see [What you already connected in Claude Code or Codex](brains.md#what-you-already-connected-in-claude-code-or-codex): then its read-only tools run by themselves, anything else asks first, and what it returns counts as content from outside. A connection the CLI gets later stays off until you turn it on.
 
 ## The network filter
 

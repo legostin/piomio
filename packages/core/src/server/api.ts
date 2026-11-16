@@ -427,6 +427,16 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     hub.brains.invalidate(ref);
     return hub.brains.probe(ref, 0);
   });
+  // The CLIs' own connections (brain-connections.ts): what the person connected in Claude Code or Codex itself.
+  api.get("/api/brains/connections", async (req) => {
+    const q = req.query as { ref?: string; refresh?: string };
+    return hub.brainConnections.list(String(q.ref ?? ""), { refresh: q.refresh === "1" });
+  });
+  api.put("/api/brains/connections", async (req) => {
+    const b = (req.body ?? {}) as { ref?: unknown; name?: unknown; enabled?: unknown };
+    if (typeof b.ref !== "string" || typeof b.name !== "string" || typeof b.enabled !== "boolean") throw new HttpError(400, "brainConnections.badInput");
+    return hub.brainConnections.set(b.ref, b.name, b.enabled, "user");
+  });
   api.delete("/api/brains/limits/:ref", async (req) => {
     hub.db.prepare("delete from brain_limits where brain_ref = ?").run(decodeURIComponent((req.params as any).ref));
     hub.bus.emit("brains.updated", {});

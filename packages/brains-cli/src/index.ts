@@ -6,3 +6,4 @@ export { createKimiProvider, kimiCommand, kimiThinking, kimiToolName, parseKimiD
 export { AcpConnection, AcpError, ACP_AUTH_REQUIRED } from "./acp.ts";
 export { runCliLogin, parseCodexDeviceLogin, parseClaudeBrowserLogin, stripAnsi, type CliLoginOptions, type LoginParser } from "./login.ts";
 export { EventQueue, runLines, capture, childEnv } from "./proc.ts";
+export { parseClaudeStatus, claudeConnectionArgs, parseCodexList, codexToolName, readKnown, writeKnown, knownFile, HUB_SERVER, type KnownConnection } from "./connections.ts";

@@ -76,8 +76,8 @@ The owner of the computer decides, not the hub: in `~/.piomio-node/policy.json` 
   "exec": { "enabled": false, "allowCommands": [] },
   "fs": { "read": true, "write": true },
   "brains": {
-    "claude-code": { "enabled": true, "allowedTools": ["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__piomio"] },
-    "codex": { "enabled": true, "sandbox": "workspace-write" },
+    "claude-code": { "enabled": true, "allowedTools": ["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__piomio"], "connections": true },
+    "codex": { "enabled": true, "sandbox": "workspace-write", "connections": true },
     "kimi": { "enabled": true }
   },
   "workspacesRoot": "/home/me/piomio-workspace",
@@ -92,8 +92,8 @@ The owner of the computer decides, not the hub: in `~/.piomio-node/policy.json` 
 | `exec.enabled` | running commands: **off by default** |
 | `exec.allowCommands` | patterns of allowed commands, like `"git status"` or `"npm test*"`; empty allows any |
 | `exec.shell`, `exec.maxTimeoutMs` | the shell, and a time limit per command (30 minutes by default) |
-| `brains.claude-code` | whether Claude Code may be used, and its tools allowed without asking (`Bash` isn't among them) |
-| `brains.codex` | whether Codex may be used, and its sandbox: `read-only`, `workspace-write` or `danger-full-access` |
+| `brains.claude-code` | whether Claude Code may be used, and its tools allowed without asking (`Bash` isn't among them); `"connections": false` keeps what you connected in Claude Code itself away from agents, whatever is turned on in the hub |
+| `brains.codex` | whether Codex may be used, and its sandbox: `read-only`, `workspace-write` or `danger-full-access`; `"connections": false` works as for Claude Code |
 | `brains.kimi` | whether Kimi Code may be used; it has no sandbox, so its commands follow `exec` and its writes `fs.write` |
 | `workspacesRoot` | where agents' working folders are made |
 | `hubChanges` | whether you may turn commands on and off from the chat (`true` by default); `false` keeps every permission in this file |

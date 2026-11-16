@@ -486,6 +486,12 @@ peer.handle("brain.probe", async (p: { brainId: string; variant?: string }) => {
   return b.probe(p.variant);
 });
 
+peer.handle("brain.connections", async (p: { brainId: string; env?: Record<string, string> }) => {
+  const b = brains.get(p.brainId);
+  if (!b) throw new Error(`unknown brain ${p.brainId}`);
+  return { connections: b.connections ? await b.connections({ env: p.env }) : [], supported: !!b.connections };
+});
+
 peer.handle("brain.create", async (p: { brainId: string; opts: BrainSessionOptions }) => {
   const b = brains.get(p.brainId);
   if (!b) throw new Error(`unknown brain ${p.brainId}`);

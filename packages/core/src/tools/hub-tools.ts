@@ -14,7 +14,7 @@
 
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentDef, AgentDraft, AgentFolder, IntegrationView, JsonSchema, Locale, MachineSettings, SpeechStatus, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
-import { AVATAR_COLORS, AVATAR_SHAPES, defaultAvatar, expandBrains, formatBrainRef, KEY_PROVIDERS, keyProvider, onMachines, parseAvatar, parseBrainRef, parseThinking } from "@piomio/shared";
+import { AVATAR_COLORS, AVATAR_SHAPES, connectionToolPrefix, defaultAvatar, expandBrains, formatBrainRef, KEY_PROVIDERS, keyProvider, onMachines, parseAvatar, parseBrainRef, parseThinking } from "@piomio/shared";
 import { normalizeSettings, SetupError } from "../machine-setup.ts";
 import { siteDomain } from "../secrets.ts";
 import type { Hub } from "../app.ts";
@@ -60,7 +60,7 @@ const SECRET_KEY = /key|token|secret|password/i;
 /** Tools that only put a card in front of the user, who then decides: fine even after outside content was read. */
 const CARDS = new Set(["network_request", "secret_request", "plugin_setup", "agent_draft", "brain_login", "connect_device", "integration_connect"]);
 /** Tools that ask the person on a card of their own (what it installs, what it allows): no second card in front of it. */
-const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete", "machine_commands", "agent_folder_add"]);
+const OWN_CARD = new Set(["plugin_install", "permission_always", "skill_save", "agent_delete", "machine_commands", "agent_folder_add", "brain_connection_set"]);
 /** The same by their full names: auto mode never decides for them (policy/auto.ts), the person always does. group-tools.ts's group_delete too. */
 export const OWN_CARD_TOOLS: ReadonlySet<string> = new Set([...[...OWN_CARD].map((n) => HUB_TOOL_PREFIX + n), "group_delete"]);
 /** Hub tools every agent sees (ToolGateway.visible): saving what the person taught is for whoever they showed it to. */
@@ -1022,6 +1022,68 @@ export function registerHubTools(hub: Hub): void {
       return text(`${setupText(m.id)}${missing.length ? `\nNo key yet for: ${missing.join(", ")}. Ask for it with secret_request (vault id ${missing.map((p) => keyProvider(p)?.vaultId).join(", ")}).` : ""}`);
     },
     (i) => describeSetup(String(i.machine ?? ""), normalizeSettings({ brains: i.brains, limit: i.limit }, keys)),
+  );
+
+  // ---------- the CLIs' own connections (brain-connections.ts) ----------
+
+  reg(
+    {
+      name: "brain_connections",
+      effect: "read",
+      description:
+        "List what the person already connected in a CLI brain itself, outside the hub (Claude Code: its MCP servers, its plugins' servers, the claude.ai connectors such as Gmail, Calendar or Drive; Codex: the MCP servers of its config.toml), and which of them are turned on for agents. " +
+        "Everything is off until the person turns it on (hub_brain_connection_set). Their sign-in lives in the CLI on that computer, never in the hub: one with status \"signin\" is signed in there by the person (Claude Code: `claude mcp login <name>` or /mcp; Codex: `codex mcp login <name>`). " +
+        "Asking starts the CLI and its servers, so it takes a few seconds; the answer is kept for some minutes, `refresh` asks again now.",
+      inputSchema: obj({ ref: { type: "string", description: "Brain ref, e.g. claude-code@local (hub_brains_list). Omit: every Claude Code and Codex." }, refresh: { type: "boolean" } }),
+    },
+    async (i) => {
+      const refs = typeof i.ref === "string" && i.ref ? [formatBrainRef(parseBrainRef(i.ref))] : hub.brains.list().map((b) => b.ref).filter((r) => hub.brainConnections.offers(r));
+      return json(
+        await Promise.all(
+          refs.map(async (ref) => {
+            try {
+              const l = await hub.brainConnections.list(ref, { refresh: i.refresh === true });
+              if (!l.supported) return { ref, offered: false, note: "This brain offers no connections of its own here (not a CLI brain, an older Piomio on that computer, or its owner's policy.json forbids it)." };
+              return {
+                ref,
+                connections: l.connections.map((c) => ({ name: c.name, from: c.source, status: c.status, ...(c.detail ? { detail: c.detail } : {}), on: c.enabled, ...(c.tools ? { tools: c.tools.length, readOnlyTools: c.readTools?.length ?? 0 } : {}) })),
+              };
+            } catch (e: any) {
+              return { ref, error: e?.message ?? String(e) };
+            }
+          }),
+        ),
+      );
+    },
+  );
+
+  reg(
+    {
+      name: "brain_connection_set",
+      effect: "external",
+      approvalSummary: "%brainConnections.approval%",
+      description:
+        "Turn one of a CLI brain's own connections (hub_brain_connections) on or off for the agents that think with that brain on that computer; the person says yes on a card. " +
+        "On: their sessions get its tools from the next turn, named mcp__<connection>__<tool>; tools that only read run without asking, anything else (send, create, change, delete) asks the person or auto mode each time, and what the tools return counts as outside content. " +
+        "It is for every agent thinking there, not one agent. Only a connection the CLI listed can be turned on.",
+      inputSchema: obj({ ref: { type: "string", description: "Brain ref, e.g. claude-code@local" }, name: { type: "string", description: "The connection's name exactly as hub_brain_connections gives it" }, on: { type: "boolean" } }, ["ref", "name", "on"]),
+    },
+    async (i, ctx) => {
+      const ref = formatBrainRef(parseBrainRef(String(i.ref ?? "")));
+      const name = String(i.name ?? "");
+      const on = i.on !== false;
+      const l = await hub.brainConnections.set(ref, name, on, `agent:${ctx.agentId}`);
+      const now = l.connections.filter((c) => c.enabled).map((c) => c.name);
+      return text(
+        on
+          ? `${name} is on for agents thinking with ${ref}: from their next turn its tools are ${connectionToolPrefix(name)}__<tool>. Reading is free, the rest asks. On now: ${now.join(", ")}.`
+          : `${name} is off for agents thinking with ${ref}. On now: ${now.length ? now.join(", ") : "none"}.`,
+      );
+    },
+    (i) => {
+      const brain = hub.brains.list().find((b) => b.ref === String(i.ref ?? ""))?.label ?? String(i.ref ?? "");
+      return tFor(hubLocale())(i.on === false ? "brainConnections.offApproval" : "brainConnections.approval", { name: String(i.name ?? ""), brain });
+    },
   );
 
   reg(

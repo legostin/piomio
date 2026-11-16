@@ -79,6 +79,8 @@ export interface RunnerDeps {
   /** The paired computers (task_delegate's `machine`). */
   machines?: () => Machine[];
   canonicalMachine?: (id: string) => string;
+  /** The CLI's own connections the person turned on for this brain on its computer (brain-connections.ts). */
+  connections?: (ref: string) => string[];
   /** The id an agent's binding (AgentDef.machines) names the hub's own computer by: its replica id in a cluster, else "local". */
   here?: () => string;
   /** The kinds of brain the brain plugins and the computers offer: one of those not connected now may come back. */
@@ -221,6 +223,11 @@ const OPEN_TASK: TaskStatus[] = ["queued", "running", "waiting_approval", "waiti
 
 /** Harness built-in tools whose results come from the outside world. */
 const NATIVE_SOURCE_TOOLS = /^(WebFetch|WebSearch|web_search|fetch)$/i;
+/**
+ * A tool of one of the CLI's own connections (brain-connections.ts): the brains name them `mcp__<server>__<tool>`, the
+ * hub's own tools by their bare names. Whatever such a tool returns came from outside, as a hub MCP tool's result does.
+ */
+const CONNECTION_TOOL = /^mcp__/;
 const MAX_TASK_CONCURRENCY = 4;
 /** An errand (Task kind "errand") still going this long after it was made is an ordinary task: the person sees it in the list. */
 export const ERRAND_MINUTES = 15;
@@ -1632,8 +1639,10 @@ export class SessionRunner {
   }
 
   /** What a session is opened with; a dialog's carries the team's rules for where work goes too. */
-  private stampOf(agent: AgentDef, conv: Conversation, kind: WorkKind): string {
-    const stamp = sessionStamp(agent, conv, kind, this.d.toolNames?.());
+  private stampOf(agent: AgentDef, conv: Conversation, kind: WorkKind, ref: string): string {
+    // The brain's process starts with the CLI's own connections that are on: another set, another process.
+    const on = this.d.connections?.(ref) ?? [];
+    const stamp = sessionStamp(agent, conv, kind, this.d.toolNames?.()) + (on.length ? `|connections:${on.join(",")}` : "");
     return conv.kind === "main" ? `${stamp}|${this.rules.stamp()}` : stamp;
   }
 
@@ -2106,8 +2115,10 @@ export class SessionRunner {
         : {}),
       // On a paired computer that allows commands, its brain asks the hub about them (auto mode, the person).
       ...(!local ? { askTool: NATIVE_PERMISSION_TOOL } : {}),
+      // What the person connected in the CLI itself and turned on for agents here (brain-connections.ts).
+      ...(this.d.connections?.(formatBrainRef(ref)).length ? { connections: this.d.connections(formatBrainRef(ref)) } : {}),
     });
-    this.live.set(row.id, { handle, brainRef: formatBrainRef(ref), stamp: this.stampOf(agent, conv, kind), ...(thinking.model ? { model: thinking.model } : {}), ...(thinking.effort ? { effort: thinking.effort } : {}) });
+    this.live.set(row.id, { handle, brainRef: formatBrainRef(ref), stamp: this.stampOf(agent, conv, kind, formatBrainRef(ref)), ...(thinking.model ? { model: thinking.model } : {}), ...(thinking.effort ? { effort: thinking.effort } : {}) });
     if (!sameBrain) this.d.audit.append("core", "session.open", row.id, { agent: agent.id, brain: formatBrainRef(ref), conversation: conv.id, task: task?.id });
     return { row, handle, fresh: !!prior && !resume };
   }
@@ -2214,7 +2225,7 @@ export class SessionRunner {
       if (!ref) return false;
       const key = formatBrainRef(parseBrainRef(ref));
       let live = prior ? this.live.get(prior.id) : undefined;
-      if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, "chat")) {
+      if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, "chat", key)) {
         if (live && prior) {
           if (live.brainRef === key) await this.closeLive(prior.id);
           else void this.closeLive(prior.id);
@@ -2577,7 +2588,7 @@ export class SessionRunner {
       // Opened ahead without the history: this first turn still gets the recap.
       if (curPrior && this.freshAhead.delete(curPrior.id)) fresh = true;
       try {
-        if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, kind)) {
+        if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, kind, key)) {
           // The same brain resumes the same conversation with the new instructions: let the old process finish first.
           if (live && curPrior) {
             if (live.brainRef === key) await this.closeLive(curPrior.id);
@@ -2843,7 +2854,9 @@ export class SessionRunner {
               opening = true;
             }
           } else if (own) this.d.egressGuard?.wrote(row.id, e.input);
-          if (NATIVE_SOURCE_TOOLS.test(e.name) && !row.tainted) {
+          const connection = own && CONNECTION_TOOL.test(e.name);
+          if (connection) sourceCalls.add(e.id);
+          if ((NATIVE_SOURCE_TOOLS.test(e.name) || connection) && !row.tainted) {
             this.d.store.updateSession(row.id, { tainted: true });
             row.tainted = true;
           }

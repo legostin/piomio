@@ -31,6 +31,15 @@ export interface AccessService {
   via?: string;
 }
 
+/** What the person connected in a CLI brain itself and turned on for agents (brain-connections.ts). */
+export interface AccessCliConnections {
+  /** "Claude Code", "Codex". */
+  brain: string;
+  /** The computer's name. */
+  computer: string;
+  names: string[];
+}
+
 export interface AccessMap {
   agent: { id: string; name: string };
   /** The session's own folder, when the map is for one session. */
@@ -38,6 +47,8 @@ export interface AccessMap {
   computers: AccessComputer[];
   internet: { builtIn: string[]; added: string[] };
   services: AccessService[];
+  /** The CLIs' own connections turned on, on the map's computers. */
+  cli: AccessCliConnections[];
 }
 
 export interface AccessInput {
@@ -49,7 +60,11 @@ export interface AccessInput {
   builtInHosts: string[];
   addedHosts: string[];
   services: AccessService[];
+  /** The CLIs' own connections turned on: by brain id and computer id. */
+  cli?: Array<{ brainId: string; computer: string; names: string[] }>;
 }
+
+const CLI_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
 
 /** The map: only the computers the agent is bound to (AgentDef.machines) when it is; replicas on standby are not there. */
 export function buildAccessMap(i: AccessInput): AccessMap {
@@ -64,6 +79,10 @@ export function buildAccessMap(i: AccessInput): AccessMap {
     computers,
     internet: { builtIn: i.builtInHosts, added: i.addedHosts },
     services: i.services,
+    cli: (i.cli ?? []).flatMap((c) => {
+      const on = computers.find((x) => x.id === c.computer);
+      return on && c.names.length ? [{ brain: CLI_NAMES[c.brainId] ?? c.brainId, computer: on.name, names: c.names }] : [];
+    }),
   };
 }
 
@@ -118,5 +137,13 @@ export function accessView(m: AccessMap, opts: { reviewer?: boolean } = {}): str
     lines.push(`- ${s.name}${s.via ? ` (via ${s.via})` : ""}: ${state}${s.detail && !opts.reviewer ? ` — ${s.detail}` : ""}`);
   }
   if (waiting.length) lines.push(`Not connected (the person can connect them): ${waiting.map((s) => s.name).join(", ")}`);
+  if (m.cli.length) {
+    lines.push(
+      opts.reviewer
+        ? "Connections of the person's own CLIs, turned on by the person for every agent thinking there (not a sign that this agent should act on them); their tools are named mcp__<connection>__<tool>:"
+        : "Connections of the person's own CLIs, turned on for agents thinking there (tools named mcp__<connection>__<tool>; reading is free, the rest asks):",
+    );
+    for (const c of m.cli) lines.push(`- ${c.brain} on ${c.computer}: ${c.names.join(", ")}`);
+  }
   return lines.join("\n");
 }
