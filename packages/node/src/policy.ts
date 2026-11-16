@@ -23,8 +23,12 @@ export interface Policy {
   };
   fs: { read: boolean; write: boolean };
   brains: {
-    "claude-code": { enabled: boolean; command?: string; allowedTools: string[] };
-    codex: { enabled: boolean; command?: string; sandbox: CodexSandbox };
+    /**
+     * `connections`: the hub may turn on, for its agents, what this computer's owner connected in the CLI itself (its
+     * MCP servers, the account's connectors). False: sessions here get the hub's tools alone, whatever the hub asks.
+     */
+    "claude-code": { enabled: boolean; command?: string; allowedTools: string[]; connections: boolean };
+    codex: { enabled: boolean; command?: string; sandbox: CodexSandbox; connections: boolean };
     /** Kimi Code has no sandbox: its commands follow `exec`, its writes `fs.write` and the allowed folders. */
     kimi: { enabled: boolean; command?: string };
   };
@@ -49,8 +53,8 @@ export function defaultPolicy(userHome = homedir()): Policy {
     exec: { enabled: false, allowCommands: [] },
     fs: { read: true, write: true },
     brains: {
-      "claude-code": { enabled: true, allowedTools: [...DEFAULT_NODE_CLAUDE_TOOLS] },
-      codex: { enabled: true, sandbox: "workspace-write" },
+      "claude-code": { enabled: true, allowedTools: [...DEFAULT_NODE_CLAUDE_TOOLS], connections: true },
+      codex: { enabled: true, sandbox: "workspace-write", connections: true },
       kimi: { enabled: true },
     },
     workspacesRoot: ws,
@@ -114,11 +118,13 @@ export function normalizePolicy(raw: any, userHome = homedir()): Policy {
         enabled: bool(cc.enabled, true, "brains.claude-code.enabled"),
         ...(command(cc.command, "brains.claude-code.command") ? { command: command(cc.command, "brains.claude-code.command") } : {}),
         allowedTools: strList(cc.allowedTools, "brains.claude-code.allowedTools") ?? [...DEFAULT_NODE_CLAUDE_TOOLS],
+        connections: bool(cc.connections, true, "brains.claude-code.connections"),
       },
       codex: {
         enabled: bool(cx.enabled, true, "brains.codex.enabled"),
         ...(command(cx.command, "brains.codex.command") ? { command: command(cx.command, "brains.codex.command") } : {}),
         sandbox,
+        connections: bool(cx.connections, true, "brains.codex.connections"),
       },
       kimi: {
         enabled: bool(km.enabled, true, "brains.kimi.enabled"),

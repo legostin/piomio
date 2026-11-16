@@ -1,7 +1,7 @@
 // Brain registry: brains contributed by plugins (local) and by paired machines (remote).
 // Gives the session runner one interface regardless of where the brain runs.
 
-import type { BrainEvent, BrainLoginUpdate, BrainSessionOptions, BrainTurn, ProbeResult, BrainRef } from "@piomio/shared";
+import type { BrainConnection, BrainEvent, BrainLoginUpdate, BrainSessionOptions, BrainTurn, ProbeResult, BrainRef } from "@piomio/shared";
 import { formatBrainRef, parseBrainRef, RpcCodes, RpcError, type RpcPeer } from "@piomio/shared";
 import { LocalizedError, t } from "./i18n.ts";
 
@@ -171,6 +171,29 @@ export class BrainRegistry {
     }
     this.probeCache.set(key, { ...result, checkedAt: new Date().toISOString() });
     return result;
+  }
+
+  /**
+   * What the person connected in this brain's CLI itself (shared BrainConnection), asked of its host now: it may start
+   * the CLI and its servers, so nothing calls this on a timer. `env` (the egress proxy) goes to a brain on the hub's
+   * own computer. `supported` false: this brain has none to offer, or its computer's owner does not offer them.
+   */
+  async connections(refStr: string, env?: Record<string, string>): Promise<{ connections: BrainConnection[]; supported: boolean }> {
+    const ref = parseBrainRef(refStr);
+    const r = this.resolve(ref);
+    if (!r) throw new LocalizedError("brain.refNotConnected", { ref: refStr }, 400);
+    try {
+      const out = await r.peer.request<{ connections?: BrainConnection[]; supported?: boolean }>(
+        "brain.connections",
+        { brainId: ref.brainId, ...(ref.machineId === "local" && env ? { env } : {}) },
+        { timeoutMs: 90_000 },
+      );
+      return { connections: Array.isArray(out?.connections) ? out.connections : [], supported: out?.supported !== false };
+    } catch (e) {
+      // A computer running a Piomio from before this does not know the method.
+      if (e instanceof RpcError && e.code === RpcCodes.MethodNotFound) return { connections: [], supported: false };
+      throw e;
+    }
   }
 
   invalidate(refStr: string): void {

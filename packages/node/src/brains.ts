@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BrainEvent, BrainSessionOptions, BrainTurn, MachineBrainId, MachineInfo, MachineModel, NodeSetup, ProbeResult } from "@piomio/shared";
+import type { BrainConnection, BrainEvent, BrainSessionOptions, BrainTurn, MachineBrainId, MachineInfo, MachineModel, NodeSetup, ProbeResult } from "@piomio/shared";
 import { brainWire, cheapestModel, keyProvider, profileFrom } from "@piomio/shared";
 import type { BrainProviderImpl, BrainSessionImpl } from "@piomio/plugin-sdk";
 import { codexChooser, createClaudeCodeProvider, createCodexProvider, createKimiProvider } from "@piomio/brains-cli";
@@ -314,6 +314,19 @@ export class BrainHost {
     return r;
   }
 
+  /** This computer's owner lets the hub turn on what they connected in the CLI itself (policy.json). */
+  private connectionsAllowed(id: NodeBrainId): boolean {
+    const b = this.o.policy.get().brains[id];
+    return "connections" in b && b.connections;
+  }
+
+  /** What the owner connected in this brain's CLI, for the hub to offer with a switch; none when the policy forbids it. */
+  async connections(p: { brainId: string }): Promise<{ connections: BrainConnection[]; supported: boolean }> {
+    const provider = this.provider(p.brainId);
+    if (!provider.connections || !this.connectionsAllowed(p.brainId as NodeBrainId)) return { connections: [], supported: false };
+    return { connections: await provider.connections({}), supported: true };
+  }
+
   async create(p: { brainId: string; opts: BrainSessionOptions }, owner?: unknown, hubUrl?: string): Promise<{ workspace: string }> {
     const provider = this.provider(p.brainId);
     const opts = p.opts;
@@ -344,6 +357,8 @@ export class BrainHost {
       // Hub-side paths mean nothing here.
       skillsDir: undefined,
       claudePluginDirs: [],
+      // Names only, and only where the owner's policy lets the hub turn the CLI's own connections on.
+      connections: this.connectionsAllowed(brainId) && Array.isArray(opts.connections) ? opts.connections.filter((n) => typeof n === "string" && n.length <= 200).slice(0, 100) : undefined,
       env,
       // This computer's own sandbox for the session, when the daemon keeps one (a hub replica's own daemon).
       ...(this.o.confine ? { confine: this.o.confine(workspace, brainId) } : {}),

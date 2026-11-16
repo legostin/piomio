@@ -13,6 +13,7 @@ import type {
   OutboundMessage,
   Params,
   ProbeResult,
+  BrainConnection,
   ToolCallContext,
   ToolResult,
   ToolSpec,
@@ -56,6 +57,12 @@ export interface BrainProviderImpl {
   variants?: string[];
   probe(variant?: string): Promise<ProbeResult>;
   createSession(opts: BrainSessionOptions): Promise<BrainSessionImpl>;
+  /**
+   * What the person connected in this CLI itself (shared BrainConnection), for the hub to offer with a switch. It may
+   * start the CLI and its servers, so the hub asks only when someone looks; `env` carries the egress proxy. Only CLI
+   * brains with connections of their own have it.
+   */
+  connections?(opts: { env?: Record<string, string> }): Promise<BrainConnection[]>;
   /**
    * Sign the CLI in without a terminal: start its device or browser login and report the page and code the user
    * needs through `onUpdate`. `env` carries the egress proxy the login may use. Only brains that can do it have it.

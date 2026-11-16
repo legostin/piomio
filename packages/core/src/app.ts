@@ -75,6 +75,7 @@ import { registerHubTools, slug } from "./tools/hub-tools.ts";
 import { SecretIntake } from "./secrets.ts";
 import { AgentDrafts } from "./agent-drafts.ts";
 import { BrainLogins } from "./brain-login.ts";
+import { BrainConnections } from "./brain-connections.ts";
 import { CliTools } from "./cli-tools.ts";
 import { graphicsCards } from "@piomio/shared/hardware";
 import { UserPath } from "@piomio/shared/user-path";
@@ -187,6 +188,7 @@ export class Hub {
   secrets: SecretIntake;
   agentDrafts: AgentDrafts;
   brainLogins: BrainLogins;
+  brainConnections: BrainConnections;
   cliTools: CliTools;
   /** Where the user's own CLIs live (their shell or account PATH): read on desktop installs, which start with a short PATH. */
   userPath = new UserPath();
@@ -371,6 +373,14 @@ export class Hub {
       const keys = (e as { keys?: unknown }).keys;
       if (Array.isArray(keys) && keys.some((k) => k === "voice" || k === "transcription" || k === "language")) this.speech.changed();
     });
+    this.brainConnections = new BrainConnections({
+      settings: this.settings,
+      brains: this.brains,
+      audit: this.audit,
+      bus: this.bus,
+      computer: (id) => this.machines.canonical(id),
+      egress: { proxy: this.egress, port: () => this.config.egressPort },
+    });
     this.runner = new SessionRunner({
       config,
       store: this.store,
@@ -393,6 +403,7 @@ export class Hub {
       machineName: (id) => this.machines.name(id) ?? this.replicaName(id),
       machines: () => this.machines.list(),
       canonicalMachine: (id) => this.machines.canonical(id),
+      connections: (ref) => this.brainConnections.enabled(ref),
       groupArchived: (id) => this.groupsState.isArchived(id),
       here: () => this.here(),
       gpus: () => this.gpus,
@@ -1023,6 +1034,7 @@ export class Hub {
       builtInHosts: DEFAULT_BRAIN_EGRESS,
       addedHosts: this.settings.get().brainEgressAllow,
       services,
+      cli: Object.entries(this.brainConnections.enabledEverywhere()).map(([key, names]) => ({ brainId: key.slice(0, key.indexOf("@")), computer: key.slice(key.indexOf("@") + 1), names })),
     });
   }
 

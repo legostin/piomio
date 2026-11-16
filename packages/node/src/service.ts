@@ -31,6 +31,7 @@ function describe(method: string, p: any): string {
     case "fs.write":
       return `${short(p?.path, 200)} (${typeof p?.content === "string" ? Buffer.byteLength(p.content) : 0} B)`;
     case "brain.probe":
+    case "brain.connections":
       return String(p?.brainId ?? "");
     case "brain.create":
       return `${p?.brainId} session=${p?.opts?.sessionId} workspace=${short(p?.opts?.workspace, 80)}`;
@@ -53,6 +54,7 @@ function outcome(method: string, r: any): string {
   if (method === "fs.list") return `${r?.entries?.length ?? 0} entries`;
   if (method === "brain.probe") return r?.available ? `available${r.authenticated ? "" : ", not signed in"}` : "unavailable";
   if (method === "brain.steer") return r?.accepted ? "joined the turn" : "no turn to join";
+  if (method === "brain.connections") return r?.supported ? `${r.connections?.length ?? 0} connections` : "not offered here";
   return "ok";
 }
 
@@ -157,6 +159,7 @@ export class NodeService {
     peer.handle("fs.write", this.wrap("fs.write", (p: any) => fsWrite(p ?? {}, policy(), this.guard)));
     peer.handle("fs.list", this.wrap("fs.list", (p: any) => fsList(p ?? {}, policy(), this.guard)));
     peer.handle("brain.probe", this.wrap("brain.probe", (p: any) => this.brains.probe(p ?? {})));
+    peer.handle("brain.connections", this.wrap("brain.connections", (p: any) => this.brains.connections(p ?? {})));
     peer.handle(
       "brain.create",
       this.wrap("brain.create", async (p: any) => {

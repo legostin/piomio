@@ -15,6 +15,11 @@ if (args[0] === "--version") {
   console.log("codex-cli 9.9.9");
   process.exit(0);
 }
+// The person's own MCP servers, as `codex mcp list --json` prints them (FAKE_CODEX_MCP).
+if (args[0] === "mcp" && args[1] === "list") {
+  console.log(process.env.FAKE_CODEX_MCP ?? "[]");
+  process.exit(0);
+}
 if (args[0] === "login" && args[1] === "status") {
   console.log(existsSync(auth) ? "Logged in using ChatGPT" : "Not logged in");
   process.exit(existsSync(auth) ? 0 : 1);

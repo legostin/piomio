@@ -6,6 +6,7 @@ import type { BrainEvent, BrainTurn } from "@piomio/shared";
 import { brainImageEvents } from "@piomio/shared";
 import { EventQueue, runLines, type RunningProcess } from "./proc.ts";
 import type { HubAnswer } from "./hub-permission.ts";
+import { codexToolName } from "./connections.ts";
 
 /** Codex's v2 notifications as BrainEvents. Pure: easy to test with recorded frames. */
 export class CodexAppParser {
@@ -33,7 +34,7 @@ export class CodexAppParser {
         break;
       case "item/started": {
         const it = p.item ?? {};
-        if (it.type === "mcpToolCall" || it.type === "dynamicToolCall") out.push({ type: "tool_call", id: it.id, name: it.tool ?? "tool", input: it.arguments ?? {} });
+        if (it.type === "mcpToolCall" || it.type === "dynamicToolCall") out.push({ type: "tool_call", id: it.id, name: codexToolName(it.server, it.tool), input: it.arguments ?? {} });
         if (it.type === "commandExecution") out.push({ type: "tool_call", id: it.id, name: "shell", input: { command: it.command } });
         if (it.type === "webSearch") out.push({ type: "tool_call", id: it.id, name: "WebSearch", input: { query: it.query ?? it.action?.query ?? "" } });
         if (it.type === "fileChange") out.push({ type: "tool_call", id: it.id, name: "apply_patch", input: { files: (it.changes ?? []).map((c: any) => c.path) } });
@@ -177,6 +178,8 @@ export interface AppServerSetup {
   threadId?: string;
   /** Ask the hub about what the sandbox would not let through; without it every approval is declined. */
   ask?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>;
+  /** Ask the hub before a tool of one of the person's own MCP servers changes something; without it that is declined. */
+  askConnection?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>;
   approvalPolicy?: "never" | "on-request";
   /** Thread settings in place of `sandbox`: a permission profile chosen by `-c default_permissions` (codex.ts). */
   profile?: boolean;
@@ -190,13 +193,20 @@ type Pending = { resolve: (v: any) => void; reject: (e: any) => void };
  * The answer to one of Codex's approval requests, asking `ask` (the hub) what it is about. Codex's answers have no
  * room for why not: `denied` gets the hub's reason, for the turn to hear it otherwise.
  */
-export async function approvalAnswer(method: string, params: Record<string, any>, ask?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>, denied?: (why: string) => void): Promise<unknown> {
-  const hub = async (tool: string, input: Record<string, unknown>): Promise<boolean> => {
-    if (!ask) return false;
-    const a = await ask(tool, input);
+export async function approvalAnswer(
+  method: string,
+  params: Record<string, any>,
+  ask?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>,
+  denied?: (why: string) => void,
+  connection?: { ask?: (tool: string, input: Record<string, unknown>) => Promise<HubAnswer>; call?: (server: string) => { tool?: string; input?: unknown } | undefined },
+): Promise<unknown> {
+  const via = async (asker: typeof ask, tool: string, input: Record<string, unknown>): Promise<boolean> => {
+    if (!asker) return false;
+    const a = await asker(tool, input);
     if (!a.allow && a.message) denied?.(a.message);
     return a.allow;
   };
+  const hub = (tool: string, input: Record<string, unknown>) => via(ask, tool, input);
   const command = Array.isArray(params.command) ? params.command.join(" ") : typeof params.command === "string" ? params.command : "";
   const net = params.networkApprovalContext && typeof params.networkApprovalContext === "object" ? { host: params.networkApprovalContext.host } : undefined;
   switch (method) {
@@ -220,6 +230,16 @@ export async function approvalAnswer(method: string, params: Record<string, any>
     case "applyPatchApproval": {
       const yes = await hub("codex.fileChange", { grantRoot: params.grantRoot, reason: params.reason });
       return { decision: yes ? "approved" : { denied: { rejection: "The person did not allow it." } } };
+    }
+    // A tool of one of the person's own MCP servers wants to change something (default_tools_approval_mode="writes",
+    // codex-isolation.ts). Codex asks in MCP's elicitation form; any other elicitation has nobody here to fill it in.
+    case "mcpServer/elicitation/request": {
+      const meta = params._meta && typeof params._meta === "object" ? params._meta : {};
+      if (meta.codex_approval_kind !== "mcp_tool_call" || typeof params.serverName !== "string") return { action: "decline", content: null, _meta: null };
+      const call = connection?.call?.(params.serverName);
+      const input = meta.tool_params ?? call?.input;
+      const yes = await via(connection?.ask, codexToolName(params.serverName, call?.tool ?? meta.tool_name), input && typeof input === "object" ? input : {});
+      return { action: yes ? "accept" : "decline", content: yes ? {} : null, _meta: null };
     }
     default:
       return { decision: "decline" };
@@ -261,6 +281,8 @@ export class CodexAppServer {
   private started = false;
   private finished = true;
   private s: AppServerSetup;
+  /** The latest call to each MCP server, by server (for its approval request). */
+  private mcpCalls = new Map<string, { tool?: string; input?: unknown }>();
 
   constructor(s: AppServerSetup) {
     this.s = s;
@@ -308,14 +330,14 @@ export class CodexAppServer {
       return;
     }
     if (m.id !== undefined && m.method) {
-      const approval = /requestApproval|Approval$/.test(m.method);
+      const approval = /requestApproval|Approval$/.test(m.method) || m.method === "mcpServer/elicitation/request";
       if (!approval) {
         this.proc?.write(`${JSON.stringify({ id: m.id, error: { code: -32601, message: "not supported by Piomio" } })}\n`);
         return;
       }
       // Confined, the hub decides (and may ask the person); otherwise approval_policy is "never" and this is a no.
       let why: string | undefined;
-      void approvalAnswer(m.method, m.params ?? {}, this.s.ask, (w) => (why = w)).then((result) => {
+      void approvalAnswer(m.method, m.params ?? {}, this.s.ask, (w) => (why = w), { ask: this.s.askConnection, call: (server) => this.mcpCalls.get(server) }).then((result) => {
         this.proc?.write(`${JSON.stringify({ id: m.id, result })}\n`);
         // The reason joins the turn as the next thing the agent reads.
         if (why) void this.steer({ text: `[System] ${why}` });
@@ -323,6 +345,10 @@ export class CodexAppServer {
       return;
     }
     if (m.method === "thread/started" && m.params?.thread?.id) this.threadId = m.params.thread.id;
+    // The call a server's approval request is about: Codex's request names the server, the started item the tool.
+    if (m.method === "item/started" && m.params?.item?.type === "mcpToolCall" && typeof m.params.item.server === "string") {
+      this.mcpCalls.set(m.params.item.server, { tool: m.params.item.tool, input: m.params.item.arguments });
+    }
     // Between turns Codex's own notes (its MCP servers starting, rate limits) concern no turn.
     if (this.finished) return;
     for (const e of this.parser.push(m.method, m.params)) this.events?.push(e);

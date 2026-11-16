@@ -2,7 +2,7 @@
 // a hub that takes them, PIOMIO_API_KEYS).
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Brain, LogIn, RefreshCw, TimerReset } from "lucide-react";
+import { Brain, LogIn, Plug, RefreshCw, TimerReset } from "lucide-react";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, relativeTime } from "../lib/format";
 import { hubEvents, session } from "../state/app";
@@ -12,6 +12,7 @@ import { toast } from "../state/toast";
 import { t, tRich } from "../i18n";
 import { Badge, Button, Card, EmptyState, ErrorNote, Loading, Page } from "../components/ui";
 import { BrainLoginCard } from "../components/BrainLoginCard";
+import { BrainConnectionsPanel, hasOwnConnections } from "../components/BrainConnections";
 import { PluginSetupCard, VaultGate } from "../components/SecretCards";
 
 
@@ -26,6 +27,8 @@ export function BrainsPage() {
   // An older hub without the flag offered keys.
   const apiKeys = useStore(session)?.apiKeys ?? true;
   const [signingIn, setSigningIn] = useState<string>();
+  // The brain whose own connections are open (what the person connected in the CLI itself).
+  const [connectionsOf, setConnectionsOf] = useState<string>();
   const [list, setList] = useState<BrainRow[] | null>(null);
   const [error, setError] = useState<string>();
   const [probingAll, setProbingAll] = useState(false);
@@ -126,6 +129,11 @@ export function BrainsPage() {
                       {t("brains.clearLimit")}
                     </Button>
                   )}
+                  {b.connected && hasOwnConnections(b.ref) && b.probe?.authenticated && (
+                    <Button size="sm" icon={<Plug className="size-3.5" />} onClick={() => setConnectionsOf(connectionsOf === b.ref ? undefined : b.ref)}>
+                      {t("brainConnections.open")}
+                    </Button>
+                  )}
                   {b.connected && (
                     <Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={() => void probe(b.ref)} loading={probing === b.ref}>
                       {t("common.check")}
@@ -135,6 +143,11 @@ export function BrainsPage() {
                 {signingIn === b.ref && (
                   <div className="w-full pl-12 sm:basis-full">
                     <BrainLoginCard brainRef={b.ref} bare />
+                  </div>
+                )}
+                {connectionsOf === b.ref && (
+                  <div className="w-full pl-12 sm:basis-full">
+                    <BrainConnectionsPanel brainRef={b.ref} />
                   </div>
                 )}
               </div>

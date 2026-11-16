@@ -17,6 +17,14 @@ export function parseBrainRef(ref: string): BrainRef {
   return { brainId, variant: variant || undefined, machineId: machine || "local" };
 }
 
+/**
+ * The start of the tool names of one of a CLI's own connections (types.ts BrainConnection), as the CLIs build them:
+ * `mcp__<server>__<tool>`, the server's name with anything but letters, digits, `_` and `-` as `_`.
+ */
+export function connectionToolPrefix(name: string): string {
+  return `mcp__${name.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+}
+
 export function formatBrainRef(r: BrainRef): string {
   return `${r.brainId}${r.variant ? ":" + r.variant : ""}@${r.machineId}`;
 }

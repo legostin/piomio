@@ -805,6 +805,36 @@ export interface ProbeResult {
   unreachable?: boolean;
 }
 
+// ---------- The CLIs' own connections ----------
+
+/**
+ * Something the person connected in a CLI brain itself (Claude Code, Codex), outside the hub: an MCP server from its
+ * config, a server of one of its plugins, a connector of the person's account (claude.ai Gmail). Its sign-in stays
+ * in the CLI; the hub only turns it on or off for agents (core/src/brain-connections.ts).
+ */
+export interface BrainConnection {
+  /** The name the CLI knows it by ("claude.ai Gmail", "blender"): what the switch names. */
+  name: string;
+  /** Where the CLI has it from: the person's own config, one of the CLI's plugins, their account with the model's maker. */
+  source: "config" | "plugin" | "account";
+  /**
+   * As the CLI last saw it: working, waiting for the person to sign in (in the CLI), failing, turned off in the CLI
+   * itself, or not known (Codex does not say before a session starts).
+   */
+  status: "connected" | "signin" | "failed" | "off" | "unknown";
+  /** Why it failed, in the CLI's words. */
+  detail?: string;
+  /** Its tools, with those that only read (free for agents; the rest ask). Absent: the CLI did not list them. */
+  tools?: string[];
+  readTools?: string[];
+}
+
+/** A connection as the hub shows it: with its switch. */
+export interface BrainConnectionView extends BrainConnection {
+  /** Agents thinking with this brain on this computer may use it. */
+  enabled: boolean;
+}
+
 // ---------- Brain sign-in from the chat ----------
 
 /**
@@ -955,6 +985,12 @@ export interface BrainSessionOptions {
    * Auto mode's reviewer (core/src/policy/reviewer.ts); only Claude Code supports it.
    */
   bare?: boolean;
+  /**
+   * The CLI's own connections (BrainConnection.name) the person turned on for agents here. The session gets these and
+   * the hub's tools, nothing else of what the CLI has; unset or empty: the hub's tools alone. Their read-only tools
+   * run without asking, the rest ask the hub (`confine.permissionTool`, `askTool`) or are refused with nobody to ask.
+   */
+  connections?: string[];
 }
 
 export type BrainEvent =

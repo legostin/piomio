@@ -24,7 +24,9 @@ describe("policy defaults", () => {
     expect(p.brains["claude-code"].enabled).toBe(true);
     expect(p.brains["claude-code"].allowedTools).not.toContain("Bash");
     expect(p.brains["claude-code"].allowedTools).toEqual(expect.arrayContaining(["Read", "Write", "Edit", "Glob", "Grep", "mcp__piomio"]));
-    expect(p.brains.codex).toEqual({ enabled: true, sandbox: "workspace-write" });
+    // What the owner connected in the CLIs themselves may be turned on from the hub, until they say otherwise here.
+    expect(p.brains["claude-code"].connections).toBe(true);
+    expect(p.brains.codex).toEqual({ enabled: true, connections: true, sandbox: "workspace-write" });
     expect(JSON.parse(readFileSync(store.file, "utf8"))).toEqual(defaultPolicy(userHome));
     expect(logs.some((l) => l.includes("created"))).toBe(true);
   });

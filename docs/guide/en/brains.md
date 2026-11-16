@@ -87,6 +87,31 @@ Under the name you see its model, version, where it runs and when it was last ch
 
 The same works in the chat: "which brains do we have?", "check Codex again", "Claude's limit should be over by now, try it".
 
+## What you already connected in Claude Code or Codex
+
+You may have connected things in the CLI itself: MCP servers, the CLI's plugins, and in Claude Code the connectors of your claude.ai account, such as Gmail, Google Calendar or Drive. Agents can use them too, once you turn them on. Until then an agent's session has the hub's tools alone.
+
+On the **Brains** page, press **Connections** next to Claude Code or Codex. The hub asks the CLI what it is connected to, which takes a few seconds, and shows each connection with a switch:
+
+| Status | What it means |
+|---|---|
+| **connected** | it works in the CLI |
+| **sign in in the CLI** | it waits for you to sign in there: `claude mcp login <name>` or `/mcp` in Claude Code, `codex mcp login <name>` in Codex |
+| **not working** | the CLI could not reach it; the reason is under the name |
+| **off in the CLI** | you turned it off in the CLI itself |
+
+A switch is for one brain on one computer and for every agent that thinks there: Gmail turned on for Claude Code on your Mac is not on for Codex, nor for Claude Code on another computer. In the chat it is the same: "what is connected in my Claude Code?", "let agents use my Gmail". Turning one on from the chat asks you on a card.
+
+What agents may do with a connection that is on:
+
+- its tools that only read run without asking;
+- anything else (send, create, change, delete) asks first, as any action outside the hub does: auto mode decides or you get a card, see [Approvals](approvals.md);
+- what its tools return counts as content from outside, so the conversation is checked afterwards as after reading a web page, see [Security](security.md).
+
+The sign-in stays in the CLI: the hub keeps only the names you turned on, never a token or a command line. A connection added to the CLI later is off for agents until you turn it on. Codex lists the MCP servers of its `config.toml`; its ChatGPT apps are not offered yet.
+
+Where Claude Code has nobody to ask, which is a paired computer with commands off, the tools that change something are refused; reading works. The owner of a paired computer can forbid all of this in its `policy.json`, see [Your other computers](machines.md#what-agents-may-do-there).
+
 ## Which brain answers
 
 Each agent has its brains in order (**Brains, in order** in the agent's settings). You can also just say "let Ada use Codex first".

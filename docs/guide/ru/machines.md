@@ -76,8 +76,8 @@ node piomio-node.mjs run
   "exec": { "enabled": false, "allowCommands": [] },
   "fs": { "read": true, "write": true },
   "brains": {
-    "claude-code": { "enabled": true, "allowedTools": ["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__piomio"] },
-    "codex": { "enabled": true, "sandbox": "workspace-write" },
+    "claude-code": { "enabled": true, "allowedTools": ["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__piomio"], "connections": true },
+    "codex": { "enabled": true, "sandbox": "workspace-write", "connections": true },
     "kimi": { "enabled": true }
   },
   "workspacesRoot": "/home/me/piomio-workspace",
@@ -92,8 +92,8 @@ node piomio-node.mjs run
 | `exec.enabled` | запуск команд: **по умолчанию выключен** |
 | `exec.allowCommands` | шаблоны разрешённых команд, например `"git status"` или `"npm test*"`; пустой список разрешает любые |
 | `exec.shell`, `exec.maxTimeoutMs` | оболочка и предел времени на одну команду (по умолчанию 30 минут) |
-| `brains.claude-code` | можно ли брать Claude Code и какие его инструменты разрешены без вопросов (`Bash` среди них нет) |
-| `brains.codex` | можно ли брать Codex и его песочница: `read-only`, `workspace-write` или `danger-full-access` |
+| `brains.claude-code` | можно ли брать Claude Code и какие его инструменты разрешены без вопросов (`Bash` среди них нет); `"connections": false` не даёт агентам то, что ты подключил в самом Claude Code, что бы ни было включено в хабе |
+| `brains.codex` | можно ли брать Codex и его песочница: `read-only`, `workspace-write` или `danger-full-access`; `"connections": false` работает так же, как у Claude Code |
 | `brains.kimi` | можно ли брать Kimi Code; песочницы у него нет, поэтому его команды подчиняются `exec`, а запись — `fs.write` |
 | `workspacesRoot` | где создаются рабочие папки агентов |
 | `hubChanges` | можно ли включать и выключать команды из чата (по умолчанию `true`); `false` оставляет все права только в этом файле |

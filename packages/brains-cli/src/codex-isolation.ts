@@ -1,7 +1,7 @@
-// What an agent's Codex may use is the hub's tools only (as Claude Code's --strict-mcp-config gives it): the person's
-// own Codex MCP servers (config.toml), its plugins and the ChatGPT apps run outside the hub's gateway, with no policy,
-// review or audit of their own. `-c mcp_servers={}` does not take away a table config.toml defines, so each of the
-// person's servers is turned off by its name.
+// What an agent's Codex may use is the hub's tools (as Claude Code's --strict-mcp-config gives it) and the person's own
+// Codex MCP servers they turned on for agents (BrainSessionOptions.connections). The rest of config.toml's servers, its
+// plugins and the ChatGPT apps run outside the hub's gateway, with no policy, review or audit of their own.
+// `-c mcp_servers={}` does not take away a table config.toml defines, so each of those servers is turned off by its name.
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -31,7 +31,14 @@ export function personalServers(env: Record<string, string | undefined>): string
   return [...names];
 }
 
-/** `-c` overrides that leave an agent's Codex with the hub's tools alone. */
-export function isolationConfig(env: Record<string, string | undefined>): string[] {
-  return ["features.plugins=false", "features.apps=false", ...personalServers(env).map((n) => `mcp_servers.${n}.enabled=false`)];
+/**
+ * `-c` overrides that leave an agent's Codex with the hub's tools and the connections turned on (`on`, by name). Such a
+ * server keeps the person's own settings, but what it changes it asks about first: Codex sends that to the hub.
+ */
+export function isolationConfig(env: Record<string, string | undefined>, on: readonly string[] = []): string[] {
+  return [
+    "features.plugins=false",
+    "features.apps=false",
+    ...personalServers(env).map((n) => (on.includes(n) ? `mcp_servers.${n}.default_tools_approval_mode="writes"` : `mcp_servers.${n}.enabled=false`)),
+  ];
 }

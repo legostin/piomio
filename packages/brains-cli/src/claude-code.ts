@@ -11,6 +11,7 @@ import type { BrainEvent, BrainSessionOptions, BrainTurn, ProbeResult } from "@p
 import type { BrainProviderImpl, BrainSessionImpl } from "@piomio/plugin-sdk";
 import type { Locale, Translate } from "@piomio/shared/i18n";
 import { capture, childEnv, runLines, textOfToolContent, WarmPool, type RunningProcess } from "./proc.ts";
+import { claudeConnectionArgs, claudeStatus, knownFile, parseClaudeStatus, readKnown, writeKnown, type ClaudeConnectionArgs, type ClaudeStatusTiming } from "./connections.ts";
 import { brainsT } from "./messages.ts";
 import { parseClaudeBrowserLogin, runCliLogin } from "./login.ts";
 import { confinedNetwork, confinedProxyEnv } from "./network.ts";
@@ -57,6 +58,8 @@ export interface ClaudeCodeOptions {
   /** How long a dialog's process waits for its next turn (default 10 minutes), and how many wait at once (3). */
   idleMs?: number;
   maxWarm?: number;
+  /** How long the CLI's servers get to settle when it is asked for its connections (connections.ts). */
+  connectionsTiming?: ClaudeStatusTiming;
 }
 
 /** Turns Claude Code stream-json messages into BrainEvents. Pure: easy to test with recorded fixtures. */
@@ -333,6 +336,8 @@ class ClaudeCodeSession implements BrainSessionImpl {
   private dir: string;
   private caps: () => Promise<ClaudeCaps>;
   private pool: WarmPool<ClaudeCodeSession>;
+  /** The CLI's own connections this session gets (BrainSessionOptions.connections), as known on this computer. */
+  private conn?: ClaudeConnectionArgs;
 
   constructor(opts: BrainSessionOptions, p: ClaudeCodeOptions, caps: () => Promise<ClaudeCaps>, pool: WarmPool<ClaudeCodeSession>) {
     this.o = opts;
@@ -350,7 +355,14 @@ class ClaudeCodeSession implements BrainSessionImpl {
       JSON.stringify({ mcpServers: opts.bare ? {} : { piomio: { type: "stdio", command, args, env: { PIOMIO_URL: opts.mcp.url, PIOMIO_TOKEN_FILE: tokenFile } } } }),
     );
     writePrivate(join(this.dir, "prompt.md"), opts.systemPrompt);
-    if (opts.confine) writePrivate(join(this.dir, "settings.json"), JSON.stringify(sandboxSettings(opts.confine, confinedNetwork(opts)?.allowedDomains)));
+    // A connection this computer never listed is not let in: the session then has the hub's tools alone.
+    if (!opts.bare && opts.connections?.length) this.conn = claudeConnectionArgs(opts.connections, readKnown(knownFile(p.stateDir)), [command, ...args]);
+    if (opts.confine || this.conn) {
+      writePrivate(
+        join(this.dir, "settings.json"),
+        JSON.stringify({ ...(opts.confine ? sandboxSettings(opts.confine, confinedNetwork(opts)?.allowedDomains) : {}), ...this.conn?.settings }),
+      );
+    }
   }
 
   private args(caps: ClaudeCaps): string[] {
@@ -368,6 +380,9 @@ class ClaudeCodeSession implements BrainSessionImpl {
       : asks
         ? ["--permission-mode", "default", "--permission-prompt-tool", `mcp__piomio__${this.o.askTool}`]
         : ["--permission-mode", "dontAsk"];
+    // The connections turned on: their read-only tools run without asking; the rest ask as any tool the hub does not
+    // know (the permission tool), or are refused with nobody to ask.
+    const connected = !this.conn ? ["--strict-mcp-config"] : confine ? [] : ["--settings", join(this.dir, "settings.json")];
     const a = [
       "-p",
       "--input-format",
@@ -379,8 +394,9 @@ class ClaudeCodeSession implements BrainSessionImpl {
       "--include-partial-messages",
       ...mode,
       "--allowedTools",
-      tools.join(","),
-      "--strict-mcp-config",
+      [...tools, ...(this.conn?.tools ?? [])].join(","),
+      // Without connections, only the hub's server; with them, the session settings name exactly what loads.
+      ...connected,
       "--mcp-config",
       join(this.dir, "mcp.json"),
       "--append-system-prompt-file",
@@ -674,6 +690,13 @@ export function createClaudeCodeProvider(p: ClaudeCodeOptions): BrainProviderImp
     },
     async createSession(opts: BrainSessionOptions): Promise<BrainSessionImpl> {
       return new ClaudeCodeSession(opts, p, currentCaps, pool);
+    },
+    // What the person connected in Claude Code itself; what it takes to let each into a session stays here.
+    async connections({ env }) {
+      const full = childEnv(process.env, { ...env, ...(await p.authEnv?.().catch(() => ({}))), ...CLAUDE_ENV });
+      const { connections, known } = parseClaudeStatus(await claudeStatus(p.command?.() ?? "claude", full, join(p.stateDir, "connections"), p.connectionsTiming));
+      writeKnown(knownFile(p.stateDir), known);
+      return connections;
     },
     // Browser sign-in to the subscription, kept in HOME like a terminal `/login`: the page shows a code to paste back.
     login({ env, onUpdate }) {

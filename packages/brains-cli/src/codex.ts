@@ -14,6 +14,7 @@ import { brainsT } from "./messages.ts";
 import { parseCodexDeviceLogin, runCliLogin } from "./login.ts";
 import { AppServerStartFailed, AppServerUnsupported, CodexAppServer, listCodexModels, parseCodexReset, type CodexModel } from "./codex-app.ts";
 import { isolationConfig } from "./codex-isolation.ts";
+import { codexConnections, codexToolName } from "./connections.ts";
 import { askHub, type HubAnswer } from "./hub-permission.ts";
 import { confinedNetwork, confinedProxyEnv } from "./network.ts";
 
@@ -71,7 +72,7 @@ export class CodexStreamParser {
         break;
       case "item.started": {
         const it = ev.item ?? {};
-        if (it.type === "mcp_tool_call") out.push({ type: "tool_call", id: it.id, name: it.tool ?? "tool", input: it.arguments ?? {} });
+        if (it.type === "mcp_tool_call") out.push({ type: "tool_call", id: it.id, name: codexToolName(it.server, it.tool), input: it.arguments ?? {} });
         if (it.type === "command_execution") out.push({ type: "tool_call", id: it.id, name: "shell", input: { command: it.command } });
         if (it.type === "web_search") out.push({ type: "tool_call", id: it.id, name: "WebSearch", input: { query: it.query } });
         break;
@@ -211,9 +212,21 @@ class CodexSession implements BrainSessionImpl {
     }
   }
 
-  /** The hub's tools alone: the person's own Codex MCP servers, plugins and ChatGPT apps are off (codex-isolation.ts). */
+  /**
+   * The hub's tools and the person's Codex MCP servers turned on for agents; their other servers, plugins and the
+   * ChatGPT apps are off (codex-isolation.ts). A bare session gets none of them.
+   */
   private isolation(): string[] {
-    return isolationConfig({ ...process.env, ...this.o.env });
+    return isolationConfig({ ...process.env, ...this.o.env }, this.o.bare ? [] : this.o.connections);
+  }
+
+  /**
+   * Who answers when a connection's tool wants to change something: the hub's permission tool (confined), else the
+   * tool a paired computer's brain asks with. Nobody: Codex is told no.
+   */
+  private askConnection(): ((tool: string, input: Record<string, unknown>) => Promise<HubAnswer>) | undefined {
+    const tool = this.o.confine?.permissionTool ?? this.o.askTool;
+    return tool && this.o.connections?.length && !this.o.bare ? (name, input) => askHub(this.o.mcp, tool, name, input) : undefined;
   }
 
   /** A bare session (auto mode's reviewer): no hub, no tools, none of the person's MCP servers, plugins or memories. */
@@ -280,6 +293,7 @@ class CodexSession implements BrainSessionImpl {
       sandbox: this.o.bare ? "read-only" : this.sandbox(),
       threadId: this.threadId,
       ask: this.ask(),
+      askConnection: this.askConnection(),
       approvalPolicy: this.approvalPolicy(),
       ...(this.profile() && !this.o.bare ? { profile: true } : {}),
       ...(this.o.bare ? { bare: { instructions: this.o.systemPrompt } } : {}),
@@ -542,6 +556,10 @@ export function createCodexProvider(p: CodexOptions): BrainProviderImpl {
     async createSession(opts: BrainSessionOptions): Promise<BrainSessionImpl> {
       mkdirSync(opts.workspace, { recursive: true });
       return new CodexSession(opts, p, pool);
+    },
+    // The MCP servers of the person's own Codex (config.toml): Codex lists what is set up, not whether it works.
+    async connections({ env }) {
+      return codexConnections(p.command?.() ?? "codex", childEnv(process.env, { ...env, ...(await p.authEnv?.().catch(() => ({}))) }));
     },
     // Device code sign-in as the same user and HOME the sessions use: the user opens the page and types the code.
     login({ env, onUpdate }) {
