@@ -25,6 +25,7 @@ import {
 } from "@piomio/replica";
 import type WebSocket from "ws";
 import type { RpcPeer } from "@piomio/shared";
+import { isLocalHost } from "./config.ts";
 import { json } from "./db.ts";
 import { LocalizedError, t } from "./i18n.ts";
 import type { Hub } from "./app.ts";
@@ -141,6 +142,25 @@ interface Peer extends Replica {
   current: Record<DbName, number>;
   filesAt: number;
   filesBusy: boolean;
+}
+
+const localOnly = (url: string): boolean => {
+  try {
+    return isLocalHost(new URL(url).hostname.replace(/^\[|\]$/g, ""));
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * What a replica publishes as its address for machines (replicas.node_urls): its own (`own`), unless that works only
+ * on its computer while a reachable one is `published` already. A hub on localhost has its link a moment after it
+ * starts; publishing "http://localhost:8080" meanwhile sent every machine of the cluster knocking at its own port.
+ */
+export function nodeUrlsToPublish(own: string[], published: string[]): string[] {
+  if (!own.length || !own.every(localOnly)) return own;
+  const reachable = published.filter((u) => !localOnly(u));
+  return reachable.length ? reachable : own;
 }
 
 const rowToReplica = (r: any): Replica & { publicKey: string; nodeUrls: string[] } => ({
@@ -358,9 +378,9 @@ export class Cluster {
   private refreshSelf(): void {
     const id = this.identity!.id;
     const urls = this.ownUrls();
-    const nodeUrls = this.ownNodeUrls();
     const machineId = this.hub.ownNode.machineId() ?? null;
     const row = this.hub.db.prepare("select * from replicas where id = ?").get(id) as any;
+    const nodeUrls = nodeUrlsToPublish(this.ownNodeUrls(), row ? json<string[]>(row.node_urls, []) : []);
     if (!row) {
       const max = (this.hub.db.prepare("select coalesce(max(priority), 0) as p from replicas").get() as { p: number }).p;
       this.hub.db
