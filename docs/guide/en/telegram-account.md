@@ -88,7 +88,8 @@ What agents read in Telegram was written by other people, so the hub treats it a
 A long message's approval card shows its beginning; the security console shows the whole text.
 
 Telegram limits how often an account is asked, so Piomio asks it no more than once in three seconds. Right after you
-connect, the list of a large account's chats takes up to a minute to load; after that it is kept. If Telegram still
+connect, your most recent chats are there in a few seconds and the rest of a large account's list within a minute;
+after that the list is kept. If Telegram still
 asks to wait, the agent tells you how long and asks nothing more until then.
 
 ## Disconnect

@@ -42,6 +42,8 @@ interface State {
   floodList?: boolean;
   /** The list of chats takes this long. */
   slowList?: number;
+  /** The list is still loading: only this many of the most recent chats are known without waiting. */
+  partial?: number;
   onMessage: Set<(m: TgMessage, chat: TgChat) => void>;
   onSignedOut: Set<() => void>;
   nextId: number;
@@ -76,6 +78,9 @@ const control = createServer(async (req, res) => {
       state.flood = b.seconds || undefined;
       state.floodList = !!b.seconds && b.list === true;
       return send({ ok: true });
+    case "/partial":
+      state.partial = b.count || undefined;
+      return send({ ok: true });
     case "/slow":
       state.slowList = b.ms || undefined;
       return send({ ok: true });
@@ -99,6 +104,12 @@ const factory: TgClientFactory = () => {
   const chatById = (id: string) => state.fixture.chats.find((c) => c.id === id);
   const sorted = (chatId: string) => [...(state.fixture.messages[chatId] ?? [])].sort((a, b) => b.id - a.id);
   const strip = ({ file: _file, ...m }: FakeMessage): TgMessage => m;
+  /** As Telegram does: each chat comes with its last message. */
+  const listed = (limit: number): TgChat[] =>
+    state.fixture.chats.slice(0, limit).map((c) => {
+      const last = sorted(c.id)[0];
+      return last ? { lastMessageAt: last.date, ...c, last: strip(last) } : c;
+    });
   const client: TgClient = {
     async resume(session) {
       return state.fixture.sessions.includes(session) ? state.fixture.account : undefined;
@@ -138,11 +149,11 @@ const factory: TgClientFactory = () => {
     async chats(limit) {
       if (state.slowList) await new Promise((r) => setTimeout(r, state.slowList));
       if (state.flood && state.floodList) throw new RateLimited(state.flood);
-      // As Telegram does: each chat comes with its last message.
-      return state.fixture.chats.slice(0, limit).map((c) => {
-        const last = sorted(c.id)[0];
-        return last ? { lastMessageAt: last.date, ...c, last: strip(last) } : c;
-      });
+      return listed(limit);
+    },
+    async recentChats() {
+      if (state.flood && state.floodList) throw new RateLimited(state.flood);
+      return state.partial ? { chats: listed(state.partial), complete: false } : { chats: listed(Infinity), complete: true };
     },
     async chat(ref) {
       const name = ref.replace(/^@/, "").toLowerCase();

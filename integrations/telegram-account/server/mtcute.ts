@@ -22,7 +22,11 @@ const SIGNED_OUT = /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|SESSION_REVOKED|SESSI
  * this only bounds what an update could have missed.
  */
 const DIALOGS_FRESH_MS = 5 * 60_000;
+/** How long after Telegram refused a walk the next one is tried. */
+const DIALOGS_RETRY_MS = 60_000;
 const DIALOGS_MAX = 2000;
+/** The list is shown this many chats at a time as it loads (Telegram gives a hundred a request). */
+const DIALOGS_PAGE = 50;
 /** No more than one request to Telegram in this long (pace.ts says which requests). */
 const REQUEST_GAP_MS = 3000;
 
@@ -132,30 +136,32 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
   tg.onError.add((e) => {
     if (!gone(e)) o.log("warn", `telegram: ${errorText(e)}`);
   });
-  /**
-   * Every call passes here, so a session Telegram ended is noticed wherever it shows, and a rate limit is told with
-   * its seconds (the library keeps them beside the text, which reads "FLOOD_WAIT_%d").
-   */
+  /** What Telegram refused with, as the rest of the integration hears it: a rate limit comes with its seconds. */
+  const told = (e: any): unknown => {
+    gone(e);
+    const text = errorText(e);
+    // The library keeps the seconds beside the text, which reads "FLOOD_WAIT_%d".
+    if (/FLOOD_(PREMIUM_)?WAIT/.test(text)) return new RateLimited(typeof e?.seconds === "number" ? e.seconds : Number(/WAIT_(\d+)/.exec(text)?.[1] ?? 0));
+    return e;
+  };
+  /** Every call passes here, so a session Telegram ended is noticed wherever it shows. */
   const run = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
       return await fn();
-    } catch (e: any) {
-      gone(e);
-      const text = errorText(e);
-      if (/FLOOD_(PREMIUM_)?WAIT/.test(text)) throw new RateLimited(typeof e?.seconds === "number" ? e.seconds : Number(/WAIT_(\d+)/.exec(text)?.[1] ?? 0));
-      throw e;
+    } catch (e) {
+      throw told(e);
     }
   };
 
   const me = (u: any): TgAccount => ({ id: String(u.id), name: String(u.displayName || u.username || u.id), ...(u.username ? { username: u.username } : {}) });
 
-  // The list of chats (chat-list.ts): one walk, kept and followed. Walking it also teaches the library the chats'
-  // access keys, which a session opened from its key alone does not have: a chat is looked up in the list before
-  // anything is asked of Telegram by id.
+  // The list of chats (chat-list.ts): one walk, page by page, kept and followed. Walking it also teaches the library
+  // the chats' access keys, which a session opened from its key alone does not have: a chat is looked up in the list
+  // before anything is asked of Telegram by id.
   const list = new ChatList(
-    () =>
-      run(async () => {
-        const all: TgChat[] = [];
+    async function* () {
+      let page: TgChat[] = [];
+      try {
         // Archived chats too: they are the account's chats like any other, and the person must be able to close them.
         for await (const d of tg.iterDialogs({ limit: DIALOGS_MAX, archived: "keep" })) {
           let last: TgMessage | undefined;
@@ -164,11 +170,18 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
           } catch {
             // A last message of a kind this cannot read: the chat is listed without it.
           }
-          all.push({ ...chatOf(d.peer), unread: d.unreadCount, ...(d.isMuted ? { muted: true } : {}), ...(last ? { lastMessageAt: last.date, last } : {}) });
+          page.push({ ...chatOf(d.peer), unread: d.unreadCount, ...(d.isMuted ? { muted: true } : {}), ...(last ? { lastMessageAt: last.date, last } : {}) });
+          if (page.length >= DIALOGS_PAGE) {
+            yield page;
+            page = [];
+          }
         }
-        return all;
-      }),
-    { freshMs: DIALOGS_FRESH_MS },
+      } catch (e) {
+        throw told(e);
+      }
+      if (page.length) yield page;
+    },
+    { freshMs: DIALOGS_FRESH_MS, retryMs: DIALOGS_RETRY_MS },
   );
   tg.onNewMessage.add((m: any) => {
     try {
@@ -181,7 +194,7 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
     if (!u.isOutbox && !u.isDiscussion) list.read(String(u.chatId), u.unreadCount);
   });
   /** The first tool call should not be the one that waits for the walk. */
-  const warm = () => void list.all().catch(() => {});
+  const warm = () => void list.recent().catch(() => {});
   const peerId = (chatId: string): number => Number(chatId);
   /** Make sure the library can address the chat (its access key is known). */
   const known = async (chatId: string): Promise<void> => {
@@ -189,15 +202,17 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
       await tg.resolvePeer(peerId(chatId));
     } catch (e) {
       if (gone(e)) throw e;
-      // The walk is what teaches the keys: wait for it (it runs only when the list is old) and ask once more.
-      await list.all();
+      // The walk is what teaches the keys: wait until it has brought this chat, and ask once more.
+      await list.find(chatId);
       await run(() => tg.resolvePeer(peerId(chatId)));
     }
   };
   /** A message the account sent from here goes into the list at once. */
-  const sent = async (chatId: string, m: TgMessage): Promise<TgMessage> => {
-    const chat = await list.find(chatId).catch(() => undefined);
-    if (chat) list.note(m, chat);
+  const sent = (chatId: string, m: TgMessage): TgMessage => {
+    void list.find(chatId).then(
+      (chat) => chat && list.note(m, chat),
+      () => {},
+    );
     return m;
   };
 
@@ -245,6 +260,8 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
     },
 
     chats: async (limit) => (await list.all()).slice(0, limit),
+
+    recentChats: () => list.recent(),
 
     // Only the account's own chats: a public name Telegram could resolve (any channel, anyone's @username) is not
     // one of them, and what the person opened is kinds of *their* chats.

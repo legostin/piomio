@@ -31,6 +31,9 @@ const DIGEST_MESSAGE_CHARS = 600;
 /** How much of a chat's last message its line in a list shows. */
 const PREVIEW_CHARS = 160;
 
+/** Said under an answer made from the part of the list of chats that has loaded so far. */
+const stillLoading = (known: number) => `\n\nThe list of chats is still loading: this is from the ${known} most recent chats. Older ones appear within a minute.`;
+
 const NOT_OPEN = "No such chat among the chats open to you. telegram_account_chats lists them; the person decides which chats agents may see (telegram_account_request_access asks them).";
 
 /** Why nothing can be read now, as the model should hear it. */
@@ -219,9 +222,13 @@ export function registerTools(ctx: PluginContext, account: Account, requests: Re
         const kind = kindOf(input.kind);
         const most = intIn(input.chats, 10, 1, 20);
         const per = intIn(input.messages, 10, 1, 30);
-        const unread = (await tg.chats(2000)).filter((c) => canRead(account.access, c) && (c.unread ?? 0) > 0 && (!kind || c.kind === kind));
-        const quiet = input.muted === true ? [] : unread.filter((c) => c.muted);
-        const pick = input.muted === true ? unread : unread.filter((c) => !c.muted);
+        // The most recent chats answer this, so it does not wait for the whole list; "nothing unread" does.
+        const withUnread = (chats: TgChat[]) => chats.filter((c) => canRead(account.access, c) && (c.unread ?? 0) > 0 && (!kind || c.kind === kind) && (input.muted === true || !c.muted));
+        let known = await tg.recentChats();
+        if (!withUnread(known.chats).length && !known.complete) known = { chats: await tg.chats(2000), complete: true };
+        const pick = withUnread(known.chats);
+        const quiet = input.muted === true ? [] : known.chats.filter((c) => c.muted && canRead(account.access, c) && (c.unread ?? 0) > 0 && (!kind || c.kind === kind));
+        const loading = known.complete ? "" : stillLoading(known.chats.length);
         const where = `the open ${kind ? `${kind} ` : ""}chats`;
         const mutedNote = quiet.length ? ` ${quiet.length} muted chat${quiet.length === 1 ? " has" : "s have"} unread messages (muted: true includes them).` : "";
         if (!pick.length) return text(`Nothing unread in ${where}.${mutedNote}`);
@@ -249,7 +256,7 @@ export function registerTools(ctx: PluginContext, account: Account, requests: Re
         const restNote = rest.length
           ? `\n\n${waited ? `${rateLimited(waited)} Not read yet` : "Also unread"} (id · kind · title · last message):\n${rest.slice(0, 40).map(chatLine).join("\n")}${rest.length > 40 ? `\n… and ${rest.length - 40} more` : ""}`
           : "";
-        return text(`${pick.length} of ${where} ${pick.length === 1 ? "has" : "have"} unread messages; most recent first, newest message first, times in UTC.${mutedNote}\n\n${blocks.join("\n\n")}${restNote}`.replace(/\n\n\n+/g, "\n\n"));
+        return text(`${pick.length} of ${where} ${pick.length === 1 ? "has" : "have"} unread messages; most recent first, newest message first, times in UTC.${mutedNote}\n\n${blocks.join("\n\n")}${restNote}${loading}`.replace(/\n\n\n+/g, "\n\n"));
       }),
   });
 
@@ -275,10 +282,18 @@ export function registerTools(ctx: PluginContext, account: Account, requests: Re
         const q = String(input.query ?? "").trim().toLowerCase().replace(/^@/, "");
         const kind = kindOf(input.kind);
         const limit = intIn(input.limit, 30, 1, 100);
-        const open = (await tg.chats(2000)).filter((c) => canRead(account.access, c));
-        const hit = open.filter((c) => (!q || c.title.toLowerCase().includes(q) || c.username?.toLowerCase().includes(q)) && (!kind || c.kind === kind) && (input.unread !== true || (c.unread ?? 0) > 0));
-        if (!hit.length) return text(open.length ? "No open chat matches." : "No chats are open to agents yet. The person opens kinds of chats or single chats on the Telegram account card (telegram_account_setup shows it).");
-        return text(`${hit.length} open chat${hit.length === 1 ? "" : "s"}${hit.length > limit ? `, the first ${limit}` : ""} (id · kind · title · last message):\n${hit.slice(0, limit).map(chatLine).join("\n")}`);
+        const matching = (chats: TgChat[]) =>
+          chats.filter((c) => canRead(account.access, c) && (!q || c.title.toLowerCase().includes(q) || c.username?.toLowerCase().includes(q)) && (!kind || c.kind === kind) && (input.unread !== true || (c.unread ?? 0) > 0));
+        // The most recent chats first, without waiting for the whole list; "no such chat" is said only of all of it.
+        let known = await tg.recentChats();
+        if (!matching(known.chats).length && !known.complete) known = { chats: await tg.chats(2000), complete: true };
+        const hit = matching(known.chats);
+        if (!hit.length) {
+          return text(known.chats.some((c) => canRead(account.access, c)) ? "No open chat matches." : "No chats are open to agents yet. The person opens kinds of chats or single chats on the Telegram account card (telegram_account_setup shows it).");
+        }
+        return text(
+          `${hit.length} open chat${hit.length === 1 ? "" : "s"}${hit.length > limit ? `, the first ${limit}` : ""} (id · kind · title · last message):\n${hit.slice(0, limit).map(chatLine).join("\n")}${known.complete ? "" : stillLoading(known.chats.length)}`,
+        );
       }),
   });
 

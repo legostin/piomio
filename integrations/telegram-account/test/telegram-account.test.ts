@@ -325,6 +325,23 @@ describe("what agents can do with a connected account", () => {
     expect((await r.control("/state")).histories).toBe(asked);
   });
 
+  it("answers from the most recent chats while the list still loads, and says so; only \"nothing\" waits for all of it", async () => {
+    // Only the most recent chat (Family) has loaded.
+    await r.control("/partial", { count: 1 });
+    const list = await r.h.invokeText("chats");
+    expect(list).toContain("Family");
+    expect(list).not.toContain("Anna");
+    expect(list).toContain("The list of chats is still loading: this is from the 1 most recent chats.");
+    expect(await r.h.invokeText("unread")).toContain("still loading");
+    // A chat that is not among them is looked for in the whole list, not reported missing.
+    const anna = await r.h.invokeText("chats", { query: "anna" });
+    expect(anna).toContain("Anna Petrova");
+    expect(anna).not.toContain("still loading");
+    expect(await r.h.invokeText("read", { chat: ANNA.id, limit: 1 })).toContain("Anna Petrova");
+    await r.control("/partial", { count: 0 });
+    expect(await r.h.invokeText("chats")).not.toContain("still loading");
+  });
+
   it("says how long Telegram asks to wait, and gives what it already has", async () => {
     await r.control("/flood", { seconds: 37 });
     const refused = await r.h.invoke("read", { chat: FAMILY.id });
