@@ -251,6 +251,10 @@ Usually it doesn't: the hub could not reach the service for a moment and reconne
 
 Codex was started twice and failed both times; the text after the colon is Codex's own. The next message tries again. If it keeps failing, run `codex --version` and `codex login status` in a terminal.
 
+### Agents went silent, then Piomio restarted itself
+
+Rarely the hub stops doing its background work (reading files, finding hosts by name) while its pages still open. Agents then wait without end: a turn stays empty, a task stays in progress. Piomio checks for this every half minute. After two minutes without an answer it writes `the thread pool stopped taking work` to the log, notes `hub.stuck` on the **Audit** page and stops; the desktop app or the server's service starts it again in a few seconds. A turn that was cut short says "Interrupted by a hub restart": send the message again. Tasks that were running go on by themselves.
+
 ## Where the logs are
 
 | Where Piomio runs | The log |

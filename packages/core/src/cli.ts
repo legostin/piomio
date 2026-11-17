@@ -1,7 +1,7 @@
 // Piomio hub CLI: start | version | reset-password | pairing-code | devices pair | link | backup | audit-verify | uninstall
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig } from "./config.ts";
@@ -21,6 +21,7 @@ import { joinCluster, localInvite } from "./cluster.ts";
 import { InviteRegistry } from "./invites.ts";
 import { homedir, hostname } from "node:os";
 import { installLayout, settleBeforeStart, TRIAL_MAX_MS } from "./self-update.ts";
+import { watchThreadPool } from "./self-check.ts";
 import { printLink, remoteStatusFile } from "./remote.ts";
 
 const [cmd = "start", ...args] = process.argv.slice(2);
@@ -69,6 +70,20 @@ async function main(): Promise<void> {
       }
       process.on("unhandledRejection", (e) => console.error("[piomio] unhandled rejection:", e));
       await hub.start();
+      // A hub whose thread pool died serves pages and hangs every agent (self-check.ts): it ends, and is started again.
+      watchThreadPool({
+        dir: config.dataDir,
+        // Written before the kill, not queued behind it.
+        log: (m) => {
+          try {
+            writeSync(1, `[piomio] ${m}\n`);
+          } catch {
+            console.log(`[piomio] ${m}`);
+          }
+        },
+        record: (data) => hub.audit.append("core", "hub.stuck", "thread pool", data),
+        kill: () => process.kill(process.pid, "SIGKILL"),
+      }).start();
       return;
     }
     case "version":
