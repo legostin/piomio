@@ -12,8 +12,12 @@ export interface TgChat {
   /** Saved Messages: the account's chat with itself. */
   self?: boolean;
   unread?: number;
+  /** The person muted it in Telegram. */
+  muted?: boolean;
   /** ISO time of the last message. */
   lastMessageAt?: string;
+  /** The last message, which the list of chats brings with it: no request of its own. */
+  last?: TgMessage;
 }
 
 export type MediaKind = "photo" | "video" | "audio" | "voice" | "document" | "sticker" | "other";
@@ -107,6 +111,15 @@ export interface TgClientOptions {
 }
 
 export type TgClientFactory = (o: TgClientOptions) => TgClient | Promise<TgClient>;
+
+/** Telegram limits how often it is asked (FLOOD_WAIT): nothing more until this many seconds have passed. */
+export class RateLimited extends Error {
+  seconds: number;
+  constructor(seconds: number) {
+    super(`Telegram asks to wait ${seconds} s`);
+    this.seconds = seconds;
+  }
+}
 
 /** A download refused for its size. */
 export class FileTooLarge extends Error {

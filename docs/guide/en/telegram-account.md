@@ -73,7 +73,9 @@ and an **Allow** button next to each; only your tap opens one. The agent is not 
 
 ## What agents can do
 
-- List the open chats and read their messages.
+- Tell you what is new in one go: the open chats with unread messages and what was written there. Chats you muted in
+  Telegram are left out unless you ask for them. Reading marks nothing as read.
+- List the open chats, each with its last message, and read their messages.
 - Find messages by words, in one chat or in all the open ones.
 - Bring an attachment (a photo, a file, a voice message) into their folder, up to 40 MB.
 - Send text and files, in the **Read and send** mode, with your approval each time.
@@ -84,6 +86,10 @@ What agents read in Telegram was written by other people, so the hub treats it a
 [After outside content](approvals.md#after-outside-content).
 
 A long message's approval card shows its beginning; the security console shows the whole text.
+
+Telegram limits how often an account is asked, so Piomio asks it no more than once in three seconds. Right after you
+connect, the list of a large account's chats takes up to a minute to load; after that it is kept. If Telegram still
+asks to wait, the agent tells you how long and asks nothing more until then.
 
 ## Disconnect
 
