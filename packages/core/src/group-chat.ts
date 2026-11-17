@@ -4,6 +4,7 @@
 
 import type { Message } from "@piomio/shared";
 import { replyContext, parseMentions, truncate, type Mentionable } from "@piomio/shared";
+import { cardsSummary } from "./cards.ts";
 
 /** At most this many hand-offs (an agent mentioning another member) per user message. */
 export const MAX_HANDOFFS = 3;
@@ -60,7 +61,9 @@ export function spokenText(m: Message): string {
               ? [` [showed ${p.items.length === 1 ? "an image" : `${p.items.length} images`}${p.items.some((it) => it.caption) ? `: ${p.items.flatMap((it) => (it.caption ? [it.caption] : [])).join("; ")}` : ""}]`]
               : p.type === "map"
                 ? [` [showed a map${p.title ? ` of ${p.title}` : ""} at ${p.lat}, ${p.lon}]`]
-                : [],
+                : p.type === "cards"
+                  ? [` ${cardsSummary(p)}`]
+                  : [],
       )
       .join("")
       .trim();

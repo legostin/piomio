@@ -5,8 +5,9 @@ import { taskBrains, taskPlacement } from "./task-routing.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind, WorkRule } from "@piomio/shared";
+import type { AgentDef, Approval, BrainEvent, ImageItem, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind, WorkRule } from "@piomio/shared";
 import { replyText, replyContext, bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, RpcCodes, RpcError, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
+import { cardBrief, cardCaption } from "./cards.ts";
 import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { confinement } from "./native-permissions.ts";
 import type { PersonAnswer, Unanswered } from "./native-questions.ts";
@@ -742,6 +743,22 @@ export class SessionRunner {
     parts[at] = { ...part, chosen: index };
     this.d.store.updateMessage(m.id, { parts });
     return this.userMessage(m.conversationId, part.options[index], { channel, choice: index });
+  }
+
+  /**
+   * The person chose a position of the agent's cards (a `cards` part, the message's part `at`): the card is marked,
+   * and its title is their next message, with the position in a line for the model. Another position later moves
+   * the mark; the same one again does nothing.
+   */
+  async pick(messageId: string, at: number, index: number, channel: string): Promise<Message | undefined> {
+    const m = this.d.store.getMessage(messageId);
+    const part = m?.parts[at];
+    if (!m || part?.type !== "cards" || part.pick === false || part.chosen === index || !Number.isInteger(index) || !part.items[index]) return undefined;
+    const parts = m.parts.slice();
+    parts[at] = { ...part, chosen: index };
+    this.d.store.updateMessage(m.id, { parts });
+    const it = part.items[index];
+    return this.userMessage(m.conversationId, it.title, { channel, context: `[The person tapped "Choose" on this card of the options shown to them: ${cardBrief(it)}]` });
   }
 
   /**
@@ -2517,8 +2534,10 @@ export class SessionRunner {
         out.push(type.startsWith("image/") && imageTypeOf(p.name) ? { kind: "image", data: data.toString("base64"), mimeType: type, name: p.name } : { kind: "file", data: data.toString("base64"), mimeType: type, name: p.name });
         continue;
       }
-      if (p.type !== "images") continue;
-      for (const it of p.items) {
+      // Cards the channel cannot draw: each position with a picture goes as that picture, captioned.
+      const shown: ImageItem[] =
+        p.type === "images" ? p.items : p.type === "cards" ? p.items.flatMap((c) => (c.images?.[0] ? [{ src: c.images[0].src, caption: truncate(cardCaption(c), 900) }] : [])) : [];
+      for (const it of shown) {
         const caption = it.caption ? { caption: it.caption } : {};
         if (/^https?:\/\//i.test(it.src)) {
           // The channel's servers fetch it by its address: only a picture the hub may fetch itself.
@@ -3060,6 +3079,7 @@ function attachedKey(p: MessagePart): string | undefined {
   if (p.type === "reply_to") return `reply_to:${p.messageId}`;
   if (p.type === "news") return `news:${JSON.stringify(p.items.map((x) => x.url ?? x.title))}`;
   if (p.type === "choices") return `choices:${JSON.stringify(p.options)}`;
+  if (p.type === "cards") return `cards:${JSON.stringify([p.title, p.items.map((x) => x.title)])}`;
   if (p.type === "feed") return `feed:${p.feedId}`;
   if (p.type === "page") return `page:${p.pageId}`;
   if (p.type === "thinking") return `thinking:${p.agentId}`;

@@ -174,6 +174,13 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     if (!sent) throw new HttpError(409, "choice.unavailable");
     return sent;
   });
+  // A position of the agent's cards chosen (a `cards` part, the message's part `part`): its title becomes the person's message.
+  api.post("/api/messages/:id/pick", async (req) => {
+    const b = (req.body ?? {}) as { part?: unknown; index?: unknown };
+    const sent = await hub.runner.pick((req.params as { id: string }).id, Number(b.part), Number(b.index), opts.kind === "device" ? "app" : "web");
+    if (!sent) throw new HttpError(409, "choice.unavailable");
+    return sent;
+  });
   // A file for the next message: raw bytes, saved in the conversation's workspace (attachments/).
   await api.register(async (up) => {
     // Signed in before a 25 MB body is read, not after.

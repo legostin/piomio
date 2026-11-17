@@ -26,6 +26,7 @@ const TOOL_WORDS: Array<[RegExp, MessageKey]> = [
   [/^memory_/, "step.tool.memory"],
   [/^page_/, "step.tool.page"],
   [/^show_map$/, "step.tool.map"],
+  [/^show_cards$/, "step.tool.cards"],
   [/^(show_images|image_)/, "step.tool.images"],
   [/^browser_/, "step.tool.browser"],
 ];
