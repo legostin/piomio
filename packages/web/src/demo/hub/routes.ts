@@ -207,6 +207,8 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
   // What the General page asks besides: no speech-to-text service is set up, the local speech engine is not in the demo.
   r.route("GET", "/api/transcription", () => ({ engine: null }));
   r.route("GET", "/api/speech", refuse);
+  // "Rules for work" in the settings: a new hub has none.
+  r.route("GET", "/api/work-rules", () => []);
   r.route("PATCH", "/api/settings", ({ body }) => {
     Object.assign(changed, body ?? {});
     return settings();

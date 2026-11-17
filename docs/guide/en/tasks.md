@@ -16,6 +16,8 @@ The agent also chooses:
 - **where**: the computer whose files, apps or hardware the work needs (rendering, 3D and model training go to a computer with a strong graphics card); the task uses a suitable available brain on that computer;
 - **how hard it is** (fast, balanced or deep) and what it is about (code, analysis, writing, research, an errand). From that the hub picks the brain, model and effort.
 
+You can choose yourself, in the request: "do it on the MacBook, on Opus, high effort". The task then runs on that computer, with that model and that effort, on the brain that has the model. Name only what matters to you; the rest the agent and the hub pick as usual.
+
 If the right agent or computer is unclear and it matters, the agent asks you one short question first. A task placed on a computer that is offline waits for it and starts when it comes online (for up to a day). Agents bound to certain computers never start tasks elsewhere (see [Agents and the team](agents.md)).
 
 Creating a task puts it in the queue; it does not confirm that its brain has started. At each start, including a retry, the hub checks installation and sign-in on the selected computer and reads the agent's current settings. If the preferred brain is unavailable, cannot open a session or has reached its limit, the task can use another suitable brain. A brain explicitly required for the task stays mandatory, as does its computer. If no option works, the failure reports the actual reason instead of assuming that you have not signed in.
@@ -26,7 +28,11 @@ A short errand (a lookup, a quick check, a figure, a short answer: minutes, noth
 
 ### Rules for where work goes
 
-Say once, to any agent, how some kind of work should always go: "run renders on LEGOSTIN-PC", "code goes to Codex", "research is for the researcher". The agent saves it as a rule, and from then on every agent's dialog follows it when it starts tasks: that computer, that agent, that brain. What you say in a request itself wins over a rule. "What rules do we have?" lists them, and "drop the render rule" removes one.
+Say once, to any agent, how some kind of work should always go: "run renders on LEGOSTIN-PC", "code goes to Codex", "research is for the researcher", "Piomio project tasks: on the MacBook, Opus, high effort". The agent saves it as a rule: the kind of work in your words, and any of a computer, an agent, a brain, a model and an effort. From then on every agent's dialog follows it when it starts tasks. What you say in a request itself wins over a rule. "What rules do we have?" lists them, and "drop the render rule" removes one.
+
+The hub applies the rules too, to every task before it starts, whoever started it: an agent in a chat, a schedule, a channel. A quick model reads the rules and the task and says which rules fit; it is a bare session on a brain signed in on the hub's computer, on its cheapest model, with no tools. The task takes the computer, brain, model and effort those rules name, wherever its starter named none. Several rules can add up: the computer from one, the model from another. When no rule fits, or no quick model can answer, the task runs as it was started. A rule never moves a task to a computer its agent does not work on or to a brain the agent does not have.
+
+**Settings → General** has the same list under **Rules for work**: **Add a rule** and the pencil open a chat with the assistant, the bin removes a rule. The **Memory** page shows the rules too, with **Forget** on each.
 
 ### The task line
 

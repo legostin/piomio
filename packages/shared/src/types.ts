@@ -630,6 +630,11 @@ export interface Task {
   deliver?: "report" | "digest";
   /** The brain and depth whoever started it chose for this job (task_delegate), over the agent's choice for tasks. */
   thinking?: ThinkingChoice;
+  /**
+   * The work rules the hub applied before the task's first run (WorkRule ids, comma-separated), "none" when it looked
+   * and none fit; unset while it has not looked (or the team had no rules then).
+   */
+  rule?: string;
   /** The skill the task follows (a trigger's run of a taught skill): a taught one may click and type in the background. */
   skill?: string;
   createdAt: ISODate;
@@ -1193,8 +1198,10 @@ export interface Machine {
 }
 
 /**
- * One of the team's standing rules for where work goes, said once to any agent ("renders go to LEGOSTIN-PC"): every
- * dialog follows it when it starts tasks. `when` is the person's words for the kind of work.
+ * One of the team's standing rules for where work goes and how it thinks, said once to any agent ("renders go to
+ * LEGOSTIN-PC", "the Piomio project: on the MacBook, Opus, high effort"). `when` is the person's words for the kind of
+ * work. Every dialog follows it when it starts tasks, and the hub applies it to every task before it starts: a quick
+ * model reads the rules and the task and says which fit (core/src/work-rules.ts).
  */
 export interface WorkRule {
   id: string;
@@ -1205,7 +1212,19 @@ export interface WorkRule {
   agent?: string;
   /** The brain it thinks with ("codex", "claude-code", or an exact ref). */
   brain?: string;
+  /** The exact model of that brain ("opus"); a rule with a model names its brain. */
+  model?: string;
+  /** How long it thinks (an effort of EFFORT_SCALE; the brain takes the nearest it has). */
+  effort?: string;
   createdAt: ISODate;
+}
+
+/** A work rule as the settings show it: with the names, for people, of what it names. */
+export interface WorkRuleView extends WorkRule {
+  machineName?: string;
+  agentName?: string;
+  brainLabel?: string;
+  modelName?: string;
 }
 
 /**

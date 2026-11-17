@@ -108,6 +108,7 @@ export default {
   "attachment.empty": "Файл пустой",
   "task.goalRequired": "Опишите задачу",
   "task.notFound": "Задача не найдена",
+  "workRule.notFound": "Такого правила нет",
   "task.missingAgent": "агент или переписка не найдены",
   "task.budgetExhausted": "дневной бюджет фоновых запусков исчерпан",
   "task.limitLater": "лимит подписки — продолжу позже",

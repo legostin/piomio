@@ -560,6 +560,13 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
   });
   api.get("/api/channels", async () => Promise.all(hub.channels.list().map(async (c) => ({ ...c, ...(await hub.channels.status(c.id)) }))));
 
+  // ----- the team's work rules (work-rules.ts): made and changed in a chat (work_rule_set); here they are seen and dropped -----
+  api.get("/api/work-rules", async () => hub.workRules());
+  api.delete("/api/work-rules/:id", async (req) => {
+    if (!hub.runner.rules.remove((req.params as { id: string }).id)) throw new HttpError(404, "workRule.notFound");
+    return { ok: true };
+  });
+
   // ----- machines -----
   api.get("/api/machines", async () => hub.machines.list());
   // What an agent may be bound to (AgentDef.machines): this hub's computer, the machines, the other replicas.

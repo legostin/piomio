@@ -15,6 +15,7 @@ import { explicitLocale, locale, LOCALES, t, type MessageKey } from "../i18n";
 import { usePluginRegistry } from "../plugins/slots";
 import { PluginSetupCard } from "../components/SecretCards";
 import { BrowserLanguageSelect } from "../components/LanguageSelect";
+import { WorkRulesCard } from "../components/WorkRulesCard";
 import { Button, Card, ErrorNote, Field, Input, Loading, Page, Select, TagInput, Toggle } from "../components/ui";
 
 /** What the page reads of GET /api/settings (the demo hub answers it with a new hub's values, demo/hub/routes.ts). */
@@ -306,6 +307,8 @@ export function SettingsPage() {
             </Field>
           </div>
         </Card>
+
+        <WorkRulesCard />
 
         <Card title={t("settings.voice.title")}>
           <p className="mb-3 text-sm text-muted">{t("settings.voice.hint")}</p>

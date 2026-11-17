@@ -5,7 +5,7 @@ import { taskBrains, taskPlacement } from "./task-routing.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind } from "@piomio/shared";
+import type { AgentDef, Approval, BrainEvent, BrainTurn, Conversation, Machine, Message, MessagePart, OutboundMedia, OutboundMessage, SecretRequest, Task, TaskStatus, ThinkingChoice, ToolResult, WorkKind, WorkRule } from "@piomio/shared";
 import { replyText, replyContext, bound, brainSpeed, brainsFor, expandBrains, formatBrainRef, goalLimit, GOAL_ROUNDS, newId, nowIso, onMachine, onMachines, parseBrainRef, resolveThinking, RpcCodes, RpcError, sameBrain, taskThinking, thinkingFor, truncate, workKind } from "@piomio/shared";
 import { MAX_SYNC_FILE_BYTES } from "@piomio/replica";
 import { confinement } from "./native-permissions.ts";
@@ -50,7 +50,8 @@ import { MAX_AUTO_TRANSCRIBE_SEC, type Transcriber } from "./transcribe.ts";
 import { firstSpeakers, groupTurn, groupTurnText, handOff, MAX_HANDOFFS, USER_LABEL } from "./group-chat.ts";
 import { localComputerName } from "./pairing.ts";
 import { cardKind, delivered, deliveredNote, recap, type NotificationPart } from "./continuity.ts";
-import { ruleLine, WorkRules } from "./work-rules.ts";
+import { brainOfModel, NO_RULE, parseRuleAnswer, ruleChoice, ruled, ruleLine, rulesPrompt, WorkRules } from "./work-rules.ts";
+import type { QuickModel } from "./bare-ask.ts";
 import { heardParts, type HeardPrefix } from "./speech/interruption.ts";
 
 export interface RunnerDeps {
@@ -83,6 +84,8 @@ export interface RunnerDeps {
   connections?: (ref: string) => string[];
   /** The id an agent's binding (AgentDef.machines) names the hub's own computer by: its replica id in a cluster, else "local". */
   here?: () => string;
+  /** The quick model that says which of the team's work rules a task falls under, before its first run (work-rules.ts). */
+  quick?: QuickModel;
   /** The kinds of brain the brain plugins and the computers offer: one of those not connected now may come back. */
   brainKinds?: () => string[];
   /** The hub's own computer's graphics cards (set by the hub once it has read them). */
@@ -229,6 +232,9 @@ const NATIVE_SOURCE_TOOLS = /^(WebFetch|WebSearch|web_search|fetch)$/i;
  */
 const CONNECTION_TOOL = /^mcp__/;
 const MAX_TASK_CONCURRENCY = 4;
+/** How long the quick model has to say which work rules a task falls under, its wait in line included. */
+const RULES_MS = 30_000;
+const RULES_SYSTEM = "You classify a piece of work against a list of rules and answer exactly in the form the message asks for, in text only.";
 /** An errand (Task kind "errand") still going this long after it was made is an ordinary task: the person sees it in the list. */
 export const ERRAND_MINUTES = 15;
 /** How long a finished errand's thread stays (for its agent to look back, or to see what went wrong) before it goes. */
@@ -336,7 +342,7 @@ export class SessionRunner {
 
   constructor(deps: RunnerDeps) {
     this.d = deps;
-    this.rules = new WorkRules(deps.settings);
+    this.rules = new WorkRules(deps.settings, () => deps.bus.emit("settings.updated", { keys: ["workRules"] }));
     deps.approvals.onDeferredApproved = (a) => this.onDeferredApproved(a);
     deps.approvals.onBlockedAllowed = (a) => this.onBlockedAllowed(a);
     deps.approvals.onDeferredDenied = (a) => this.onDeferredDenied(a);
@@ -1093,8 +1099,54 @@ export class SessionRunner {
       .run(day, agentId, kind, tokens);
   }
 
+  /**
+   * The team's work rules on a task, once, before its first run (work-rules.ts): the quick model says which fit, and
+   * the task takes the computer, brain, model and effort they name where its starter named none. With no quick model,
+   * or no clear answer from it, the task runs as it was started. Returns the task as it is now.
+   */
+  private async byRules(task: Task): Promise<Task | undefined> {
+    const quick = this.d.quick;
+    // Rules that only say who does the work were followed when the task was started.
+    const rules = this.rules.list().filter((r) => r.machine || r.brain || r.model || r.effort);
+    if (!quick || task.rule || task.status !== "queued" || !rules.length || !ruled(task)) return task;
+    const agent = this.d.agents.get(task.agentId);
+    // A task that has worked already stays where it is (one started before the rules, waiting for its brain).
+    if (!agent || this.d.store.listMessages(task.conversationId, { limit: 50 }).some((m) => m.role === "assistant")) return task;
+    let fit: WorkRule[] | undefined;
+    let failed: string | undefined;
+    try {
+      const prompt = rulesPrompt(rules, { title: task.title, goal: task.goal, agent: agentName(agent, hubLocale()), kind: workKind(task) });
+      const r = await quick.ask(prompt, { system: RULES_SYSTEM, signal: AbortSignal.timeout(RULES_MS) });
+      fit = parseRuleAnswer(r.text, rules);
+      if (!fit) failed = "no clear answer";
+    } catch (e) {
+      failed = (e as Error).message;
+    }
+    const now = this.d.store.getTask(task.id);
+    if (!now || now.status !== "queued") return now;
+    const choice = fit?.length ? ruleChoice(now, fit) : undefined;
+    // A computer the agent does not work on, or a brain it does not have, is not a rule's to give.
+    const placed = choice?.machineId ? this.placeTask(agent.id, choice.machineId) : undefined;
+    const machineId = placed && !("error" in placed) ? placed.machineId : undefined;
+    const brain = choice?.thinking?.brain;
+    const has = !brain || !!now.thinking?.brain || agent.brains.some((b) => sameBrain(b, brainsFor(agent, "task", { brain })[0]));
+    const { brain: _, model: __, ...withoutBrain } = choice?.thinking ?? {};
+    const thinking = choice?.thinking ? (has ? choice.thinking : withoutBrain) : undefined;
+    this.d.audit.append("core", "task.rule", task.id, {
+      rules: fit?.map((r) => r.id) ?? [],
+      ...(failed ? { error: failed } : {}),
+      ...(machineId ? { machineId } : {}),
+      ...(thinking ? { thinking } : {}),
+      ...(placed && "error" in placed ? { skipped: `computer: ${placed.error}` } : !has ? { skipped: `brain: ${agent.id} has no ${brain}` } : {}),
+    });
+    return this.d.store.updateTask(task.id, { rule: fit?.length ? fit.map((r) => r.id).join(",") : NO_RULE, ...(machineId ? { machineId } : {}), ...(thinking ? { thinking } : {}) });
+  }
+
   private async runTask(task: Task): Promise<void> {
-    const fresh = this.d.store.getTask(task.id);
+    const queued = this.d.store.getTask(task.id);
+    if (!queued || !["queued", "paused"].includes(queued.status)) return;
+    // The team's work rules first: they may send the task to another computer, brain and model.
+    const fresh = await this.byRules(queued);
     if (!fresh || !["queued", "paused"].includes(fresh.status)) return;
     const agent = this.d.agents.get(fresh.agentId);
     const conv = this.d.store.getConversation(fresh.conversationId);
@@ -1618,6 +1670,33 @@ export class SessionRunner {
     const online = new Set((this.d.machines?.() ?? []).filter((m) => m.status === "online").map((m) => canonical(m.id)));
     if (agent.machines.some((m) => m === "local" || m === this.here() || online.has(canonical(m)) || canonical(m) === this.here())) return undefined;
     return t("chat.machinesOff", { agent: agentName(agent, hubLocale()), machines: this.boundNames(agent), count: agent.machines.length });
+  }
+
+  /**
+   * The brain that has a model the person named ("Opus", for one task or in a work rule), with the model's id there:
+   * among the agent's brains for tasks, or all of the hub's without one; the named `brain` only; those on `machine` first.
+   * The brain comes back as the person or the rule would name it (its id, wherever it runs).
+   */
+  async modelBrain(model: string, o: { agentId?: string; brain?: string; machine?: string } = {}): Promise<{ brain: string; model: string } | { error: string }> {
+    const agent = o.agentId ? this.d.agents.get(o.agentId) : undefined;
+    if (o.agentId && !agent) return { error: `No agent ${o.agentId}.` };
+    const all = agent ? this.ownBrains(agent, "task", thinkingFor(agent, "task")) : this.d.brains.list().map((b) => b.ref);
+    const idOf = (ref: string) => ref.split("@")[0];
+    const named = o.brain ? all.filter((r) => (o.brain!.includes("@") ? sameBrain(r, o.brain!) : parseBrainRef(r).brainId === o.brain || idOf(r) === o.brain)) : all;
+    const canonical = (id: string) => this.d.canonicalMachine?.(id === "local" ? this.here() : id) ?? id;
+    const there = (r: string) => (o.machine && canonical(parseBrainRef(r).machineId) === canonical(o.machine) ? 0 : 1);
+    const refs = [...named].sort((a, z) => there(a) - there(z));
+    const found = await brainOfModel(this.d.brains, refs.filter((r) => this.d.brains.has(r)), model);
+    if (found) return { brain: o.brain ?? idOf(found.ref), model: found.model };
+    // What they have, by kind of brain, for the next try.
+    const lists = new Map<string, string[]>();
+    for (const r of refs) {
+      if (lists.has(idOf(r)) || !this.d.brains.has(r)) continue;
+      const probe = await this.d.brains.probe(r, 10 * 60_000).catch(() => undefined);
+      if (probe?.models?.length) lists.set(idOf(r), probe.models);
+    }
+    const have = [...lists].map(([id, models]) => `${id}: ${models.join(", ")}`).join("; ");
+    return { error: `No model "${model}"${o.brain ? ` on ${o.brain}` : agent ? ` among ${agent.id}'s brains` : ""}.${have ? ` Models: ${have}.` : " None of them lists its models now."}` };
   }
 
   /**

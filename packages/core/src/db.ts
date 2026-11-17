@@ -158,6 +158,8 @@ const MIGRATIONS: string[] = [
   // The machine that serves a hub replica's computer while another replica leads (own-node.ts): its own daemon, or
   // a piomio-node it verified on the same host. Agents bound to that computer think there whoever leads.
   `alter table replicas add column machine_id text;`,
+  // The work rules the hub applied before a task's first run (Task.rule): ids, "none", or null while it has not looked.
+  `alter table tasks add column rule text;`,
 ];
 
 /**
