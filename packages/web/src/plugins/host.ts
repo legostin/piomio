@@ -7,7 +7,7 @@ import { translator } from "@piomio/shared/i18n";
 import { navigate } from "wouter/use-browser-location";
 import { api, request, type Method } from "../lib/api";
 import { createStore, useStore } from "../lib/store";
-import { hubEvents, sendToHub, session, type UiPluginEntry } from "../state/app";
+import { hubEvents, refreshBootstrap, sendToHub, session, type UiPluginEntry } from "../state/app";
 import { toast } from "../state/toast";
 import { formatDate, formatNumber, locale, t } from "../i18n";
 import { addCommand, addContribution, addLiveView, addMapApp, addRoute, addSettings, addStatus, addWidget, normalizePath, removePlugin } from "./registry";
@@ -118,12 +118,25 @@ async function load(entry: UiPluginEntry): Promise<void> {
     if (cur) cur.cleanup = typeof ret === "function" ? ret : undefined;
     setLoad(entry.id, { name: entry.name, status: "active" });
   } catch (e) {
+    if (!ours(entry)) return;
     removePlugin(entry.id);
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[ui-plugin ${entry.id}] failed to load`, e);
+    // A hub of several replicas may hand the lead over between the list and the import: the list came from one hub,
+    // the module was asked of the next, which may not have that plugin (or has another revision). Only what the hub
+    // lists now is worth a word; the sync after the new list loads that.
+    if (!(await stillListed(entry)) || !ours(entry)) return;
     setLoad(entry.id, { name: entry.name, status: "error", error: msg });
     toast(t("plugins.loadFailed", { name: entry.name, error: msg }), "error");
   }
+}
+
+/** This load is still the one for its plugin (no later sync unloaded or replaced it). */
+const ours = (entry: UiPluginEntry): boolean => loaded.get(entry.id)?.url === entry.url;
+
+async function stillListed(entry: UiPluginEntry): Promise<boolean> {
+  await refreshBootstrap();
+  return (session.get()?.uiPlugins ?? []).some((e) => e.id === entry.id && e.url === entry.url);
 }
 
 /** Load new UI plugins and unload ones that disappeared (called after bootstrap and on plugins.updated). */
