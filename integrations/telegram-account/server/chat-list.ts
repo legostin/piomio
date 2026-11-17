@@ -39,6 +39,12 @@ export interface ChatListOptions {
 /** One walk of the list: its pages in order, the most recent chats first. */
 export type ChatPages = () => AsyncIterable<TgChat[]>;
 
+/**
+ * What arrived while a walk went on, in the order it happened: a message with its chat, or a chat read down to this
+ * many unread.
+ */
+type Noted = { message: TgMessage; chat: TgChat } | { read: string; unread: number };
+
 /** Put a message into a list: its chat goes first, with it as the last message. A message the list has is left. */
 function applyNote(list: TgChat[], message: TgMessage, chat: TgChat): void {
   const at = list.findIndex((c) => c.id === chat.id);
@@ -46,6 +52,12 @@ function applyNote(list: TgChat[], message: TgMessage, chat: TgChat): void {
   if (known.last && known.last.id >= message.id) return;
   if (at >= 0) list.splice(at, 1);
   list.unshift({ ...known, last: message, lastMessageAt: message.date, unread: (known.unread ?? 0) + (message.out ? 0 : 1) });
+}
+
+/** A chat of the list was read: this many are still unread. The chat's entry is replaced, not changed. */
+function applyRead(list: TgChat[], chatId: string, unread: number): void {
+  const at = list.findIndex((c) => c.id === chatId);
+  if (at >= 0) list[at] = { ...list[at]!, unread };
 }
 
 export class ChatList {
@@ -60,8 +72,12 @@ export class ChatList {
   /** When a walk last ended, finished or refused. */
   private at = 0;
   private walking: Promise<void> | undefined;
-  /** What arrived during the walk: put again into the pages as they come, which may be older than it. */
-  private noted: Array<{ message: TgMessage; chat: TgChat }> = [];
+  /**
+   * What arrived during the walk: put again, in order, into the pages as they come, which may be older than it. A
+   * page is how its chats were when it came, so what was read before that is dropped for them; a message is told
+   * from one the page has by its id.
+   */
+  private noted: Noted[] = [];
   private waiting = new Set<() => void>();
 
   constructor(pages: ChatPages, o: ChatListOptions) {
@@ -96,12 +112,17 @@ export class ChatList {
       const next: TgChat[] = [];
       const withNotes = () => {
         const list = [...next];
-        for (const n of this.noted) applyNote(list, n.message, n.chat);
+        for (const n of this.noted) {
+          if ("read" in n) applyRead(list, n.read, n.unread);
+          else applyNote(list, n.message, n.chat);
+        }
         return list;
       };
       this.noted = [];
       try {
         for await (const page of this.pages()) {
+          const came = new Set(page.map((c) => c.id));
+          this.noted = this.noted.filter((n) => !("read" in n) || !came.has(n.read));
           next.push(...page);
           if (!this.complete) this.list = withNotes();
           this.wake();
@@ -175,8 +196,8 @@ export class ChatList {
 
   /** The chat was read (here or on another device): this many are still unread. */
   read(chatId: string, unread: number): void {
-    const chat = this.list?.find((c) => c.id === chatId);
-    if (chat) chat.unread = unread;
+    if (this.walking) this.noted.push({ read: chatId, unread });
+    if (this.list) applyRead(this.list, chatId, unread);
   }
 
   clear(): void {

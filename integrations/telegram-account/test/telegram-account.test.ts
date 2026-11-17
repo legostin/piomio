@@ -308,8 +308,9 @@ describe("what agents can do with a connected account", () => {
       "1 of the open chats has unread messages; most recent first, newest message first, times in UTC. 1 muted chat has unread messages (muted: true includes them).",
       "",
       "Family (group, id -1001) · 2 unread:",
+      // The account's own reply between them is not an unread message, and does not take the place of one.
       "#12 2026-11-15 09:30 Dad: [document: recipe.pdf, 1 KB] The recipe",
-      "#11 2026-11-15 09:10 me (reply to #10): Yes",
+      "#10 2026-11-15 09:00 Mom: Dinner at seven?",
     ]);
     expect((await r.control("/state")).histories).toBe(before + 1);
     expect(await r.h.invokeText("unread", { muted: true })).toContain("Noisy chat (group, id -1003) · 89000 unread, the newest 1:");
@@ -323,6 +324,13 @@ describe("what agents can do with a connected account", () => {
     expect(personal).toContain("Anna Petrova: Call me");
     expect(personal).not.toContain("Family");
     expect((await r.control("/state")).histories).toBe(asked);
+
+    // The account answered from another app without opening the chat: the unread message is under its own.
+    await r.control("/incoming", { chatId: ANNA.id, message: { out: true, text: "In a minute" } });
+    const answered = await r.h.invokeText("unread", { kind: "private" });
+    expect(answered).toContain("Anna Petrova (private, id 501) · 1 unread:");
+    expect(answered).toContain("Anna Petrova: Call me");
+    expect(answered).not.toContain("In a minute");
   });
 
   it("answers from the most recent chats while the list still loads, and says so; only \"nothing\" waits for all of it", async () => {

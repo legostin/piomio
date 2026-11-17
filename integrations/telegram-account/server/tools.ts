@@ -28,6 +28,13 @@ const MAX_SEND_FILES = 10;
 const MAX_READ_CHARS = 24_000;
 /** In the digest of unread messages a long message is shown by its beginning. */
 const DIGEST_MESSAGE_CHARS = 600;
+/**
+ * The digest asks for this many messages more than a chat has unread: the account's own messages, sent since from
+ * another app, lie among the unread ones and are not shown. Still one request a chat.
+ */
+const DIGEST_OWN_SPARE = 20;
+/** The most messages Telegram gives in one request for a chat's history. */
+const HISTORY_MOST = 100;
 /** How much of a chat's last message its line in a list shows. */
 const PREVIEW_CHARS = 160;
 
@@ -242,7 +249,8 @@ export function registerTools(ctx: PluginContext, account: Account, requests: Re
           if (want === 1 && c.last && !c.last.out) list = [c.last];
           else {
             try {
-              list = await tg.history(c.id, { limit: want });
+              // Unread messages are other people's: the account's own, sent since, lie among them and above them.
+              list = (await tg.history(c.id, { limit: Math.min(HISTORY_MOST, want + DIGEST_OWN_SPARE) })).filter((m) => !m.out).slice(0, want);
             } catch (e) {
               if (!(e instanceof RateLimited)) throw e;
               waited = e;
@@ -250,7 +258,12 @@ export function registerTools(ctx: PluginContext, account: Account, requests: Re
             }
           }
           read++;
-          blocks.push(`${c.title} (${c.kind}, id ${c.id}) · ${c.unread} unread${(c.unread ?? 0) > list.length ? `, the newest ${list.length}` : ""}:\n${list.map(digestLine).join("\n")}`);
+          const head = `${c.title} (${c.kind}, id ${c.id}) · ${c.unread} unread`;
+          blocks.push(
+            list.length
+              ? `${head}${(c.unread ?? 0) > list.length ? `, the newest ${list.length}` : ""}:\n${list.map(digestLine).join("\n")}`
+              : `${head}, under newer messages of the account's own: telegram_account_read shows the chat.`,
+          );
         }
         const rest = pick.slice(read);
         const restNote = rest.length

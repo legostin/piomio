@@ -213,6 +213,40 @@ describe("the account's list of chats", () => {
     expect(all[0]).toMatchObject({ id: "151", unread: 1, last: { text: "fresh" } });
   });
 
+  it("keeps what was read elsewhere while the list loads, in the order it happened", async () => {
+    const chats = [chat("1", { unread: 4, last: message("1", 5) }), chat("2", { unread: 1, last: message("2", 6) }), ...many(100).slice(2), chat("150", { unread: 3 })];
+    const { list, t } = listOf(chats);
+    await list.all();
+    t.now += 3_600_000;
+    t.hold = true;
+    const whole = list.all();
+    await t.step();
+    // The page with chats 1 and 2 has come, and counts them as they were. Then: 1 is read; 2 gets a message, is
+    // read, and gets one more.
+    list.read("1", 0);
+    list.note(message("2", 7), chat("2"));
+    list.read("2", 0);
+    list.note(message("2", 8, { text: "after reading" }), chat("2"));
+    // 150 was read before its page was asked for: the page, which has a message that came after that, knows better.
+    list.read("150", 2);
+    await t.step();
+    const all = await whole;
+    expect(all.find((c) => c.id === "1")?.unread).toBe(0);
+    expect(all[0]).toMatchObject({ id: "2", unread: 1, last: { text: "after reading" } });
+    expect(all.find((c) => c.id === "150")?.unread).toBe(3);
+    expect(t.walks).toBe(2);
+
+    // The same during the very first walk, when the pages are shown as they come.
+    const first = listOf([chat("1", { unread: 4 }), ...many(150).slice(1)]);
+    first.t.hold = true;
+    const loading = first.list.all();
+    await first.t.step();
+    first.list.read("1", 0);
+    expect((await first.list.find("1"))?.unread).toBe(0);
+    await first.t.step();
+    expect((await loading).find((c) => c.id === "1")?.unread).toBe(0);
+  });
+
   it("lets a caller that cannot wait long give up, while the walk goes on", async () => {
     const { list, t } = listOf([chat("1")]);
     t.hold = true;
