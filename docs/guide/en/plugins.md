@@ -54,7 +54,7 @@ Reminders, schedules, page watches and webhooks (triggers) are part of Piomio it
 | Plugin | What it does |
 |---|---|
 | **Browser** | The agents' own browser, with a live view you can take over. See [The browser and teach mode](browser.md). |
-| **Web** | Reads web pages and RSS feeds, and searches the web: through the browser, or Brave, Tavily or your own SearXNG. |
+| **Web** | Reads web pages and RSS feeds, and searches the web: through the browser, or Brave, Tavily or your own SearXNG. When the agent wants something from a page rather than its whole text, a quick model reads the page and the agent gets only the answer, which keeps long research cheap. |
 | **Memory** | The team's long-term memory about you, which you can see and change. |
 | **Telegram** | Chat with your agents in Telegram. Needs a bot of your own: see [Telegram](telegram.md). |
 | **Yandex Maps and 2GIS** | Adds both apps to "Open in…" on the maps agents show in the chat. |

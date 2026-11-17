@@ -51,7 +51,7 @@ export function ThinkingCard({ agentId }: { agentId: string }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold">{t("thinking.card.title", { agent: agent.name })}</span>
-          <span className="line-clamp-2 text-[13px] text-muted">{t("thinking.card.hint")}</span>
+          <span className="line-clamp-3 text-[13px] text-muted">{t("thinking.card.hint")}</span>
         </span>
       </div>
       {view.kinds.map((k) => {

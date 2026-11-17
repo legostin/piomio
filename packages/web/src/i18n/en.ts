@@ -1176,7 +1176,7 @@ export default {
   "thinking.askKinds": "Let's set up how you think for different kinds of work",
   "thinking.changed": "{agent}: {how}",
   "thinking.card.title": "How {agent} thinks",
-  "thinking.card.hint": "Kinds without their own choice think as in the chat.",
+  "thinking.card.hint": "Without a choice of its own, a kind thinks as in the chat. Channels and schedules take Auto instead of the chat's Deep.",
   "thinking.card.brainTitle": "What {agent} thinks with",
   "thinking.card.effortTitle": "How deeply {agent} thinks",
   "thinking.moreBrains": "{n, plural, one {# more brain, not set up} other {# more brains, not set up}}",
