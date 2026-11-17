@@ -109,6 +109,7 @@ export default {
   "attachment.empty": "The file is empty",
   "task.goalRequired": "Describe the task",
   "task.notFound": "Task not found",
+  "workRule.notFound": "No such rule",
   "task.missingAgent": "the agent or conversation no longer exists",
   "task.budgetExhausted": "the daily budget for background runs is used up",
   "task.limitLater": "subscription limit — will continue later",

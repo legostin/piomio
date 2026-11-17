@@ -76,6 +76,7 @@ const taskFrom = (r: any): Task => ({
   ...(r.feed_id ? { feedId: r.feed_id } : {}),
   ...(r.skill ? { skill: r.skill } : {}),
   ...(r.deliver === "report" || r.deliver === "digest" ? { deliver: r.deliver as "report" | "digest" } : {}),
+  ...(r.rule ? { rule: r.rule } : {}),
   ...(parseThinkingChoice(json(r.thinking, undefined)) ? { thinking: parseThinkingChoice(json(r.thinking, undefined)) } : {}),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -463,11 +464,12 @@ export class Store {
     return this.db.prepare("select * from tasks order by created_at desc limit ?").all(limit).map(taskFrom);
   }
 
-  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds" | "kind">>): Task | undefined {
-    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", machineId: "machine_id", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds", kind: "kind" };
+  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds" | "kind" | "rule" | "thinking">>): Task | undefined {
+    const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", machineId: "machine_id", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds", kind: "kind", rule: "rule" };
     for (const [k, col] of Object.entries(cols)) {
       if (k in patch) this.db.prepare(`update tasks set ${col} = ? where id = ?`).run((patch as any)[k] ?? null, id);
     }
+    if ("thinking" in patch) this.db.prepare("update tasks set thinking = ? where id = ?").run(patch.thinking && Object.keys(patch.thinking).length ? JSON.stringify(patch.thinking) : null, id);
     if (patch.tainted !== undefined) this.db.prepare("update tasks set tainted = ? where id = ?").run(patch.tainted ? 1 : 0, id);
     this.db.prepare("update tasks set updated_at = ? where id = ?").run(nowIso(), id);
     const t = this.getTask(id);

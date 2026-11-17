@@ -63,12 +63,31 @@ describe("thinking per kind of work", () => {
     expect(resolveThinking(both, "codex@local", { efforts: ["low", "high"], presets: { deep: { effort: "high" } } })).toEqual({ effort: "high", preset: "deep" });
   });
 
+  it("gives a task the exact model and effort named for it (the person's words, a work rule)", () => {
+    const a = agent({ chat: { preset: "fast" }, task: { model: "sonnet", effort: "max", brain: "claude-code@local" } });
+    // A model, with its brain: nothing of the kind's own model and effort stays.
+    const named = taskThinking(a, "task", { model: "opus", effort: "high", brain: "claude-code" });
+    expect(named).toEqual({ model: "opus", effort: "high", brain: "claude-code" });
+    expect(resolveThinking(named, "claude-code@local", claude)).toEqual({ model: "opus", effort: "high" });
+    expect(taskThinking(a, "task", { model: "opus", brain: "claude-code" })).toEqual({ model: "opus", brain: "claude-code" });
+    // An exact one wins over a depth given with it.
+    expect(taskThinking(a, "task", { preset: "fast", model: "opus", effort: "high", brain: "claude-code" })).toEqual({ model: "opus", effort: "high", brain: "claude-code" });
+    // Only an effort: the kind's model stays on the same brain, a preset otherwise.
+    expect(taskThinking(a, "task", { effort: "high" })).toEqual({ model: "sonnet", effort: "high", brain: "claude-code@local" });
+    expect(taskThinking(a, "task", { effort: "high", brain: "codex" })).toEqual({ effort: "high", brain: "codex" });
+    expect(taskThinking(a, "schedule", { effort: "high" })).toEqual({ preset: "fast", effort: "high" });
+    expect(taskThinking(a, "schedule", { preset: "deep", effort: "high", skill: "code" })).toEqual({ preset: "deep", effort: "high", skill: "code" });
+  });
+
   it("resolves a preset on each brain, exact choices on their own brain, and the old agent-wide model last", () => {
     expect(resolveThinking({ preset: "deep" }, "claude-code@local", claude)).toEqual({ model: "opus", effort: "xhigh", preset: "deep" });
     expect(resolveThinking({ preset: "deep" }, "codex@local", { efforts: ["low", "medium", "high"], presets: { deep: { effort: "high" } } }, "gpt-x")).toEqual({ model: "gpt-x", effort: "high", preset: "deep" });
     const exact = { model: "haiku", effort: "low", brain: "claude-code" };
     expect(resolveThinking(exact, "claude-code@local", claude)).toEqual({ model: "haiku", effort: "low" });
     expect(resolveThinking(exact, "codex@local", { presets: {} })).toEqual({});
+    // Named without its computer, the brain is the same one on another computer; with one, only there.
+    expect(resolveThinking(exact, "claude-code@mach_1", claude)).toEqual({ model: "haiku", effort: "low" });
+    expect(resolveThinking({ ...exact, brain: "claude-code@local" }, "claude-code@mach_1", claude)).toEqual({});
     expect(resolveThinking({ preset: "fast", effort: "max", brain: "claude-code@local" }, "claude-code@local", claude)).toEqual({ model: "sonnet", effort: "max" });
     // A brain without presets or efforts: the agent's old model, nothing else.
     expect(resolveThinking({ preset: "fast" }, "fake@local", undefined, "old")).toEqual({ model: "old", preset: "fast" });

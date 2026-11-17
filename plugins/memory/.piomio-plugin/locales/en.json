@@ -123,5 +123,16 @@
   "ui.error.factNotFound": "Fact not found: {path}",
   "ui.error.notInReview": "No fact pending review: {path}",
   "ui.error.notInTrash": "Nothing to bring back: {path}",
-  "ui.error.versionNotFound": "That version is not in the history: {rev}"
+  "ui.error.versionNotFound": "That version is not in the history: {rev}",
+  "ui.rules.title": "Rules for work",
+  "ui.rules.hint": "Where work of some kind goes and how it thinks. Say a rule to any agent in a chat to add or change one.",
+  "ui.rules.effort": "{effort} effort",
+  "ui.rules.effortName.none": "no",
+  "ui.rules.effortName.minimal": "minimal",
+  "ui.rules.effortName.low": "low",
+  "ui.rules.effortName.medium": "medium",
+  "ui.rules.effortName.high": "high",
+  "ui.rules.effortName.xhigh": "extra high",
+  "ui.rules.effortName.max": "maximum",
+  "ui.rules.effortName.ultra": "ultra"
 }

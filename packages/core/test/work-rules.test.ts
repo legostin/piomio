@@ -84,7 +84,7 @@ describe("work rules (integration)", () => {
     const said = await call("work_rule_set", { when: "rendering, anything for the GPU", machine: "BOX" });
     const [rule] = hub.runner.rules.list();
     expect(rule).toMatchObject({ when: "rendering, anything for the GPU", machine: "mach_box" });
-    expect(said).toContain(`Saved the rule ${rule.id}: rendering, anything for the GPU → computer box (mach_box). Every dialog of the team follows it from now on.`);
+    expect(said).toContain(`Saved the rule ${rule.id}: rendering, anything for the GPU → computer box (mach_box). Every dialog of the team follows it from now on, and the hub applies it to each task before it starts.`);
   });
 
   it("lists the rules and the computers' graphics cards for the team", async () => {
@@ -135,6 +135,80 @@ describe("work rules (integration)", () => {
     }, "the task to run on box");
     expect(done.result).toMatch(/^fake heard: /);
     expect(hub.store.activeSession(done.conversationId, "assistant")!.brainRef).toBe("fake@mach_box");
+  });
+
+  it("saves how such work thinks: the model by its name, on the brain that has it", async () => {
+    expect(await call("work_rule_set", { when: "the Piomio project", model: "opus" })).toMatch(/No model "opus"\. Models: fake: quick, smart\./);
+    expect(await call("work_rule_set", { when: "the Piomio project", model: "Smart", effort: "extreme" })).toMatch(/No effort "extreme"\. Efforts: /);
+    const said = await call("work_rule_set", { when: "the Piomio project", machine: "box", model: "Smart", effort: "high" });
+    const rule = hub.runner.rules.list().find((r) => r.when === "the Piomio project")!;
+    expect(rule).toMatchObject({ machine: "mach_box", brain: "fake", model: "smart", effort: "high" });
+    expect(said).toContain(`Saved the rule ${rule.id}: the Piomio project → computer box (mach_box); brain fake; model smart; effort high.`);
+    // How it thinks alone is a rule too.
+    expect(await call("work_rule_set", { when: "news channels", effort: "low" })).toContain("news channels → effort low");
+  });
+
+  it("applies the rules that fit before a task's first run, whoever started it; what the starter named stands", async () => {
+    const piomio = hub.runner.rules.list().find((r) => r.when === "the Piomio project")!;
+    const asked: string[] = [];
+    let answer = `{"rules":["${piomio.id}"]}`;
+    (hub.runner as any).d.quick = {
+      ask: async (prompt: string) => {
+        asked.push(prompt);
+        if (answer === "DOWN") throw new Error("no quick model is signed in");
+        return { text: answer, ref: "fake@local" };
+      },
+    };
+    const run = async (t: Parameters<Hub["runner"]["createTask"]>[0]): Promise<Task> => {
+      const id = hub.runner.createTask(t).id;
+      return until(() => {
+        const now = hub.store.getTask(id) as Task;
+        return now.status === "done" || now.status === "failed" ? now : undefined;
+      }, "the task to end");
+    };
+    const base = { agentId: "assistant", title: "Fix the build", goal: "THINKING?", background: false } as const;
+
+    // A scheduled run nobody placed: the rule sends it to the box, on the model and the effort it names.
+    const ruledTask = await run({ ...base, createdBy: "trigger" });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain(`- ${piomio.id}: the Piomio project`);
+    expect(asked[0]).toContain("Fix the build");
+    expect(ruledTask).toMatchObject({ rule: piomio.id, machineId: "mach_box", thinking: { brain: "fake", model: "smart", effort: "high" } });
+    expect(ruledTask.result).toBe("fake thinks: model=smart effort=high");
+    expect(hub.store.activeSession(ruledTask.conversationId, "assistant")!.brainRef).toBe("fake@mach_box");
+    expect(hub.audit.list({ action: "task.rule", limit: 1 })[0]).toMatchObject({ target: ruledTask.id, data: { rules: [piomio.id], machineId: "mach_box" } });
+
+    // The starter's own computer and exact model win; the rule is still noted.
+    const mine = await run({ ...base, createdBy: "user", machineId: "local", thinking: { brain: "fake", model: "quick" } });
+    expect(mine).toMatchObject({ rule: piomio.id, machineId: "local", thinking: { brain: "fake", model: "quick" } });
+    expect(mine.result).toBe("fake thinks: model=quick effort=default");
+
+    // No rule fits, or the quick model is away: the task runs as it was started, and is not asked about again.
+    answer = '{"rules":[]}';
+    expect(await run({ ...base, createdBy: "user" })).toMatchObject({ rule: "none", machineId: undefined });
+    answer = "DOWN";
+    const unruled = await run({ ...base, createdBy: "user" });
+    expect(unruled).toMatchObject({ rule: "none", machineId: undefined });
+    expect(unruled.thinking).toBeUndefined();
+    expect(hub.audit.list({ action: "task.rule", limit: 1 })[0]).toMatchObject({ target: unruled.id, data: { rules: [], error: "no quick model is signed in" } });
+
+    for (const r of hub.runner.rules.list().filter((x) => x.when !== "rendering, anything for the GPU")) hub.runner.rules.remove(r.id);
+  });
+
+  it("starts a task on the exact model and effort the person named for it", async () => {
+    await until(() => !hub.runner.isRunning(dialog), "the dialog to be quiet");
+    expect(await call("task_delegate", { title: "Think", goal: "THINKING?", model: "nope" })).toMatch(/No model "nope" among assistant's brains\. Models: fake: quick, smart\./);
+    // The task may end, and its result reach the dialog, before the tool's reply is read: find the reply by its words.
+    await call("task_delegate", { title: "Think", goal: "THINKING?", model: "Smart", effort: "low", depth: "fast" });
+    const said = replies().map(textOf).find((x) => x.includes("“Think”"))!;
+    expect(said).toMatch(/Task created: (t_\S+) “Think” \(fake, smart, low effort\)\./);
+    const id = /Task created: (t_\S+)/.exec(said)![1];
+    const done = await until(() => {
+      const t = hub.store.getTask(id) as Task;
+      return t.status === "done" ? t : undefined;
+    }, "the task to end");
+    expect(done.thinking).toEqual({ preset: "fast", brain: "fake", model: "smart", effort: "low" });
+    expect(done.result).toBe("fake thinks: model=smart effort=low");
   });
 
   it("drops a rule", async () => {

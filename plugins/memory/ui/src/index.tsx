@@ -1,7 +1,9 @@
 // UI of the memory plugin:
 // - page /memory: "What the team knows about you", grouped by meaning, with search, the review queue first, a fact's
 //   detail inline (where it came from, what it replaced, its history), editing in place, forget with Undo;
-// - a quiet line under an agent's message when it remembers something ("Remembered: … · Undo").
+// - a quiet line under an agent's message when it remembers something ("Remembered: … · Undo");
+// - on the page, the team's rules for work (the hub's work rules: where work of some kind goes and how it thinks),
+//   when there are any: they are remembered too, and dropped here like a fact.
 // No dialogs: everything happens in place.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -382,6 +384,66 @@ function FactRow(props: { f: FactView; open: boolean; onToggle(): void; onChange
   );
 }
 
+// ---------- the team's rules for work (the hub's, GET /api/work-rules) ----------
+
+interface RuleView {
+  id: string;
+  when: string;
+  machineName?: string;
+  agentName?: string;
+  brainLabel?: string;
+  modelName?: string;
+  effort?: string;
+}
+
+/** "MacBook · Claude Code · Opus · high effort". */
+function ruleWhere(r: RuleView): string {
+  const name = r.effort ? t(`ui.rules.effortName.${r.effort}`) : "";
+  const effort = r.effort ? t("ui.rules.effort", { effort: name === `ui.rules.effortName.${r.effort}` ? r.effort : name }) : "";
+  return [r.machineName, r.agentName, r.brainLabel, r.modelName, effort].filter(Boolean).join(" · ");
+}
+
+/** Nothing while there are none (or on a hub that has no such list): a rule is said to an agent in a chat. */
+function Rules() {
+  const [rules, setRules] = useState<RuleView[]>([]);
+  const load = useCallback(() => {
+    UI.api.get<RuleView[]>("/api/work-rules").then(
+      (r) => setRules(Array.isArray(r) ? r : []),
+      () => setRules([]),
+    );
+  }, []);
+  useEffect(() => {
+    load();
+    // An agent saved or dropped one in the chat next to this page.
+    return UI.events.on((e) => {
+      if (e.type === "settings.updated") load();
+    });
+  }, [load]);
+  const drop = (r: RuleView) =>
+    void UI.api.del(`/api/work-rules/${enc(r.id)}`).then(
+      () => setRules((list) => list.filter((x) => x.id !== r.id)),
+      (e) => UI.toast(errText(e), "error"),
+    );
+  if (!rules.length) return null;
+  return (
+    <div className="owm-sec">
+      <div className="owm-sech"><h2>{t("ui.rules.title")}</h2><span>{rules.length}</span></div>
+      <div className="owm-card">
+        {rules.map((r) => (
+          <div key={r.id} className="owm-row" style={{ cursor: "default" }}>
+            <div className="owm-text">{r.when}</div>
+            <div className="owm-meta"><span>{ruleWhere(r)}</span></div>
+            <div className="owm-acts">
+              <button className="owm-link" title={t("ui.forget")} onClick={() => drop(r)}>{Icon.x}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="owm-sub" style={{ padding: "6px 4px 0" }}>{t("ui.rules.hint")}</div>
+    </div>
+  );
+}
+
 // ---------- the page ----------
 
 function Review({ items, reload }: { items: ReviewItem[]; reload(): void }) {
@@ -583,6 +645,7 @@ function MemoryPage() {
       ) : (
         <>
           <Review items={review} reload={load} />
+          {!kind && <Rules />}
           {total > 0 && groups.length > 1 && (
             <div className="owm-chips">
               <button className={`owm-chip${kind === "" ? " on" : ""}`} onClick={() => setKind("")}>{t("ui.all")}<span>{total}</span></button>

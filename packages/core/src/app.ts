@@ -5,8 +5,8 @@ import { wireNetworkApprovals } from "./network-approvals.ts";
 import { NetworkDenied, networkPattern, privatePattern } from "./egress.ts";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, TaskStatus, ThinkingView } from "@piomio/shared";
-import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, TaskStatus, ThinkingView, WorkRuleView } from "@piomio/shared";
+import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, modelLabel, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
 import { EventBus } from "./bus.ts";
@@ -391,6 +391,8 @@ export class Hub {
       settings: this.settings,
       agents: this.agents,
       brains: this.brains,
+      // Which of the team's work rules a task falls under, asked before its first run: a line of its own.
+      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
       skills: this.skills,
       hooks: this.hooks,
       notifier: this.notifier,
@@ -606,6 +608,7 @@ export class Hub {
       agents: this.agents,
       createTask: (t) => this.runner.createTask(t),
       rules: this.runner.rules,
+      modelBrain: (model, o) => this.runner.modelBrain(model, o),
       tasks: {
         place: (agentId, machine) => this.runner.placeTask(agentId, machine),
         ask: (taskId, question) => this.runner.askStarter(taskId, question),
@@ -1057,6 +1060,23 @@ export class Hub {
       .prepare("select r.name, m.name as machine from replicas r left join machines m on m.id = r.machine_id and m.revoked = 0 where r.id = ? and r.revoked = 0")
       .get(id) as { name: string; machine: string | null } | undefined;
     return r ? (r.machine ?? r.name) : undefined;
+  }
+
+  /** The team's work rules with the names, for people, of what they name (GET /api/work-rules). */
+  workRules(): WorkRuleView[] {
+    const computers = this.runner.computers();
+    const labels = new Map(this.brains.list().map((b) => [parseBrainRef(b.ref).brainId, b.label]));
+    return this.runner.rules.list().map((r) => {
+      const agent = r.agent ? this.agents.get(r.agent) : undefined;
+      const machine = r.machine ? computers.find((c) => c.id === r.machine || c.aliases?.includes(r.machine!)) : undefined;
+      return {
+        ...r,
+        ...(r.machine ? { machineName: machine?.name ?? this.machines.list().find((m) => m.id === r.machine)?.name ?? r.machine } : {}),
+        ...(agent ? { agentName: agentName(agent, hubLocale()) } : {}),
+        ...(r.brain ? { brainLabel: labels.get(parseBrainRef(r.brain).brainId) ?? r.brain } : {}),
+        ...(r.model ? { modelName: modelLabel(r.model) } : {}),
+      };
+    });
   }
 
   /**

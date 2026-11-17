@@ -123,5 +123,16 @@
   "ui.error.factNotFound": "Факт не найден: {path}",
   "ui.error.notInReview": "Нет факта на проверке: {path}",
   "ui.error.notInTrash": "Нечего вернуть: {path}",
-  "ui.error.versionNotFound": "Такой версии нет в истории: {rev}"
+  "ui.error.versionNotFound": "Такой версии нет в истории: {rev}",
+  "ui.rules.title": "Правила работы",
+  "ui.rules.hint": "Куда идёт какая работа и как над ней думать. Чтобы добавить или изменить правило, скажите его любому агенту в чате.",
+  "ui.rules.effort": "глубина: {effort}",
+  "ui.rules.effortName.none": "без рассуждений",
+  "ui.rules.effortName.minimal": "минимальная",
+  "ui.rules.effortName.low": "низкая",
+  "ui.rules.effortName.medium": "средняя",
+  "ui.rules.effortName.high": "высокая",
+  "ui.rules.effortName.xhigh": "очень высокая",
+  "ui.rules.effortName.max": "максимальная",
+  "ui.rules.effortName.ultra": "ультра"
 }
