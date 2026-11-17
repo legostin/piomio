@@ -15,6 +15,8 @@ import { CHAT_KINDS } from "./access.ts";
 import { Account, NotConnected } from "./account.ts";
 import type { AccountStatus } from "./account.ts";
 import { readAppKeys } from "./app-keys.ts";
+import { StillLoading, within } from "./chat-list.ts";
+import { RateLimited } from "./client.ts";
 import type { ChatKind, TgClientFactory } from "./client.ts";
 import { RequestError, Requests } from "./requests.ts";
 import { provideSignal, registerTools } from "./tools.ts";
@@ -26,6 +28,12 @@ export type { ChatKind } from "./client.ts";
 
 /** Tests run the plugin against a fake Telegram: a module whose default export makes the client. */
 const TEST_CLIENT_ENV = "TELEGRAM_ACCOUNT_TEST_CLIENT";
+
+/**
+ * How long the card waits for the list of chats. The first walk of a large account takes longer (requests to
+ * Telegram are paced); the card then says so instead of hanging until the hub gives up on the request.
+ */
+const LIST_WAIT_MS = 20_000;
 
 let account: Account | undefined;
 
@@ -62,8 +70,9 @@ const plugin: PluginModule = {
     ctx.events.on("vault.state", () => void acc.resume());
     ctx.events.on("vault.updated", () => void acc.resume());
 
-    const t = (key: string, locale: Locale) => ctx.i18n.t(key, undefined, locale);
-    const fail = (status: number, key: string, locale: Locale): PluginHttpResponse => ({ status, body: { error: t(key, locale) } });
+    const fail = (status: number, key: string, locale: Locale, params?: Record<string, string | number>): PluginHttpResponse => ({ status, body: { error: ctx.i18n.t(key, params, locale) } });
+    const listWait = Number((process.env[TEST_CLIENT_ENV] && process.env.TELEGRAM_ACCOUNT_TEST_LIST_WAIT_MS) || LIST_WAIT_MS);
+    const soon = <T>(work: Promise<T>) => within(work, listWait);
     const ok = (body: unknown): PluginHttpResponse => ({ status: 200, body });
 
     // The card's side: only the person's own app reaches these (never a public request), so what changes here is
@@ -76,7 +85,7 @@ const plugin: PluginModule = {
       const requestId = /^\/requests\/([\w-]{1,40})$/.exec(path)?.[1];
       try {
         if (requestId) {
-          if (req.method.toUpperCase() === "GET") return ok(await requests.view(requestId));
+          if (req.method.toUpperCase() === "GET") return ok(await soon(requests.view(requestId)));
           if (req.method.toUpperCase() === "POST") return ok(await requests.answer(requestId, { allow: body.allow === true, ...(typeof body.chatId === "string" ? { chatId: body.chatId } : {}) }));
         }
         switch (route) {
@@ -117,18 +126,20 @@ const plugin: PluginModule = {
             if (!/^-?\d{1,20}$/.test(id) || (to !== "open" && to !== "closed" && to !== "default")) return fail(400, "http.bad", req.locale);
             // Dropping an exception needs no Telegram: it works while signed out too.
             const kept = acc.access.open[id] ?? acc.access.closed[id];
-            const chat = to === "default" && kept ? { id, ...kept } : await acc.client().chat(id);
+            const chat = to === "default" && kept ? { id, ...kept } : await soon(acc.client().chat(id));
             if (!chat) return fail(404, "http.noChat", req.locale);
             await acc.setException(chat, to);
             return ok(acc.status());
           }
           case "GET /chats":
-            return ok({ chats: await acc.chatRows(String(req.query.q ?? ""), 200) });
+            return ok({ chats: await soon(acc.chatRows(String(req.query.q ?? ""), 200)) });
           default:
             return { status: 404, body: { error: "not found" } };
         }
       } catch (e: any) {
         if (e instanceof NotConnected) return fail(409, "http.notConnected", req.locale);
+        if (e instanceof StillLoading) return fail(503, "http.loading", req.locale);
+        if (e instanceof RateLimited) return fail(429, "http.wait", req.locale, { seconds: e.seconds });
         if (e instanceof RequestError) return fail(e.code === "notFound" ? 404 : 409, `http.request.${e.code}`, req.locale);
         ctx.log.warn(`telegram-account: ${route} failed: ${e?.message ?? e}`);
         return { status: 500, body: { error: String(e?.message ?? e).slice(0, 300) } };

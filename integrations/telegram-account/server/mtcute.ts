@@ -6,18 +6,29 @@
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { InputMedia, MemoryStorage } from "@mtcute/core";
+import { InputMedia, MemoryStorage, networkMiddlewares } from "@mtcute/core";
 import { TelegramClient } from "@mtcute/core/client.js";
 import { WebCryptoProvider, WebPlatform, WebSocketTransport } from "@mtcute/web";
-import { FileTooLarge } from "./client.ts";
+import { ChatList } from "./chat-list.ts";
+import { FileTooLarge, RateLimited } from "./client.ts";
+import { Pace, isPaced } from "./pace.ts";
 import type { ChatKind, MediaKind, QrSignIn, TgAccount, TgChat, TgClient, TgClientOptions, TgFile, TgMedia, TgMessage } from "./client.ts";
 
 /** Telegram's answers that mean "this session is no more". */
 const SIGNED_OUT = /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED/;
 
-/** How long a list of the account's chats is good for. */
-const DIALOGS_TTL_MS = 60_000;
+/**
+ * How long a walk of the account's chats answers "the whole list". Between walks the list follows what arrives, so
+ * this only bounds what an update could have missed.
+ */
+const DIALOGS_FRESH_MS = 5 * 60_000;
+/** How long after Telegram refused a walk the next one is tried. */
+const DIALOGS_RETRY_MS = 60_000;
 const DIALOGS_MAX = 2000;
+/** The list is shown this many chats at a time as it loads (Telegram gives a hundred a request). */
+const DIALOGS_PAGE = 50;
+/** No more than one request to Telegram in this long (pace.ts says which requests). */
+const REQUEST_GAP_MS = 3000;
 
 const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "video/mp4": "mp4", "audio/ogg": "ogg", "audio/mpeg": "mp3", "application/pdf": "pdf" };
 
@@ -89,6 +100,7 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
   const require = createRequire(import.meta.url);
   // Compiled here from the file: the library would otherwise fetch it by URL, as a browser does.
   const wasm = new (globalThis as any).WebAssembly.Module(readFileSync(require.resolve("@mtcute/wasm/mtcute.wasm")));
+  const pace = new Pace(REQUEST_GAP_MS);
   const tg = new TelegramClient({
     apiId: o.apiId,
     apiHash: o.apiHash,
@@ -97,6 +109,16 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
     transport: new WebSocketTransport(),
     platform: new HubPlatform(o.deviceModel),
     initConnectionOptions: { deviceModel: o.deviceModel, appVersion: o.appVersion, systemVersion: `Node ${process.versions.node}` },
+    network: {
+      middlewares: [
+        // First in line: a request waits its turn before the library's own handling (its rate-limit waits, retries).
+        async (ctx, next) => {
+          if (isPaced(ctx.request._)) await pace.wait();
+          return next(ctx);
+        },
+        ...networkMiddlewares.basic(),
+      ],
+    },
     // Warnings and errors only; they go to the plugin's log.
     logLevel: 2,
   });
@@ -114,34 +136,65 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
   tg.onError.add((e) => {
     if (!gone(e)) o.log("warn", `telegram: ${errorText(e)}`);
   });
+  /** What Telegram refused with, as the rest of the integration hears it: a rate limit comes with its seconds. */
+  const told = (e: any): unknown => {
+    gone(e);
+    const text = errorText(e);
+    // The library keeps the seconds beside the text, which reads "FLOOD_WAIT_%d".
+    if (/FLOOD_(PREMIUM_)?WAIT/.test(text)) return new RateLimited(typeof e?.seconds === "number" ? e.seconds : Number(/WAIT_(\d+)/.exec(text)?.[1] ?? 0));
+    return e;
+  };
   /** Every call passes here, so a session Telegram ended is noticed wherever it shows. */
   const run = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
       return await fn();
     } catch (e) {
-      gone(e);
-      throw e;
+      throw told(e);
     }
   };
 
   const me = (u: any): TgAccount => ({ id: String(u.id), name: String(u.displayName || u.username || u.id), ...(u.username ? { username: u.username } : {}) });
 
-  // The list of chats, kept a minute. Loading it also teaches the library the chats' access keys, which a session
-  // opened from its key alone does not have: a chat is looked up in it before anything is asked of Telegram by id.
-  let dialogs: { at: number; list: TgChat[] } | undefined;
-  const loadDialogs = async (limit: number): Promise<TgChat[]> => {
-    if (dialogs && Date.now() - dialogs.at < DIALOGS_TTL_MS && dialogs.list.length >= Math.min(limit, DIALOGS_MAX)) return dialogs.list.slice(0, limit);
-    const list: TgChat[] = [];
-    await run(async () => {
-      // Archived chats too: they are the account's chats like any other, and the person must be able to close them.
-      for await (const d of tg.iterDialogs({ limit: Math.min(Math.max(limit, 200), DIALOGS_MAX), archived: "keep" })) {
-        const last = d.lastMessage?.date;
-        list.push({ ...chatOf(d.peer), unread: d.unreadCount, ...(last ? { lastMessageAt: last.toISOString() } : {}) });
+  // The list of chats (chat-list.ts): one walk, page by page, kept and followed. Walking it also teaches the library
+  // the chats' access keys, which a session opened from its key alone does not have: a chat is looked up in the list
+  // before anything is asked of Telegram by id.
+  const list = new ChatList(
+    async function* () {
+      let page: TgChat[] = [];
+      try {
+        // Archived chats too: they are the account's chats like any other, and the person must be able to close them.
+        for await (const d of tg.iterDialogs({ limit: DIALOGS_MAX, archived: "keep" })) {
+          let last: TgMessage | undefined;
+          try {
+            last = d.lastMessage ? messageOf(d.lastMessage) : undefined;
+          } catch {
+            // A last message of a kind this cannot read: the chat is listed without it.
+          }
+          page.push({ ...chatOf(d.peer), unread: d.unreadCount, ...(d.isMuted ? { muted: true } : {}), ...(last ? { lastMessageAt: last.date, last } : {}) });
+          if (page.length >= DIALOGS_PAGE) {
+            yield page;
+            page = [];
+          }
+        }
+      } catch (e) {
+        throw told(e);
       }
-    });
-    dialogs = { at: Date.now(), list };
-    return list.slice(0, limit);
-  };
+      if (page.length) yield page;
+    },
+    { freshMs: DIALOGS_FRESH_MS, retryMs: DIALOGS_RETRY_MS },
+  );
+  tg.onNewMessage.add((m: any) => {
+    try {
+      list.note(messageOf(m), chatOf(m.chat));
+    } catch {
+      // Not a message the list can show: the next walk brings the chat's state.
+    }
+  });
+  tg.onHistoryRead.add((u: any) => {
+    if (!u.isOutbox && !u.isDiscussion) list.read(String(u.chatId), u.unreadCount);
+  });
+  /** The first tool call should not be the one that waits for the walk. */
+  const warm = () => void list.recent().catch(() => {});
   const peerId = (chatId: string): number => Number(chatId);
   /** Make sure the library can address the chat (its access key is known). */
   const known = async (chatId: string): Promise<void> => {
@@ -149,10 +202,18 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
       await tg.resolvePeer(peerId(chatId));
     } catch (e) {
       if (gone(e)) throw e;
-      dialogs = undefined;
-      await loadDialogs(DIALOGS_MAX);
+      // The walk is what teaches the keys: wait until it has brought this chat, and ask once more.
+      await list.find(chatId);
       await run(() => tg.resolvePeer(peerId(chatId)));
     }
+  };
+  /** A message the account sent from here goes into the list at once. */
+  const sent = (chatId: string, m: TgMessage): TgMessage => {
+    void list.find(chatId).then(
+      (chat) => chat && list.note(m, chat),
+      () => {},
+    );
+    return m;
   };
 
   return {
@@ -162,6 +223,7 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
         await tg.connect();
         const user = await tg.getMe();
         await tg.startUpdatesLoop();
+        warm();
         return me(user);
       } catch (e) {
         if (SIGNED_OUT.test(errorText(e))) return undefined;
@@ -181,7 +243,9 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
         abortSignal: h.signal,
       });
       dead = false;
+      list.clear();
       await tg.startUpdatesLoop();
+      warm();
       return me(user);
     },
 
@@ -195,22 +259,13 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
       await tg.destroy().catch(() => {});
     },
 
-    chats: (limit) => loadDialogs(limit),
+    chats: async (limit) => (await list.all()).slice(0, limit),
 
-    async chat(ref) {
-      const name = ref.trim();
-      if (/^-?\d+$/.test(name)) {
-        const hit = (await loadDialogs(DIALOGS_MAX)).find((c) => c.id === name);
-        if (hit) return hit;
-      } else {
-        const username = name.replace(/^@/, "").toLowerCase();
-        const hit = (await loadDialogs(DIALOGS_MAX)).find((c) => c.username?.toLowerCase() === username);
-        if (hit) return hit;
-      }
-      // Only the account's own chats: a public name Telegram could resolve (any channel, anyone's @username) is not
-      // one of them, and what the person opened is kinds of *their* chats.
-      return undefined;
-    },
+    recentChats: () => list.recent(),
+
+    // Only the account's own chats: a public name Telegram could resolve (any channel, anyone's @username) is not
+    // one of them, and what the person opened is kinds of *their* chats.
+    chat: (ref) => list.find(ref),
 
     async history(chatId, { limit, beforeId }) {
       await known(chatId);
@@ -243,13 +298,13 @@ export async function createMtcuteClient(o: TgClientOptions): Promise<TgClient> 
 
     async sendText(chatId, text, opts) {
       await known(chatId);
-      return messageOf(await run(() => tg.sendText(peerId(chatId), text, opts?.replyTo ? { replyTo: opts.replyTo } : {})));
+      return sent(chatId, messageOf(await run(() => tg.sendText(peerId(chatId), text, opts?.replyTo ? { replyTo: opts.replyTo } : {}))));
     },
 
     async sendFile(chatId, file, opts) {
       await known(chatId);
       const media = InputMedia.auto(file.data, { fileName: file.fileName, ...(file.mime ? { fileMime: file.mime } : {}), ...(opts?.caption ? { caption: opts.caption } : {}) });
-      return messageOf(await run(() => tg.sendMedia(peerId(chatId), media, opts?.replyTo ? { replyTo: opts.replyTo } : {})));
+      return sent(chatId, messageOf(await run(() => tg.sendMedia(peerId(chatId), media, opts?.replyTo ? { replyTo: opts.replyTo } : {}))));
     },
 
     onMessage(cb) {

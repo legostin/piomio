@@ -24,11 +24,13 @@ const ANNA = { id: "501", kind: "private" as const, title: "Anna Petrova", usern
 const NEWS = { id: "-2001", kind: "channel" as const, title: "City news", username: "citynews" };
 const SAVED = { id: "100", kind: "private" as const, title: "Saved Messages", self: true };
 const SERVICE = { id: "777000", kind: "private" as const, title: "Telegram" };
+/** A group the person muted in Telegram, with a pile of unread messages. */
+const NOISY = { id: "-1003", kind: "group" as const, title: "Noisy chat", unread: 89000, muted: true };
 
 function fixture(over: Partial<Fixture> = {}): Fixture {
   return {
     account: { id: "100", name: "Lena", username: "lena" },
-    chats: [FAMILY, WORK, ANNA, NEWS, SAVED, SERVICE],
+    chats: [FAMILY, WORK, ANNA, NEWS, SAVED, SERVICE, NOISY],
     messages: {
       [FAMILY.id]: [
         { id: 10, chatId: FAMILY.id, date: "2026-11-15T09:00:00.000Z", out: false, sender: "Mom", text: "Dinner at seven?" },
@@ -38,6 +40,7 @@ function fixture(over: Partial<Fixture> = {}): Fixture {
       [WORK.id]: [{ id: 20, chatId: WORK.id, date: "2026-11-15T10:00:00.000Z", out: false, sender: "Boss", text: "The dinner budget is secret" }],
       [ANNA.id]: [{ id: 30, chatId: ANNA.id, date: "2026-11-14T10:00:00.000Z", out: false, sender: "Anna Petrova", text: "See you at dinner" }],
       [SERVICE.id]: [{ id: 40, chatId: SERVICE.id, date: "2026-11-15T11:00:00.000Z", out: false, sender: "Telegram", text: "Login code: 12345. Do not give this code to anyone, dinner or not" }],
+      [NOISY.id]: [{ id: 60, chatId: NOISY.id, date: "2026-11-12T10:00:00.000Z", out: false, sender: "Stranger", text: "gm" }],
       [SAVED.id]: [{ id: 50, chatId: SAVED.id, date: "2026-11-13T10:00:00.000Z", out: true, text: "dinner password hunter2" }],
     },
     sessions: [],
@@ -164,7 +167,7 @@ describe("connecting the account", () => {
   it("starts signed out, read only, with nothing open and no way to send", async () => {
     const s = await r.until("signed-out");
     expect(s).toMatchObject({ mode: "read", access: emptyAccess() });
-    expect([...r.h.tools.keys()].sort()).toEqual(["chats", "download", "read", "request_access", "search", "setup", "status"]);
+    expect([...r.h.tools.keys()].sort()).toEqual(["chats", "download", "read", "request_access", "search", "setup", "status", "unread"]);
     expect(r.h.catalog).toEqual([{ id: "telegram-account", status: "needs-setup", connect: "setup" }]);
     expect(await r.h.invokeText("status")).toContain("No Telegram account is connected");
     const chats = await r.h.invoke("chats");
@@ -224,7 +227,7 @@ describe("what agents can do with a connected account", () => {
   let r: Run;
   const delivered: Array<{ name: string; data: string }> = [];
   beforeAll(async () => {
-    r = await run({ delivered });
+    r = await run({ delivered, env: { TELEGRAM_ACCOUNT_TEST_LIST_WAIT_MS: "400" } });
     await signIn(r);
   });
   afterAll(async () => {
@@ -285,6 +288,110 @@ describe("what agents can do with a connected account", () => {
     expect(await r.h.invokeText("read", { chat: "@anna", limit: 1 })).toContain("See you at dinner");
     expect((await r.h.invoke("read", { chat: "Work secrets" })).isError).toBe(true);
     expect((await r.h.invoke("read", { chat: WORK.id })).isError).toBe(true);
+  });
+
+  it("lists each chat with its last message, and narrows the list by kind and by unread", async () => {
+    // "What did Anna write last" is one call: the list brings the last message.
+    expect((await r.h.invokeText("chats", { query: "anna" })).split("\n")[1]).toBe("501 · private · Anna Petrova (@anna) · last 2026-11-14 10:00 UTC — See you at dinner");
+    const groups = await r.h.invokeText("chats", { kind: "group" });
+    expect(groups).toContain("Family · 2 unread · last 2026-11-15 09:30 UTC — Dad: [document] The recipe");
+    expect(groups).toContain("Noisy chat · 89000 unread · muted");
+    expect(groups).not.toContain("Anna");
+    const unread = await r.h.invokeText("chats", { unread: true, kind: "private" });
+    expect(unread).toBe("No open chat matches.");
+  });
+
+  it("tells what is unread in one call, without the muted chats and without the closed ones", async () => {
+    const before = (await r.control("/state")).histories;
+    const digest = await r.h.invokeText("unread");
+    expect(digest.split("\n")).toEqual([
+      "1 of the open chats has unread messages; most recent first, newest message first, times in UTC. 1 muted chat has unread messages (muted: true includes them).",
+      "",
+      "Family (group, id -1001) · 2 unread:",
+      // The account's own reply between them is not an unread message, and does not take the place of one.
+      "#12 2026-11-15 09:30 Dad: [document: recipe.pdf, 1 KB] The recipe",
+      "#10 2026-11-15 09:00 Mom: Dinner at seven?",
+    ]);
+    expect((await r.control("/state")).histories).toBe(before + 1);
+    expect(await r.h.invokeText("unread", { muted: true })).toContain("Noisy chat (group, id -1003) · 89000 unread, the newest 1:");
+    expect(await r.h.invokeText("unread", { kind: "private" })).toBe("Nothing unread in the open private chats.");
+
+    // One new message in a personal chat: it is the chat's last message, so nothing more is asked of Telegram.
+    await r.control("/incoming", { chatId: ANNA.id, message: { sender: "Anna Petrova", text: "Call me" } });
+    const asked = (await r.control("/state")).histories;
+    const personal = await r.h.invokeText("unread", { kind: "private" });
+    expect(personal).toContain("Anna Petrova (private, id 501) · 1 unread:");
+    expect(personal).toContain("Anna Petrova: Call me");
+    expect(personal).not.toContain("Family");
+    expect((await r.control("/state")).histories).toBe(asked);
+
+    // The account answered from another app without opening the chat: the unread message is under its own.
+    await r.control("/incoming", { chatId: ANNA.id, message: { out: true, text: "In a minute" } });
+    const answered = await r.h.invokeText("unread", { kind: "private" });
+    expect(answered).toContain("Anna Petrova (private, id 501) · 1 unread:");
+    expect(answered).toContain("Anna Petrova: Call me");
+    expect(answered).not.toContain("In a minute");
+  });
+
+  it("answers from the most recent chats while the list still loads, and says so; only \"nothing\" waits for all of it", async () => {
+    // Only the most recent chat (Family) has loaded.
+    await r.control("/partial", { count: 1 });
+    const list = await r.h.invokeText("chats");
+    expect(list).toContain("Family");
+    expect(list).not.toContain("Anna");
+    expect(list).toContain("The list of chats is still loading: this is from the 1 most recent chats.");
+    expect(await r.h.invokeText("unread")).toContain("still loading");
+    // A chat that is not among them is looked for in the whole list, not reported missing.
+    const anna = await r.h.invokeText("chats", { query: "anna" });
+    expect(anna).toContain("Anna Petrova");
+    expect(anna).not.toContain("still loading");
+    expect(await r.h.invokeText("read", { chat: ANNA.id, limit: 1 })).toContain("Anna Petrova");
+    await r.control("/partial", { count: 0 });
+    expect(await r.h.invokeText("chats")).not.toContain("still loading");
+  });
+
+  it("says how long Telegram asks to wait, and gives what it already has", async () => {
+    await r.control("/flood", { seconds: 37 });
+    const refused = await r.h.invoke("read", { chat: FAMILY.id });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.content)).toContain("in 37 s");
+    // The digest still tells which chats wait, with their last messages, and the one it needs no request for.
+    const digest = await r.h.invokeText("unread");
+    expect(digest).toContain("in 37 s");
+    expect(digest).toContain("Not read yet");
+    expect(digest).toContain("-1001 · group · Family · 2 unread");
+    await r.control("/flood", { seconds: 0 });
+    expect((await r.h.invoke("read", { chat: FAMILY.id })).isError).toBeFalsy();
+  });
+
+  it("tells the person on the card to wait, when Telegram limits the account or the list of chats is still loading", async () => {
+    await r.control("/flood", { seconds: 12, list: true });
+    const limited = await r.h.http({ path: "/chats", query: { q: "fam" } });
+    expect(limited.status).toBe(429);
+    expect((limited.body as any).error).toContain("12");
+    const tool = await r.h.invoke("chats");
+    expect(tool.isError).toBe(true);
+    expect(JSON.stringify(tool.content)).toContain("in 12 s");
+    await r.control("/flood", { seconds: 0 });
+
+    await r.control("/slow", { ms: 1500 });
+    const loading = await r.h.http({ path: "/chats", query: { q: "fam" } });
+    expect(loading.status).toBe(503);
+    expect((loading.body as any).error).toContain("still loading");
+    await r.control("/slow", { ms: 0 });
+    expect((await r.h.http({ path: "/chats", query: { q: "fam" } })).status).toBe(200);
+  });
+
+  it("stops a page of long messages at a bound and says where the next one starts", async () => {
+    const long = "x".repeat(4000);
+    for (let n = 0; n < 8; n++) await r.control("/incoming", { chatId: ANNA.id, message: { sender: "Anna Petrova", text: long } });
+    const page = await r.h.invokeText("read", { chat: ANNA.id, limit: 10 });
+    expect(page.length).toBeLessThan(26_000);
+    const shown = page.split("\n").filter((l) => l.startsWith("#"));
+    expect(shown.length).toBeGreaterThan(1);
+    expect(shown.length).toBeLessThan(10);
+    expect(page).toContain(`pass before: ${shown.at(-1)!.slice(1).split(" ")[0]} for them`);
+    expect(await r.h.invokeText("unread", { kind: "private" })).toContain("more characters: telegram_account_read shows the whole message");
   });
 
   it("searches the open chats only", async () => {
