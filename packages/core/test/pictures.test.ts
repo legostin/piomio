@@ -40,15 +40,16 @@ describe("the pictures a text shows", () => {
     expect(picturesIn({ url: "https://news.example.com/1" })).toEqual([]);
   });
 
-  it("stored parts: images, news pictures, words and notes", () => {
+  it("stored parts: images, the pictures of news and cards, words and notes", () => {
     expect(
       partPictures([
         { type: "images", items: [{ src: "https://img.example.com/a.jpg" }, { src: "file:x/chart.png" }] },
         { type: "news", items: [{ title: "N", image: "https://cdn.example.com/n.jpg" }, { title: "M" }] },
+        { type: "cards", items: [{ title: "C", images: [{ src: "https://cdn.example.com/c.jpg" }, { src: "file:x/c.png" }] }, { title: "D" }] },
         { type: "text", text: "![t](https://img.example.com/t.png)" },
         { type: "notification", level: "silent", title: "R", body: "![b](https://img.example.com/b.png)" },
       ]),
-    ).toEqual(["https://img.example.com/a.jpg", "https://cdn.example.com/n.jpg", "https://img.example.com/t.png", "https://img.example.com/b.png"]);
+    ).toEqual(["https://img.example.com/a.jpg", "https://cdn.example.com/n.jpg", "https://cdn.example.com/c.jpg", "https://img.example.com/t.png", "https://img.example.com/b.png"]);
   });
 });
 

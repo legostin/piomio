@@ -136,9 +136,9 @@ In an agent's chat, the brain button in the header opens **How Ada thinks in thi
 | **Balanced** | everyday work |
 | **Deep** | thinks longer over hard things |
 
-A new agent thinks **Auto**. Each brain turns a preset into its own model and effort. On Claude Code, for example, **Fast** is Sonnet at low effort, **Balanced** is Opus at medium effort and **Deep** is Opus at extra-high effort (high, on a CLI without it). **Exact model and effort** lets you pick a **Model** and an **Effort** yourself. The levels come from the installed CLI; an effort a brain doesn't have becomes the nearest one it has.
+A new agent thinks **Auto**. Each brain turns a preset into its own model and effort. On Claude Code, for example, **Fast** is Sonnet at low effort, **Balanced** is Opus at medium effort and **Deep** is Opus at extra-high effort (high, on a CLI without it). **Exact model and effort** lets you pick a **Model** and an **Effort** yourself. No preset picks Fable, the model Claude meters apart from the rest of a plan: an agent thinks with it only where you chose it as the exact model. The levels come from the installed CLI; an effort a brain doesn't have becomes the nearest one it has.
 
-The same menu lists the agent's brains: picking one makes it the first for the chat. **Different for tasks, channels, schedules** opens a short chat with the agent to set each kind of work apart; a kind without its own choice thinks as in the chat. **Connect another brain** opens the Brains page.
+The same menu lists the agent's brains: picking one makes it the first for the chat. **Different for tasks, channels, schedules** opens a short chat with the agent to set each kind of work apart; a kind without its own choice thinks as in the chat. Channels and schedules are the exception for **Deep**: they repeat by themselves, so the chat's **Deep** does not carry over to them and they think **Auto** until you choose **Deep** for them. **Connect another brain** opens the Brains page.
 
 Agents on Codex always run at its standard speed. The **Fast** preset is only a model and an effort: Codex's own Fast mode, which uses up a plan quicker, stays off for agents even when your `~/.codex/config.toml` turns it on.
 

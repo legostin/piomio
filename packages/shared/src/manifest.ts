@@ -206,6 +206,7 @@ export const CORE_METHODS = [
   "agents.presence", // the live state of one of the plugin's own agents (the always-on companion): { agentId, presence | null }
   "speech.status", // the hub's local speech engine: SpeechStatus (voices, speech-to-text, what is installed and downloading)
   "speech.install", // { voice?, stt? }: start downloading the local engine's runtime, a voice and/or speech-to-text; SpeechStatus
+  "quick.ask", // { prompt, system? } → { text }: one bare question to the hub's quick model (a signed-in brain's cheapest; no tools, no memory)
 ] as const;
 export type CoreMethod = (typeof CORE_METHODS)[number];
 

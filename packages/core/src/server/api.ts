@@ -174,6 +174,13 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     if (!sent) throw new HttpError(409, "choice.unavailable");
     return sent;
   });
+  // A position of the agent's cards chosen (a `cards` part, the message's part `part`): its title becomes the person's message.
+  api.post("/api/messages/:id/pick", async (req) => {
+    const b = (req.body ?? {}) as { part?: unknown; index?: unknown };
+    const sent = await hub.runner.pick((req.params as { id: string }).id, Number(b.part), Number(b.index), opts.kind === "device" ? "app" : "web");
+    if (!sent) throw new HttpError(409, "choice.unavailable");
+    return sent;
+  });
   // A file for the next message: raw bytes, saved in the conversation's workspace (attachments/).
   await api.register(async (up) => {
     // Signed in before a 25 MB body is read, not after.
@@ -559,6 +566,13 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     return [...own, ...hub.skills.listCommands().filter((c) => !names.has(c.name)).map((c) => ({ name: c.name, description: c.description, source: c.source }))];
   });
   api.get("/api/channels", async () => Promise.all(hub.channels.list().map(async (c) => ({ ...c, ...(await hub.channels.status(c.id)) }))));
+
+  // ----- the team's work rules (work-rules.ts): made and changed in a chat (work_rule_set); here they are seen and dropped -----
+  api.get("/api/work-rules", async () => hub.workRules());
+  api.delete("/api/work-rules/:id", async (req) => {
+    if (!hub.runner.rules.remove((req.params as { id: string }).id)) throw new HttpError(404, "workRule.notFound");
+    return { ok: true };
+  });
 
   // ----- machines -----
   api.get("/api/machines", async () => hub.machines.list());

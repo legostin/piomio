@@ -340,6 +340,12 @@ export type MessagePart =
    * `chosen` is the one they tapped, after which the buttons rest.
    */
   | { type: "choices"; options: string[]; chosen?: number }
+  /**
+   * Options the agent shows as cards (show_cards): places, products, apps. Two or more are a slider; a card opens its
+   * position full screen (or the agent's own page, `pageId`). `pick: false`: only a show, no "Choose" button;
+   * `chosen` is the position the person chose, whose title went to the agent as their message.
+   */
+  | { type: "cards"; title?: string; items: CardItem[]; pick?: boolean; chosen?: number }
   /** A channel's live card in the chat: its state and buttons (open, gather now, how often, pause, delete). */
   | { type: "feed"; feedId: string }
   /**
@@ -427,6 +433,38 @@ export interface NewsItem {
   image?: string;
   /** When it came out (or was posted in the channel). */
   at?: ISODate;
+}
+
+/** One position of a `cards` part: what its card shows, and its own page when opened. Only `title` is required. */
+export interface CardItem {
+  title: string;
+  /** A line under the title: what it is, the district, the maker. */
+  subtitle?: string;
+  /** Its pictures; the first is the card's. */
+  images?: ImageItem[];
+  /** As the person reads it: "12 000 ₸", "from $9 a month", "Free". */
+  price?: string;
+  /** 0–5. */
+  rating?: number;
+  /** A short mark on the picture: "Best pick", "Cheapest". */
+  badge?: string;
+  tags?: string[];
+  /** Why it fits this person: a line or two, shown highlighted. */
+  why?: string;
+  /** The description, Markdown. */
+  text?: string;
+  specs?: Array<{ label: string; value: string }>;
+  pros?: string[];
+  cons?: string[];
+  address?: string;
+  hours?: string;
+  /** Where it is: a map and a route on its page. */
+  lat?: number;
+  lon?: number;
+  /** Its site, where to buy or book; without a label the link reads as its host. */
+  links?: Array<{ label?: string; url: string }>;
+  /** A page the agent made for it (page_create): the card opens that instead of the built-in one. */
+  pageId?: string;
 }
 
 /** What a sent file is: a voice note and a photo are told apart from an audio file or a document by the channel. */
@@ -630,6 +668,11 @@ export interface Task {
   deliver?: "report" | "digest";
   /** The brain and depth whoever started it chose for this job (task_delegate), over the agent's choice for tasks. */
   thinking?: ThinkingChoice;
+  /**
+   * The work rules the hub applied before the task's first run (WorkRule ids, comma-separated), "none" when it looked
+   * and none fit; unset while it has not looked (or the team had no rules then).
+   */
+  rule?: string;
   /** The skill the task follows (a trigger's run of a taught skill): a taught one may click and type in the background. */
   skill?: string;
   createdAt: ISODate;
@@ -1193,8 +1236,10 @@ export interface Machine {
 }
 
 /**
- * One of the team's standing rules for where work goes, said once to any agent ("renders go to LEGOSTIN-PC"): every
- * dialog follows it when it starts tasks. `when` is the person's words for the kind of work.
+ * One of the team's standing rules for where work goes and how it thinks, said once to any agent ("renders go to
+ * LEGOSTIN-PC", "the Piomio project: on the MacBook, Opus, high effort"). `when` is the person's words for the kind of
+ * work. Every dialog follows it when it starts tasks, and the hub applies it to every task before it starts: a quick
+ * model reads the rules and the task and says which fit (core/src/work-rules.ts).
  */
 export interface WorkRule {
   id: string;
@@ -1205,7 +1250,19 @@ export interface WorkRule {
   agent?: string;
   /** The brain it thinks with ("codex", "claude-code", or an exact ref). */
   brain?: string;
+  /** The exact model of that brain ("opus"); a rule with a model names its brain. */
+  model?: string;
+  /** How long it thinks (an effort of EFFORT_SCALE; the brain takes the nearest it has). */
+  effort?: string;
   createdAt: ISODate;
+}
+
+/** A work rule as the settings show it: with the names, for people, of what it names. */
+export interface WorkRuleView extends WorkRule {
+  machineName?: string;
+  agentName?: string;
+  brainLabel?: string;
+  modelName?: string;
 }
 
 /**

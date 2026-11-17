@@ -3,7 +3,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { BehindEntry, ImageItem, InboxEntry, LibraryItem, LibraryKind, MapIcon, MapMarker, MapRoute, MessagePart, ModelSkill, RouteMode, ThinkingChoice, ToolDescriptor, ToolResult } from "@piomio/shared";
-import { brainsFor, isThinkingPreset, MAP_ICONS, sameBrain, truncate } from "@piomio/shared";
+import { brainsFor, EFFORT_SCALE, isThinkingPreset, MAP_ICONS, sameBrain, truncate } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
 import type { SkillIndex } from "../skills.ts";
 import type { VaultService } from "../vault/service.ts";
@@ -30,6 +30,11 @@ export interface CoreToolDeps {
   tasks: TaskLine;
   /** The team's rules for where work goes (work-rules.ts). */
   rules: WorkRules;
+  /**
+   * The brain that has a model the person named ("Opus"), with the model's id there: among an agent's brains (`agentId`)
+   * or all of the hub's, the named `brain` only, those on `machine` first (SessionRunner.modelBrain).
+   */
+  modelBrain: (model: string, o: { agentId?: string; brain?: string; machine?: string }) => Promise<{ brain: string; model: string } | { error: string }>;
   /** Add a card to the reply the agent is writing (SessionRunner.attachPart). */
   attachPart: (conversationId: string, part: MessagePart) => void;
   /** Pictures for the person: here, and from a task also in the dialog that started it (SessionRunner.showToPerson). */
@@ -71,7 +76,14 @@ const MAX_TASK_DEPTH = 3;
 const MAX_IMAGES = 10;
 const MAX_MARKERS = 50;
 
-const clip = (v: unknown, max: number): string | undefined => {
+/** An effort as the brains name them ("high"), or an error line for the model. */
+function effortOf(v: unknown): { effort?: string; error?: string } {
+  if (typeof v !== "string" || !v.trim()) return {};
+  const effort = v.trim().toLowerCase();
+  return EFFORT_SCALE.includes(effort) ? { effort } : { error: `No effort "${v}". Efforts: ${EFFORT_SCALE.join(", ")} (a brain takes the nearest it has).` };
+}
+
+export const clip = (v: unknown, max: number): string | undefined => {
   const s = typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "";
   return s ? (s.length > max ? `${s.slice(0, max - 1)}…` : s) : undefined;
 };
@@ -186,6 +198,40 @@ function workspaceImage(path: string, workspace: string, root: string, more: str
   if (!imageTypeOf(real)) return { error: `${path}: not an image (png, jpg, gif, webp, avif, bmp or svg)` };
   if (st.size > MAX_IMAGE_BYTES) return { error: `${path}: larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB` };
   return `file:${relative(realRoot, real).split(sep).join("/")}`;
+}
+
+/**
+ * A picture an agent names in a tool's input as the chat shows it: `url` (a public http(s) address) as it is, `path`
+ * (a file in its workspace or a task folder it started, on another computer once it reached the hub) as
+ * `file:<path relative to the workspaces root>`. Or an error for the model. show_images and show_cards.
+ */
+export async function imageSource(
+  it: Record<string, unknown>,
+  ctx: { workspace: string; machineId: string },
+  d: Pick<CoreToolDeps, "workspacesRoot">,
+  more: string[] = [],
+): Promise<string | { error: string }> {
+  if (typeof it.path === "string" && it.path.trim()) {
+    let path = it.path.trim();
+    // Remote absolute paths may name this session OR a task this conversation started. Map to the matching
+    // hub folder before waiting; relative paths still belong only to the current session.
+    if (ctx.machineId !== "local") {
+      let mapped: string | undefined;
+      for (const folder of [ctx.workspace, ...more]) {
+        const rel = folderRelative(path, folder);
+        if (rel) { mapped = resolve(folder, rel); break; }
+      }
+      if (!mapped) return { error: `${path} is not in your workspace or your tasks' folders; save the picture there and show it by its path` };
+      await arrived(mapped, REMOTE_FILE_WAIT_MS);
+      path = mapped;
+    }
+    return workspaceImage(path, ctx.workspace, d.workspacesRoot, more);
+  }
+  if (typeof it.url === "string" && it.url.trim()) {
+    const u = parseImageUrl(it.url.trim());
+    return u ? u.href : { error: "url must be a public http(s) address" };
+  }
+  return { error: "give url or path" };
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
@@ -333,6 +379,8 @@ export function registerCoreTools(d: CoreToolDeps): void {
           depth: { type: "string", enum: ["fast", "balanced", "deep"], description: "How hard to think: fast for simple errands (a cheap quick model), balanced for everyday work, deep for hard problems (the most capable model, thinking long). The hub picks the brain and model for it." },
           about: { type: "string", enum: ["code", "analysis", "writing", "research", "errand"], description: "What the work is mostly about, so the hub picks a model good at it (code goes to a coding model)." },
           brain: { type: "string", description: "Only to insist on one brain (\"Brains here\" in your instructions); normally leave it to the hub." },
+          model: { type: "string", description: "Only when the user named an exact model for this task (\"do it on Opus\"): its id or name. The hub finds the brain that has it; it wins over depth." },
+          effort: { type: "string", enum: EFFORT_SCALE, description: "Only when the user said how long to think on this task (\"high effort\"); it wins over depth's effort." },
           quick: {
             type: "boolean",
             description:
@@ -342,7 +390,7 @@ export function registerCoreTools(d: CoreToolDeps): void {
         required: ["goal"],
       },
     },
-    (i, ctx) => {
+    async (i, ctx) => {
       const agentId = i.agent ? String(i.agent) : ctx.agentId;
       const target = d.agents.get(agentId);
       if (!target) return text(`No agent ${agentId}. See task_agents.`, true);
@@ -357,7 +405,8 @@ export function registerCoreTools(d: CoreToolDeps): void {
       if (brain && !target.brains.some((b) => sameBrain(b, lead!))) return text(`${agentId} has no brain ${brain}. Its brains: ${target.brains.join(", ")}.`, true);
       const depth = isThinkingPreset(i.depth) && i.depth !== "auto" ? i.depth : undefined;
       const skill = ABOUT[String(i.about ?? "")];
-      const thinking = { ...(depth ? { preset: depth } : {}), ...(brain ? { brain } : {}), ...(skill ? { skill } : {}) };
+      const { effort, error: noEffort } = effortOf(i.effort);
+      if (noEffort) return text(noEffort, true);
       if (depthOf(ctx.taskId) >= MAX_TASK_DEPTH) return text("Tasks are already nested too deep here: do this part yourself.", true);
       let goal = String(i.goal);
       let place: { machineId: string; machineName: string; note?: string; offline?: boolean } | undefined;
@@ -367,6 +416,20 @@ export function registerCoreTools(d: CoreToolDeps): void {
         place = p;
         if (p.note) goal = `${goal}\n\n${p.note}`;
       }
+      // An exact model is its brain's: the one named, else the agent's brain that has it (on the task's computer first).
+      let exact: { brain: string; model: string } | undefined;
+      if (typeof i.model === "string" && i.model.trim()) {
+        const found = await d.modelBrain(i.model.trim(), { agentId, ...(brain ? { brain } : {}), ...(place ? { machine: place.machineId } : {}) });
+        if ("error" in found) return text(found.error, true);
+        exact = found;
+      }
+      const thinking: ThinkingChoice = {
+        ...(depth ? { preset: depth } : {}),
+        ...(brain || exact ? { brain: brain ?? exact!.brain } : {}),
+        ...(exact ? { model: exact.model } : {}),
+        ...(effort ? { effort } : {}),
+        ...(skill ? { skill } : {}),
+      };
       const t = d.createTask({
         agentId,
         goal,
@@ -376,14 +439,14 @@ export function registerCoreTools(d: CoreToolDeps): void {
         background: ctx.background,
         createdBy: "agent",
         ...(place ? { machineId: place.machineId } : {}),
-        ...(depth || brain || skill ? { thinking } : {}),
+        ...(Object.keys(thinking).length ? { thinking } : {}),
         ...(i.quick === true ? { kind: "errand" as const } : {}),
         // Instructions from a session that read outside content may carry it: the task starts marked too.
         ...(ctx.tainted ? { tainted: true } : {}),
       });
       d.attachPart(ctx.conversationId, { type: "task", taskId: t.id });
       const where = place ? ` on ${place.machineName}` : "";
-      const how = [brain, depth, i.about].filter(Boolean).join(", ");
+      const how = [thinking.brain, exact?.model, effort ? `${effort} effort` : "", exact ? "" : depth, i.about].filter(Boolean).join(", ");
       // Placed on a computer that is off: it waits for it (tell the user so).
       const wait = place?.offline ? ` ${place.machineName} is offline now: the task starts when it comes online.` : "";
       const errand = i.quick === true ? " A quick errand: the user sees you thinking on it, not a task." : "";
@@ -445,7 +508,8 @@ export function registerCoreTools(d: CoreToolDeps): void {
     {
       name: "work_rule_set",
       description:
-        "Save one of the user's standing rules for where work of some kind goes (\"run renders on LEGOSTIN-PC\", \"code goes to Codex\", \"research is for the researcher\"): every dialog of the team follows it from then on when it starts tasks. With `id`, changes that rule.",
+        "Save one of the user's standing rules for where work of some kind goes and how it thinks (\"run renders on LEGOSTIN-PC\", \"code goes to Codex\", \"research is for the researcher\", \"the Piomio project: on the MacBook, Opus, high effort\"): every dialog of the team follows it from then on when it starts tasks, " +
+        "and the hub applies it to every task before it starts, scheduled runs and channels included (a quick model tells which rules a task falls under). With `id`, changes that rule: give all of its fields again, the ones left out are dropped.",
       effect: "local-write",
       inputSchema: {
         type: "object",
@@ -454,12 +518,14 @@ export function registerCoreTools(d: CoreToolDeps): void {
           machine: { type: "string", description: "Computer id or name such work runs on (its brain there does it)" },
           agent: { type: "string", description: "Agent id or name who does it" },
           brain: { type: "string", description: "Brain it thinks with (\"codex\", \"claude-code\"), only when the user named one" },
+          model: { type: "string", description: "Exact model such work thinks with (\"Opus\"), only when the user named one: its id or name. The hub finds the brain that has it." },
+          effort: { type: "string", enum: EFFORT_SCALE, description: "How long such work thinks (\"high\"), only when the user said so" },
           id: { type: "string", description: "A rule's id, to change it" },
         },
         required: ["when"],
       },
     },
-    (i) => {
+    async (i) => {
       const when = clip(i.when ?? i.rule, 300);
       if (!when) return text("No rule saved: give `when`, the kind of work in the user's words.", true);
       const computers = d.tasks.computers();
@@ -477,13 +543,22 @@ export function registerCoreTools(d: CoreToolDeps): void {
         if (!a) return text(`No agent "${i.agent}". Agents: ${d.agents.list().map((x) => `${x.name} (${x.id})`).join(", ")}.`, true);
         agent = a.id;
       }
-      const brain = clip(i.brain, 80);
-      if (!machine && !agent && !brain) return text("No rule saved: say where such work goes (`machine`, `agent` or `brain`).", true);
+      let brain = clip(i.brain, 80);
+      const { effort, error: noEffort } = effortOf(i.effort);
+      if (noEffort) return text(noEffort, true);
+      // A model is its brain's: the rule names both, so the model never lands on a brain that does not have it.
+      let model: string | undefined;
+      if (typeof i.model === "string" && i.model.trim()) {
+        const found = await d.modelBrain(i.model.trim(), { ...(agent ? { agentId: agent } : {}), ...(brain ? { brain } : {}), ...(machine ? { machine } : {}) });
+        if ("error" in found) return text(found.error, true);
+        ({ brain, model } = found);
+      }
+      if (!machine && !agent && !brain && !effort) return text("No rule saved: say where such work goes (`machine`, `agent` or `brain`) or how it thinks (`model`, `effort`).", true);
       const id = typeof i.id === "string" && i.id.trim() ? i.id.trim() : undefined;
-      const rule = d.rules.set({ id, when, machine, agent, brain });
+      const rule = d.rules.set({ id, when, machine, agent, brain, model, effort });
       if (!rule) return text(id ? `No rule ${id}. Rules: ${d.rules.list().map((r) => r.id).join(", ") || "none"}.` : "No rule saved: there are too many already; remove one first.", true);
       const name = (cid: string) => computers.find((c) => c.id === cid)?.name ?? cid;
-      return text(`${id ? "Changed" : "Saved"} the rule ${ruleLine(rule, name).slice(2)}. Every dialog of the team follows it from now on.`);
+      return text(`${id ? "Changed" : "Saved"} the rule ${ruleLine(rule, name).slice(2)}. Every dialog of the team follows it from now on, and the hub applies it to each task before it starts.`);
     },
   );
 
@@ -707,39 +782,9 @@ export function registerCoreTools(d: CoreToolDeps): void {
       for (const [n, raw] of list.entries()) {
         const it = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
         const label = `image ${n + 1}`;
-        let src: string | undefined;
-        if (typeof it.path === "string" && it.path.trim()) {
-          let path = it.path.trim();
-          // Remote absolute paths may name this session OR a task this conversation started. Map to the matching
-          // hub folder before waiting; relative paths still belong only to the current session.
-          if (ctx.machineId !== "local") {
-            let mapped: string | undefined;
-            for (const folder of [ctx.workspace, ...more]) {
-              const rel = folderRelative(path, folder);
-              if (rel) { mapped = resolve(folder, rel); break; }
-            }
-            if (!mapped) {
-              problems.push(`${label}: ${path} is not in your workspace or your tasks' folders; save the picture there and show it by its path`);
-              continue;
-            }
-            await arrived(mapped, REMOTE_FILE_WAIT_MS);
-            path = mapped;
-          }
-          const r = workspaceImage(path, ctx.workspace, d.workspacesRoot, more);
-          if (typeof r !== "string") {
-            problems.push(`${label}: ${r.error}`);
-            continue;
-          }
-          src = r;
-        } else if (typeof it.url === "string" && it.url.trim()) {
-          const u = parseImageUrl(it.url.trim());
-          if (!u) {
-            problems.push(`${label}: url must be a public http(s) address`);
-            continue;
-          }
-          src = u.href;
-        } else {
-          problems.push(`${label}: give url or path`);
+        const src = await imageSource(it, ctx, d, more);
+        if (typeof src !== "string") {
+          problems.push(`${label}: ${src.error}`);
           continue;
         }
         items.push({ src, ...(clip(it.alt, 300) ? { alt: clip(it.alt, 300) } : {}), ...(clip(it.caption, 200) ? { caption: clip(it.caption, 200) } : {}) });

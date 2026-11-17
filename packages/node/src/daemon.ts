@@ -7,6 +7,7 @@ import { PolicyStore } from "./policy.ts";
 import { BrainHost, type BrainHostOptions } from "./brains.ts";
 import { NodeService } from "./service.ts";
 import { NodeClient } from "./client.ts";
+import { HubLinks } from "./hub-links.ts";
 import type { Logger } from "./info.ts";
 import { ModelGateway } from "./gateway.ts";
 import { t } from "./messages.ts";
@@ -80,20 +81,11 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     });
   const client = clientFor(config.hubUrl, false);
   // The hub's other replicas: a connection to each, so whichever leads finds this machine at once.
-  const norm = (u: string) => u.replace(/\/$/, "");
-  const others = new Map<string, NodeClient>();
-  const connectHubs = (urls: string[]) => {
-    for (const u of urls.map(norm)) {
-      if (u === norm(config.hubUrl) || others.has(u)) continue;
-      const c = clientFor(u, true);
-      others.set(u, c);
-      c.start();
-    }
-  };
+  const others = new HubLinks(config.hubUrl, (u) => clientFor(u, true));
   const origStart = client.start.bind(client);
   client.start = () => {
     origStart();
-    connectHubs(config.hubUrls ?? []);
+    others.set(config.hubUrls ?? []);
   };
 
   // The workspaces folder is the leader's own `workspaces`: each side pulls what the other changed.
@@ -128,7 +120,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
       } catch {
         /* read-only home: keep them in memory */
       }
-      connectHubs(setup.hubs);
+      others.set(setup.hubs);
     }
     if (setup.filesName) hubName = setup.filesName;
     if (setup.files && !filesOn && o.files !== false) {
@@ -146,7 +138,7 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     stop: async () => {
       clearInterval(filesTimer);
       files.stop();
-      await Promise.all([client.stop(), ...[...others.values()].map((c) => c.stop())]);
+      await Promise.all([client.stop(), others.stop()]);
       await gateway.stop();
     },
   };

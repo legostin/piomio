@@ -165,6 +165,114 @@ describe("agents show images and maps", () => {
     }
   });
 
+  it("show_cards adds a slider of positions, sends their pictures to the channels, and a chosen one comes back as the person's message", async () => {
+    sent.length = 0;
+    const page = hub.pages.create({ title: "Laptops compared", code: "export default function Page() { return <main>A table</main>; }" }, { agentId: "assistant", conversationId: conv });
+    const reply = await call("show_cards", {
+      title: "  For   travel ",
+      items: [
+        {
+          title: "  Air  13 ",
+          subtitle: "Apple",
+          images: [{ url: "https://img.example.com/air.jpg" }, { path: "chart.png", caption: "Battery" }],
+          price: "$999",
+          rating: "4.76",
+          badge: "Best pick",
+          tags: ["light", " "],
+          why: "The lightest.",
+          text: "Line one.\n\n\n\nLine two.",
+          specs: [{ label: "Weight", value: "1.2 kg" }, { label: "No value" }],
+          pros: ["Battery"],
+          cons: ["Ports"],
+          links: [{ label: "Site", url: "https://apple.example/air" }],
+        },
+        // What models reach for: `name`, one `image`, one `url`; and a page of the agent's own.
+        { name: "Cafe", image: "https://img.example.com/cafe.jpg", address: "1 Main St", hours: "9–21", lat: 43.2, lon: 76.9, url: "https://cafe.example", page: "Laptops compared" },
+        { title: "Plain" },
+      ],
+    });
+    const result = reply.parts.find((p: any) => p.type === "tool_result");
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toMatch(/slider of 3 cards.*comes back as their message/);
+    const at = reply.parts.findIndex((p: any) => p.type === "cards");
+    expect(reply.parts[at]).toEqual({
+      type: "cards",
+      title: "For travel",
+      items: [
+        {
+          title: "Air 13",
+          images: [{ src: "https://img.example.com/air.jpg" }, { src: `file:assistant/${conv}/chart.png`, caption: "Battery" }],
+          subtitle: "Apple",
+          price: "$999",
+          rating: 4.8,
+          badge: "Best pick",
+          tags: ["light"],
+          why: "The lightest.",
+          text: "Line one.\n\nLine two.",
+          specs: [{ label: "Weight", value: "1.2 kg" }],
+          pros: ["Battery"],
+          cons: ["Ports"],
+          links: [{ url: "https://apple.example/air", label: "Site" }],
+        },
+        { title: "Cafe", images: [{ src: "https://img.example.com/cafe.jpg" }], address: "1 Main St", hours: "9–21", lat: 43.2, lon: 76.9, links: [{ url: "https://cafe.example/" }], pageId: page.id },
+        { title: "Plain" },
+      ],
+    });
+
+    // A channel cannot draw a card: each position with a picture goes as that picture, captioned.
+    const out = await until(() => sent.find((m) => m.media), "the mirrored reply with the cards' pictures");
+    expect(out.media).toEqual([
+      { kind: "image", url: "https://img.example.com/air.jpg", caption: "Air 13\n$999 · ★ 4.8\nThe lightest.\nhttps://apple.example/air" },
+      { kind: "image", url: "https://img.example.com/cafe.jpg", caption: "Cafe\nhttps://cafe.example/" },
+    ]);
+
+    // Chosen: the card is marked, the title is the person's message, and the model reads which position it was.
+    const part = async () => (await json("GET", `/api/conversations/${conv}/messages`)).find((m: any) => m.id === reply.id).parts[at];
+    const idle = () => until(() => !hub.runner.isRunning(conv), "the turn to end");
+    await idle();
+    const said = vi.spyOn(hub.runner, "userMessage");
+    const chose = await req("POST", `/api/messages/${reply.id}/pick`, { part: at, index: 1 });
+    expect(chose.status).toBe(200);
+    expect(await chose.json()).toMatchObject({ role: "user", parts: [{ type: "text", text: "Cafe" }] });
+    expect((await part()).chosen).toBe(1);
+    expect(said).toHaveBeenCalledWith(conv, "Cafe", { channel: "web", context: '[The person tapped "Choose" on this card of the options shown to them: Cafe (1 Main St; https://cafe.example/)]' });
+    said.mockRestore();
+    // The same one again does nothing; another one moves the mark.
+    expect((await req("POST", `/api/messages/${reply.id}/pick`, { part: at, index: 1 })).status).toBe(409);
+    expect((await req("POST", `/api/messages/${reply.id}/pick`, { part: at, index: 9 })).status).toBe(409);
+    expect((await req("POST", `/api/messages/${reply.id}/pick`, { part: 0, index: 0 })).status).toBe(409);
+    await idle();
+    expect((await req("POST", `/api/messages/${reply.id}/pick`, { part: at, index: 0 })).status).toBe(200);
+    expect((await part()).chosen).toBe(0);
+    await idle();
+  });
+
+  it("show_cards refuses positions it cannot show, and shows without a Choose button when there is nothing to choose", async () => {
+    const shown = async (args: unknown) => (await call("show_cards", args)).parts;
+    for (const [args, why] of [
+      [{ items: [] }, /Give items/],
+      [{ items: [{ subtitle: "no title" }] }, /card 1: give a title/],
+      [{ items: [{ title: "A", rating: 7 }] }, /card 1 \(A\): rating is a number from 0 to 5/],
+      [{ items: [{ title: "A", lat: 43.2 }] }, /lat .* and lon .* go together/],
+      [{ items: [{ title: "A", images: [{ path: "notes.txt" }] }] }, /not an image/],
+      [{ items: [{ title: "A", links: [{ url: "javascript:alert(1)" }] }] }, /http\(s\) address/],
+      [{ items: [{ title: "A", page: "No such page" }] }, /no page "No such page"/],
+      [{ items: Array.from({ length: 13 }, (_, n) => ({ title: `N${n}` })) }, /At most 12/],
+    ] as const) {
+      const parts = await shown(args);
+      const r = parts.find((p: any) => p.type === "tool_result");
+      expect(r.isError, JSON.stringify(args).slice(0, 60)).toBe(true);
+      expect(r.output).toMatch(why);
+      expect(parts.some((p: any) => p.type === "cards")).toBe(false);
+    }
+    const reply = await call("show_cards", { pick: false, items: [{ title: "Only to look at" }] });
+    const at = reply.parts.findIndex((p: any) => p.type === "cards");
+    expect(reply.parts[at]).toEqual({ type: "cards", items: [{ title: "Only to look at" }], pick: false });
+    expect(reply.parts.find((p: any) => p.type === "tool_result").output).toMatch(/^The user now sees the card in the chat; each opens its own page\. Do not list/);
+    await until(() => !hub.runner.isRunning(conv), "the turn to end");
+    expect((await req("POST", `/api/messages/${reply.id}/pick`, { part: at, index: 0 })).status).toBe(409);
+  });
+
   it("a task's picture reaches the dialog that started it, and the dialog can show a file from its task's folder", async () => {
     const task = hub.store.createTask({ agentId: "assistant", title: "Render", goal: "x", createdBy: "agent", background: false, parentConversationId: conv });
     const taskWs = hub.runner.workspacePath({ agentId: "assistant", taskId: task.id, conversationId: task.conversationId });

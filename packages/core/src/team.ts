@@ -24,6 +24,7 @@ export function previewText(m: Message): string {
     // Pictures and maps by their caption or title, marked without words (the sidebar's language is the viewer's), when
     // the message says nothing else.
     else if (p.type === "images") shown.push(`🖼 ${p.items.find((it) => it.caption)?.caption ?? ""}`.trim());
+    else if (p.type === "cards") shown.push(`🗂 ${p.title ?? p.items[0]?.title ?? ""}`.trim());
     else if (p.type === "map") shown.push(`📍 ${p.title ?? `${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}`}`);
   }
   const text = (out.some((x) => x.trim()) ? out : shown)

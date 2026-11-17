@@ -5,8 +5,8 @@ import { wireNetworkApprovals } from "./network-approvals.ts";
 import { NetworkDenied, networkPattern, privatePattern } from "./egress.ts";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, TaskStatus, ThinkingView } from "@piomio/shared";
-import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, TaskStatus, ThinkingView, WorkRuleView } from "@piomio/shared";
+import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, modelLabel, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
 import { EventBus } from "./bus.ts";
@@ -41,6 +41,7 @@ import { registerFeedTools } from "./tools/feed-tools.ts";
 import { registerThinkingTools } from "./tools/thinking-tools.ts";
 import { thinkingView } from "./thinking.ts";
 import { registerPageTools } from "./tools/page-tools.ts";
+import { registerCardTools } from "./tools/card-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
 import { ownedWorkspaces, ownsWorkspacePaths } from "@piomio/shared/agent-workspaces";
@@ -95,13 +96,15 @@ import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
 import { pageReader } from "./signals/extract.ts";
 import { scriptSandbox } from "./signals/sandbox.ts";
-import { quickModel } from "./bare-ask.ts";
+import { quickModel, type QuickModel } from "./bare-ask.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
 const ENTRY_SIGNIN_MS = 30 * 60_000;
 /** Where earlier versions kept a Claude subscription token (forgetClaudeToken). */
 const OLD_CLAUDE_TOKEN = "claude_code_token";
+/** Pages plugins' tools have the quick model read at once (each holds a CLI session); the others wait their turn. */
+const READERS_IN_FLIGHT = 3;
 
 export class Hub {
   config: Config;
@@ -124,6 +127,8 @@ export class Hub {
   pictures: Pictures;
   private reviewToken?: string;
   private quickToken?: string;
+  /** The quick model plugins' tools read with (core method quick.ask): a line of its own, so reading never holds up the triggers' triage. */
+  readers: QuickModel;
   agents: AgentRegistry;
   /** Pinned, archived and deleted built-in agents (agents-state.ts). */
   agentsState: AgentsStateStore;
@@ -387,6 +392,8 @@ export class Hub {
       settings: this.settings,
       agents: this.agents,
       brains: this.brains,
+      // Which of the team's work rules a task falls under, asked before its first run: a line of its own.
+      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
       skills: this.skills,
       hooks: this.hooks,
       notifier: this.notifier,
@@ -473,6 +480,7 @@ export class Hub {
     });
     this.pages = new Pages({ db: this.db, bus: this.bus, dir: join(config.dataDir, "pages") });
     this.mcpClients = new McpClientManager({ config, registry: this.tools, vault: this.vault, audit: this.audit, egress: this.egress });
+    this.readers = quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }, { maxInFlight: READERS_IN_FLIGHT });
     const coreCall = createCoreCall(this);
     this.plugins = new PluginHost({
       config,
@@ -601,6 +609,7 @@ export class Hub {
       agents: this.agents,
       createTask: (t) => this.runner.createTask(t),
       rules: this.runner.rules,
+      modelBrain: (model, o) => this.runner.modelBrain(model, o),
       tasks: {
         place: (agentId, machine) => this.runner.placeTask(agentId, machine),
         ask: (taskId, question) => this.runner.askStarter(taskId, question),
@@ -679,6 +688,14 @@ export class Hub {
       pages: this.pages,
       agents: this.agents,
       attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
+    });
+    registerCardTools({
+      registry: this.tools,
+      page: (key) => this.pages.find(key),
+      attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
+      showToPerson: (conversationId, part, taskId) => this.runner.showToPerson(conversationId, part, taskId),
+      startedWorkspaces: (conversationId) => this.runner.startedWorkspaces(conversationId),
+      workspacesRoot: join(config.dataDir, "workspaces"),
     });
     // A brain signed in from a card the assistant showed: the assistant hears it and carries on.
     this.brainLogins.onSignedIn = (s, label, conversationId) =>
@@ -1052,6 +1069,23 @@ export class Hub {
       .prepare("select r.name, m.name as machine from replicas r left join machines m on m.id = r.machine_id and m.revoked = 0 where r.id = ? and r.revoked = 0")
       .get(id) as { name: string; machine: string | null } | undefined;
     return r ? (r.machine ?? r.name) : undefined;
+  }
+
+  /** The team's work rules with the names, for people, of what they name (GET /api/work-rules). */
+  workRules(): WorkRuleView[] {
+    const computers = this.runner.computers();
+    const labels = new Map(this.brains.list().map((b) => [parseBrainRef(b.ref).brainId, b.label]));
+    return this.runner.rules.list().map((r) => {
+      const agent = r.agent ? this.agents.get(r.agent) : undefined;
+      const machine = r.machine ? computers.find((c) => c.id === r.machine || c.aliases?.includes(r.machine!)) : undefined;
+      return {
+        ...r,
+        ...(r.machine ? { machineName: machine?.name ?? this.machines.list().find((m) => m.id === r.machine)?.name ?? r.machine } : {}),
+        ...(agent ? { agentName: agentName(agent, hubLocale()) } : {}),
+        ...(r.brain ? { brainLabel: labels.get(parseBrainRef(r.brain).brainId) ?? r.brain } : {}),
+        ...(r.model ? { modelName: modelLabel(r.model) } : {}),
+      };
+    });
   }
 
   /**

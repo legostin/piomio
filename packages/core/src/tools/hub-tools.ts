@@ -396,7 +396,7 @@ export function registerHubTools(hub: Hub): void {
         "brains is the ordered fallback list (see hub_brains_list), initiative 0 = only reacts, 1 = suggests, 2 = acts within rules. " +
         "machines binds the agent to computers (names or ids, see task_agents): it then thinks only with their brains, and while none of them is online its chat shows an error instead of moving elsewhere; [] unbinds. " +
         'To put an agent on one computer and one brain there (what the person means by "machine, then brain"), offer the computers with show_choices, then that computer\'s brains (hub_brains_list), and save machines: [computer] with brains: [that brain\'s ref]. ' +
-        'thinking: how it thinks per kind of work (chat, task, feed, schedule), each {preset: "fast"|"balanced"|"deep"} or an exact {model, effort, brain}; kinds left out follow chat.',
+        'thinking: how it thinks per kind of work (chat, task, feed, schedule), each {preset: "fast"|"balanced"|"deep"} or an exact {model, effort, brain}; kinds left out follow chat, except that feed and schedule never take chat\'s deep (they think auto until deep is set for them).',
       inputSchema: obj({
         id: { type: "string", description: "Existing agent id to edit; omit to create (derived from the name)" },
         ...PROFILE_FIELDS,

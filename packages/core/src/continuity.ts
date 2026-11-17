@@ -6,6 +6,7 @@
 
 import type { Message, MessagePart, NotificationKind } from "@piomio/shared";
 import { truncate } from "@piomio/shared";
+import { cardsSummary } from "./cards.ts";
 
 /** How long the recap may get, in characters, and how it is split. */
 const RECAP_CHARS = 16_000;
@@ -53,6 +54,8 @@ export function partsText(parts: MessagePart[], o: { cardBody?: (p: Notification
                   ? `[showed a map${p.title ? ` of ${p.title}` : ""} at ${p.lat}, ${p.lon}]`
                   : p.type === "news"
                     ? `[showed news: ${p.items.map((n) => n.title).join("; ")}]`
+                    : p.type === "cards"
+                      ? cardsSummary(p)
                     : p.type === "choices"
                       ? `[offered: ${p.options.join(" / ")}${p.chosen !== undefined ? `; chosen: ${p.options[p.chosen]}` : ""}]`
                       : p.type === "task" && p.text !== undefined

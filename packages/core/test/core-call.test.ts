@@ -17,10 +17,11 @@ interface Fake {
   heard: Array<{ file: string; mimeType?: string; bytes: string }>;
   created: any[];
   notified: any[];
+  asked: Array<{ prompt: string; system?: string; bounded: boolean }>;
 }
 
-function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: string) => Promise<string>; wake?: "steered" | "started" | "cancelled"; noBudget?: boolean } = {}): Fake {
-  const f: Fake = { told: [], woken: [], messages: [], heard: [], created: [], notified: [], hub: undefined as unknown as Hub };
+function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: string) => Promise<string>; wake?: "steered" | "started" | "cancelled"; noBudget?: boolean; noQuick?: boolean } = {}): Fake {
+  const f: Fake = { told: [], woken: [], messages: [], heard: [], created: [], notified: [], asked: [], hub: undefined as unknown as Hub };
   const convs = new Map<string, Conversation>([
     ["c_dialog", { id: "c_dialog", kind: "agent", agentId: "assistant" } as Conversation],
     ["c_other", { id: "c_other", kind: "agent", agentId: "coder" } as Conversation],
@@ -64,6 +65,13 @@ function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: s
         return opts.transcribe ? opts.transcribe(name ?? "") : "сначала каталог";
       },
     },
+    readers: {
+      ask: async (prompt: string, o?: { system?: string; signal?: AbortSignal }) => {
+        f.asked.push({ prompt, system: o?.system, bounded: !!o?.signal });
+        if (opts.noQuick) throw new Error("no quick model is signed in");
+        return { text: "  It costs 60 days.  ", ref: "claude-code@local" };
+      },
+    },
   } as unknown as Hub;
   return f;
 }
@@ -96,6 +104,17 @@ describe("core methods for plugins", () => {
     ]);
     await expect(call("browser", "conversations.tell", { conversationId: "c_nope", text: "x" })).rejects.toThrow(/conversation not found/);
     await expect(call("browser", "conversations.tell", { text: "  " })).rejects.toThrow(/text is required/);
+  });
+
+  it("quick.ask puts one bare question to the hub's quick model, bounded in size and time", async () => {
+    const f = fakeHub();
+    const call = createCoreCall(f.hub);
+    expect(await call("web", "quick.ask", { prompt: "How many days?", system: "Answer from the page only." })).toEqual({ text: "It costs 60 days." });
+    expect(f.asked).toEqual([{ prompt: "How many days?", system: "Answer from the page only.", bounded: true }]);
+    await expect(call("web", "quick.ask", { prompt: "  " })).rejects.toThrow(/prompt is required/);
+    await expect(call("web", "quick.ask", { prompt: "x".repeat(400_001) })).rejects.toThrow(/too long/);
+    await expect(createCoreCall(fakeHub({ noQuick: true }).hub)("web", "quick.ask", { prompt: "q" })).rejects.toThrow(/no quick model/);
+    expect(f.asked).toHaveLength(1);
   });
 
   it("speech.transcribe turns a clip into words, named by its type for the services", async () => {

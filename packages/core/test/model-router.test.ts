@@ -33,9 +33,20 @@ describe("routing a request", () => {
   });
 
   it("gives hard thinking the most capable model with the most effort, and code to a coding model", () => {
-    expect(route([claude], { need: "deep" })[0]).toMatchObject({ effort: "xhigh" });
-    expect(["fable", "opus"]).toContain(route([claude], { need: "deep" })[0].model);
+    expect(route([claude], { need: "deep" })[0]).toMatchObject({ model: "opus", effort: "xhigh" });
     expect(route([claude, codex], { need: "standard", skill: "code", hands: true })[0]).toMatchObject({ ref: "codex@local", model: "gpt-5.5-codex", effort: "medium" });
+  });
+
+  it("never picks a premium model by itself: Fable is the person's to name", () => {
+    expect(profileOf("claude-fable-5-2").premium).toBe(true);
+    expect(profileOf("opus").premium).toBeUndefined();
+    for (const need of ["light", "quick", "standard", "deep"] as const) expect(route([claude], { need })[0].model).not.toBe("fable");
+    expect(route([claude], { need: "deep", skill: "reasoning" })[0].model).toBe("opus");
+    // A brain's own catalog can mark one too.
+    const own: RouteBrain = { ref: "api:x", probe: { catalog: [{ id: "top", tier: 5, speed: 1, cost: 3, premium: true }, { id: "usual", tier: 4, speed: 2, cost: 2 }] } };
+    expect(route([own], { need: "deep" })[0].model).toBe("usual");
+    // With nothing else to think with, the brain still answers.
+    expect(route([{ ref: "claude-code@local", probe: { models: ["fable"] } }], { need: "deep" })[0].model).toBe("fable");
   });
 
   it("chooses across providers by what their models are like, and keeps brains without hands off work that needs them", () => {

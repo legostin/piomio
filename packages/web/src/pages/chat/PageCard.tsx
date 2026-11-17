@@ -11,6 +11,7 @@ import { mediaSrc } from "../../lib/media";
 import { FullscreenPanel } from "../../components/WindowTitlebar";
 import { QuietImg } from "../../components/picture";
 import { native } from "../../lib/native";
+import { holdFullscreen } from "../../lib/fullscreen";
 import { sendMessage } from "../../state/app";
 import { ensurePages, pages } from "../../state/pages";
 import { toast } from "../../state/toast";
@@ -65,16 +66,11 @@ export function PageViewer({ page, conversationId, onClose }: { page: PageView; 
 
   // Nothing over the page: the composer steps aside (index.css), the phone app hides its header, Escape closes.
   useEffect(() => {
-    document.documentElement.classList.add("owl-map-full");
-    native?.call("fullscreen", { on: true }).catch(() => {});
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const release = holdFullscreen();
     const esc = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     document.addEventListener("keydown", esc);
     return () => {
-      document.documentElement.classList.remove("owl-map-full");
-      native?.call("fullscreen", { on: false }).catch(() => {});
-      document.body.style.overflow = overflow;
+      release();
       document.removeEventListener("keydown", esc);
     };
   }, []);

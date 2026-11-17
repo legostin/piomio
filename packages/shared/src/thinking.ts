@@ -103,16 +103,21 @@ export function withChoice(prev: AgentThinking | undefined, kind: WorkKind, choi
 /** Whether the choice says how deeply to think (rather than only which brain). */
 const hasDepth = (c: ThinkingChoice | undefined): c is ThinkingChoice => !!c && !!(c.preset || c.model || c.effort);
 
+/** Work that repeats by itself: a channel's runs, scheduled runs. */
+const ROUTINE: readonly WorkKind[] = ["feed", "schedule"];
+
 /**
  * The kind's own choice when it has one, else the general one (chat). An agent with neither a choice nor an agent-wide
  * model (from before `thinking`) thinks "auto": the hub decides per request for every kind (core/src/model-router.ts).
+ * Routine work does not take the chat's "deep": every run would think long on the most capable model, so there "deep"
+ * is only the kind's own choice, and following the chat comes to "auto".
  */
 export function thinkingFor(agent: Pick<AgentDef, "thinking" | "model">, kind: WorkKind): ThinkingChoice {
   const general = agent.thinking?.chat ?? (agent.model ? undefined : { preset: "auto" as const });
   const own = kind === "chat" ? general : agent.thinking?.[kind];
   const depth = hasDepth(own) ? own : general;
   const brain = own?.brain ?? (depth === general ? general?.brain : undefined);
-  const preset = depth?.preset;
+  const preset = depth?.preset === "deep" && depth !== own && ROUTINE.includes(kind) ? ("auto" as const) : depth?.preset;
   return {
     ...(preset ? { preset } : {}),
     ...(depth?.model ? { model: depth.model } : {}),
@@ -123,13 +128,23 @@ export function thinkingFor(agent: Pick<AgentDef, "thinking" | "model">, kind: W
 
 /**
  * How a task thinks: the brain and depth whoever started it chose (Task.thinking), over its kind's choice. A chosen
- * depth replaces the kind's exact model and effort; a chosen brain goes first.
+ * depth replaces the kind's exact model and effort; a chosen brain goes first. An exact model or effort named for the
+ * task (the person's words in the request, a work rule) wins over a depth: a model replaces the kind's model and
+ * effort; an effort alone keeps the depth (or, on the same brain, the kind's model) and changes only how long it thinks.
  */
 export function taskThinking(agent: Pick<AgentDef, "thinking" | "model">, kind: WorkKind, chosen?: ThinkingChoice): ThinkingChoice {
   const base = thinkingFor(agent, kind);
   if (!chosen) return base;
-  const depth = chosen.preset ? { preset: chosen.preset } : { ...(base.preset ? { preset: base.preset } : {}), ...(base.model ? { model: base.model } : {}), ...(base.effort ? { effort: base.effort } : {}) };
   const brain = chosen.brain ?? base.brain;
+  const kept = { ...(base.preset ? { preset: base.preset } : {}), ...(base.model ? { model: base.model } : {}), ...(base.effort ? { effort: base.effort } : {}) };
+  let depth: ThinkingChoice;
+  if (chosen.model) depth = { model: chosen.model, ...(chosen.effort ? { effort: chosen.effort } : {}) };
+  else if (chosen.effort) {
+    // The kind's exact model was chosen on its own brain: it does not follow the task to another one.
+    const same = !chosen.brain || (!!base.brain && sameBrain(chosen.brain, base.brain));
+    const preset = chosen.preset ?? base.preset;
+    depth = { ...(preset ? { preset } : same && base.model ? { model: base.model } : {}), effort: chosen.effort };
+  } else depth = chosen.preset ? { preset: chosen.preset } : kept;
   return { ...depth, ...(brain ? { brain } : {}), ...(chosen.skill ? { skill: chosen.skill } : {}) };
 }
 
@@ -238,8 +253,11 @@ export function resolveThinking(
   probe?: Pick<ProbeResult, "presets" | "efforts"> | null,
   legacyModel?: string,
 ): ResolvedThinking {
-  const exact = !choice.brain || sameBrain(choice.brain, brainRef);
-  // "auto" thinks fast (other work following an auto dialog was made balanced by thinkingFor).
+  // A brain named without its computer ("codex", in a work rule or for one task) is that brain wherever it runs.
+  const id = brainRef.split("@")[0];
+  const exact = !choice.brain || (choice.brain.includes("@") ? sameBrain(choice.brain, brainRef) : choice.brain === id || choice.brain === id.split(":")[0]);
+  // "auto" comes to the brain's fast preset here; where the hub routes the request (core/src/model-router.ts) it
+  // picks the model and effort itself.
   const p = choice.preset ? probe?.presets?.[choice.preset === "auto" ? "fast" : choice.preset] : undefined;
   const model = (exact ? choice.model : undefined) ?? p?.model ?? legacyModel;
   const effort = fitEffort((exact ? choice.effort : undefined) ?? p?.effort, probe?.efforts);
