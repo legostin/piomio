@@ -88,13 +88,14 @@ export function picturesIn(input: unknown): string[] {
   return [...out];
 }
 
-/** The web pictures stored message parts show: `images` items, news cards' pictures, Markdown in words and notes. */
+/** The web pictures stored message parts show: `images` items, the pictures of news and of cards, Markdown in words and notes. */
 export function partPictures(parts: MessagePart[]): string[] {
   const out = new Set<string>();
   const add = (urls: string[]) => urls.forEach((u) => out.add(u));
   for (const p of parts) {
     if (p.type === "images") for (const it of p.items) add(hrefs(it.src));
     else if (p.type === "news") for (const it of p.items) add(it.image ? hrefs(it.image) : []);
+    else if (p.type === "cards") for (const it of p.items) for (const img of it.images ?? []) add(hrefs(img.src));
     else if (p.type === "text") add(markdownPictures(p.text));
     else if (p.type === "notification") add(markdownPictures(p.body));
   }

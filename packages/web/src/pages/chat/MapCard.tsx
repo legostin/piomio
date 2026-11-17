@@ -47,7 +47,7 @@ import { formatCoords, OSM_COPYRIGHT, TILE_URL } from "../../lib/media";
 import { appLink, BUILTIN_MAP_APPS, formatDistance, formatTravelTime, mapTarget } from "../../lib/maps";
 import { usePluginRegistry } from "../../plugins/slots";
 import { cx } from "../../components/ui";
-import { native } from "../../lib/native";
+import { holdFullscreen } from "../../lib/fullscreen";
 import { t, type MessageKey } from "../../i18n";
 
 type MapPart = Extract<MessagePart, { type: "map" }>;
@@ -284,18 +284,13 @@ export function MapCard({ part }: { part: MapPart }) {
     if (!full) return () => cancelAnimationFrame(frame);
     activate.current(true);
     // Nothing over the map: the chat's composer hides (index.css), and the phone app hides its header.
-    document.documentElement.classList.add("owl-map-full");
-    native?.call("fullscreen", { on: true }).catch(() => {});
+    const release = holdFullscreen();
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setFull(false);
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     document.addEventListener("keydown", esc);
     return () => {
       cancelAnimationFrame(frame);
-      document.documentElement.classList.remove("owl-map-full");
-      native?.call("fullscreen", { on: false }).catch(() => {});
+      release();
       document.removeEventListener("keydown", esc);
-      document.body.style.overflow = overflow;
       activate.current(false);
     };
     // Only entering and leaving full screen re-fit the map, not choosing a place.
@@ -340,6 +335,7 @@ export function MapCard({ part }: { part: MapPart }) {
         full ? "window-overlay animate-zoom fixed inset-0 z-[70] m-0 pb-[env(safe-area-inset-bottom)]" : "w-full max-w-xl rounded-[22px] border border-hairline shadow-card",
       )}
       aria-label={t("message.map.label", { place })}
+      data-map-full={full || undefined}
     >
       {full && <WindowTitlebar />}
       <div className={cx("group/map relative isolate", full ? "min-h-0 flex-1" : route ? "h-[300px]" : "h-[260px]")} onTouchStart={() => !active && !full && setNudge(true)}>

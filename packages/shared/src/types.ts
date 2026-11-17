@@ -340,6 +340,12 @@ export type MessagePart =
    * `chosen` is the one they tapped, after which the buttons rest.
    */
   | { type: "choices"; options: string[]; chosen?: number }
+  /**
+   * Options the agent shows as cards (show_cards): places, products, apps. Two or more are a slider; a card opens its
+   * position full screen (or the agent's own page, `pageId`). `pick: false`: only a show, no "Choose" button;
+   * `chosen` is the position the person chose, whose title went to the agent as their message.
+   */
+  | { type: "cards"; title?: string; items: CardItem[]; pick?: boolean; chosen?: number }
   /** A channel's live card in the chat: its state and buttons (open, gather now, how often, pause, delete). */
   | { type: "feed"; feedId: string }
   /**
@@ -427,6 +433,38 @@ export interface NewsItem {
   image?: string;
   /** When it came out (or was posted in the channel). */
   at?: ISODate;
+}
+
+/** One position of a `cards` part: what its card shows, and its own page when opened. Only `title` is required. */
+export interface CardItem {
+  title: string;
+  /** A line under the title: what it is, the district, the maker. */
+  subtitle?: string;
+  /** Its pictures; the first is the card's. */
+  images?: ImageItem[];
+  /** As the person reads it: "12 000 ₸", "from $9 a month", "Free". */
+  price?: string;
+  /** 0–5. */
+  rating?: number;
+  /** A short mark on the picture: "Best pick", "Cheapest". */
+  badge?: string;
+  tags?: string[];
+  /** Why it fits this person: a line or two, shown highlighted. */
+  why?: string;
+  /** The description, Markdown. */
+  text?: string;
+  specs?: Array<{ label: string; value: string }>;
+  pros?: string[];
+  cons?: string[];
+  address?: string;
+  hours?: string;
+  /** Where it is: a map and a route on its page. */
+  lat?: number;
+  lon?: number;
+  /** Its site, where to buy or book; without a label the link reads as its host. */
+  links?: Array<{ label?: string; url: string }>;
+  /** A page the agent made for it (page_create): the card opens that instead of the built-in one. */
+  pageId?: string;
 }
 
 /** What a sent file is: a voice note and a photo are told apart from an audio file or a document by the channel. */

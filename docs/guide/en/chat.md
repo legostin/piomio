@@ -90,6 +90,16 @@ An agent can show pictures right in the chat: one picture as a card, two to ten 
 
 The hub loads every picture for the chat itself, so a picture's address reaches its site as soon as you see it. After the agent has read outside content (a web page, an email), a picture whose address it put together itself doesn't load on its own: the address could carry data from the chat to that site. In its place is a quiet line, **Picture from** and the site, with **Show**: tap it and the picture loads, from then on everywhere. Pictures from what the agent read, from your own messages and plain addresses on sites you named load as usual. A news card, a channel post or a page cover just leaves such a picture out.
 
+### Cards to choose from
+
+When you ask an agent to find options (places to eat, products, apps, plans), it shows them as cards you swipe through: a picture, the name, the price and rating, a mark such as **Best pick**.
+
+- Tap a card to open it full screen: more pictures, why it fits you, the description, the details, pros and cons, the address on a map with a route, links to its site. The arrows at the top go to the next option without going back to the chat.
+- **Choose** sends the option's name to the agent as your message, and the card stays marked. You can choose another one later, or just answer in words.
+- A card may open a [page](pages.md) the agent made for it instead, when an option needs more than this.
+
+Their pictures follow the same rule as other pictures in the chat.
+
 ### Maps and routes
 
 For places, addresses and directions the agent shows an OpenStreetMap map: places with symbols and short notes, and a route through them. Walking, driving and cycling routes follow real roads and paths and show length and time; public transport is drawn as straight lines.

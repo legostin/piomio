@@ -35,6 +35,7 @@ import { ImagesCard } from "./ImagesCard";
 import { NotificationCard } from "./NotificationCard";
 import { MapCard } from "./MapCard";
 import { NewsCard } from "./NewsCard";
+import { CardsCard } from "./CardsCard";
 import { Choices, FeedCard } from "./ChatButtons";
 import { ThinkingCard } from "./ThinkingCard";
 import { ThinkingMenuCard } from "./ThinkingMenu";
@@ -382,6 +383,8 @@ function Parts({ message }: { message: Message }) {
             return <ReplyQuote key={it.key} part={p} conversationId={message.conversationId} />;
           case "news":
             return <NewsCard key={it.key} part={p} />;
+          case "cards":
+            return <CardsCard key={it.key} part={p} messageId={message.id} index={it.index} conversationId={message.conversationId} />;
           case "choices":
             return <Choices key={it.key} part={p} messageId={message.id} />;
           case "feed":

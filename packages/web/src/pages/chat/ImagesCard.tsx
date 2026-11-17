@@ -1,10 +1,11 @@
 // Pictures an agent shows (an `images` part): one image as a card, more as a swipeable carousel; both open the
 // media viewer on the chat's pictures. Sources go through the hub (lib/media.ts), so the page CSP stays strict.
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
 import type { ImageItem } from "@piomio/shared";
-import { activeSlide, mediaSrc } from "../../lib/media";
+import { mediaSrc } from "../../lib/media";
+import { useStrip } from "../../lib/strip";
 import { partKey } from "../../lib/gallery";
 import { previewSrc, useCachedImage } from "../../lib/media-cache";
 import { openViewer } from "../../state/viewer";
@@ -14,13 +15,11 @@ import { t } from "../../i18n";
 
 type Shown = ImageItem & { url: string; key: string };
 
-const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 /**
  * An image that fades in once loaded, with a quiet placeholder while it loads and when it cannot. `failed` (from a
  * PictureGate) says whether the hub held it: then the gate shows the Show line instead.
  */
-function Picture({ src: full, alt, fit, className, failed }: { src: string; alt: string; fit: "contain" | "cover"; className?: string; failed?: () => Promise<boolean> }) {
+export function Picture({ src: full, alt, fit, className, failed }: { src: string; alt: string; fit: "contain" | "cover"; className?: string; failed?: () => Promise<boolean> }) {
   // The chat shows a workspace picture's preview, kept on this device (lib/media-cache.ts); the viewer loads `full`.
   const src = useCachedImage(previewSrc(full));
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
@@ -75,49 +74,7 @@ function SingleImage({ item, onOpen }: { item: Shown; onOpen: () => void }) {
 }
 
 function Carousel({ items, onOpen }: { items: Shown[]; onOpen: (i: number) => void }) {
-  const strip = useRef<HTMLDivElement>(null);
-  const frame = useRef(0);
-  const [active, setActive] = useState(0);
-  const [edges, setEdges] = useState({ start: true, end: false });
-
-  const measure = useCallback(() => {
-    const el = strip.current;
-    if (!el) return;
-    const max = el.scrollWidth - el.clientWidth;
-    const lefts = Array.from(el.children, (c) => (c as HTMLElement).offsetLeft);
-    setActive(activeSlide(lefts, el.scrollLeft, max));
-    setEdges({ start: el.scrollLeft <= 2, end: el.scrollLeft >= max - 2 });
-  }, []);
-
-  useEffect(() => {
-    measure();
-    const el = strip.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      cancelAnimationFrame(frame.current);
-    };
-  }, [measure, items.length]);
-
-  const onScroll = () => {
-    cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(measure);
-  };
-
-  const go = (i: number) => {
-    const el = strip.current;
-    const slide = el?.children[Math.max(0, Math.min(items.length - 1, i))] as HTMLElement | undefined;
-    if (el && slide) el.scrollTo({ left: slide.offsetLeft, behavior: reducedMotion() ? "auto" : "smooth" });
-  };
-
-  const onKey = (e: ReactKeyboardEvent) => {
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      go(active + (e.key === "ArrowRight" ? 1 : -1));
-    }
-  };
+  const { strip, active, edges, onScroll, onKey, go } = useStrip(items.length);
 
   const arrow = "glass absolute top-1/2 z-10 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-hairline text-fg shadow-card transition duration-200 hover:bg-surface focus-visible:opacity-100";
   return (

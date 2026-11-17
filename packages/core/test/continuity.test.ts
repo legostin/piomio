@@ -54,6 +54,8 @@ describe("the recap a fresh session starts from", () => {
 
   it("puts what the agent did in words", () => {
     expect(partsText([{ type: "choices", options: ["yes", "no"], chosen: 0 }, { type: "map", lat: 1, lon: 2, title: "Lisbon" }])).toBe("[offered: yes / no; chosen: yes] [showed a map of Lisbon at 1, 2]");
+    expect(partsText([{ type: "cards", title: "For travel", items: [{ title: "Air 13", price: "$999" }, { title: "Cafe" }], chosen: 1 }])).toBe("[showed cards “For travel”: Air 13; Cafe; chosen: Cafe]");
+    expect(partsText([{ type: "cards", items: [{ title: "Only one" }], pick: false }])).toBe("[showed cards: Only one]");
   });
 
   it("repeats what a card said, cut short, or only names it when its text came from outside content", () => {
