@@ -14,6 +14,7 @@ import { catalogOf, fitEffort, isKnownModel, markLegacy, parseBrainRef } from "@
  * - quick: the dialog's front desk: a strong model that answers at once (low effort);
  * - standard: everyday work;
  * - deep: hard problems: the most capable model, thinking long.
+ * No need reaches a premium model (Claude's Fable): it runs only where the person chose it by name.
  */
 export type Need = "light" | "quick" | "standard" | "deep";
 
@@ -112,9 +113,11 @@ export function route(brains: RouteBrain[], ask: RouteAsk): Route[] {
       out.push({ ref: b.ref, ...(effort ? { effort } : {}), score: scoreModel({ tier: 3, speed: 2, cost: 2 }, ask) + local, at });
       return;
     }
-    // An older generation only when the brain has nothing current.
+    // An older generation only when the brain has nothing current; a premium model (ModelProfile.premium) only when
+    // it has nothing else: the person names that one themselves (an exact model never comes here).
     const current = models.filter((m) => !m.legacy);
-    const pool = current.length ? current : models;
+    const usual = (current.length ? current : models).filter((m) => !m.premium);
+    const pool = usual.length ? usual : current.length ? current : models;
     const best = pool.map((m) => ({ m, s: scoreModel(m, ask) })).sort((a, z) => z.s - a.s)[0];
     out.push({ ref: b.ref, model: best.m.id, ...(effort ? { effort } : {}), score: best.s + local, at });
   });

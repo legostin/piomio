@@ -1176,7 +1176,7 @@ export default {
   "thinking.askKinds": "Давай настроим, как ты думаешь в разных делах",
   "thinking.changed": "«{agent}»: {how}",
   "thinking.card.title": "Как думает «{agent}»",
-  "thinking.card.hint": "Где своего выбора нет, агент думает как в чате.",
+  "thinking.card.hint": "Где своего выбора нет, агент думает как в чате. Каналы и расписания вместо «Глубоко» из чата берут «Авто».",
   "thinking.card.brainTitle": "На чём думает {agent}",
   "thinking.card.effortTitle": "Как глубоко думает {agent}",
   "thinking.moreBrains": "{n, plural, one {Ещё # интеллект, не настроен} few {Ещё # интеллекта, не настроены} many {Ещё # интеллектов, не настроены} other {Ещё # интеллекта, не настроены}}",

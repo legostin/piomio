@@ -22,6 +22,11 @@ export interface ModelProfile {
   good?: ModelSkill[];
   /** An older generation the provider has moved on from: chosen only when the brain has nothing current. */
   legacy?: boolean;
+  /**
+   * A top model its provider meters apart from the rest of a plan (Claude's Fable): the person's to name, never chosen
+   * for them while the brain has another (core/src/model-router.ts).
+   */
+  premium?: boolean;
 }
 
 type Traits = Omit<ModelProfile, "id" | "name" | "legacy">;
@@ -46,7 +51,7 @@ export interface ModelMeta {
  */
 export const KNOWN_MODELS: ReadonlyArray<readonly [RegExp, Traits]> = [
   // Anthropic
-  [/fable/i, { tier: 5, speed: 1, cost: 3, good: ["reasoning", "writing", "code", "vision"] }],
+  [/fable/i, { tier: 5, speed: 1, cost: 3, good: ["reasoning", "writing", "code", "vision"], premium: true }],
   [/opus/i, { tier: 5, speed: 1, cost: 3, good: ["reasoning", "writing", "code", "vision"] }],
   [/sonnet/i, { tier: 4, speed: 2, cost: 2, good: ["writing", "code", "vision"] }],
   [/haiku/i, { tier: 2, speed: 3, cost: 1, good: ["vision"] }],
@@ -119,7 +124,7 @@ export function isKnownModel(id: string, name?: string): boolean {
 export function profileOf(id: string, name?: string): ModelProfile {
   const hit = KNOWN_MODELS.find(([re]) => re.test(id) || (!!name && re.test(name)));
   const traits = hit ? hit[1] : UNKNOWN;
-  return { id, ...(name ? { name } : {}), tier: traits.tier, speed: traits.speed, cost: traits.cost, ...(traits.good ? { good: [...traits.good] } : {}) };
+  return { id, ...(name ? { name } : {}), tier: traits.tier, speed: traits.speed, cost: traits.cost, ...(traits.good ? { good: [...traits.good] } : {}), ...(traits.premium ? { premium: true } : {}) };
 }
 
 const OLD = /\b(older|legacy|previous[- ]generation|deprecated|outdated|superseded|retired)\b/i;

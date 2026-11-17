@@ -95,13 +95,15 @@ import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
 import { pageReader } from "./signals/extract.ts";
 import { scriptSandbox } from "./signals/sandbox.ts";
-import { quickModel } from "./bare-ask.ts";
+import { quickModel, type QuickModel } from "./bare-ask.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
 const ENTRY_SIGNIN_MS = 30 * 60_000;
 /** Where earlier versions kept a Claude subscription token (forgetClaudeToken). */
 const OLD_CLAUDE_TOKEN = "claude_code_token";
+/** Pages plugins' tools have the quick model read at once (each holds a CLI session); the others wait their turn. */
+const READERS_IN_FLIGHT = 3;
 
 export class Hub {
   config: Config;
@@ -124,6 +126,8 @@ export class Hub {
   pictures: Pictures;
   private reviewToken?: string;
   private quickToken?: string;
+  /** The quick model plugins' tools read with (core method quick.ask): a line of its own, so reading never holds up the triggers' triage. */
+  readers: QuickModel;
   agents: AgentRegistry;
   /** Pinned, archived and deleted built-in agents (agents-state.ts). */
   agentsState: AgentsStateStore;
@@ -473,6 +477,7 @@ export class Hub {
     });
     this.pages = new Pages({ db: this.db, bus: this.bus, dir: join(config.dataDir, "pages") });
     this.mcpClients = new McpClientManager({ config, registry: this.tools, vault: this.vault, audit: this.audit, egress: this.egress });
+    this.readers = quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }, { maxInFlight: READERS_IN_FLIGHT });
     const coreCall = createCoreCall(this);
     this.plugins = new PluginHost({
       config,

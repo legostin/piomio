@@ -27,6 +27,15 @@ describe("thinking per kind of work", () => {
     expect(brainsFor(a, "feed")).toEqual(["codex@local", "claude-code@local"]);
     expect(brainsFor(a, "chat")).toEqual(["claude-code@local", "codex@local"]);
     // No choice at all: every kind thinks "auto" (the hub decides per request); an agent-wide model from before keeps its way.
+    // Routine work never takes the chat's "deep" by itself: each run of a channel or a schedule would think long.
+    const deep = agent({ chat: { preset: "deep", brain: "codex" } });
+    expect(thinkingFor(deep, "task")).toEqual({ preset: "deep", brain: "codex" });
+    expect(thinkingFor(deep, "feed")).toEqual({ preset: "auto", brain: "codex" });
+    expect(thinkingFor(deep, "schedule")).toEqual({ preset: "auto", brain: "codex" });
+    expect(thinkingFor(agent({ chat: { preset: "deep" }, schedule: { brain: "codex" } }), "schedule")).toEqual({ preset: "auto", brain: "codex" });
+    // Chosen for the kind itself, it stands; so does the chat's exact model.
+    expect(thinkingFor(agent({ chat: { preset: "fast" }, feed: { preset: "deep" } }), "feed")).toEqual({ preset: "deep" });
+    expect(thinkingFor(agent({ chat: { model: "opus", effort: "high" } }), "feed")).toEqual({ model: "opus", effort: "high" });
     expect(thinkingFor({ brains: [] }, "chat")).toEqual({ preset: "auto" });
     expect(thinkingFor({ brains: [] }, "task")).toEqual({ preset: "auto" });
     expect(thinkingFor({ brains: [], model: "old" }, "chat")).toEqual({});

@@ -15,6 +15,10 @@ import { notifyInputError } from "./notifier.ts";
 const MAX_DELIVER_BYTES = 1024 * 1024 * 1024;
 /** Largest file a plugin may read from a workspace (it travels as base64). */
 const MAX_FETCH_BYTES = 25 * 1024 * 1024;
+/** The longest question a plugin may put to the quick model (a page to read and what to find in it). */
+const MAX_QUICK_PROMPT = 400_000;
+/** How long the quick model has for a plugin's question, its wait for a free slot included. */
+const QUICK_ASK_MS = 90_000;
 
 const KINDS = new Set<AttachmentKind>(["photo", "voice", "audio", "video", "file"]);
 
@@ -119,6 +123,16 @@ export function createCoreCall(hub: Hub) {
         const mimeType = typeof p.mimeType === "string" && p.mimeType ? p.mimeType.slice(0, 100) : undefined;
         // The services go by the extension: "audio.webm" for audio/webm;codecs=opus.
         return { text: await hub.transcriber.transcribeBuffer(data, mimeType, uploadName("clip", mimeType?.split(";")[0].trim())) };
+      }
+      // One bare question to the quick model (bare-ask.ts): a plugin's tool reads something long with a cheap model
+      // and hands the agent only the answer, so the agent's own (costly) context stays small.
+      case "quick.ask": {
+        const prompt = String(p.prompt ?? "");
+        if (!prompt.trim()) throw new Error("prompt is required");
+        if (prompt.length > MAX_QUICK_PROMPT) throw new Error(`the prompt is too long (over ${MAX_QUICK_PROMPT} characters)`);
+        const system = typeof p.system === "string" && p.system.trim() ? p.system.slice(0, 4000) : undefined;
+        const r = await hub.readers.ask(prompt, { ...(system ? { system } : {}), signal: AbortSignal.timeout(QUICK_ASK_MS) });
+        return { text: r.text.trim() };
       }
       // The hub's local speech engine (speech/engine.ts): what is installed and downloading; downloads in the background.
       case "speech.status":
