@@ -60,7 +60,7 @@ The card shows the server deadline. If the program closes its connection sooner,
 
 ## "Always allow" and rules
 
-**Always allow this** makes a narrow rule from that card: this tool, this agent and, when the action has them, the same recipient, the same site (its domain and subdomains), the same computer or the same file. For a brain's command it covers the program and subcommand: allowing `git push origin main` allows `git push *`. That works only for a single plain command; a chain with `;`, `&&`, pipes or redirections stays exactly that command.
+**Always allow this** makes a narrow rule from that card: this tool, this agent and, when the action has them, the same recipient, the same site (its domain and subdomains), the same computer or the same file. For a brain's command it covers the program and subcommand: allowing `git push origin main` allows `git push *`. That works only for a single plain command; a chain with `;`, `&&`, pipes or redirections stays exactly that command, and a rule for a program never covers a chain that starts with it. A command that takes secrets from the vault (see [Secrets for commands](security.md#secrets-for-commands)) is allowed together with its variables: the same program with another secret, or with one more variable, asks again.
 
 You can also say it in the chat: "always allow Linear", "don't ask me for Blender". The assistant makes a rule for one tool or a whole integration, for every agent or only one. It is saved at once when your own message from the last half hour says so; otherwise you confirm it on a card. The hub's own tools and the brains' commands can't be allowed this way (their cards have **Always allow this**).
 

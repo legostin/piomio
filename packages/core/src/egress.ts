@@ -280,11 +280,12 @@ export class EgressProxy {
   hasSession(sessionId: string): boolean {
     return [...this.grants.values()].some((g) => g.context?.sessionId === sessionId && !g.cancel.signal.aborted);
   }
-  revoke(token: string): void {
+  /** `keepSession`: the token was one command's (vault_exec); its session goes on and keeps what it was allowed once. */
+  revoke(token: string, o: { keepSession?: boolean } = {}): void {
     const g = this.grants.get(token);
     g?.cancel.abort();
     this.grants.delete(token);
-    if (g?.context) this.forgetSession(g.context.sessionId);
+    if (g?.context && !o.keepSession) this.forgetSession(g.context.sessionId);
   }
   revokeOwner(owner: string): void {
     for (const [t, g] of this.grants) if (g.owner === owner) this.revoke(t);

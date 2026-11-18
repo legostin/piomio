@@ -38,7 +38,7 @@ The chat and the console listen only on the computer itself (`127.0.0.1`), unles
 The vault keeps passwords, API keys, tokens and personal data.
 
 - Each item's secret fields are encrypted with XChaCha20-Poly1305 under a random data key. The data key is itself encrypted with a key derived from your vault password by Argon2id. Names, types and scopes stay readable, so the list shows while the vault is sealed.
-- Models only ever see `vault://id`. The hub puts the value where it's used: the browser types a login on its own site, a plugin gets its key.
+- Models only ever see `vault://id`. The hub puts the value where it's used: the browser types a login on its own site, a plugin gets its key, a command gets a token in its environment.
 - Secret values of 6 characters or more, and their base64 and URL-encoded forms, are replaced with `[redacted: vault://id]` in tool results going to models, in messages to channels such as Telegram, in plugin logs and in the audit log. The one exception is an item where you turned on **Allow the model to read the value** (meant for harmless data such as a delivery address).
 - The vault password can't be recovered. **Change vault password** re-encrypts only the data key, not the items.
 
@@ -48,6 +48,18 @@ The vault keeps passwords, API keys, tokens and personal data.
 - A token pasted into a message is recognised and moved to the vault before the message is stored or reaches a model; the message keeps the reference. This covers the formats plugins declare and well-known ones (Anthropic, OpenAI, OpenRouter, xAI, Groq, GitHub, GitLab, Slack, Google API, Stripe live keys, Hugging Face, Notion). If the vault is locked, the token is removed and stored nowhere.
 - Claude tokens from `claude setup-token` are removed and never stored: Claude Code signs in on each computer by itself (see [Brains and sign-in](brains.md)).
 - From the chat you can create or unlock the vault. Reading items, sealing it and changing who gets what happen only in the console.
+- Any agent can ask you for a secret its work needs on this card, not only the assistant. Pointing a plugin's setting at a secret stays with the assistant.
+
+### Secrets for commands
+
+A command that needs a token (`git push`, `gh pr create`, a deploy) gets it from the vault without the agent ever reading it. The agent names the item and the variable to put it in (`GH_TOKEN` from `vault://github_token`), and the hub starts the command with the value in its environment.
+
+- The command runs where the agent works: on the hub's computer, in the agent's folder or one of its project folders, or on the paired computer its session runs on. That computer needs commands turned on and a current Piomio.
+- It is an action like any other: the card names the command and its variables, never the value. Auto mode can answer it. **Always allow this** covers the same program with exactly the same variables (see ["Always allow" and rules](approvals.md#always-allow-and-rules)).
+- The output comes back with the values removed, also for an item you let the model read. A command that changes a value before printing it (reverses it, say) could still show it, which is why every such command is reviewed.
+- On the hub's computer the command gets the same proxy settings as the agent's session, so programs that follow them (git, gh, curl, npm) go through [the network filter](#the-network-filter): a host that is not on the list asks first.
+- For git over HTTPS the agent names the token `GIT_PASSWORD` (and `GIT_USERNAME` when the server wants a real one). Git signs in with it for that one command; your keychain and other credential helpers are neither read nor updated. This works on macOS and Linux.
+- A website's login is never given to a command, unless you add `vault_exec` to that item's **Tools**. To keep a secret away from commands, list only other tools there; to keep it to one agent, name the agent under **Agents**.
 
 ### Who gets an item
 
