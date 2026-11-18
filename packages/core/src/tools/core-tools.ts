@@ -83,7 +83,7 @@ function effortOf(v: unknown): { effort?: string; error?: string } {
   return EFFORT_SCALE.includes(effort) ? { effort } : { error: `No effort "${v}". Efforts: ${EFFORT_SCALE.join(", ")} (a brain takes the nearest it has).` };
 }
 
-const clip = (v: unknown, max: number): string | undefined => {
+export const clip = (v: unknown, max: number): string | undefined => {
   const s = typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "";
   return s ? (s.length > max ? `${s.slice(0, max - 1)}…` : s) : undefined;
 };
@@ -198,6 +198,40 @@ function workspaceImage(path: string, workspace: string, root: string, more: str
   if (!imageTypeOf(real)) return { error: `${path}: not an image (png, jpg, gif, webp, avif, bmp or svg)` };
   if (st.size > MAX_IMAGE_BYTES) return { error: `${path}: larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB` };
   return `file:${relative(realRoot, real).split(sep).join("/")}`;
+}
+
+/**
+ * A picture an agent names in a tool's input as the chat shows it: `url` (a public http(s) address) as it is, `path`
+ * (a file in its workspace or a task folder it started, on another computer once it reached the hub) as
+ * `file:<path relative to the workspaces root>`. Or an error for the model. show_images and show_cards.
+ */
+export async function imageSource(
+  it: Record<string, unknown>,
+  ctx: { workspace: string; machineId: string },
+  d: Pick<CoreToolDeps, "workspacesRoot">,
+  more: string[] = [],
+): Promise<string | { error: string }> {
+  if (typeof it.path === "string" && it.path.trim()) {
+    let path = it.path.trim();
+    // Remote absolute paths may name this session OR a task this conversation started. Map to the matching
+    // hub folder before waiting; relative paths still belong only to the current session.
+    if (ctx.machineId !== "local") {
+      let mapped: string | undefined;
+      for (const folder of [ctx.workspace, ...more]) {
+        const rel = folderRelative(path, folder);
+        if (rel) { mapped = resolve(folder, rel); break; }
+      }
+      if (!mapped) return { error: `${path} is not in your workspace or your tasks' folders; save the picture there and show it by its path` };
+      await arrived(mapped, REMOTE_FILE_WAIT_MS);
+      path = mapped;
+    }
+    return workspaceImage(path, ctx.workspace, d.workspacesRoot, more);
+  }
+  if (typeof it.url === "string" && it.url.trim()) {
+    const u = parseImageUrl(it.url.trim());
+    return u ? u.href : { error: "url must be a public http(s) address" };
+  }
+  return { error: "give url or path" };
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
@@ -748,39 +782,9 @@ export function registerCoreTools(d: CoreToolDeps): void {
       for (const [n, raw] of list.entries()) {
         const it = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
         const label = `image ${n + 1}`;
-        let src: string | undefined;
-        if (typeof it.path === "string" && it.path.trim()) {
-          let path = it.path.trim();
-          // Remote absolute paths may name this session OR a task this conversation started. Map to the matching
-          // hub folder before waiting; relative paths still belong only to the current session.
-          if (ctx.machineId !== "local") {
-            let mapped: string | undefined;
-            for (const folder of [ctx.workspace, ...more]) {
-              const rel = folderRelative(path, folder);
-              if (rel) { mapped = resolve(folder, rel); break; }
-            }
-            if (!mapped) {
-              problems.push(`${label}: ${path} is not in your workspace or your tasks' folders; save the picture there and show it by its path`);
-              continue;
-            }
-            await arrived(mapped, REMOTE_FILE_WAIT_MS);
-            path = mapped;
-          }
-          const r = workspaceImage(path, ctx.workspace, d.workspacesRoot, more);
-          if (typeof r !== "string") {
-            problems.push(`${label}: ${r.error}`);
-            continue;
-          }
-          src = r;
-        } else if (typeof it.url === "string" && it.url.trim()) {
-          const u = parseImageUrl(it.url.trim());
-          if (!u) {
-            problems.push(`${label}: url must be a public http(s) address`);
-            continue;
-          }
-          src = u.href;
-        } else {
-          problems.push(`${label}: give url or path`);
+        const src = await imageSource(it, ctx, d, more);
+        if (typeof src !== "string") {
+          problems.push(`${label}: ${src.error}`);
           continue;
         }
         items.push({ src, ...(clip(it.alt, 300) ? { alt: clip(it.alt, 300) } : {}), ...(clip(it.caption, 200) ? { caption: clip(it.caption, 200) } : {}) });

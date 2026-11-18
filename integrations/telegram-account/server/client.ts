@@ -12,8 +12,12 @@ export interface TgChat {
   /** Saved Messages: the account's chat with itself. */
   self?: boolean;
   unread?: number;
+  /** The person muted it in Telegram. */
+  muted?: boolean;
   /** ISO time of the last message. */
   lastMessageAt?: string;
+  /** The last message, which the list of chats brings with it: no request of its own. */
+  last?: TgMessage;
 }
 
 export type MediaKind = "photo" | "video" | "audio" | "voice" | "document" | "sticker" | "other";
@@ -79,8 +83,13 @@ export interface TgClient {
   logOut(): Promise<void>;
   /** Drop the connection; the session stays valid. */
   close(): Promise<void>;
-  /** The account's chats, most recent first. */
+  /** The account's chats, most recent first, all of them: waits until the whole list is loaded. */
   chats(limit: number): Promise<TgChat[]>;
+  /**
+   * The chats known now, most recent first, without waiting for the whole list: at least the most recent ones.
+   * `complete` is false while older chats are still loading.
+   */
+  recentChats(): Promise<{ chats: TgChat[]; complete: boolean }>;
   /** One of the account's chats by its id or @username; undefined when the account has no such chat (a public name it is not in included). */
   chat(ref: string): Promise<TgChat | undefined>;
   /** Messages of a chat, newest first; `beforeId` pages back. Reading marks nothing as read. */
@@ -107,6 +116,15 @@ export interface TgClientOptions {
 }
 
 export type TgClientFactory = (o: TgClientOptions) => TgClient | Promise<TgClient>;
+
+/** Telegram limits how often it is asked (FLOOD_WAIT): nothing more until this many seconds have passed. */
+export class RateLimited extends Error {
+  seconds: number;
+  constructor(seconds: number) {
+    super(`Telegram asks to wait ${seconds} s`);
+    this.seconds = seconds;
+  }
+}
 
 /** A download refused for its size. */
 export class FileTooLarge extends Error {

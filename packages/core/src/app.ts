@@ -41,6 +41,7 @@ import { registerFeedTools } from "./tools/feed-tools.ts";
 import { registerThinkingTools } from "./tools/thinking-tools.ts";
 import { thinkingView } from "./thinking.ts";
 import { registerPageTools } from "./tools/page-tools.ts";
+import { registerCardTools } from "./tools/card-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
 import { registerVaultExec } from "./tools/vault-exec.ts";
@@ -699,6 +700,14 @@ export class Hub {
       pages: this.pages,
       agents: this.agents,
       attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
+    });
+    registerCardTools({
+      registry: this.tools,
+      page: (key) => this.pages.find(key),
+      attachPart: (conversationId, part) => this.runner.attachPart(conversationId, part),
+      showToPerson: (conversationId, part, taskId) => this.runner.showToPerson(conversationId, part, taskId),
+      startedWorkspaces: (conversationId) => this.runner.startedWorkspaces(conversationId),
+      workspacesRoot: join(config.dataDir, "workspaces"),
     });
     // A brain signed in from a card the assistant showed: the assistant hears it and carries on.
     this.brainLogins.onSignedIn = (s, label, conversationId) =>

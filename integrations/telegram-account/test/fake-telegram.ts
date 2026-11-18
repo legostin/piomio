@@ -6,7 +6,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { FileTooLarge } from "../server/client.ts";
+import { FileTooLarge, RateLimited } from "../server/client.ts";
 import type { TgChat, TgClient, TgClientFactory, TgMessage } from "../server/client.ts";
 
 export interface FakeMessage extends TgMessage {
@@ -34,13 +34,23 @@ interface State {
   passwords: string[];
   /** How many search requests Telegram got. */
   searches: number;
+  /** How many times a chat's messages were asked for. */
+  histories: number;
+  /** Telegram refuses to give messages: "wait this many seconds". */
+  flood?: number;
+  /** It refuses the list of chats too. */
+  floodList?: boolean;
+  /** The list of chats takes this long. */
+  slowList?: number;
+  /** The list is still loading: only this many of the most recent chats are known without waiting. */
+  partial?: number;
   onMessage: Set<(m: TgMessage, chat: TgChat) => void>;
   onSignedOut: Set<() => void>;
   nextId: number;
 }
 
 const file = process.env.TELEGRAM_ACCOUNT_TEST_FIXTURE!;
-const state: State = { fixture: JSON.parse(readFileSync(file, "utf8")), sent: [], loggedOut: 0, open: 0, passwords: [], searches: 0, onMessage: new Set(), onSignedOut: new Set(), nextId: 9000 };
+const state: State = { fixture: JSON.parse(readFileSync(file, "utf8")), sent: [], loggedOut: 0, open: 0, passwords: [], searches: 0, histories: 0, onMessage: new Set(), onSignedOut: new Set(), nextId: 9000 };
 
 const body = (req: import("node:http").IncomingMessage) =>
   new Promise<any>((resolve) => {
@@ -60,15 +70,26 @@ const control = createServer(async (req, res) => {
       const chat = state.fixture.chats.find((c) => c.id === b.chatId)!;
       const m: TgMessage = { id: state.nextId++, chatId: chat.id, date: new Date().toISOString(), out: false, sender: "Someone", text: "", ...b.message };
       (state.fixture.messages[chat.id] ??= []).push(m);
+      if (!m.out) chat.unread = (chat.unread ?? 0) + 1;
       for (const cb of state.onMessage) cb(m, chat);
       return send({ id: m.id });
     }
+    case "/flood":
+      state.flood = b.seconds || undefined;
+      state.floodList = !!b.seconds && b.list === true;
+      return send({ ok: true });
+    case "/partial":
+      state.partial = b.count || undefined;
+      return send({ ok: true });
+    case "/slow":
+      state.slowList = b.ms || undefined;
+      return send({ ok: true });
     case "/revoke":
       state.fixture.sessions = [];
       for (const cb of [...state.onSignedOut]) cb();
       return send({ ok: true });
     case "/state":
-      return send({ sent: state.sent, loggedOut: state.loggedOut, open: state.open, sessions: state.fixture.sessions, passwords: state.passwords, searches: state.searches });
+      return send({ sent: state.sent, loggedOut: state.loggedOut, open: state.open, sessions: state.fixture.sessions, passwords: state.passwords, searches: state.searches, histories: state.histories });
     default:
       res.writeHead(404).end();
   }
@@ -83,6 +104,12 @@ const factory: TgClientFactory = () => {
   const chatById = (id: string) => state.fixture.chats.find((c) => c.id === id);
   const sorted = (chatId: string) => [...(state.fixture.messages[chatId] ?? [])].sort((a, b) => b.id - a.id);
   const strip = ({ file: _file, ...m }: FakeMessage): TgMessage => m;
+  /** As Telegram does: each chat comes with its last message. */
+  const listed = (limit: number): TgChat[] =>
+    state.fixture.chats.slice(0, limit).map((c) => {
+      const last = sorted(c.id)[0];
+      return last ? { lastMessageAt: last.date, ...c, last: strip(last) } : c;
+    });
   const client: TgClient = {
     async resume(session) {
       return state.fixture.sessions.includes(session) ? state.fixture.account : undefined;
@@ -120,13 +147,21 @@ const factory: TgClientFactory = () => {
       for (const off of offs) off();
     },
     async chats(limit) {
-      return state.fixture.chats.slice(0, limit);
+      if (state.slowList) await new Promise((r) => setTimeout(r, state.slowList));
+      if (state.flood && state.floodList) throw new RateLimited(state.flood);
+      return listed(limit);
+    },
+    async recentChats() {
+      if (state.flood && state.floodList) throw new RateLimited(state.flood);
+      return state.partial ? { chats: listed(state.partial), complete: false } : { chats: listed(Infinity), complete: true };
     },
     async chat(ref) {
       const name = ref.replace(/^@/, "").toLowerCase();
       return state.fixture.chats.find((c) => c.id === ref || c.username?.toLowerCase() === name);
     },
     async history(chatId, { limit, beforeId }) {
+      state.histories++;
+      if (state.flood) throw new RateLimited(state.flood);
       return sorted(chatId).filter((m) => !beforeId || m.id < beforeId).slice(0, limit).map(strip);
     },
     async search(query, { chatId, limit, from }) {

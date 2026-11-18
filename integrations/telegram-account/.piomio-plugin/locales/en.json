@@ -15,6 +15,8 @@
   "http.bad": "That request is not valid.",
   "http.noChat": "No such chat.",
   "http.notConnected": "The Telegram account is not connected.",
+  "http.loading": "The list of chats is still loading: Telegram is asked slowly so that it does not limit the account. Try again in half a minute.",
+  "http.wait": "Telegram limits how often an account is asked. Try again in {seconds} s.",
   "http.request.notFound": "This request is no longer there.",
   "http.request.answered": "This request was already answered.",
   "http.request.noChat": "That chat cannot be opened.",
