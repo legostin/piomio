@@ -17,8 +17,29 @@ export interface SessionRow {
   tainted: boolean;
   status: "active" | "closed";
   background: boolean;
+  /** Its life (session-life.ts): the prompt it started with, what it was opened with and told, its size, its last use. */
+  systemPrompt?: string;
+  stamp?: string;
+  briefed?: string;
+  contextTokens?: number;
+  baseTokens?: number;
+  usedAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** What `updateSession` changes; null clears a field. */
+export interface SessionPatch {
+  resumeToken?: string | null;
+  tainted?: boolean;
+  status?: SessionRow["status"];
+  brainRef?: string;
+  systemPrompt?: string | null;
+  stamp?: string | null;
+  briefed?: string | null;
+  contextTokens?: number | null;
+  baseTokens?: number | null;
+  usedAt?: string | null;
 }
 
 const convFrom = (r: any): Conversation => ({
@@ -92,9 +113,25 @@ const sessionFrom = (r: any): SessionRow => ({
   tainted: !!r.tainted,
   status: r.status,
   background: !!r.background,
+  ...(r.system_prompt ? { systemPrompt: r.system_prompt } : {}),
+  ...(r.stamp ? { stamp: r.stamp } : {}),
+  ...(r.briefed ? { briefed: r.briefed } : {}),
+  ...(typeof r.context_tokens === "number" ? { contextTokens: r.context_tokens } : {}),
+  ...(typeof r.base_tokens === "number" ? { baseTokens: r.base_tokens } : {}),
+  ...(r.used_at ? { usedAt: r.used_at } : {}),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
+
+/** A session's life in its row (SessionPatch → column). */
+const LIFE_COLUMNS = [
+  ["systemPrompt", "system_prompt"],
+  ["stamp", "stamp"],
+  ["briefed", "briefed"],
+  ["contextTokens", "context_tokens"],
+  ["baseTokens", "base_tokens"],
+  ["usedAt", "used_at"],
+] as const;
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -520,11 +557,14 @@ export class Store {
     return !!this.db.prepare("select 1 from sessions where conversation_id = ? and tainted = 1 limit 1").get(conversationId);
   }
 
-  updateSession(id: string, patch: { resumeToken?: string | null; tainted?: boolean; status?: SessionRow["status"]; brainRef?: string }): void {
+  updateSession(id: string, patch: SessionPatch): void {
     if (patch.resumeToken !== undefined) this.db.prepare("update sessions set resume_token = ? where id = ?").run(patch.resumeToken, id);
     if (patch.tainted !== undefined) this.db.prepare("update sessions set tainted = ? where id = ?").run(patch.tainted ? 1 : 0, id);
     if (patch.status) this.db.prepare("update sessions set status = ? where id = ?").run(patch.status, id);
     if (patch.brainRef) this.db.prepare("update sessions set brain_ref = ? where id = ?").run(patch.brainRef, id);
+    for (const [key, column] of LIFE_COLUMNS) {
+      if (patch[key] !== undefined) this.db.prepare(`update sessions set ${column} = ? where id = ?`).run(patch[key], id);
+    }
     this.db.prepare("update sessions set updated_at = ? where id = ?").run(nowIso(), id);
   }
 }

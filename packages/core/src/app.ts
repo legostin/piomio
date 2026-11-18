@@ -11,7 +11,7 @@ import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
 import { EventBus } from "./bus.ts";
 import { Store } from "./store.ts";
-import { DEFAULT_BRAIN_EGRESS, Settings, triggerSettingsProblem, type CoreSettings } from "./settings.ts";
+import { contextSettingsProblem, DEFAULT_BRAIN_EGRESS, Settings, triggerSettingsProblem, type CoreSettings } from "./settings.ts";
 import { VaultService } from "./vault/service.ts";
 import { AuditLog } from "./audit.ts";
 import { RuleStore } from "./policy/rules.ts";
@@ -792,6 +792,8 @@ export class Hub {
     }
     const triggers = triggerSettingsProblem(p);
     if (triggers) throw new LocalizedError(triggers.key, triggers.params, 400);
+    const context = contextSettingsProblem(p);
+    if (context) throw new LocalizedError(context.key, context.params, 400);
     const before = this.settings.get().language;
     this.audit.append(actor, "settings.update", undefined, { keys: Object.keys(p) });
     const next = this.settings.update(p as Partial<CoreSettings>);

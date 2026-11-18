@@ -8,6 +8,9 @@
 // "QUIET?" answers "[quiet]" (a quiet look with nothing to say).
 // "TIME?" answers with the turn's "[Now: …]" line (or "none"); a turn with files answers with their paths and the note.
 // "SELF?" answers with the last "[You now]" block the session got (or "none"); "INPUT?" with the rest of the turn's input.
+// "CONTEXT <n>" reports a model call with a prompt of n tokens (most of it read from the cache), then answers as usual;
+// "OPENS?" says how many times the hub opened this session's brain, "SYSTEM? <text>" whether its system prompt has the
+// text, "WINDOW?" the compaction window the hub gave it.
 // "NATIVE <events>" uses the brain's own tools (a CLI's WebFetch, its shell), never the hub's: a JSON array of
 // {"call": name, "id", "input"} and {"result": id, "output"}, in the order the brain reports them.
 import { existsSync } from "node:fs";
@@ -23,6 +26,8 @@ const steered = new Map<string, string[]>();
 const used = new Map<string, string[]>();
 /** Sessions the hub got ready ahead of a turn (warm). */
 const warmed = new Set<string>();
+/** How many times the hub opened each session's brain. */
+const opens = new Map<string, number>();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const lastLine = (text: string) => text.trim().split("\n").at(-1) ?? "";
 
@@ -64,7 +69,7 @@ export default {
                 presets: { fast: { model: "quick", effort: "low" }, balanced: { model: "smart", effort: "medium" }, deep: { model: "smart", effort: "high" } },
               }
             : { available: true, authenticated: true },
-        createSession: async (o: BrainSessionOptions) => ({
+        createSession: async (o: BrainSessionOptions) => (opens.set(o.sessionId, (opens.get(o.sessionId) ?? 0) + 1), {
           async *send(raw): AsyncGenerator<BrainEvent> {
             // The hub may choose the model and effort per turn: the session thinks so from here on.
             if (raw.model) o = { ...o, model: raw.model };
@@ -85,8 +90,31 @@ export default {
               yield { type: "done", resumeToken: `${id}-resume` };
               return;
             }
+            const asked = lastLine(turn.text.replace(/\n+When you are done[^\n]*\s*$/, ""));
+            // A model call with a prompt this big, nearly all of it read from the provider's cache.
+            const sized = /^CONTEXT (\d+)$/.exec(asked);
+            if (sized) {
+              const tokens = Number(sized[1]);
+              yield { type: "context", tokens };
+              yield { type: "usage", inputTokens: tokens, outputTokens: 7, cacheReadTokens: tokens - 100, cacheWriteTokens: 60 };
+            }
+            if (asked === "OPENS?") {
+              yield { type: "text", delta: `${id} opens: ${opens.get(o.sessionId) ?? 0}` };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            if (asked.startsWith("SYSTEM? ")) {
+              yield { type: "text", delta: `${id} system: ${o.systemPrompt.includes(asked.slice("SYSTEM? ".length)) ? "yes" : "no"}` };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            if (asked === "WINDOW?") {
+              yield { type: "text", delta: `${id} window: ${o.compactWindow ?? "none"}` };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
             // The model and effort this session was opened with.
-            if (lastLine(turn.text.replace(/\n+When you are done[^\n]*\s*$/, "")) === "THINKING?") {
+            if (asked === "THINKING?") {
               yield { type: "text", delta: `${id} thinks: model=${o.model ?? "default"} effort=${o.effort ?? "default"}` };
               yield { type: "done", resumeToken: `${id}-resume` };
               return;

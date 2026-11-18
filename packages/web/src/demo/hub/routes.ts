@@ -201,6 +201,9 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
     voice: {},
     triggersAllowPrivateUrls: false,
     triggersWatchTimeoutSec: 30,
+    dialogContextCap: 120_000,
+    taskContextCap: 200_000,
+    recapMaxChars: 16_000,
     ...changed,
   });
   r.route("GET", "/api/settings", settings);

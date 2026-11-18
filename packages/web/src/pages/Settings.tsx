@@ -32,6 +32,10 @@ export interface CoreSettings {
   brainConcurrency: number;
   approvalInlineWaitSec: number;
   approvalExpireHours: number;
+  /** Tokens of history a dialog's session holds before it starts afresh from a recap; a task's compaction size; the recap's size. */
+  dialogContextCap: number;
+  taskContextCap: number;
+  recapMaxChars: number;
   /** Hub language: notifications, channels, approval cards, agent replies; the UI default. */
   language: Locale;
   /** Speech to text for voice messages. */
@@ -56,7 +60,7 @@ const VOICE_PROVIDERS: Array<{ id: Transcription["provider"]; label: MessageKey 
   { id: "off", label: "settings.voice.off" },
 ];
 
-type NumKey = "notifyRatePerHour" | "brainConcurrency" | "approvalInlineWaitSec" | "approvalExpireHours";
+type NumKey = "notifyRatePerHour" | "brainConcurrency" | "approvalInlineWaitSec" | "approvalExpireHours" | "dialogContextCap" | "taskContextCap" | "recapMaxChars";
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -71,7 +75,7 @@ export function SettingsPage() {
   const { settings: sections } = usePluginRegistry();
   const [orig, setOrig] = useState<CoreSettings | null>(null);
   const [form, setForm] = useState<CoreSettings | null>(null);
-  const [nums, setNums] = useState<Record<NumKey, string>>({ notifyRatePerHour: "", brainConcurrency: "", approvalInlineWaitSec: "", approvalExpireHours: "" });
+  const [nums, setNums] = useState<Record<NumKey, string>>({ notifyRatePerHour: "", brainConcurrency: "", approvalInlineWaitSec: "", approvalExpireHours: "", dialogContextCap: "", taskContextCap: "", recapMaxChars: "" });
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [voiceEngine, setVoiceEngine] = useState<{ label: string; model: string } | null>();
@@ -100,6 +104,9 @@ export function SettingsPage() {
         brainConcurrency: String(r.brainConcurrency),
         approvalInlineWaitSec: String(r.approvalInlineWaitSec),
         approvalExpireHours: String(r.approvalExpireHours),
+        dialogContextCap: String(r.dialogContextCap),
+        taskContextCap: String(r.taskContextCap),
+        recapMaxChars: String(r.recapMaxChars),
       });
     } catch (e) {
       setError(errorText(e));
@@ -155,6 +162,9 @@ export function SettingsPage() {
       brainConcurrency: [1, 16, "settings.brainConcurrencyName"],
       approvalInlineWaitSec: [0, 600, "settings.approvalWaitName"],
       approvalExpireHours: [1, 24 * 30, "settings.approvalExpireName"],
+      dialogContextCap: [20_000, 1_000_000, "settings.dialogContextCapName"],
+      taskContextCap: [100_000, 1_000_000, "settings.taskContextCapName"],
+      recapMaxChars: [4_000, 200_000, "settings.recapMaxCharsName"],
     };
     for (const k of Object.keys(limits) as NumKey[]) {
       const n = Number(nums[k]);
@@ -294,6 +304,15 @@ export function SettingsPage() {
           <div className="flex flex-col gap-4">
             <Field label={t("settings.brainConcurrency")} hint={t("settings.brainConcurrencyHint")} className="sm:max-w-xs">
               <Input type="number" min={1} value={nums.brainConcurrency} onChange={(e) => setNums((n) => ({ ...n, brainConcurrency: e.target.value }))} />
+            </Field>
+            <Field label={t("settings.dialogContextCap")} hint={t("settings.dialogContextCapHint")} className="sm:max-w-xs">
+              <Input type="number" min={20_000} step={10_000} value={nums.dialogContextCap} onChange={(e) => setNums((n) => ({ ...n, dialogContextCap: e.target.value }))} />
+            </Field>
+            <Field label={t("settings.taskContextCap")} hint={t("settings.taskContextCapHint")} className="sm:max-w-xs">
+              <Input type="number" min={100_000} step={10_000} value={nums.taskContextCap} onChange={(e) => setNums((n) => ({ ...n, taskContextCap: e.target.value }))} />
+            </Field>
+            <Field label={t("settings.recapMaxChars")} hint={t("settings.recapMaxCharsHint")} className="sm:max-w-xs">
+              <Input type="number" min={4_000} step={1_000} value={nums.recapMaxChars} onChange={(e) => setNums((n) => ({ ...n, recapMaxChars: e.target.value }))} />
             </Field>
             <Field group label={t("settings.egress")} hint={t("settings.egressHint")}>
               <details className="mb-3 text-xs text-muted">
