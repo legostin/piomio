@@ -43,6 +43,7 @@ import { thinkingView } from "./thinking.ts";
 import { registerPageTools } from "./tools/page-tools.ts";
 import { registerGroupTools } from "./tools/group-tools.ts";
 import { registerNativePermission } from "./tools/native-permission.ts";
+import { registerVaultExec } from "./tools/vault-exec.ts";
 import { ownedWorkspaces, ownsWorkspacePaths } from "@piomio/shared/agent-workspaces";
 import { ordinaryFilePaths } from "./access/owned-files.ts";
 import { AutoMode, type AutoAction, type AutoContext, type AutoWhere } from "./policy/auto.ts";
@@ -629,6 +630,17 @@ export class Hub {
       library: (q) => this.library(q),
     });
     this.machines.registerTools(this.tools);
+    registerVaultExec({
+      registry: this.tools,
+      vault: this.vault,
+      agents: this.agents,
+      machines: this.machines,
+      dataDir: config.dataDir,
+      here: () => this.here(),
+      egress: this.egress,
+      egressPort: config.egressPort,
+      pathDirs: () => this.userPath.dirs(),
+    });
     registerHubTools(this);
     wireNetworkApprovals({
       egress: this.egress, approvals: this.approvals, settings: this.settings, store: this.store, audit: this.audit, agents: this.agents,

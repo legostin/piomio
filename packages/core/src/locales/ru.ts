@@ -202,6 +202,7 @@ export default {
 
   // machines
   "machines.execApproval": "Выполнить на машине {machine}: {command}",
+  "vaultExec.approval": "Выполнить с секретами из хранилища ({env}): {command}",
   "machines.revokeApproval": "Отключить компьютер {machine} от Piomio",
   "agents.folderApproval": "Открыть папку {path} на компьютере {computer} как проект «{name}»: агент будет читать и менять её без вопросов",
   "agents.folderApprovalFor": "Открыть папку {path} на компьютере {computer} агенту {agent} как проект «{name}»: он будет читать и менять её без вопросов",

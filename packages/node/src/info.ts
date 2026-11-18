@@ -38,6 +38,7 @@ export function machineInfo(policy: Policy, clis: MachineInfo["clis"], gpus: str
     allowedDirs: [...policy.allowedDirs],
     workspacesRoot: policy.workspacesRoot,
     commands: policy.exec.enabled,
+    secretEnv: true,
     ...(gpus.length ? { gpus } : {}),
   };
 }

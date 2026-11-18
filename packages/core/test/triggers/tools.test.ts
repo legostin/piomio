@@ -294,8 +294,8 @@ describe("the trigger tools in the chat", () => {
     expect(props.script.description).toMatch(/report\.pdf/);
     // The goal of a trigger with a pipeline carries the [Signal] block, not the payload.
     expect(props.prompt.description).toMatch(/\[Signal\] block/);
-    // The signing secret is stored through the secret card, which only the default agent shows.
-    expect(props.verify.description).toMatch(/ask the person to store it through the secret card \(the default agent's hub_secret_request/);
+    // The signing secret is stored through the secret card, which any agent shows.
+    expect(props.verify.description).toMatch(/ask the person to store it through the secret card \(hub_secret_request: a secure card/);
     // A webhook is answered at once and repeats dropped only with a pipeline, and only with a delivery header.
     const hook = sourcesOf<Array<{ type: string; description: string }>>(await h.invokeText("sources")).find((s) => s.type === "web.webhook")!;
     expect(hook.description).toMatch(/With a script, a quick check or a batch/);
