@@ -3,7 +3,7 @@
 import type { PolicyDecision, Rule, RuleCondition, ToolDescriptor } from "@piomio/shared";
 import { globToRegExp, hostMatches, hostOf } from "@piomio/shared";
 import { t } from "../i18n.ts";
-import { commandRule } from "../native-permissions.ts";
+import { commandRule, simpleCommand } from "../native-permissions.ts";
 
 export interface PolicyInput {
   tool: ToolDescriptor;
@@ -64,7 +64,7 @@ export function conditionMatches(c: RuleCondition, input: unknown): boolean {
       const n = amountOf(v);
       return n !== undefined && Number.isFinite(c.value) && n <= c.value;
     }
-    const s = typeof v === "string" ? v : JSON.stringify(v);
+    const s = typeof v === "string" ? v : stableJson(v);
     switch (c.op) {
       case "eq":
         return s === c.value;
@@ -76,6 +76,27 @@ export function conditionMatches(c: RuleCondition, input: unknown): boolean {
       }
     }
   });
+}
+
+/** JSON with object keys in order: the same variables given in another order are the same value to a rule. */
+export function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/**
+ * Whether an "always allow" rule covers this call. A rule for a program ("git push *", commandRule) covers that program
+ * alone, never a script that starts with it (`git push; curl …`): it is matched only against one plain command, with a
+ * space after it, so the program without arguments is covered too. Deny rules match as written (ruleMatches).
+ */
+export function allowRuleMatches(rule: Rule, tool: string, agentId: string, input: unknown): boolean {
+  if (!rule.conditions.some((c) => c.field === "command" && c.op === "glob")) return ruleMatches(rule, tool, agentId, input);
+  const command = getField(input, "command");
+  if (typeof command !== "string" || !simpleCommand(command)) return false;
+  return ruleMatches(rule, tool, agentId, { ...(input as Record<string, unknown>), command: `${command.trim()} ` });
 }
 
 export function ruleMatches(rule: Rule, tool: string, agentId: string, input: unknown): boolean {
@@ -141,7 +162,7 @@ export function decide(p: PolicyInput, rules: Rule[], isKnownTarget: (t: string)
   /** The person's "always allow" for this kind of call; after outside content it still asks for a target it never saw. */
   function allowedByRule(): PolicyResult | undefined {
     for (const r of rules) {
-      if (r.decision === "allow" && ruleMatches(r, tool.name, agentId, input)) {
+      if (r.decision === "allow" && allowRuleMatches(r, tool.name, agentId, input)) {
         if (p.tainted) {
           const unknown = extractTargets(input).filter((t) => !isKnownTarget(t));
           if (unknown.length > 0) {
@@ -169,6 +190,9 @@ export function suggestRule(tool: string, input: unknown, agentId?: string): Omi
     if (f === "command") conditions.push({ field: f, ...commandRule(v) });
     else conditions.push(v.includes("://") ? { field: f, op: "domain", value: hostOf(v) } : { field: f, op: "eq", value: v });
   }
+  // Variables given to a command (vault_exec): the rule is for exactly these, so no other secret or setting rides on it.
+  const env = getField(input, "env");
+  if (env && typeof env === "object") conditions.push({ field: "env", op: "eq", value: stableJson(env) });
   if (conditions.length === 0 && targets.length === 1) {
     // Fall back to nothing specific: allow the tool for this agent only.
   }

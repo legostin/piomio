@@ -104,7 +104,7 @@ const FIELDS: Record<string, JsonSchema> = {
     type: "object",
     description:
       "event (web.webhook) only: how a sender proves itself. { kind: 'secret' } (default): the trigger's own secret in the x-piomio-secret header or ?secret=. { kind: 'github' | 'stripe' | 'hmac-sha256', secretRef: 'vault://<id>', header? }: each delivery's signature, made with the signing secret the person sets at the sender (header: hmac-sha256's header, default x-signature). " +
-      "That secret lives in the vault, never in the chat or here as text: ask the person to store it through the secret card (the default agent's hub_secret_request: a secure card in the chat that gives back vault://<id>; another agent asks the default agent or the person), or to store it in the vault themselves, then pass that reference as secretRef.",
+      "That secret lives in the vault, never in the chat or here as text: ask the person to store it through the secret card (hub_secret_request: a secure card in the chat that gives back vault://<id>), or to store it in the vault themselves, then pass that reference as secretRef.",
     properties: { kind: { type: "string", enum: ["secret", "github", "stripe", "hmac-sha256"] }, secretRef: { type: "string" }, header: { type: "string" } },
     required: ["kind"],
   },

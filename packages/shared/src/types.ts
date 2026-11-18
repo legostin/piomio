@@ -1219,6 +1219,8 @@ export interface MachineInfo {
   gpus?: string[];
   /** Commands may run there (its policy's exec.enabled); the person turns them on from the chat (node.policy). */
   commands?: boolean;
+  /** Its exec.run gives a command variables of the hub's (vault_exec: secrets from the vault); older daemons drop them. */
+  secretEnv?: boolean;
   /** It runs inside the Piomio desktop app, which installs its update when the hub asks (node.appUpdate). */
   desktopApp?: boolean;
 }

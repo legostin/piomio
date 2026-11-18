@@ -234,7 +234,9 @@ describe("integrations and the Google sign-in", () => {
     try {
       hub.settings.update({ defaultAgent: "someone-else" });
       const names = hub.gateway.listFor(session).map((t) => t.name);
-      for (const name of ["hub_integration_connect", "hub_plugin_setup", "hub_secret_request", "hub_brain_login", "hub_connect_device"]) expect(names).not.toContain(name);
+      for (const name of ["hub_integration_connect", "hub_plugin_setup", "hub_brain_login", "hub_connect_device"]) expect(names).not.toContain(name);
+      // Any agent asks the person for a key its work needs: the card puts it straight into the vault.
+      expect(names).toContain("hub_secret_request");
     } finally {
       hub.settings.update({ defaultAgent: original });
     }

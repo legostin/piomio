@@ -203,6 +203,7 @@ export default {
 
   // machines
   "machines.execApproval": "Run on {machine}: {command}",
+  "vaultExec.approval": "Run with secrets from the vault ({env}): {command}",
   "machines.revokeApproval": "Disconnect the computer {machine} from Piomio",
   "agents.folderApproval": "Open the folder {path} on {computer} as the project “{name}”: the agent reads and writes it without asking",
   "agents.folderApprovalFor": "Open the folder {path} on {computer} to {agent} as the project “{name}”: it reads and writes it without asking",

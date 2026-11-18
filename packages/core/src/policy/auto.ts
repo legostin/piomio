@@ -87,6 +87,11 @@ export function alwaysPerson(a: AutoAction): string | undefined {
     const what = publishingCommand(str("command"));
     return what ? `publishing: ${what}` : undefined;
   }
+  // A command given secrets from the vault (tools/vault-exec.ts) publishes as the brain's own command does.
+  if (a.tool === "vault_exec") {
+    const what = publishingCommand(str("command"));
+    if (what) return `publishing: ${what}`;
+  }
   // A read (a web address after outside content, policy/egress.ts) pays and sends nothing itself: the reviewer judges it.
   if (a.kind !== "tool" || a.effect === "read") return undefined;
   if (i.amount !== undefined && i.amount !== null) return "money";
@@ -127,6 +132,7 @@ ALLOW otherwise, in particular:
 - reading files and the web (GET requests whose address holds nothing of the person's, git fetch, API reads), searching, following links to read what the person asked about;
 - installing what a project declares (npm ci, pip install -r), running its tests, builds and scripts;
 - git commits and branches, and pushing a working branch that is not main or master;
+- a command given secrets from the person's vault by reference (vault_exec, env names with vault://…): the values never reach the agent, so that is not reading credentials. Judge the command itself, and block one that would print, store or send a secret anywhere but the service it is for;
 - what the person plainly asked for.`;
 
 /** The reviewer's prompt for one action (English: it is for the model). */

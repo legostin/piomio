@@ -70,6 +70,8 @@ export const HUB_TOOLS_FOR_EVERY_AGENT = [
   "hub_skills_list",
   "hub_skill_assign",
   "hub_network_request",
+  // A key or token its work needs: any agent asks the person itself, on the card that puts it straight into the vault.
+  "hub_secret_request",
   // What an agent can reach and whether it works: every agent asks about its own (and may answer about another's).
   "hub_access",
   // Where the person keeps their projects is said to the agent that works on them.
@@ -1293,7 +1295,8 @@ export function registerHubTools(hub: Hub): void {
         "Ask the user for a secret (API key, token, password) with a secure input card in this chat. The value goes straight into the vault; " +
         "you only ever get vault://<vault>. Use it whenever something needs a secret: never ask the user to paste secrets as a message or to open another app for it. " +
         "To sign in to a website, ask for its login: pass login { domain, username? }; the card takes the username and the password, keeps them for that site only, " +
-        "and browser_fill_secret types them there. For a plugin's own secrets prefer hub_plugin_setup. Waits a little for the user; if they take longer you get a system note once it is saved.",
+        "and browser_fill_secret types them there. A command that needs the secret takes it by reference (vault_exec). For a plugin's own secrets prefer hub_plugin_setup " +
+        "(plugin and setting are the default agent's to pass). Waits a little for the user; if they take longer you get a system note once it is saved.",
       inputSchema: obj(
         {
           vault: { type: "string", description: "Vault item id to store it under, e.g. github_token (letters, digits, _ . -); for a login it defaults to login-<domain>" },
@@ -1318,6 +1321,10 @@ export function registerHubTools(hub: Hub): void {
       if (login && !domain) return text(`"${login.domain}" is not a website's domain: pass one like x.com.`, true);
       const vaultId = String(i.vault ?? "").trim() || (domain ? `login-${domain}` : "");
       if (!vaultId) return text("Pass vault: the id to store the secret under.", true);
+      // Pointing a plugin's setting at a secret changes the hub's setup: that stays with the default agent.
+      if ((i.plugin || i.setting) && ctx.agentId !== hub.settings.get().defaultAgent) {
+        return text("Only the default agent sets up a plugin's secrets: ask for the secret without plugin and setting, and use it by its vault:// reference.", true);
+      }
       const req = hub.secrets.create({
         vaultId,
         login,
