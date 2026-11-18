@@ -50,7 +50,8 @@ held a vault secret; each hop is checked like the first address.
   characters. Bodies are kept up to 512 KB each (a binary response: its type and size only); the newest 5000 rows stay.
   Filters: text, host, method, status (`200`, `4xx`, `error`), since, who.
 - `saved.ts`: saved requests and environments in `ctx.storage` (replicated with the hub's data), names unique without
-  case.
+  case. In a tainted session `http_get` also refuses `url` together with `saved`, and a `{{variable}}` or a `vault://`
+  reference written into the address: only a saved request may hold those there.
 - `curl.ts`: a request as a curl command, and a pasted curl command as a request.
 - `client.ts`: what both the tools and the page call: resolve a saved request, fill variables and secrets, send, redact,
   write the history, tell the open pages (`ctx.ui.emit("changed")`).
@@ -70,7 +71,7 @@ A result for the model: the status line, time, size, type and the history id; th
 pretty-printed, cut at `maxChars` (20 000 by default) with how to read on.
 
 The page's routes (never public): `GET /state`, `GET /history`, `GET|DELETE /history/:id`, `DELETE /history`,
-`POST /send`, `POST|PUT|DELETE /requests[/:id]`, `POST|PUT|DELETE /environments[/:id]`, `PUT /active-env`,
+`POST /send`, `POST|PUT|DELETE /requests[/:id]`, `POST|PUT|DELETE /environments[/:id]`, `PUT /active-environment`,
 `POST /curl/parse`, `POST /curl/format`.
 
 `ui/src/`: `index.tsx` (route, sidebar link, the `response` card), `HttpPage.tsx` (the list on the left: search, History
@@ -81,8 +82,9 @@ field becomes the request. Everything the page does, the tools do.
 
 ## Errors
 
-A refused address, a timeout, a DNS or TLS failure is an entry in the history too (`error` instead of a status), and an
-`isError` result that says what to do. A missing vault item names the item and never the value. The page shows errors in
+A refused address, a timeout, a DNS or TLS failure is an entry in the history too (`error` instead of a status, with a
+code: `local` for this computer, `lan` for a host of the person's network not yet allowed, `timeout`, `network`,
+`invalid`), and an `isError` result that says what to do. A missing vault item names the item and never the value. The page shows errors in
 the person's language (`error.*` in the locales).
 
 ## Tests
