@@ -87,15 +87,20 @@ function TileView({ tile, state, showProject, onOpen, onDragStart, onDragEnd }: 
           )}
           {tile.external && (
             <span title={`${tile.external.source} ${tile.external.id}`}>
-              <Icon name="link" size={12} /> {tile.external.id}
+              <Icon name="link" size={12} /> <span className="kb-clip">{tile.external.id}</span>
             </span>
           )}
           {tile.labels.slice(0, 3).map((l) => (
-            <span key={l} className="kb-label">
+            <span key={l} className="kb-label kb-clip" title={l}>
               {l}
             </span>
           ))}
-          {showProject && <span className="kb-muted">{state.projects.find((p) => p.id === tile.projectId)?.name}</span>}
+          {tile.labels.length > 3 && (
+            <span className="kb-label" title={tile.labels.slice(3).join(", ")}>
+              +{tile.labels.length - 3}
+            </span>
+          )}
+          {showProject && <span className="kb-muted kb-clip">{state.projects.find((p) => p.id === tile.projectId)?.name}</span>}
         </div>
       )}
     </div>
