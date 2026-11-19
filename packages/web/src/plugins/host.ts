@@ -8,6 +8,7 @@ import { navigate } from "wouter/use-browser-location";
 import { api, request, type Method } from "../lib/api";
 import { createStore, useStore } from "../lib/store";
 import { hubEvents, refreshBootstrap, sendToHub, session, type UiPluginEntry } from "../state/app";
+import { chatOnScreen } from "../state/chat-on-screen";
 import { toast } from "../state/toast";
 import { formatDate, formatNumber, locale, t } from "../i18n";
 import { addCommand, addContribution, addLiveView, addMapApp, addRoute, addSettings, addStatus, addWidget, normalizePath, removePlugin } from "./registry";
@@ -63,6 +64,7 @@ export function createPiomioUI(pluginId: string, messages: Catalog = {}): Piomio
     liveView: { register: (c) => addLiveView(pluginId, c) },
     maps: { addApp: (a) => addMapApp(pluginId, a) },
     widgets: { add: (kind, component) => addWidget(pluginId, kind, component as ComponentType<any>) },
+    chat: { current: chatOnScreen },
     toast: (text, kind) => toast(text, kind ?? "info"),
     navigate: (path) => navigate(path),
     api,

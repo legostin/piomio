@@ -3,6 +3,7 @@
 import { useStore } from "../../lib/store";
 import { conversations, groups, session, useSelector } from "../../state/app";
 import { SetupGate } from "../../components/BrainSetupCard";
+import { useChatOnScreen } from "../../state/chat-on-screen";
 import { useReadMarker } from "./AgentPage";
 import { ChatView } from "./ChatView";
 import { GroupArchivedBar } from "./GroupMenu";
@@ -16,6 +17,7 @@ export function ChatPage({ conversationId }: { conversationId?: string }) {
   // In the archive nobody writes there: the bar brings it back instead of the composer.
   const archived = useSelector(groups, (list) => list?.find((g) => g.conversationId === id && g.archived));
   useReadMarker(conv?.kind === "group" ? id : undefined, unread);
+  useChatOnScreen(id);
   if (!s || !id) return null;
   return (
     <ChatView

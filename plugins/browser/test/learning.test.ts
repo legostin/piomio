@@ -14,6 +14,7 @@ function setup(o: { remember?: boolean } = {}) {
     core: {
       call: async (method: string, params: any) => {
         calls.push({ method, params });
+        if (method === "agents.list") return TEAM;
         return method === "speech.transcribe" ? { available: false } : {};
       },
     },
@@ -56,6 +57,13 @@ function setup(o: { remember?: boolean } = {}) {
 }
 
 const ORDER = ["Вода 19 л", "В корзину", "Оформить заказ", "Подтвердить"];
+
+/** The team as the hub lists it: Marta uses the browser, the painter only its own app. */
+const TEAM = [
+  { id: "assistant", name: "Assistant", tools: ["*"] },
+  { id: "marta", name: "Marta", tools: ["web_*", "browser_*", "memory_*"] },
+  { id: "painter", name: "Painter", tools: ["blender_*"] },
+];
 
 describe("learning from takeovers", () => {
   it("gives what the person did to the agent that was just working, as a hint", async () => {
@@ -120,5 +128,43 @@ describe("learning from takeovers", () => {
     await learning.finish("cancel");
     expect(learning.journal.list()).toEqual([]);
     expect(calls.find((c) => c.method === "conversations.tell")?.params.text).toContain("cancelled the demonstration");
+  });
+
+  it("teaches the agent whose chat is open when the person presses Teach in the live view", async () => {
+    const { learning, calls } = setup();
+    await learning.startByPerson("marta");
+    // The live view shows whose lesson it is.
+    expect(learning.learner).toBe("marta");
+    await learning.finish("done");
+    const told = calls.find((c) => c.method === "conversations.tell");
+    // Marta's own dialog: the skill she saves from it is hers.
+    expect(told?.params).toMatchObject({ agentId: "marta" });
+    expect(told?.params.conversationId).toBeUndefined();
+    expect(told?.params.text).toContain("The person finished showing you something in the browser");
+    expect(told?.params.text).toContain("you did not ask for it");
+    expect(told?.params.text).toContain("first ask in one short question what this was for");
+    expect(learning.journal.all()[0]).toMatchObject({ kind: "teach", agentId: "marta" });
+    expect(learning.learner).toBeUndefined();
+  });
+
+  it("leaves Teach with the default agent when no agent's chat is open, or its agent cannot use the browser", async () => {
+    for (const open of [undefined, "painter", "nobody", 7]) {
+      const { learning, calls } = setup();
+      await learning.startByPerson(open);
+      expect(learning.learner).toBeUndefined();
+      await learning.finish("done");
+      const told = calls.find((c) => c.method === "conversations.tell");
+      expect(told?.params.agentId).toBeUndefined();
+      expect(told?.params.conversationId).toBeUndefined();
+      expect(told?.params.text).toContain("showing an agent (from the browser's Teach button, so you were not asked)");
+    }
+  });
+
+  it("says nothing when the person cancels a lesson they started themselves", async () => {
+    const { learning, calls } = setup();
+    await learning.startByPerson("marta");
+    await learning.finish("cancel");
+    expect(learning.journal.list()).toEqual([]);
+    expect(calls.filter((c) => c.method === "conversations.tell")).toEqual([]);
   });
 });

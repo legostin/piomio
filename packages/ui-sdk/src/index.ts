@@ -174,6 +174,13 @@ export interface PluginChannel {
   on(channel: string, cb: (payload: any) => void): () => void;
 }
 
+/** The chat on the person's screen. */
+export interface ChatOnScreen {
+  conversationId: string;
+  /** The agent whose own dialog this is (not set in a group chat, a task's chat or a setup chat, or for an archived agent). */
+  agentId?: string;
+}
+
 export interface PiomioUI {
   pluginId: string;
   slots: {
@@ -195,6 +202,8 @@ export interface PiomioUI {
   maps: { addApp(app: MapAppContribution): () => void };
   /** Draw this plugin's chat cards: `kind` as in contributes.widgets and ctx.widgets.show. */
   widgets: { add<D = any>(kind: string, component: ComponentType<WidgetProps<D>>): () => void };
+  /** The chat the person is looking at now (a live view open over it stays on top of it); undefined on other pages. */
+  chat: { current(): ChatOnScreen | undefined };
   toast(text: string, kind?: "info" | "success" | "error"): void;
   /** Navigate inside the SPA. */
   navigate(path: string): void;
