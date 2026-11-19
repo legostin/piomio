@@ -154,7 +154,10 @@ export class Learning {
   /** `id` when it is an agent of the team that may use this plugin's tools. */
   private async browserAgent(id: unknown): Promise<string | undefined> {
     if (typeof id !== "string" || !id) return undefined;
-    const team = await this.h.ctx.core.call<Array<{ id: string; tools?: string[] }>>("agents.list", {}).catch(() => []);
+    const team = await this.h.ctx.core.call<Array<{ id: string; tools?: string[] }>>("agents.list", {}).catch((e) => {
+      this.h.ctx.log.warn(`the team is not known, so the lesson is the default agent's: ${e?.message ?? e}`);
+      return [];
+    });
     const agent = (Array.isArray(team) ? team : []).find((a) => a.id === id);
     if (!agent) return undefined;
     // An agent's tools are name globs; none listed means all (as the hub reads them).
