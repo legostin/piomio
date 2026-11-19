@@ -113,6 +113,29 @@ describe("a task's thread as lines", () => {
     expect(threadLines([thread[0]])).toEqual({ lines: [], total: 0, from: 1 });
   });
 
+  it("keeps what the task told and asked its starter, in its own words", () => {
+    const told = [
+      thread[0],
+      msg("assistant", [
+        { type: "tool_call", id: "a", name: "mcp__piomio__task_tell", input: { text: "found the cause,\nfixing it" } },
+        { type: "tool_result", id: "a", output: "Noted" },
+        { type: "tool_call", id: "b", name: "task_tell", input: { message: "half done" } },
+        { type: "tool_call", id: "c", name: "task_ask", input: { question: "Which branch?" } },
+        // A call that did not go through said nothing.
+        { type: "tool_call", id: "d", name: "task_tell", input: { text: "never sent" } },
+        { type: "tool_result", id: "d", output: "refused", isError: true },
+        { type: "tool_call", id: "e", name: "task_tell", input: {} },
+      ]),
+    ];
+    expect(threadLines(told).lines).toEqual([
+      "Told its starter: found the cause, fixing it",
+      "Told its starter: half done",
+      "Asked its starter: Which branch?",
+      "→ tool: task_tell (failed)",
+      "→ tool: task_tell",
+    ]);
+  });
+
   it("names a turn's step in a few words", () => {
     expect(stepLine({ step: "command", detail: "npm test" })).toBe("command: npm test");
     expect(stepLine({ step: "thinking" })).toBe("thinking");
@@ -170,6 +193,10 @@ describe("talking to a task's thread (integration)", () => {
     await until(() => notes(main, `Task ${id} “Halfway” is finished.`), "the result in the dialog");
     expect(await notes(main, "replies:")).toBe(0);
     await idle(main);
+    // The update stays readable in the thread after later ones replace it on the task's line.
+    await say(main, `CALL task_status {"taskId":"${id}"}`);
+    await idle(main);
+    expect(await lastAnswer(main)).toContain("Told its starter: halfway there");
   });
 
   it("delivers a task's answer to its starter at once when they wrote to it", async () => {

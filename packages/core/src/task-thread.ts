@@ -22,6 +22,22 @@ export function stepLine(work: Pick<MachineWork, "step" | "detail">): string {
 }
 
 /**
+ * What the task said to whoever started it through a tool (task_tell, task_ask), in its own words: the header of
+ * task_status keeps only the latest update, so the earlier ones are read here.
+ */
+function wordsToStarter(name: string, input: unknown): string | undefined {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const said = (v: unknown) => (typeof v === "string" && flat(v) ? flat(v) : undefined);
+  const tool = name.replace(/^mcp__piomio__/, "");
+  if (tool === "task_tell") {
+    const text = said(i.text) ?? said(i.message) ?? said(i.note);
+    return text ? `Told its starter: ${text}` : undefined;
+  }
+  if (tool === "task_ask") return said(i.question) ? `Asked its starter: ${said(i.question)}` : undefined;
+  return undefined;
+}
+
+/**
  * The thread's entries, oldest first: the newest `last` of them after leaving out the `skip` newest (to read further
  * back). `total` counts them all, `from` is the place of the first one returned (1 is the oldest). The first message,
  * the task's goal, is left out: task_status prints the goal itself.
@@ -39,8 +55,9 @@ export function threadLines(messages: Message[], o: { last?: number; skip?: numb
         else if (m.role === "system") line = said.replace(/^\[System\] /, "");
         else line = m.agentId ? `${m.agentId} writes: ${said}` : `The user: ${said}`;
       } else if (p.type === "tool_call") {
+        const told = wordsToStarter(p.name, p.input);
         const detail = detailOfTool(p.name, p.input);
-        line = `→ ${stepOfTool(p.name)}${detail ? `: ${detail}` : ""}${failed.has(p.id) ? " (failed)" : ""}`;
+        line = told && !failed.has(p.id) ? told : `→ ${stepOfTool(p.name)}${detail ? `: ${detail}` : ""}${failed.has(p.id) ? " (failed)" : ""}`;
       } else if (p.type === "error") line = `Error: ${flat(p.message)}`;
       else if (p.type === "approval") line = `Approval “${flat(p.summary)}”: ${p.status}`;
       else if (p.type === "attachment") line = `File: ${p.name}`;
