@@ -24,7 +24,8 @@ const used = new Map<string, string[]>();
 /** Sessions the hub got ready ahead of a turn (warm). */
 const warmed = new Set<string>();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const lastLine = (text: string) => text.trim().split("\n").at(-1) ?? "";
+/** The hub's hint under a starter's message to a task ("(If they ask you something, …)") is not the message. */
+const lastLine = (text: string) => text.replace(/\n\(If they ask you something[^\n]*\)\s*$/, "").trim().split("\n").at(-1) ?? "";
 
 async function mcpCall(o: BrainSessionOptions, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
   const r = await fetch(o.mcp.url, {

@@ -29,7 +29,7 @@ describe("task placement storage and constraints", () => {
     const old = openDb(file);
     const store = new Store(old, new EventBus());
     const task = store.createTask({ agentId: "legost", title: "Traffic", goal: "report", background: false, createdBy: "agent", brainRef: "claude-code@local", thinking: { brain: "codex", preset: "deep" } });
-    old.exec("alter table tasks drop column rule; alter table tasks drop column machine_id; drop index messages_conv_changed; alter table messages drop column updated_at; alter table replicas drop column machine_id; update schema_version set v = v - 6;");
+    old.exec("alter table tasks drop column progress; alter table tasks drop column progress_at; alter table tasks drop column owes_reply; alter table tasks drop column rule; alter table tasks drop column machine_id; drop index messages_conv_changed; alter table messages drop column updated_at; alter table replicas drop column machine_id; update schema_version set v = v - 7;");
     old.close();
     const db = openDb(file);
     const migrated = new Store(db, new EventBus());

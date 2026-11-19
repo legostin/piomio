@@ -546,6 +546,7 @@ export default {
   "task.requeued": "Task queued",
   "task.createdAt": "created {time}",
   "task.question": "Asks",
+  "task.progress": "Latest update",
   "task.goal": "Goal",
   "task.result": "Result",
   "task.expand": "More",
