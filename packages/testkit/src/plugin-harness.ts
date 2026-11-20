@@ -254,6 +254,8 @@ export async function startPlugin(o: HarnessOptions): Promise<PluginHarness> {
     [...kv.entries()].filter(([k]) => k.startsWith(p.prefix ?? "")).map(([key, value]) => ({ key, value })),
   );
   peer.handle("core.call", async (p: { method: string; params: any }) => {
+    // As the hub does (core/src/plugins/host.ts): a method the manifest does not ask for is refused.
+    if (!layout.manifest.permissions.core.includes(p.method as never)) throw new Error(`permission denied: core method ${p.method} not in permissions.core`);
     coreCalls.push(p);
     if (!o.core) return {};
     return (await o.core(p.method, p.params)) ?? {};

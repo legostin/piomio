@@ -214,7 +214,8 @@ export function createCoreCall(hub: Hub) {
         };
       }
       case "agents.list":
-        return hub.agents.list().map((a) => ({ id: a.id, name: agentName(a, hubLocale()), description: a.description, initiative: a.initiative }));
+        // tools (name globs): a plugin tells from them who can work with its own tools.
+        return hub.agents.list().map((a) => ({ id: a.id, name: agentName(a, hubLocale()), description: a.description, initiative: a.initiative, tools: a.tools }));
       case "ui.emit":
         hub.bus.emit("plugin.event", { pluginId, channel: String(p.channel ?? "default"), payload: hub.vault.redactor.value(p.payload) });
         return {};
