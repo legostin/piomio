@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import type { PluginContext } from "@piomio/plugin-sdk";
 import { ClientError } from "./errors.ts";
+import { formEncode } from "./vars.ts";
 import { BODY_TYPES, METHODS, type BodyType, type Environment, type Method, type Pair, type RequestSpec, type SavedRequest } from "./types.ts";
 
 type Storage = PluginContext["storage"];
@@ -61,9 +62,10 @@ export function cleanSpec(raw: unknown, base?: RequestSpec): RequestSpec {
   if (r.body !== undefined && r.body !== null) {
     if (typeof r.body === "string") body = r.body;
     else if (bodyType === "form" && typeof r.body === "object" && !Array.isArray(r.body)) {
-      const form = new URLSearchParams();
-      for (const [k, v] of Object.entries(r.body)) form.append(k, typeof v === "string" ? v : JSON.stringify(v));
-      body = form.toString();
+      // {{variables}} and vault references stay as written: they are filled in, and encoded, when the request leaves.
+      body = Object.entries(r.body)
+        .map(([k, v]) => `${formEncode(k)}=${formEncode(typeof v === "string" ? v : JSON.stringify(v))}`)
+        .join("&");
     } else {
       body = JSON.stringify(r.body, null, 2);
       bodyType ??= "json";

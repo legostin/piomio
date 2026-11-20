@@ -371,8 +371,47 @@ describe("variables and secrets", () => {
     expect((await history()).entries).toHaveLength(0);
   });
 
+  it("writes a value as its place needs it: escaped in a JSON string, encoded in a form", async () => {
+    const tricky = 'q"uo\\te\nline & more';
+    const { h, entry, idOf } = await open({ vault: { tricky: { value: tricky }, plain: { value: "s3cr3t-token" } } });
+    await h.invoke("save", { kind: "environment", name: "Env", vars: { name: 'Ann "the" B&B', count: "3", ref: "vault://plain" }, active: true });
+
+    // An object body: a secret or a variable lands inside a JSON string, and the JSON stays what it was.
+    const json = await h.invokeText("send", { url: `${a.base}/echo`, body: { password: "vault://tricky", name: "{{name}}", ref: "{{ref}}" } });
+    expect(JSON.parse(a.seen[0].body)).toEqual({ password: tricky, name: 'Ann "the" B&B', ref: "s3cr3t-token" });
+    // The echo holds the body as a string inside JSON, so the secret comes back escaped twice: still cut.
+    expect(json).not.toContain("uo\\");
+    expect(json).not.toContain("s3cr3t-token");
+    const e = await entry(idOf(json));
+    expect(e.response!.body).not.toContain("uo\\");
+    expect(e.request.body).toContain('"password": "vault://tricky"');
+
+    // A body typed as text: outside a string a variable goes in as it is (a number), inside one it is escaped.
+    await h.invoke("send", { url: `${a.base}/echo`, method: "POST", bodyType: "json", body: '{"n": {{count}}, "who": "{{name}}", "note": "a \\"quoted\\" {{count}}"}' });
+    expect(JSON.parse(a.seen[1].body)).toEqual({ n: 3, who: 'Ann "the" B&B', note: 'a "quoted" 3' });
+
+    // Form fields from an object, and a form body typed by hand: references are read, values encoded.
+    await h.invoke("send", { url: `${a.base}/echo`, bodyType: "form", body: { user: "{{name}}", password: "vault://tricky", token: "{{ref}}", "a b": "c&d" } });
+    expect(Object.fromEntries(new URLSearchParams(a.seen[2].body))).toEqual({ user: 'Ann "the" B&B', password: tricky, token: "s3cr3t-token", "a b": "c&d" });
+    expect(a.seen[2].body).not.toContain("vault");
+    await h.http({ method: "POST", path: "/send", body: { request: { method: "POST", url: `${a.base}/echo`, bodyType: "form", body: "user={{name}}&password=vault://tricky&fixed=1" } } });
+    expect(Object.fromEntries(new URLSearchParams(a.seen[3].body))).toEqual({ user: 'Ann "the" B&B', password: tricky, fixed: "1" });
+
+    // A header and a text body take the value as it is.
+    await h.invoke("send", { url: `${a.base}/echo`, method: "POST", bodyType: "text", body: "hello {{name}}", headers: { "X-Name": "{{count}}-vault://plain" } });
+    expect(a.seen[4].body).toBe('hello Ann "the" B&B');
+    expect(a.seen[4].headers["x-name"]).toBe("3-s3cr3t-token");
+  });
+
   it("cuts secrets however they come back", () => {
-    expect(redact("key=p%40ss%20w0rd and p@ss w0rd", ["p@ss w0rd"])).toBe("key=*** and ***");
+    expect(redact("key=p%40ss%20w0rd and p@ss w0rd or p%40ss+w0rd", ["p@ss w0rd"])).toBe("key=*** and *** or ***");
+    const secret = 'q"uo\\te/пароль';
+    expect(redact(JSON.stringify({ authorization: `Bearer ${secret}` }), [secret])).toBe('{"authorization":"Bearer ***"}');
+    expect(redact(JSON.stringify({ data: JSON.stringify({ password: secret }) }), [secret])).toBe('{"data":"{\\"password\\":\\"***\\"}"}');
+    // As PHP writes JSON (slashes escaped) and as Python does (nothing but ASCII).
+    expect(redact('{"a":"q\\"uo\\\\te\\/пароль"}', [secret])).toBe('{"a":"***"}');
+    expect(redact('{"a":"q\\"uo\\\\te/\\u043f\\u0430\\u0440\\u043e\\u043b\\u044c"}', [secret])).toBe('{"a":"***"}');
+    expect(redact("nothing here", ["abc"])).toBe("nothing here");
   });
 });
 

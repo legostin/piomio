@@ -42,7 +42,9 @@ held a vault secret; each hop is checked like the first address.
 - `net.ts`: which addresses are open (public; the person's own network when the hub's proxy decides; never this
   computer), with an injectable DNS lookup.
 - `vars.ts`: `{{name}}` from the call's `vars`, then the environment; `vault://` references resolved through
-  `ctx.vault.get(ref, { domain: host })`; the list of secrets put in, for redaction.
+  `ctx.vault.get(ref, { domain: host })`; the list of secrets put in, for redaction. A value is written as its place
+  needs it: escaped inside a JSON string, percent-encoded in a form body and in a query, as it is elsewhere. Redaction
+  cuts a secret however it comes back: plain, percent-encoded, or JSON-escaped once or twice.
 - `send.ts`: one request: builds it, follows up to 5 redirects by hand, 30 s by default (120 s at most), reads up to
   5 MB, decodes text by charset, tells text from binary, measures time.
 - `history.ts`: SQLite (`node:sqlite`) in the plugin's data folder: a row per request and an FTS5 trigram index over
