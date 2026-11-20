@@ -140,9 +140,10 @@ Agents are meant to feel like people who know where and when they are. Each turn
 - who it is, which brain, model and effort it thinks with, and which computer it runs on;
 - the local time: a `[Now: …]` line, refreshed at most every 10 minutes;
 - a `[You now]` block whenever something changed: this conversation, its other work, what each teammate is busy with, which computers are online and where you are;
-- in its dialog, the tasks it started that are still open.
+- in its dialog, the tasks it started that are still open;
+- when a teammate writes to it or hands it a task, a `[Your recent work]` block: what it lately said in its dialog with you and the tasks it finished.
 
-Its dialog, its tasks and its messages with teammates are all the same agent, so it can say what else it is busy with.
+Its dialog, its tasks and its messages with teammates are all the same agent, so it can say what else it is busy with, and a teammate who asks about something it did with you gets an answer from that work, not "I don't know". For anything older it looks into its own dialog and tasks by itself.
 
 Where you are comes from the iPhone app when you turn on sharing your location on its **Hub** tab (see [The iPhone app](phone.md)). The hub keeps only your last place and forgets it when you turn sharing off.
 

@@ -154,9 +154,13 @@ export class Store {
    * per-agent dialogs (id "main") stays with the agent it belongs to, so its history carries on.
    */
   agentConversation(agentId: string): Conversation {
+    return this.agentDialog(agentId) ?? this.createConversation({ kind: "main", title: agentId, agentId });
+  }
+
+  /** The agent's dialog with the user when it has one already: looking at it makes none. */
+  agentDialog(agentId: string): Conversation | undefined {
     const r = this.db.prepare("select * from conversations where kind = 'main' and agent_id = ? order by created_at limit 1").get(agentId);
-    if (r) return convFrom(r);
-    return this.createConversation({ kind: "main", title: agentId, agentId });
+    return r ? convFrom(r) : undefined;
   }
 
   listConversations(limit = 100): Conversation[] {

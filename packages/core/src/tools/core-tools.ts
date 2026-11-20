@@ -18,6 +18,7 @@ import type { RoadRoute } from "../routing.ts";
 import type { UserLocation } from "../user-location.ts";
 import { ruleLine, type WorkRules } from "../work-rules.ts";
 import { THREAD_LAST, THREAD_LAST_MAX } from "../task-thread.ts";
+import { RECALL_DEFAULT, RECALL_MAX } from "../own-work.ts";
 
 export interface CoreToolDeps {
   registry: ToolRegistry;
@@ -69,6 +70,8 @@ export interface TaskLine {
   tell(taskId: string, text: string): Promise<{ ok: boolean; text: string }>;
   /** task_status: how a task stands and, for whoever may direct it, the tail of its thread; `taint` when it read outside content. */
   look(taskId: string, from: TaskSender, o: { last?: number; skip?: number }): { ok: boolean; text: string; taint?: boolean };
+  /** self_recall: the agent's own dialog with the user and its finished tasks, the latest or what mentions `query`; `taint` when that read outside content. */
+  recall(agentId: string, o: { query?: string; limit?: number }): { text: string; taint?: boolean };
   cancel(taskId: string, from: TaskSender): { ok: boolean; text: string };
   computers(): Array<{ id: string; name: string; online: boolean; gpus?: string[] }>;
   /** team_message: write to a teammate (a thread on the side; the reply comes back like a task's result). */
@@ -690,6 +693,31 @@ export function registerCoreTools(d: CoreToolDeps): void {
       const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : undefined);
       const r = d.tasks.look(String(i.taskId), { agentId: ctx.agentId, conversationId: ctx.conversationId, taskId: ctx.taskId }, { last: num(i.last), skip: num(i.skip) });
       const out = text(r.text, !r.ok);
+      return r.taint ? { ...out, _meta: { taint: true } } : out;
+    },
+  );
+
+  reg(
+    {
+      name: "self_recall",
+      description:
+        "Look into your own other sessions, which are all you: your dialog with the user and the tasks you finished. Without `query`, the latest of both; " +
+        "with it, the messages and tasks that mention those words, newest first. Use it whenever somebody (a teammate, the user, a task's starter) asks about " +
+        "something you may have said, heard or done elsewhere and this session does not show it: look before you say you do not know. " +
+        "task_status then shows a task whole; memory_search and library_find look through what you saved and the files you exchanged.",
+      effect: "read",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "One to three words to look for, in the language they were written in (empty: the latest)" },
+          limit: { type: "integer", minimum: 1, maximum: RECALL_MAX, description: `How many messages and tasks at most (default ${RECALL_DEFAULT})` },
+        },
+      },
+    },
+    (i, ctx) => {
+      const limit = typeof i.limit === "number" && Number.isFinite(i.limit) ? i.limit : undefined;
+      const r = d.tasks.recall(ctx.agentId, { ...(typeof i.query === "string" && i.query.trim() ? { query: i.query } : {}), ...(limit ? { limit } : {}) });
+      const out = text(r.text);
       return r.taint ? { ...out, _meta: { taint: true } } : out;
     },
   );
