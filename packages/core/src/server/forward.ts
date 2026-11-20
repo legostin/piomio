@@ -186,6 +186,11 @@ export function canPipeToLeader(hub: Hub, app: LinkApp = "device"): boolean {
 export function pipeToLeader(hub: Hub, socket: WebSocket, req: FastifyRequest, app: LinkApp = "device", session?: AuthSession): boolean {
   if (!canPipeToLeader(hub, app)) return false;
   const target = hub.cluster.leaderTarget()!;
+  // Passed on to this leader only: when the lead is elsewhere (here, too), the socket reconnects (server/realtime.ts).
+  hub.realtime.relay(socket, () => {
+    const now = hub.cluster.leaderTarget();
+    return !now || (target.link ? now.link !== target.link : now.url !== target.url);
+  });
   const headers0: Record<string, string> = {};
   for (const k of ["authorization", "cookie", "user-agent", "accept-language"]) if (typeof req.headers[k] === "string") headers0[k] = req.headers[k] as string;
   if (target.link) {

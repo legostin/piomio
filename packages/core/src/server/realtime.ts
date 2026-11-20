@@ -2,6 +2,9 @@
 // gets. A socket only hears the replica it is attached to, so when the lead moves the sockets move too: a replica
 // that stops leading closes the ones it served (they reconnect and land on the new leader), and a standby that finds
 // its leader closes those it served while it had none.
+// A socket a standby passes on to the leader (server/forward.ts) hears only the replica it was passed to: once that one
+// no longer leads, the socket reconnects too. The other replica does not close it in every case: a window opened in the
+// second a starting replica still takes a peer that just stepped down for the leader stays attached to that peer.
 
 import WebSocket from "ws";
 
@@ -15,8 +18,15 @@ interface Served {
   relays: () => boolean;
 }
 
+interface Relayed {
+  socket: WebSocket;
+  /** True once the replica the socket was passed to is not the leader this replica would pass a socket to now. */
+  moved: () => boolean;
+}
+
 export class RealtimeSockets {
   private readonly served = new Set<Served>();
+  private readonly relayed = new Set<Relayed>();
 
   add(socket: WebSocket, relays: () => boolean): void {
     const s: Served = { socket, relays };
@@ -24,8 +34,19 @@ export class RealtimeSockets {
     socket.once("close", () => this.served.delete(s));
   }
 
+  /** A socket this replica passes on to the leader instead of serving it. */
+  relay(socket: WebSocket, moved: () => boolean): void {
+    const r: Relayed = { socket, moved };
+    this.relayed.add(r);
+    socket.once("close", () => this.relayed.delete(r));
+  }
+
   get size(): number {
     return this.served.size;
+  }
+
+  get relayedSize(): number {
+    return this.relayed.size;
   }
 
   /** This replica no longer leads: what it served reconnects, to the leader. */
@@ -33,15 +54,27 @@ export class RealtimeSockets {
     for (const s of [...this.served]) this.close(s);
   }
 
-  /** A standby that can reach its leader now: the sockets it served meanwhile reconnect, to the leader. */
+  /**
+   * The sockets that are in the wrong place now reconnect: those a standby served while it had no leader to pass them
+   * to, and those passed on to a replica that no longer leads (this one took the lead, or another did).
+   */
   closeMoved(): void {
     for (const s of [...this.served]) if (s.relays()) this.close(s);
+    for (const r of [...this.relayed]) {
+      if (!r.moved()) continue;
+      this.relayed.delete(r);
+      this.end(r.socket);
+    }
   }
 
   private close(s: Served): void {
     this.served.delete(s);
-    if (s.socket.readyState === WebSocket.OPEN) s.socket.close(MOVED, "hub moved");
-    else s.socket.terminate();
+    this.end(s.socket);
+  }
+
+  private end(socket: WebSocket): void {
+    if (socket.readyState === WebSocket.OPEN) socket.close(MOVED, "hub moved");
+    else socket.terminate();
   }
 }
 
