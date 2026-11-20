@@ -81,6 +81,7 @@
       "ui.emit",
       "files.deliver",
       "conversations.tell",
+      "agents.list",
       "speech.transcribe",
       "files.fetch"
     ],

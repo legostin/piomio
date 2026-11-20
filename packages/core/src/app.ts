@@ -616,6 +616,8 @@ export class Hub {
         ask: (taskId, question) => this.runner.askStarter(taskId, question),
         goal: (taskId, status, summary) => this.runner.reportGoal(taskId, status, summary),
         message: (taskId, text, from) => this.runner.messageTask(taskId, text, from),
+        tell: (taskId, text) => this.runner.tellFromTask(taskId, text),
+        look: (taskId, from, o) => this.runner.lookTask(taskId, from, o),
         cancel: (taskId, from) => this.runner.cancelTaskFrom(taskId, from),
         computers: () => this.runner.computers(),
         team: () => this.runner.teamNow(),

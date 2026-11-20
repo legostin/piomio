@@ -251,7 +251,7 @@ describe("agents as entry points (integration)", () => {
     await idle(c);
     const read = textOf((await messages(c)).filter((m) => m.role === "assistant").at(-1)!);
     expect(read).toContain("[Open tasks you started]");
-    expect(read).toMatch(/“Reopen me” — .+: working; the user added in its thread: also add a summary SLOW/);
+    expect(read).toMatch(/“Reopen me” — .+: working.*; the user added in its thread: also add a summary SLOW/);
 
     // More words while it works join it, and the report names all of them.
     await say(tc, "and a chart");
@@ -358,6 +358,10 @@ describe("agents as entry points (integration)", () => {
     const inTask = buildSystemPrompt({ ...base, task: { id: "t1", title: "x", createdBy: "agent" } as Task });
     expect(inTask).not.toContain("## How you work");
     expect(inTask).toContain("`task_ask`");
+    // A line both ways mid-work: the dialog looks into a task, the task says where it is and answers.
+    expect(dialog).toContain("look with `task_status`");
+    expect(inTask).toContain("say where you are with `task_tell`");
+    expect(inTask).toContain("answer with `task_tell`");
     expect(inTask).toContain("while continuing the original task");
     // An obstacle is a reason to try another way; the person's no is not one to work around.
     expect(inTask).toContain("Try two or three really different ways");

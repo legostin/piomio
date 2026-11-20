@@ -546,6 +546,7 @@ export default {
   "task.requeued": "Задача поставлена в очередь",
   "task.createdAt": "создана {time}",
   "task.question": "Спрашивает",
+  "task.progress": "Последняя заметка",
   "task.goal": "Цель",
   "task.result": "Результат",
   "task.expand": "Подробнее",

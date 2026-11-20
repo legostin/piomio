@@ -1028,8 +1028,8 @@ export class BrowserManager {
           this.ctx.ui.emit("probe", { id: m.id, seq: m.seq, editable: editable ?? null });
         });
       case "teach":
-        // The live view's Teach (for the default agent), Done and Cancel.
-        if (m.action === "start") return run(async () => void (await this.learning.start({ goal: "" })));
+        // The live view's Teach (for the agent whose chat the view says is open, else the default agent), Done and Cancel.
+        if (m.action === "start") return run(async () => void (await this.learning.startByPerson(m.agentId)));
         if (m.action === "done" || m.action === "cancel") return run(() => this.learning.finish(m.action));
         return;
       case "highlight":
@@ -1260,7 +1260,8 @@ export class BrowserManager {
     const activity = {
       running: !!this.context,
       busy: this.busy,
-      agentId: this.agentId,
+      // During a lesson: the agent being shown, so the person sees whose lesson it is.
+      agentId: this.learning.learner ?? this.agentId,
       url: this.activePage()?.url() ?? "",
       control: this.userControl ? "user" : "agent",
       // A demonstration needs the person: the live view pops up for it.

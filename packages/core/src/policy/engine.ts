@@ -40,7 +40,7 @@ export const SKILL_RUN_TOOLS = /^browser_/;
 /** Tools background tasks may always use regardless of effect. */
 // memory_remember, memory_write: the nightly reflection is a background task; a remembered or updated fact is local,
 // shown and undoable.
-export const BACKGROUND_ALWAYS_ALLOWED = ["notify", "task_status", "skill_load", "vault_list", "memory_search", "memory_read", "memory_list", "memory_remember", "memory_write", "feed_post", "feed_sources", "feed_update", "page_create", "page_update"];
+export const BACKGROUND_ALWAYS_ALLOWED = ["notify", "task_status", "task_tell", "skill_load", "vault_list", "memory_search", "memory_read", "memory_list", "memory_remember", "memory_write", "feed_post", "feed_sources", "feed_update", "page_create", "page_update"];
 
 function getField(input: unknown, path: string): unknown {
   let v: any = input;

@@ -29,7 +29,14 @@ function fakeHub(opts: { tasks?: Task[]; engine?: boolean; transcribe?: (file: s
   const tasks = new Map((opts.tasks ?? []).map((t) => [t.id, t]));
   f.hub = {
     settings: { get: () => ({ defaultAgent: "assistant" }) },
-    agents: { get: (id: string) => (["assistant", "coder"].includes(id) ? { id } : undefined), isArchived: () => false },
+    agents: {
+      get: (id: string) => (["assistant", "coder"].includes(id) ? { id } : undefined),
+      isArchived: () => false,
+      list: () => [
+        { id: "assistant", name: "Assistant", description: "Helps", initiative: 2, tools: ["*"] },
+        { id: "coder", name: "Coder", description: "Writes code", initiative: 1, tools: ["code_*", "browser_*"] },
+      ],
+    },
     skills: { get: (name: string) => (name === "order-water" ? { name, taught: true } : name === "make-integration" ? { name, taught: false } : undefined) },
     store: {
       getConversation: (id: string) => convs.get(id),
@@ -93,17 +100,30 @@ describe("core methods for plugins", () => {
     const call = createCoreCall(f.hub);
     expect(await call("browser", "conversations.tell", { conversationId: "c_other", text: "hint" })).toEqual({ conversationId: "c_other", delivered: "dialog" });
     expect(await call("browser", "conversations.tell", { text: "noticed a routine" })).toEqual({ conversationId: "c_dialog", delivered: "dialog" });
+    // An agent named: its dialog; one the hub does not know: the default agent's.
+    expect(await call("browser", "conversations.tell", { agentId: "coder", text: "a lesson" })).toEqual({ conversationId: "c_other", delivered: "dialog" });
+    expect(await call("browser", "conversations.tell", { agentId: "gone", text: "a lesson" })).toEqual({ conversationId: "c_dialog", delivered: "dialog" });
     // A task id that does not exist: the dialog.
     expect(await call("browser", "conversations.tell", { taskId: "t_missing", text: "recording" })).toEqual({ conversationId: "c_dialog", delivered: "dialog" });
     expect(await call("browser", "conversations.tell", { taskId: "t_gone", text: "late recording" })).toEqual({ conversationId: "c_other", delivered: "dialog" });
     expect(f.told).toEqual([
       { conversationId: "c_other", note: "hint", opts: { taint: true } },
       { conversationId: "c_dialog", note: "noticed a routine", opts: { taint: true } },
+      { conversationId: "c_other", note: "a lesson", opts: { taint: true } },
+      { conversationId: "c_dialog", note: "a lesson", opts: { taint: true } },
       { conversationId: "c_dialog", note: "recording", opts: { taint: true } },
       { conversationId: "c_other", note: "late recording", opts: { taint: true } },
     ]);
     await expect(call("browser", "conversations.tell", { conversationId: "c_nope", text: "x" })).rejects.toThrow(/conversation not found/);
     await expect(call("browser", "conversations.tell", { text: "  " })).rejects.toThrow(/text is required/);
+  });
+
+  it("agents.list says what each agent may use, so a plugin can tell who can work with its tools", async () => {
+    const list = (await createCoreCall(fakeHub().hub)("browser", "agents.list", {})) as Array<{ id: string; tools: string[] }>;
+    expect(list.map((a) => [a.id, a.tools])).toEqual([
+      ["assistant", ["*"]],
+      ["coder", ["code_*", "browser_*"]],
+    ]);
   });
 
   it("quick.ask puts one bare question to the hub's quick model, bounded in size and time", async () => {
