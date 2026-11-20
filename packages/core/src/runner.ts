@@ -1410,10 +1410,17 @@ export class SessionRunner {
     const words = truncate((opts.quote ?? text).trim(), ADDED_CHARS);
     if (cur.status === "cancelled") {
       if (!opts.fromUser) return "cancelled";
-      // Back in line: it starts, or goes on from where it was cut off, with the words waiting in its thread.
-      this.d.store.updateTask(cur.id, { status: "queued", resumeAt: undefined, error: undefined });
-      this.reopened(cur, words);
-      setImmediate(() => this.scheduleTasks());
+      const thread = this.d.store.getConversation(cur.conversationId);
+      if (!thread) return "cancelled";
+      // Back in line: it starts, or goes on from where it was cut off, with the words waiting in its thread. Not before
+      // the turn the cancel cut off has ended: its end would take a task back in line for one that just finished.
+      void this.enqueue(thread.id, async () => {
+        const now = this.d.store.getTask(cur.id);
+        if (now?.status !== "cancelled") return;
+        this.d.store.updateTask(now.id, { status: "queued", resumeAt: undefined, error: undefined });
+        this.reopened(now, words);
+        setImmediate(() => this.scheduleTasks());
+      });
       return "queued";
     }
     // Outside content stays marked in every session of the task from now on.

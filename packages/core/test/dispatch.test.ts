@@ -290,6 +290,22 @@ describe("agents as entry points (integration)", () => {
     await idle(c);
   });
 
+  it("takes a cancelled task up again though its cut-off turn is still ending", async () => {
+    for (const agentId of ["assistant", "plodder"]) {
+      const t = hub.runner.createTask({ agentId, title: `Cut off ${agentId}`, goal: "look around SLOW", background: false, createdBy: "user" });
+      await until(async () => (await messages(t.conversationId)).some((m) => m.role === "assistant" && textOf(m).includes("is thinking")), "the task at work");
+      // Written at once: the cancelled turn has not ended, and what it said so far is not the task's result.
+      hub.runner.cancelTask(t.id);
+      const m = await hub.runner.userMessage(t.conversationId, "go on anyway");
+      await until(async () => (await task(t.id)).status === "done", `${agentId}'s task to finish`);
+      await until(() => !hub.runner.isRunning(t.conversationId), "its turn to end");
+      const ms = await messages(t.conversationId);
+      expect(ms.find((x) => x.id === m.id)?.parts).toContainEqual({ type: "input_status", state: "started" });
+      expect(textOf(ms.filter((x) => x.role === "assistant").at(-1)!)).toMatch(/heard: go on anyway$/);
+      expect((await task(t.id)).result).toMatch(/heard: go on anyway$/);
+    }
+  });
+
   it("places a task on a computer, or says which computers there are", async () => {
     const c = (await web.req("GET", "/api/bootstrap")).mainConversationId as string;
     await idle(c);
