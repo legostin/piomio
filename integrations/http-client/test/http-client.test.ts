@@ -389,7 +389,9 @@ describe("the history", () => {
     expect(await ids({ q: "tomatoes" })).toEqual(["GET /json 200"]);
     expect(await ids({ q: "ОГУРЦЫ" })).toEqual(["POST /echo 200"]);
     expect(await ids({ q: "ignore previous" })).toEqual(["GET /json 200"]);
-    expect(await ids({ q: "status 40" })).toEqual(["GET /status 404"]);
+    // Whole words of the address: a bare "40" would also be in a port number or a Date header of another entry.
+    expect(await ids({ q: "status code=404" })).toEqual(["GET /status 404"]);
+    expect(await ids({ q: "code=404 code=503" })).toEqual([]);
     expect(await ids({ q: "no-such-thing" })).toEqual([]);
     expect(await ids({ method: "post" })).toEqual(["POST /echo 200"]);
     expect(await ids({ status: "4xx" })).toEqual(["GET /status 404"]);
