@@ -225,6 +225,87 @@ describe("agents as entry points (integration)", () => {
     expect(done.result).toContain("writes: use the second way");
   });
 
+  it("takes a finished task up again when the person writes in its thread, and its starter hears without a turn", async () => {
+    const c = (await web.req("GET", "/api/bootstrap")).mainConversationId as string;
+    await idle(c);
+    await say(c, `CALL task_delegate {"title":"Reopen me","goal":"do the thing"}`);
+    const id = await startedTask(c, "Reopen me");
+    const tc = (await task(id)).conversationId;
+    const notes = async () => (await messages(c)).filter((m) => m.role === "system" && m.taskId === id).map(textOf);
+    await until(async () => (await notes()).some((n) => n.startsWith(`[System] Task ${id} “Reopen me” is finished.`)), "the first result in the dialog");
+    await idle(c);
+    const replies = async () => (await messages(c)).filter((m) => m.role === "assistant").length;
+    const before = await replies();
+
+    await say(tc, "also add a summary SLOW");
+    await until(async () => (await task(id)).status === "running", "the task at work again");
+    // Its starter has the note, and no turn of its own for it.
+    const note = await until(async () => (await notes()).find((n) => n.includes("The user wrote in the thread of task")), "the note in the dialog");
+    expect(note).toContain(`task ${id} “Reopen me”`);
+    expect(note).toContain("also add a summary SLOW");
+    await sleep(300);
+    expect(hub.runner.isRunning(c)).toBe(false);
+    expect(await replies()).toBe(before);
+    // Its next turn, whatever it is about, shows the task open again with the person's words.
+    await say(c, "WHOLE?");
+    await idle(c);
+    const read = textOf((await messages(c)).filter((m) => m.role === "assistant").at(-1)!);
+    expect(read).toContain("[Open tasks you started]");
+    expect(read).toMatch(/“Reopen me” — .+: working.*; the user added in its thread: also add a summary SLOW/);
+
+    // More words while it works join it, and the report names all of them.
+    await say(tc, "and a chart");
+    await until(async () => (await task(id)).status === "done", "the task to finish again", 8000);
+    const again = await until(async () => (await notes()).find((n) => n.startsWith(`[System] Task ${id} “Reopen me” is finished again`)), "the second result in the dialog");
+    expect(again).toContain("also add a summary SLOW");
+    expect(again).toContain("and a chart");
+    expect(again).toMatch(/\nResult:\n.*fake also heard: and a chart/);
+    await idle(c);
+  });
+
+  it("takes a cancelled task up again for the person, not for an agent", async () => {
+    const c = (await web.req("GET", "/api/bootstrap")).mainConversationId as string;
+    await idle(c);
+    await say(c, `CALL task_delegate {"title":"Dropped","goal":"look around SLOW"}`);
+    const id = await startedTask(c, "Dropped");
+    const tc = (await task(id)).conversationId;
+    await until(async () => (await messages(tc)).some((m) => m.role === "assistant" && textOf(m).includes("fake is thinking")), "the task at work");
+    await idle(c);
+    await web.req("POST", `/api/tasks/${id}/cancel`, {});
+    expect((await task(id)).status).toBe("cancelled");
+    await until(() => !hub.runner.isRunning(tc), "the cancelled turn to end");
+
+    // The agent that started it starts a new one instead.
+    const refused = await hub.runner.messageTask(id, "go on", { agentId: "assistant", conversationId: c });
+    expect(refused.ok).toBe(false);
+    expect((await task(id)).status).toBe("cancelled");
+
+    await say(tc, "go on, but shorter");
+    await until(async () => (await task(id)).status === "done", "the task to finish");
+    const ms = await messages(tc);
+    expect(ms.find((m) => textOf(m) === "go on, but shorter")?.parts).toContainEqual({ type: "input_status", state: "started" });
+    expect(textOf(ms.filter((m) => m.role === "assistant").at(-1)!)).toBe("fake heard: go on, but shorter");
+    const told = await until(async () => (await messages(c)).map(textOf).find((n) => n.startsWith(`[System] Task ${id} “Dropped” is finished again`)), "the result in the dialog");
+    expect(told).toContain("go on, but shorter");
+    await idle(c);
+  });
+
+  it("takes a cancelled task up again though its cut-off turn is still ending", async () => {
+    for (const agentId of ["assistant", "plodder"]) {
+      const t = hub.runner.createTask({ agentId, title: `Cut off ${agentId}`, goal: "look around SLOW", background: false, createdBy: "user" });
+      await until(async () => (await messages(t.conversationId)).some((m) => m.role === "assistant" && textOf(m).includes("is thinking")), "the task at work");
+      // Written at once: the cancelled turn has not ended, and what it said so far is not the task's result.
+      hub.runner.cancelTask(t.id);
+      const m = await hub.runner.userMessage(t.conversationId, "go on anyway");
+      await until(async () => (await task(t.id)).status === "done", `${agentId}'s task to finish`);
+      await until(() => !hub.runner.isRunning(t.conversationId), "its turn to end");
+      const ms = await messages(t.conversationId);
+      expect(ms.find((x) => x.id === m.id)?.parts).toContainEqual({ type: "input_status", state: "started" });
+      expect(textOf(ms.filter((x) => x.role === "assistant").at(-1)!)).toMatch(/heard: go on anyway$/);
+      expect((await task(t.id)).result).toMatch(/heard: go on anyway$/);
+    }
+  });
+
   it("places a task on a computer, or says which computers there are", async () => {
     const c = (await web.req("GET", "/api/bootstrap")).mainConversationId as string;
     await idle(c);
