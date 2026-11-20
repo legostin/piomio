@@ -21,6 +21,7 @@ import { ChatView } from "./chat/ChatView";
 import { useReadMarker } from "./chat/AgentPage";
 import { ArchivedBar } from "./chat/AgentMenu";
 import { GroupArchivedBar } from "./chat/GroupMenu";
+import { useChatOnScreen } from "../state/chat-on-screen";
 import { t } from "../i18n";
 
 /** Tell the app the page is on screen (it hides its spinner), once. */
@@ -170,6 +171,8 @@ function MobileChat({ conversationId }: { conversationId: string }) {
 
   // An archived agent's dialog or group chat: read only, with the way back.
   const archived = (!!agent?.archived && meta?.kind === "main") || !!archivedGroup;
+  // An agent's own dialog names its agent to plugins.
+  useChatOnScreen(conversationId, agent && !archived && (member || meta?.kind === "main") ? agent.id : undefined);
 
   return (
     <ChatView

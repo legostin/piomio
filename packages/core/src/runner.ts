@@ -28,6 +28,7 @@ import type { Redactor } from "./vault/redact.ts";
 import type { ToolGateway } from "./tools/gateway.ts";
 import type { ApprovalService } from "./approvals.ts";
 import { detailOfTool, stepOfTool, type MachineActivityFeed } from "./activity.ts";
+import { stepLine, threadLines } from "./task-thread.ts";
 import { needOf, route, skillOfGoal, type Route } from "./model-router.ts";
 import type { EgressProxy } from "./egress.ts";
 import { urlsIn, type EgressGiven, type EgressGuard } from "./policy/egress.ts";
@@ -1622,9 +1623,12 @@ export class SessionRunner {
     if (!task) return { ok: false, text: `No task ${taskId}.` };
     if (!this.mayDirect(task, from)) return { ok: false, text: "You can message only the tasks you started." };
     if (task.status === "cancelled") return { ok: false, text: "That task was cancelled. Start a new one with task_delegate if the work is still needed." };
-    const note = `[System] ${this.agentLabel(from.agentId)}, who started this task, writes: ${text}`;
+    // The answer to the task's own question is no question for the task; anything else may be one, and the task's next
+    // task_tell is then its answer (tellFromTask). A thread's reply goes back by itself.
+    const mayAsk = !task.question && task.kind !== "message";
+    const note = `[System] ${this.agentLabel(from.agentId)}, who started this task, writes: ${text}${mayAsk ? "\n(If they ask you something, answer with task_tell — it reaches them at once — and go on with the work.)" : ""}`;
     this.d.store.addMessage({ conversationId: task.conversationId, role: "system", parts: [{ type: "text", text: note }], status: "complete", taskId: task.id });
-    if (task.question) this.d.store.updateTask(task.id, { question: undefined });
+    if (task.question || mayAsk) this.d.store.updateTask(task.id, { ...(task.question ? { question: undefined } : {}), ...(mayAsk ? { owesReply: true } : {}) });
     const how = await this.wakeTask(task, note, from.tainted ? { taint: true } : {});
     const said = {
       steered: "Delivered: the task is working and takes it at its next step.",
@@ -1632,7 +1636,61 @@ export class SessionRunner {
       started: "Delivered: the task continues with it.",
       cancelled: "The task was cancelled meanwhile.",
     }[how];
-    return { ok: how !== "cancelled", text: `${said} Its result will come here as a message.` };
+    return { ok: how !== "cancelled", text: `${said} If you asked it something, its answer comes here as a message; so does its result.` };
+  }
+
+  /**
+   * task_tell: a task says something to whoever started it without ending its turn. It is the task's last word on its
+   * line, for the person. When its starter wrote to it and has not heard back, it is the answer and reaches them at
+   * once; otherwise it is progress, and nobody is woken for it (the starter reads it with its next turn's open tasks).
+   */
+  async tellFromTask(taskId: string, text: string): Promise<{ ok: boolean; text: string }> {
+    const task = this.d.store.getTask(taskId);
+    if (!task) return { ok: false, text: "This task no longer exists." };
+    if (task.kind === "message") return { ok: false, text: "In a thread your reply goes back to your teammate by itself when you finish: just write it." };
+    const said = text.trim();
+    if (!said) return { ok: false, text: "Nothing told: give `text`, one or two lines on where the work stands." };
+    this.d.store.updateTask(task.id, { progress: { text: said, at: nowIso() }, ...(task.owesReply ? { owesReply: false } : {}) });
+    if (!task.owesReply || !this.starterOf(task)) return { ok: true, text: "Noted: the person sees it under the task. Nobody answers it; go on with the work." };
+    const agent = this.d.agents.get(task.agentId);
+    const who = agent ? agentName(agent, hubLocale()) : task.agentId;
+    await this.tellStarter(task, `[System] Task ${task.id} “${task.title}” (${who}${this.taskWhere(task)}) replies: ${said}\nIt is still working; its result comes when it finishes.`);
+    return { ok: true, text: "Delivered to whoever started this task, as your answer. Go on with the work." };
+  }
+
+  /**
+   * task_status: how a task stands, for an agent. Its state, the step it is on now, what it last said, its open
+   * question, its result; and, for whoever may direct it (mayDirect), the tail of its thread (task-thread.ts).
+   * `taint`: the task read outside content, so what it says carries it.
+   */
+  lookTask(taskId: string, from: { agentId: string; conversationId: string; taskId?: string }, o: { last?: number; skip?: number } = {}): { ok: boolean; text: string; taint?: boolean } {
+    const task = this.d.store.getTask(taskId);
+    if (!task) return { ok: false, text: `No task ${taskId}.` };
+    const time = (iso: string) => clockTime(iso, this.d.settings.get().timezone);
+    const agent = this.d.agents.get(task.agentId);
+    const state = task.kind === "message" && task.status === "running" ? "answering" : (TASK_STATE[task.status] ?? task.status);
+    const lines = [`Task ${task.id} “${task.title}” — ${agent ? agentName(agent, hubLocale()) : task.agentId}${this.taskWhere(task)}, since ${time(task.createdAt)}: ${state}`, `Goal: ${truncate(task.goal, 2000)}`];
+    const now = this.stepOf(task);
+    if (now) lines.push(`Now: ${now}`);
+    if (task.progress) lines.push(`Last update (${time(task.progress.at)}): ${task.progress.text}`);
+    if (task.question) lines.push(`Asked: ${task.question}`);
+    if (this.mayDirect(task, from)) {
+      const tail = threadLines(this.d.store.listMessages(task.conversationId, { limit: 500 }), o);
+      if (tail.lines.length) {
+        const older = tail.from > 1 ? `; skip: ${tail.total - tail.from + 1} reads older` : "";
+        lines.push("", `Thread (entries ${tail.from}–${tail.from + tail.lines.length - 1} of ${tail.total}, oldest first${older}):`, ...tail.lines);
+      } else lines.push("", tail.total ? "Thread: nothing older." : "Thread: nothing yet.");
+    }
+    if (task.result) lines.push("", "Result:", task.result);
+    if (task.error) lines.push("", `Error: ${task.error}`);
+    return { ok: true, text: lines.join("\n"), ...(this.carriesTaint(task) ? { taint: true } : {}) };
+  }
+
+  /** The step a task's turn is on now ("command: npm test"; without `detail`, "command"), while one runs. */
+  private stepOf(task: Task, detail = true): string | undefined {
+    if (task.status !== "running") return undefined;
+    const work = this.d.activity?.view().flatMap((m) => m.work).find((w) => w.taskId === task.id);
+    return work ? (detail ? stepLine(work) : work.step) : undefined;
   }
 
   /** task_cancel from whoever may direct the task. */
@@ -1778,17 +1836,25 @@ export class SessionRunner {
     const open = this.d.store.listTasks({ status: OPEN_TASK, limit: 200 }).filter((t) => t.parentConversationId === conversationId);
     if (!open.length) return "";
     const state: Partial<Record<TaskStatus, string>> = { ...TASK_STATE, waiting_input: "waiting for your answer" };
+    const time = (iso: string) => clockTime(iso, this.d.settings.get().timezone);
     const lines = open.slice(0, 12).map((t) => {
       const a = this.d.agents.get(t.agentId);
       const asked = t.question ? `; asked you: ${truncate(t.question, 300)}` : "";
       const who = a ? agentName(a, hubLocale()) : t.agentId;
       if (t.kind === "message") return `- ${t.id} your message to ${who} “${t.title}”: ${t.status === "running" ? "answering" : (state[t.status] ?? t.status)}${asked}`;
-      return `- ${t.id} “${t.title}” — ${who}${this.taskWhere(t)}: ${state[t.status] ?? t.status}${asked}`;
+      // What a task that read outside content says and does is outside content: here only the kind of step it is on,
+      // and that it said something.
+      const marked = this.carriesTaint(t);
+      const now = this.stepOf(t, !marked);
+      const update = !t.progress ? "" : marked ? `; wrote an update at ${time(t.progress.at)} (task_status shows it)` : `; last update ${time(t.progress.at)}: ${truncate(t.progress.text.replace(/\s+/g, " "), 200)}`;
+      return `- ${t.id} “${t.title}” — ${who}${this.taskWhere(t)}: ${state[t.status] ?? t.status}${now ? ` (now: ${now})` : ""}${update}${asked}`;
     });
     return `[Open tasks you started]\n${lines.join("\n")}`;
   }
 
   private async reportTaskDone(task: Task): Promise<void> {
+    // Its result is the answer its starter still waited for.
+    if (task.owesReply) this.d.store.updateTask(task.id, { owesReply: false });
     const result = taskResult(task);
     if (task.deliver === "report") {
       await this.d.notifier.deliverReport(task);
