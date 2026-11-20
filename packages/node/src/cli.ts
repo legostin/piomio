@@ -12,6 +12,7 @@ import { PolicyStore, policySummary } from "./policy.ts";
 import { BrainHost } from "./brains.ts";
 import { pair, PairError, networkErrorText } from "./pair.ts";
 import { createNodeDaemon } from "./daemon.ts";
+import { keepThreadPoolAwake } from "@piomio/shared/thread-pool";
 import { consoleLogger, machineInfo, osName } from "./info.ts";
 import { t } from "./messages.ts";
 import { stopOnDesktopStdin } from "./desktop.ts";
@@ -100,6 +101,8 @@ async function cmdRun(): Promise<void> {
   process.on("unhandledRejection", (e: any) => log(t("cli.unhandledRejection", { error: String(e?.stack ?? e) })));
   process.on("uncaughtException", (e: any) => log(t("cli.uncaughtException", { error: String(e?.stack ?? e) })));
   daemon.client.start();
+  // The daemon scans its workspaces through the thread pool, which macOS stops waking after enough work (thread-pool.ts).
+  keepThreadPoolAwake();
 }
 
 async function cmdStatus(): Promise<void> {
