@@ -164,14 +164,24 @@ describe("a session's life (integration)", () => {
     agent("latecomer");
     await hub.stop();
     await start();
+    // A plugin's part of the prompt (memory's facts about the person), with what it holds as told to the session.
+    const told: string[] = [];
+    hub.hooks.register("session.start", "test", async (p) => {
+      told.push((p as { sessionId: string }).sessionId);
+      return { appendSystemPrompt: "A fact learned meanwhile." };
+    });
     // What changed meanwhile comes as a message; the prompt is the stored one, so the provider's cache still fits.
     expect(await ask("steady", "INPUT?")).toContain("- latecomer: Latecomer — The latecomer one");
     expect(await ask("steady", "SYSTEM? latecomer")).toBe("fake system: no");
     expect(await ask("steady", "RECAP?")).toBe("fake backup: yes");
     expect(session("steady")).toMatchObject({ id: before.id, systemPrompt: before.systemPrompt, stamp: before.stamp });
-    // An edited agent is another matter: its instructions are in the prompt.
+    // Nothing was written into the kept prompt, so no plugin was asked for its part of it.
+    expect(told).toEqual([]);
+    // An edited agent is another matter: its instructions are in the prompt, and so is the plugin's part.
     hub.agents.save({ ...hub.agents.get("steady")!, prompt: "Be brief." } as any);
     expect(await ask("steady", "SYSTEM? Be brief.")).toBe("fake system: yes");
+    expect(await ask("steady", "SYSTEM? A fact learned meanwhile.")).toBe("fake system: yes");
+    expect(told).toEqual([before.id]);
     expect(session("steady").stamp).not.toBe(before.stamp);
   });
 

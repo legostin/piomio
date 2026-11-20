@@ -2253,12 +2253,17 @@ export class SessionRunner {
     const folderPaths = local ? localFolderPaths(folders, { dataDir: this.d.config.dataDir }) : [];
     const elsewhere = (agent.folders ?? []).filter((f) => !folders.includes(f)).map((f) => ({ ...f, computer: this.computerName(f.machine ?? "local") }));
 
-    const hook = await this.d.hooks.run("session.start", { sessionId: row.id, agentId: agent.id, conversationId: conv.id, taskId: task?.id, background }, (p) => p);
-    const appended = hook.results.map((r) => r?.appendSystemPrompt).filter(Boolean) as string[];
     const s = this.d.settings.get();
     const resume = sameBrain ? prior?.resumeToken : undefined;
     // A conversation that goes on keeps the system prompt it started with: the provider's cache of it stays valid.
     const kept = resume && plan === "keep" ? prior?.systemPrompt : undefined;
+    // Plugins write their part of a new prompt only: one that counts what it wrote as told to the session (memory's
+    // facts about the person) would otherwise count what the kept prompt never got.
+    const appended: string[] = [];
+    if (kept === undefined) {
+      const hook = await this.d.hooks.run("session.start", { sessionId: row.id, agentId: agent.id, conversationId: conv.id, taskId: task?.id, background }, (p) => p);
+      appended.push(...(hook.results.map((r) => r?.appendSystemPrompt).filter(Boolean) as string[]));
+    }
     const dispatch = conv.kind === "main" && !task && !background ? this.dispatchContext() : undefined;
     const systemPrompt = kept ?? buildSystemPrompt({
       agent,

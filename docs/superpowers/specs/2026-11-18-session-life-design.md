@@ -57,7 +57,8 @@ A session from before this change has neither a stamp nor a size: its next turn 
 before (one more full rewrite), its brain says how big it is, and the turn after that starts afresh if it is past the cap.
 
 A hub restart no longer changes the prompt of a session that is still warm: `openSession` with **keep** passes the
-stored prompt to the brain.
+stored prompt to the brain. The `session.start` hook runs only when a prompt is written: a plugin that counts what it
+appended as told to the session (memory's facts about the person) must not count what a kept prompt never got.
 
 ### 3. What changes mid-life comes as a message
 
