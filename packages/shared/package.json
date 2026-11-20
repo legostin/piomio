@@ -16,7 +16,8 @@
     "./user-path": "./src/user-path.ts",
     "./hardware": "./src/hardware.ts",
     "./host-identity": "./src/host-identity.ts",
-    "./agent-workspaces": "./src/agent-workspaces.ts"
+    "./agent-workspaces": "./src/agent-workspaces.ts",
+    "./thread-pool": "./src/thread-pool.ts"
   },
   "dependencies": {
     "yaml": "^2.9.1",
