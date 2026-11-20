@@ -68,6 +68,8 @@ export function TaskDetailPage({ id }: { id: string }) {
   const active = ACTIVE_STATUSES.includes(current.status);
   // A thread goes on when its sender writes again; only one that broke off can be retried.
   const canRetry = (thread ? ["failed", "interrupted"] : ["failed", "cancelled", "interrupted", "paused", "done"]).includes(current.status);
+  // A job that is over goes on when the person writes: the field says so.
+  const over = !thread && ["done", "failed", "cancelled"].includes(current.status);
   const from = thread && current.from ? (agentList?.find((a) => a.id === current.from) ?? { id: current.from, name: current.from, avatar: undefined }) : undefined;
   const to = agentList?.find((a) => a.id === current.agentId);
 
@@ -196,7 +198,7 @@ export function TaskDetailPage({ id }: { id: string }) {
         )}
       </TopBar>
       <div className="min-h-0 flex-1">
-        <ChatView conversationId={current.conversationId} header={false} top={thread ? hint : summary} emptyHint={t("task.notStarted")} />
+        <ChatView conversationId={current.conversationId} header={false} top={thread ? hint : summary} emptyHint={t("task.notStarted")} placeholder={over ? t("task.writeToContinue") : undefined} />
       </div>
     </div>
   );

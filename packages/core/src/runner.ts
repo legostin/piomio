@@ -224,6 +224,8 @@ interface ActiveTurn {
 
 /** Tasks still going: what the starter's turns list as open. */
 const OPEN_TASK: TaskStatus[] = ["queued", "running", "waiting_approval", "waiting_input", "paused", "interrupted"];
+/** How much of what the person wrote in a finished task's thread its starter is told. */
+const ADDED_CHARS = 1000;
 
 /** Harness built-in tools whose results come from the outside world. */
 const NATIVE_SOURCE_TOOLS = /^(WebFetch|WebSearch|web_search|fetch)$/i;
@@ -329,6 +331,11 @@ export class SessionRunner {
   private groupSeen = new Map<string, string>();
   /** Goals whose agent called goal_report "achieved" in the turn running now: the summary, their result. */
   private reached = new Map<string, string>();
+  /**
+   * What the person wrote in the thread of a finished task, taking it up again, by task: its starter reads it on the
+   * task's line among its open tasks and with the new result. In memory: after a restart the result comes plain.
+   */
+  private added = new Map<string, string[]>();
   /** Tasks that could not run for now (brains not connected, a broken turn): since when, and how many broken turns. */
   private waiting = new Map<string, { since: number; broken: number }>();
   waits: TaskWaits = { brainMs: 30 * 60_000, machineMs: 24 * 60 * 60_000, everyMs: 60_000, dialogMs: 30 * 60_000 };
@@ -482,6 +489,7 @@ export class SessionRunner {
         const files: Pick<TurnOpts, "attachments" | "speech"> = attachments.length ? await this.transcribeParts(msg.id, attachments) : {};
         if (await this.steerInto(conversationId, prompt, { ...reply, ...files, fromUser: true })) {
           this.inputStatus(msg.id, "steered");
+          if (task) this.added.get(task.id)?.push(truncate(quote, ADDED_CHARS));
           return;
         }
         this.inputStatus(msg.id, "queued");
@@ -1278,6 +1286,7 @@ export class SessionRunner {
     let cur = this.d.store.getTask(taskId);
     if (!cur || cur.status === "cancelled") {
       this.reached.delete(taskId);
+      this.added.delete(taskId);
       return;
     }
     // A goal the person paused stays paused, also when the pause cut its turn off.
@@ -1301,6 +1310,7 @@ export class SessionRunner {
     if (cur.kind === "goal") cur = this.d.store.updateTask(cur.id, { rounds: (cur.rounds ?? 0) + 1 }) ?? cur;
     if (r.error && !r.text) {
       this.reached.delete(cur.id);
+      this.added.delete(cur.id);
       // It waited for its brains (or tried again after they broke off) quietly: the chat says why it stopped now.
       if (r.errorCode === "brain-offline" || r.broken) this.d.store.addMessage({ conversationId: cur.conversationId, role: "system", parts: [{ type: "error", message: r.error }], status: "complete", taskId: cur.id });
       this.d.store.updateTask(cur.id, { status: "failed", error: r.error });
@@ -1392,20 +1402,31 @@ export class SessionRunner {
 
   /**
    * Something for a task (its starter's answer or clarification, the user's words on its page): it joins the running
-   * turn, waits for the first turn of a task that has not started, or gives the task another turn.
+   * turn, waits for the first turn of a task that has not started, or gives the task another turn. The user's words
+   * take a finished task up again, a cancelled one too (an agent starts a new task instead), and its starter hears.
    */
   async wakeTask(task: Task, text: string, opts: Pick<TurnOpts, "replyChannel" | "quote" | "attachments" | "speech" | "taint" | "fromUser" | "inputMessageIds"> = {}): Promise<"steered" | "queued" | "started" | "cancelled"> {
     const cur = this.d.store.getTask(task.id) ?? task;
-    if (cur.status === "cancelled") return "cancelled";
+    const words = truncate((opts.quote ?? text).trim(), ADDED_CHARS);
+    if (cur.status === "cancelled") {
+      if (!opts.fromUser) return "cancelled";
+      // Back in line: it starts, or goes on from where it was cut off, with the words waiting in its thread.
+      this.d.store.updateTask(cur.id, { status: "queued", resumeAt: undefined, error: undefined });
+      this.reopened(cur, words);
+      setImmediate(() => this.scheduleTasks());
+      return "queued";
+    }
     // Outside content stays marked in every session of the task from now on.
     if (opts.taint && !cur.tainted) this.d.store.updateTask(cur.id, { tainted: true });
     if (await this.steerInto(cur.conversationId, text, opts)) {
       for (const id of opts.inputMessageIds ?? []) this.inputStatus(id, "steered");
+      if (opts.fromUser) this.added.get(cur.id)?.push(words);
       return "steered";
     }
     if (cur.status === "queued") return "queued";
     const conv = this.d.store.getConversation(cur.conversationId);
     if (!conv) return "cancelled";
+    if (opts.fromUser && (cur.status === "done" || cur.status === "failed")) this.reopened(cur, words);
     void this.enqueue(conv.id, async () => {
       const now = this.d.store.getTask(cur.id);
       if (!now || now.status === "cancelled") {
@@ -1417,6 +1438,26 @@ export class SessionRunner {
       await this.afterTaskTurn(now.id, r);
     });
     return "started";
+  }
+
+  /**
+   * The person took a finished task up again by writing in its thread. The agent that started it hears: a note in its
+   * conversation, taken into its turn if one is running and with no turn of its own otherwise (it reads the words on
+   * the task's line among its open tasks, and with the new result).
+   */
+  private reopened(task: Task, words: string): void {
+    if (task.createdBy !== "agent" || task.kind === "message" || !task.parentConversationId) return;
+    const parent = this.d.store.getConversation(task.parentConversationId);
+    if (!parent) return;
+    // Words written in a row before its turn began are all its starter's to read.
+    this.added.set(task.id, [...(this.added.get(task.id) ?? []), words]);
+    const was = task.status === "done" ? "finished" : task.status;
+    const note = [
+      `[System] The user wrote in the thread of task ${task.id} “${task.title}”, which was ${was}: ${words}`,
+      "The task is working again with it, and its new result will come here as a message. Nothing for you to do now.",
+    ].join("\n");
+    this.d.store.addMessage({ conversationId: parent.id, role: "system", parts: [{ type: "text", text: note }], status: "complete", taskId: task.id });
+    if (parent.kind !== "group") void this.steerInto(parent.id, note).catch(() => {});
   }
 
   /** Who hears from a task: the dialog or task that started it, or, for one the user started, its agent's dialog. */
@@ -1783,7 +1824,9 @@ export class SessionRunner {
       const asked = t.question ? `; asked you: ${truncate(t.question, 300)}` : "";
       const who = a ? agentName(a, hubLocale()) : t.agentId;
       if (t.kind === "message") return `- ${t.id} your message to ${who} “${t.title}”: ${t.status === "running" ? "answering" : (state[t.status] ?? t.status)}${asked}`;
-      return `- ${t.id} “${t.title}” — ${who}${this.taskWhere(t)}: ${state[t.status] ?? t.status}${asked}`;
+      const added = this.added.get(t.id);
+      const more = added ? `; the user added in its thread: ${truncate(added.join(" / "), 300)}` : "";
+      return `- ${t.id} “${t.title}” — ${who}${this.taskWhere(t)}: ${state[t.status] ?? t.status}${asked}${more}`;
     });
     return `[Open tasks you started]\n${lines.join("\n")}`;
   }
@@ -1805,7 +1848,10 @@ export class SessionRunner {
       return;
     }
     if (task.createdBy === "agent" && task.parentConversationId) {
-      await this.tellStarter(task, `[System] Task ${task.id} “${task.title}” is finished.\nResult:\n${result}`);
+      const added = this.added.get(task.id);
+      this.added.delete(task.id);
+      const how = added ? `is finished again, after the user wrote in its thread: ${added.join(" / ")}` : "is finished.";
+      await this.tellStarter(task, `[System] Task ${task.id} “${task.title}” ${how}\nResult:\n${result}`);
       return;
     }
     if (task.createdBy === "user") {

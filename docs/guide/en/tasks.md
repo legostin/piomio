@@ -72,7 +72,7 @@ A task you started yourself (with `/task` or **New task**) ends with a notificat
 
 A task can ask whoever started it. The agent in your dialog answers from what it knows; otherwise it asks you in one short message and passes your answer on. Meanwhile the task line says **awaiting reply**, and the task's page shows the question under **Asks**.
 
-You can add to a task while it runs. Tell the agent "for the laptops, only ones under 1.5 kg", and it sends that into the task, which takes it at its next step. A finished task picks up again with a new note. You can also write on the task's own page.
+You can add to a task while it runs. Tell the agent "for the laptops, only ones under 1.5 kg", and it sends that into the task, which takes it at its next step. A finished task picks up again with a new note. You can also write on the task's own page, also once the task is over: a finished, failed or cancelled task goes back to work with what you wrote, and the agent that started it learns what you added and gets the new result.
 
 To stop a task, say "stop that", or press **Cancel** on the task's page. **Stop** in the dialog only stops the agent's current reply, not the tasks it started.
 
