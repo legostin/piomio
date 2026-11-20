@@ -35,7 +35,8 @@ import { urlsIn, type EgressGiven, type EgressGuard } from "./policy/egress.ts";
 import { markdownPictures, type Pictures } from "./policy/pictures.ts";
 import { previewOf } from "./policy/previews.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
-import { buildSystemPrompt, goalPrompt, taskEnding } from "./prompt.ts";
+import { briefingNote, buildSystemPrompt, dispatchBrief, goalPrompt, taskEnding } from "./prompt.ts";
+import { fingerprint, lifePlan, nextBase, type LifePlan } from "./session-life.ts";
 import { humanFailure } from "./notifier.ts";
 import { agentName } from "./agents.ts";
 import { hubLocale, LocalizedError, t } from "./i18n.ts";
@@ -172,8 +173,8 @@ export interface TeamSender {
 interface Live {
   handle: BrainHandle;
   brainRef: string;
-  /** The agent definition the session was opened with: an edited agent gets a fresh session on its next turn. */
-  stamp: string;
+  /** The conversation starts in this brain session: its first model call is the base of its size (session-life.ts). */
+  newLife?: boolean;
   /** The model and effort it thinks with now (the router's choice for its last turn). */
   model?: string;
   effort?: string;
@@ -1110,11 +1111,14 @@ export class SessionRunner {
     return (r?.count ?? 0) < agent.budget.backgroundRunsPerDay;
   }
 
-  private countUsage(agentId: string, kind: string, tokens = 0): void {
+  /** `used`: a turn's tokens (all of them, and of those the output and what the prompt cache gave and took). */
+  private countUsage(agentId: string, kind: string, used: { tokens?: number; output?: number; cacheRead?: number; cacheWrite?: number } = {}): void {
     const day = new Date().toISOString().slice(0, 10);
     this.d.store.db
-      .prepare("insert into usage(day, agent_id, kind, count, tokens) values (?,?,?,1,?) on conflict(day, agent_id, kind) do update set count = count + 1, tokens = tokens + excluded.tokens")
-      .run(day, agentId, kind, tokens);
+      .prepare(
+        "insert into usage(day, agent_id, kind, count, tokens, output, cache_read, cache_write) values (?,?,?,1,?,?,?,?) on conflict(day, agent_id, kind) do update set count = count + 1, tokens = tokens + excluded.tokens, output = output + excluded.output, cache_read = cache_read + excluded.cache_read, cache_write = cache_write + excluded.cache_write",
+      )
+      .run(day, agentId, kind, used.tokens ?? 0, used.output ?? 0, used.cacheRead ?? 0, used.cacheWrite ?? 0);
   }
 
   /**
@@ -1792,12 +1796,42 @@ export class SessionRunner {
     return { machineId: m.id, machineName: m.name, ...(!m.online ? { offline: true } : {}) };
   }
 
-  /** What a session is opened with; a dialog's carries the team's rules for where work goes too. */
+  /**
+   * A fingerprint of what a session is opened with: the agent, the tools, the connections. A change there changes what
+   * comes before the conversation, so the session gets a new prompt. The team and the rules for where work goes are not
+   * in it: a dialog hears of those in a message (briefing), and keeps its prompt.
+   */
   private stampOf(agent: AgentDef, conv: Conversation, kind: WorkKind, ref: string): string {
     // The brain's process starts with the CLI's own connections that are on: another set, another process.
     const on = this.d.connections?.(ref) ?? [];
-    const stamp = sessionStamp(agent, conv, kind, this.d.toolNames?.()) + (on.length ? `|connections:${on.join(",")}` : "");
-    return conv.kind === "main" ? `${stamp}|${this.rules.stamp()}` : stamp;
+    return fingerprint(sessionStamp(agent, conv, kind, this.d.toolNames?.()) + (on.length ? `|connections:${on.join(",")}` : ""));
+  }
+
+  /**
+   * What the next turn does with the session it would go on in (session-life.ts): keep its prompt, resume with a new
+   * one, or start afresh from the recap. Only a dialog starts afresh; a task keeps its history (its brain compacts it).
+   */
+  private lifeOf(prior: SessionRow, agent: AgentDef, conv: Conversation, kind: WorkKind, ref: string, task: Task | undefined): LifePlan {
+    return lifePlan(
+      { resumable: !!prior.resumeToken, contextTokens: prior.contextTokens, baseTokens: prior.baseTokens, usedAt: prior.usedAt, stampSame: prior.stamp === this.stampOf(agent, conv, kind, ref) },
+      { now: Date.now(), cap: task || conv.taskId ? Infinity : this.d.settings.get().dialogContextCap },
+    );
+  }
+
+  /**
+   * For a dialog's turn: the team and the rules as they are now, when its session was told others (prompt.ts
+   * `dispatchBrief`). A session keeps the system prompt it started with, so this is how it hears of a new rule or
+   * teammate. Undefined when it knows them.
+   */
+  private briefing(row: SessionRow, agent: AgentDef): string | undefined {
+    const brief = dispatchBrief(this.dispatchContext(), agent.id);
+    const now = fingerprint(brief);
+    if (row.briefed === now) return undefined;
+    const told = row.briefed;
+    this.d.store.updateSession(row.id, { briefed: now });
+    row.briefed = now;
+    // A session from before the hub kept this has them in the prompt it was just opened with.
+    return told ? briefingNote(brief) : undefined;
   }
 
   /** The team and the computers, for a dialog's prompt. */
@@ -2173,6 +2207,7 @@ export class SessionRunner {
     task: Task | undefined,
     prior?: SessionRow,
     pick?: Pick<Route, "model" | "effort">,
+    plan?: LifePlan,
   ): Promise<{ row: SessionRow; handle: BrainHandle; fresh: boolean }> {
     const background = task?.background ?? false;
     const ref = parseBrainRef(brainRef);
@@ -2188,6 +2223,12 @@ export class SessionRunner {
     let row: SessionRow;
     let token: string;
     if (sameBrain && prior) {
+      // A conversation too long to resume cheaply starts over in the same session: from the recap, not the history.
+      if (plan === "fresh" && prior.resumeToken) {
+        this.d.store.updateSession(prior.id, { resumeToken: null });
+        prior.resumeToken = undefined;
+        this.d.audit.append("core", "session.renew", prior.id, { agent: agent.id, conversation: conv.id, context: prior.contextTokens, base: prior.baseTokens, usedAt: prior.usedAt });
+      }
       row = prior;
       token = this.d.store.rotateSessionToken(prior.id);
     } else {
@@ -2212,10 +2253,19 @@ export class SessionRunner {
     const folderPaths = local ? localFolderPaths(folders, { dataDir: this.d.config.dataDir }) : [];
     const elsewhere = (agent.folders ?? []).filter((f) => !folders.includes(f)).map((f) => ({ ...f, computer: this.computerName(f.machine ?? "local") }));
 
-    const hook = await this.d.hooks.run("session.start", { sessionId: row.id, agentId: agent.id, conversationId: conv.id, taskId: task?.id, background }, (p) => p);
-    const appended = hook.results.map((r) => r?.appendSystemPrompt).filter(Boolean) as string[];
     const s = this.d.settings.get();
-    const systemPrompt = buildSystemPrompt({
+    const resume = sameBrain ? prior?.resumeToken : undefined;
+    // A conversation that goes on keeps the system prompt it started with: the provider's cache of it stays valid.
+    const kept = resume && plan === "keep" ? prior?.systemPrompt : undefined;
+    // Plugins write their part of a new prompt only: one that counts what it wrote as told to the session (memory's
+    // facts about the person) would otherwise count what the kept prompt never got.
+    const appended: string[] = [];
+    if (kept === undefined) {
+      const hook = await this.d.hooks.run("session.start", { sessionId: row.id, agentId: agent.id, conversationId: conv.id, taskId: task?.id, background }, (p) => p);
+      appended.push(...(hook.results.map((r) => r?.appendSystemPrompt).filter(Boolean) as string[]));
+    }
+    const dispatch = conv.kind === "main" && !task && !background ? this.dispatchContext() : undefined;
+    const systemPrompt = kept ?? buildSystemPrompt({
       agent,
       defaultAgent: agent.id === s.defaultAgent,
       timezone: s.timezone,
@@ -2230,7 +2280,7 @@ export class SessionRunner {
       folders: folders.length || elsewhere.length ? { here: folders, elsewhere } : undefined,
       setup: background || task ? undefined : await this.d.setup?.promptBlock(agent.id),
       group: conv.kind === "group" ? { title: conv.title, members: this.groupMembers(conv) } : undefined,
-      dispatch: conv.kind === "main" && !task && !background ? this.dispatchContext() : undefined,
+      dispatch,
       thread: task?.kind === "message" ? this.threadSender(task) : undefined,
       making: conv.kind === "setup" && conv.purpose ? { purpose: conv.purpose, ...(conv.entity ? { entity: conv.entity } : {}) } : undefined,
       thinking: { brain: this.d.brains.list().find((b) => b.ref === formatBrainRef(ref))?.label ?? formatBrainRef(ref), kind, ...thinking },
@@ -2244,7 +2294,6 @@ export class SessionRunner {
       Object.assign(env, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" });
     }
 
-    const resume = sameBrain ? prior?.resumeToken : undefined;
     const handle = await this.d.brains.create(formatBrainRef(ref), {
       sessionId: row.id,
       agent,
@@ -2279,8 +2328,23 @@ export class SessionRunner {
       ...(!local ? { askTool: NATIVE_PERMISSION_TOOL } : {}),
       // What the person connected in the CLI itself and turned on for agents here (brain-connections.ts).
       ...(this.d.connections?.(formatBrainRef(ref)).length ? { connections: this.d.connections(formatBrainRef(ref)) } : {}),
+      // A task keeps its whole history: its brain compacts it at the person's cap instead of near the model's limit.
+      ...(task ? { compactWindow: s.taskContextCap } : {}),
     });
-    this.live.set(row.id, { handle, brainRef: formatBrainRef(ref), stamp: this.stampOf(agent, conv, kind, formatBrainRef(ref)), ...(thinking.model ? { model: thinking.model } : {}), ...(thinking.effort ? { effort: thinking.effort } : {}) });
+    const stamp = this.stampOf(agent, conv, kind, formatBrainRef(ref));
+    this.live.set(row.id, { handle, brainRef: formatBrainRef(ref), ...(!resume ? { newLife: true } : {}), ...(thinking.model ? { model: thinking.model } : {}), ...(thinking.effort ? { effort: thinking.effort } : {}) });
+    // Its life, kept with it (session-life.ts): the prompt it has from here on, and what it was opened with and told.
+    // A conversation that starts here has no size until its brain says.
+    if (kept === undefined) {
+      this.d.store.updateSession(row.id, {
+        systemPrompt,
+        stamp,
+        briefed: dispatch ? fingerprint(dispatchBrief(dispatch, agent.id)) : null,
+        usedAt: nowIso(),
+        ...(!resume ? { contextTokens: null, baseTokens: null } : {}),
+      });
+      row = this.d.store.getSession(row.id) ?? row;
+    }
     if (!sameBrain) this.d.audit.append("core", "session.open", row.id, { agent: agent.id, brain: formatBrainRef(ref), conversation: conv.id, task: task?.id });
     return { row, handle, fresh: !!prior && !resume };
   }
@@ -2341,6 +2405,7 @@ export class SessionRunner {
       self: agentName(agent, hubLocale()),
       ...(first && first.id !== msgs[0]?.id ? { first } : {}),
       ...(tainted ? {} : { cardBody: (m: Message, p: NotificationPart) => !this.cardFromOutside(m, p) }),
+      maxChars: this.d.settings.get().recapMaxChars,
     });
     return r && this.d.redactor.text(r);
   }
@@ -2387,12 +2452,14 @@ export class SessionRunner {
       if (!ref) return false;
       const key = formatBrainRef(parseBrainRef(ref));
       let live = prior ? this.live.get(prior.id) : undefined;
-      if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, "chat", key)) {
+      // Whether the conversation goes on as it is, with a new prompt, or afresh from the recap (session-life.ts).
+      const plan = prior && formatBrainRef(parseBrainRef(prior.brainRef)) === key ? this.lifeOf(prior, agent, conv, "chat", key, undefined) : undefined;
+      if (!live || live.brainRef !== key || plan !== "keep") {
         if (live && prior) {
           if (live.brainRef === key) await this.closeLive(prior.id);
           else void this.closeLive(prior.id);
         }
-        const opened = await this.openSession(conv, agent, ref, undefined, prior, routes.find((r) => sameBrain(r.ref, ref)));
+        const opened = await this.openSession(conv, agent, ref, undefined, prior, routes.find((r) => sameBrain(r.ref, ref)), plan);
         if (opened.fresh) this.freshAhead.add(opened.row.id);
         live = this.live.get(opened.row.id)!;
       }
@@ -2752,13 +2819,15 @@ export class SessionRunner {
       // Opened ahead without the history: this first turn still gets the recap.
       if (curPrior && this.freshAhead.delete(curPrior.id)) fresh = true;
       try {
-        if (!live || live.brainRef !== key || live.stamp !== this.stampOf(agent, conv, kind, key)) {
-          // The same brain resumes the same conversation with the new instructions: let the old process finish first.
+        // Whether the conversation goes on as it is, with a new prompt, or afresh from the recap (session-life.ts).
+        const plan = curPrior && formatBrainRef(parseBrainRef(curPrior.brainRef)) === key ? this.lifeOf(curPrior, agent, conv, kind, key, task) : undefined;
+        if (!live || live.brainRef !== key || plan !== "keep") {
+          // The same brain goes on in the same session with the new instructions: let the old process finish first.
           if (live && curPrior) {
             if (live.brainRef === key) await this.closeLive(curPrior.id);
             else void this.closeLive(curPrior.id);
           }
-          const opened = await this.openSession(conv, agent, ref, task, curPrior, routes.find((r) => sameBrain(r.ref, ref)));
+          const opened = await this.openSession(conv, agent, ref, task, curPrior, routes.find((r) => sameBrain(r.ref, ref)), plan);
           row = opened.row;
           live = this.live.get(row.id)!;
           fresh = opened.fresh;
@@ -2774,6 +2843,9 @@ export class SessionRunner {
       if (opts.taint || task?.tainted || said?.outside) this.markTainted(row!);
 
       let text = said ? `${said.text}\n\n${prompt}` : prompt;
+      // The team or the rules changed since this session's prompt was written: it hears of it here, and keeps the prompt.
+      const brief = conv.kind === "main" && !task ? this.briefing(row!, agent) : undefined;
+      if (brief) text = `${brief}\n\n${text}`;
       // A session that resumes gets the recap too, for the brain to start afresh with if it cannot (BrainTurn.recap).
       const seed = fresh || row!.resumeToken ? this.recapOf(conv.id, agent, row!.tainted) : undefined;
       if (conv.kind === "group") {
@@ -2887,6 +2959,10 @@ export class SessionRunner {
     let resumeToken: string | undefined;
     let awaitingApproval = false;
     let tokens = 0;
+    const used = { output: 0, cacheRead: 0, cacheWrite: 0 };
+    /** How big the session's conversation is, as its brain says with each model call (session-life.ts). */
+    let context = row.contextTokens;
+    let base = row.baseTokens;
     /** The brain's own web calls this turn, by id: their results are outside content. */
     const sourceCalls = new Set<string>();
     /** This step's first web calls were made before anything from outside reached the session (policy/egress.ts). */
@@ -3040,6 +3116,14 @@ export class SessionRunner {
         }
         case "usage":
           tokens += (e.inputTokens ?? 0) + (e.outputTokens ?? 0);
+          used.output += e.outputTokens ?? 0;
+          used.cacheRead += e.cacheReadTokens ?? 0;
+          used.cacheWrite += e.cacheWriteTokens ?? 0;
+          break;
+        case "context":
+          context = e.tokens;
+          base = nextBase(base, e.tokens, !!live.newLife);
+          live.newLife = false;
           break;
         case "model":
           if (e.model && e.model !== model) {
@@ -3078,8 +3162,13 @@ export class SessionRunner {
       activity?.end(turnKey);
     }
 
-    if (resumeToken) this.d.store.updateSession(row.id, { resumeToken });
-    this.countUsage(agent.id, "turn", tokens);
+    this.d.store.updateSession(row.id, {
+      ...(resumeToken ? { resumeToken } : {}),
+      usedAt: nowIso(),
+      ...(context !== undefined ? { contextTokens: context } : {}),
+      ...(base !== undefined ? { baseTokens: base } : {}),
+    });
+    this.countUsage(agent.id, "turn", { tokens, ...used });
 
     // Pending approvals from this session also mean we are waiting.
     if (!awaitingApproval) {
@@ -3118,15 +3207,15 @@ export class SessionRunner {
   }
 }
 
-/**
- * What a live session was opened with: a changed agent, a group's new members, or a setup chat that became its channel
- * or agent get a fresh session (resumed).
- */
 /** A conversation the person talks in with one agent (not a task, not a group chat): its brain stays warm between turns. */
 function warmable(conv: Conversation, task?: Task): boolean {
   return !task && !conv.taskId && (conv.kind === "main" || conv.kind === "setup" || conv.kind === "chat");
 }
 
+/**
+ * What a session is opened with: a changed agent, a group's new members, or a setup chat that became its channel or
+ * agent get a new prompt (the conversation resumes, or starts afresh when it is long: session-life.ts).
+ */
 function sessionStamp(agent: AgentDef, conv: Conversation, kind: WorkKind, tools = ""): string {
   // Only this kind's choice: changing how tasks think leaves the dialog's session alone.
   const stamp = `${JSON.stringify({ ...agent, thinking: thinkingFor(agent, kind) })}|${tools}`;

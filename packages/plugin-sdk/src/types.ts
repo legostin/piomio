@@ -80,6 +80,11 @@ export interface ChannelImpl {
 export type HookName = "session.start" | "turn.context" | "tool.before" | "tool.after" | "message.in" | "notify.before" | "digest.compose";
 
 export interface HookPayloads {
+  /**
+   * A session's system prompt is being written: `appendSystemPrompt` becomes a part of it. Not every time its brain
+   * starts: a session that goes on keeps the prompt it has (the hub restarted, its brain's process was closed), and
+   * the hook does not run then.
+   */
   "session.start": { sessionId: string; agentId: string; conversationId: string; taskId?: string; background: boolean };
   /**
    * A turn is about to reach the brain. `text` is the turn's input (the user's words when `fromUser`, otherwise a

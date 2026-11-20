@@ -59,11 +59,6 @@ export class WorkRules {
     }
     return gone;
   }
-
-  /** What a dialog's session was opened with: a changed rule opens it again with the new instructions. */
-  stamp(): string {
-    return JSON.stringify(this.list());
-  }
 }
 
 /** "rendering → computer LEGOSTIN-PC (mach_…); agent blenderist; brain claude-code; model opus; effort high", names from `name`. */

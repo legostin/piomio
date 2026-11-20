@@ -34,8 +34,8 @@ if (args[0] === "--help") {
 if (process.env.FAKE_ARGS_FILE) appendFileSync(process.env.FAKE_ARGS_FILE, `${JSON.stringify(args)}\n`);
 // The switches the brain set for each run.
 if (process.env.FAKE_ENV_FILE) {
-  const { DISABLE_AUTOUPDATER, DISABLE_TELEMETRY } = process.env;
-  appendFileSync(process.env.FAKE_ENV_FILE, `${JSON.stringify({ DISABLE_AUTOUPDATER, DISABLE_TELEMETRY })}\n`);
+  const { DISABLE_AUTOUPDATER, DISABLE_TELEMETRY, CLAUDE_CODE_AUTO_COMPACT_WINDOW } = process.env;
+  appendFileSync(process.env.FAKE_ENV_FILE, `${JSON.stringify({ DISABLE_AUTOUPDATER, DISABLE_TELEMETRY, CLAUDE_CODE_AUTO_COMPACT_WINDOW })}\n`);
 }
 if (login) {
   console.log("Opening browser to sign in…");
