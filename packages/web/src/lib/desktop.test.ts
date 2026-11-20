@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { desktopApp, desktopInvoke, desktopTicketFrom, dragRegion, onAnotherComputer, pairLink } from "./desktop";
+import { desktopApp, desktopInvoke, desktopTicketFrom, dragRegion, guardFileDrops, onAnotherComputer, pairLink } from "./desktop";
 
 describe("desktop app links", () => {
   it("reads a sign-in ticket from the address fragment", () => {
@@ -53,5 +53,39 @@ describe("the Pio window's commands", () => {
     await desktopInvoke("pio_frame", { expanded: true }, w);
     expect(calls).toEqual([["pio_frontmost", undefined], ["pio_frame", { expanded: true }]]);
     await expect(desktopInvoke("pio_frontmost", undefined, {})).rejects.toThrow(/Pio window/);
+  });
+});
+
+describe("files dropped where nothing takes them", () => {
+  // A drag event as the page hears it on its way up to the window; `taken`: a drop zone under it accepted it.
+  const drag = (type: string, types: string[], taken = false) => {
+    const e = Object.assign(new Event(type, { cancelable: true }), { dataTransfer: { types, dropEffect: "move" } });
+    if (taken) e.preventDefault();
+    return e;
+  };
+
+  it("are refused instead of opening in place of the hub", () => {
+    const w = new EventTarget();
+    guardFileDrops(w);
+    const over = drag("dragover", ["Files"]);
+    w.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(true);
+    expect(over.dataTransfer.dropEffect).toBe("none");
+    const drop = drag("drop", ["Files"]);
+    w.dispatchEvent(drop);
+    expect(drop.defaultPrevented).toBe(true);
+  });
+
+  it("leave the chat's drop zone and the board's cards be", () => {
+    const w = new EventTarget();
+    guardFileDrops(w);
+    const chat = drag("dragover", ["Files"], true);
+    chat.dataTransfer.dropEffect = "copy";
+    w.dispatchEvent(chat);
+    expect(chat.dataTransfer.dropEffect).toBe("copy");
+    const card = drag("dragover", ["text/plain"]);
+    w.dispatchEvent(card);
+    expect(card.defaultPrevented).toBe(false);
+    expect(card.dataTransfer.dropEffect).toBe("move");
   });
 });
