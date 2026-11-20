@@ -160,6 +160,12 @@ const MIGRATIONS: string[] = [
   `alter table replicas add column machine_id text;`,
   // The work rules the hub applied before a task's first run (Task.rule): ids, "none", or null while it has not looked.
   `alter table tasks add column rule text;`,
+  // What a task last told its starter (task_tell: Task.progress), and whether it owes them an answer (task_message).
+  `
+  alter table tasks add column progress text;
+  alter table tasks add column progress_at text;
+  alter table tasks add column owes_reply integer not null default 0;
+  `,
   // A session's life (session-life.ts): the system prompt it started with and a fingerprint of what it was opened with
   // (the same prompt for its whole life), a fingerprint of the team and rules it was told, how big its context is (the
   // prompt of its last model call, and of the first one of this life), and when it was last used. Rows from before

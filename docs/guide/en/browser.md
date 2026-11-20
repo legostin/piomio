@@ -114,9 +114,11 @@ to be allowed to reach it (see [Settings and environment variables](settings.md)
 
 ### Show it
 
-Say "let me show you how I order water on 5vodi.kz", or pick **Teach the agent** in the browser's **More** menu (then
-the default agent gets it and asks what it was for). The live view opens with control in your hands and a bar on top:
-what you are showing, the steps so far, the microphone, Highlight, **Done** and **Cancel**.
+Say "let me show you how I order water on 5vodi.kz", or pick **Teach the agent** in the browser's **More** menu. From
+the menu, the lesson is for the agent whose chat is open under the browser: its name is in the window's title, and it
+asks what the lesson was for. With no agent's chat open, or an agent that does not use the browser, the default agent
+gets it. The live view opens with control in your hands and a bar on top: what you are showing, the steps so far, the
+microphone, Highlight, **Done** and **Cancel**.
 
 - **Do it the way you always do.** Clicks, typing and pages are recorded. Passwords and codes never are.
 - **Talk.** Your words are written into the recording. That needs speech to text set up (see [The chat](chat.md)) and

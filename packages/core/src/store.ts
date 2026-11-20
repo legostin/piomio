@@ -90,6 +90,8 @@ const taskFrom = (r: any): Task => ({
   error: r.error ?? undefined,
   resumeAt: r.resume_at ?? undefined,
   question: r.question ?? undefined,
+  ...(r.progress ? { progress: { text: r.progress, at: r.progress_at ?? r.updated_at } } : {}),
+  ...(r.owes_reply ? { owesReply: true } : {}),
   ...(r.kind === "message" || r.kind === "goal" || r.kind === "errand" ? { kind: r.kind as NonNullable<Task["kind"]> } : {}),
   ...(r.kind === "goal" ? { rounds: r.rounds ?? 0 } : {}),
   ...(r.from_agent ? { from: r.from_agent } : {}),
@@ -501,13 +503,15 @@ export class Store {
     return this.db.prepare("select * from tasks order by created_at desc limit ?").all(limit).map(taskFrom);
   }
 
-  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds" | "kind" | "rule" | "thinking">>): Task | undefined {
+  updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds" | "kind" | "rule" | "thinking" | "progress" | "owesReply">>): Task | undefined {
     const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", machineId: "machine_id", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds", kind: "kind", rule: "rule" };
     for (const [k, col] of Object.entries(cols)) {
       if (k in patch) this.db.prepare(`update tasks set ${col} = ? where id = ?`).run((patch as any)[k] ?? null, id);
     }
     if ("thinking" in patch) this.db.prepare("update tasks set thinking = ? where id = ?").run(patch.thinking && Object.keys(patch.thinking).length ? JSON.stringify(patch.thinking) : null, id);
     if (patch.tainted !== undefined) this.db.prepare("update tasks set tainted = ? where id = ?").run(patch.tainted ? 1 : 0, id);
+    if ("progress" in patch) this.db.prepare("update tasks set progress = ?, progress_at = ? where id = ?").run(patch.progress?.text ?? null, patch.progress?.at ?? null, id);
+    if (patch.owesReply !== undefined) this.db.prepare("update tasks set owes_reply = ? where id = ?").run(patch.owesReply ? 1 : 0, id);
     this.db.prepare("update tasks set updated_at = ? where id = ?").run(nowIso(), id);
     const t = this.getTask(id);
     if (t) this.bus.emit("task.updated", t);

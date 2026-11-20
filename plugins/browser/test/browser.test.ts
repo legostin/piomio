@@ -161,6 +161,7 @@ describe("browser plugin (headless Chromium)", { timeout: 60_000 }, () => {
   const fakeCore = (method: string, p: any) => {
     // Speech-to-text is set up and hears the same words every time.
     if (method === "speech.transcribe") return p.check ? { available: true } : { text: "здесь главное — счётчик" };
+    if (method === "agents.list") return [{ id: "assistant", name: "Assistant", tools: ["*"] }, { id: "marta", name: "Marta", tools: ["browser_*"] }];
     // The agent's workspace holds one photo; anything else is not there.
     if (method === "files.fetch") {
       if (p.path !== "attachments/cat.jpg") throw new Error(`there is no ${p.path} in the workspace`);
@@ -851,6 +852,28 @@ describe("browser plugin (headless Chromium)", { timeout: 60_000 }, () => {
     expect(await ok("journal", { action: "forget", day: "all" })).toMatch(/Forgotten: [1-9]/);
     expect(await ok("journal", { action: "list" })).toBe(await ok("journal", { action: "list" }));
     h.uiMessage({ type: "watch", on: false, id: "teach" });
+  });
+
+  it("Teach in the live view is a lesson for the agent whose chat is open: the window names it, the recording goes to its dialog", async () => {
+    await ok("open", { url: base + "/counter" });
+    const all = () => h.coreCalls.filter((c) => c.method === "ui.emit").map((c) => c.params as { channel: string; payload: any });
+    const from = all().length;
+    const emits = () => all().slice(from);
+    const tells = h.coreCalls.filter((c) => c.method === "conversations.tell").length;
+    h.uiMessage({ type: "watch", on: true, id: "teach-button" });
+    h.uiMessage({ type: "teach", action: "start", agentId: "marta" });
+    const lesson = await until(() => emits().find((e) => e.channel === "activity" && e.payload.teach));
+    expect(lesson.payload).toMatchObject({ agentId: "marta", control: "user" });
+    for (const action of ["down", "up"]) h.uiMessage({ type: "input", event: "mouse", action, x: 0.1, y: 0.1, button: "left", clickCount: 1 });
+    await until(() => emits().find((e) => e.channel === "state" && e.payload.teach?.steps >= 1));
+    h.uiMessage({ type: "teach", action: "done" });
+    const told = await until(() => h.coreCalls.filter((c) => c.method === "conversations.tell")[tells]);
+    expect(told.params).toMatchObject({ agentId: "marta" });
+    expect(told.params.conversationId).toBeUndefined();
+    expect(told.params.text).toContain("They pressed Teach in the browser with your chat open");
+    // The lesson is over: the window is the last working agent's again.
+    await until(() => emits().find((e) => e.channel === "activity" && !e.payload.teach && e.payload.agentId !== "marta"));
+    h.uiMessage({ type: "watch", on: false, id: "teach-button" });
   });
 
   it("saves a sharp copy of a screenshot for the person, to show in the chat", async () => {

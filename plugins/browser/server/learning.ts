@@ -21,6 +21,8 @@ const UNWATCHED_MS = 2 * 60_000;
 /** How long the click waits for "what is under the pointer" before it goes to the page anyway. */
 const INSPECT_MS = 300;
 const MAX_SPEECH_BYTES = 8 * 1024 * 1024;
+/** One of this plugin's tools as agents know it: an agent whose tools include it can use the browser. */
+const OWN_TOOL = "browser_open";
 
 export interface TeachState {
   id: string;
@@ -37,6 +39,8 @@ interface TeachSession {
   scope: "task" | "step";
   /** Whom the recording goes to: the agent's chat (and its task), or the default agent's dialog. */
   agentId?: string;
+  /** The person started it with the live view's Teach: the agent did not ask to be shown. */
+  unasked?: boolean;
   conversationId?: string;
   sessionId?: string;
   taskId?: string;
@@ -99,6 +103,11 @@ export class Learning {
     if (agentId) this.agent = { id: agentId, at: Date.now() };
   }
 
+  /** The agent being shown, when the lesson is for one by name (the live view says whose it is). */
+  get learner(): string | undefined {
+    return this.teach?.agentId;
+  }
+
   state(): TeachState | null {
     const t = this.teach;
     if (!t) return null;
@@ -108,7 +117,7 @@ export class Learning {
   // ---------- a demonstration ----------
 
   /** Start a demonstration: the person gets control and the live view a bar (Done, Cancel, Highlight, the mic). */
-  async start(o: { goal: string; scope?: "task" | "step"; agentId?: string; conversationId?: string; sessionId?: string; taskId?: string }): Promise<TeachSession> {
+  async start(o: { goal: string; scope?: "task" | "step"; agentId?: string; conversationId?: string; sessionId?: string; taskId?: string; unasked?: boolean }): Promise<TeachSession> {
     if (this.teach) throw new ToolError("The person is already showing something in the browser: wait for that recording to come.");
     const page = await this.h.ensurePage();
     // A takeover in progress ends here as one of its own; the demonstration starts clean.
@@ -120,6 +129,7 @@ export class Learning {
     const id = this.journal.newId();
     const t: TeachSession = { id, goal: o.goal.trim().slice(0, 200), scope: o.scope === "step" ? "step" : "task", startedAt: Date.now(), speech };
     for (const k of ["agentId", "conversationId", "sessionId", "taskId"] as const) if (o[k]) t[k] = o[k];
+    if (o.unasked) t.unasked = true;
     this.teach = t;
     this.rec = new Recorder({ id, kind: "teach", goal: t.goal, ...(t.agentId ? { agentId: t.agentId } : {}), now: t.startedAt });
     this.rec.page(page.url(), await this.h.titleOf(page), t.startedAt);
@@ -129,6 +139,30 @@ export class Learning {
     if (!this.h.userControl) this.h.setControl(true);
     this.h.changed();
     return t;
+  }
+
+  /**
+   * The live view's Teach: the lesson is for the agent whose chat is on the person's screen (`chatAgent`, as the view
+   * says), so the skill it saves is its own; for the default agent when no agent's chat is open or that agent has no
+   * browser tools.
+   */
+  async startByPerson(chatAgent: unknown): Promise<TeachSession> {
+    const agentId = await this.browserAgent(chatAgent);
+    return this.start({ goal: "", unasked: true, ...(agentId ? { agentId } : {}) });
+  }
+
+  /** `id` when it is an agent of the team that may use this plugin's tools. */
+  private async browserAgent(id: unknown): Promise<string | undefined> {
+    if (typeof id !== "string" || !id) return undefined;
+    const team = await this.h.ctx.core.call<Array<{ id: string; tools?: string[] }>>("agents.list", {}).catch((e) => {
+      this.h.ctx.log.warn(`the team is not known, so the lesson is the default agent's: ${e?.message ?? e}`);
+      return [];
+    });
+    const agent = (Array.isArray(team) ? team : []).find((a) => a.id === id);
+    if (!agent) return undefined;
+    // An agent's tools are name globs; none listed means all (as the hub reads them).
+    const globs = agent.tools?.length ? agent.tools : ["*"];
+    return globs.some((g) => globMatches(g, OWN_TOOL)) ? id : undefined;
   }
 
   /** Done or Cancel (the bar), or the person handed control back (Done). */
@@ -145,7 +179,7 @@ export class Learning {
     const r = rec.finish(Date.now());
     if (how === "cancel") {
       this.journal.forget({ id: r.id });
-      if (t.agentId) await this.tell(t, `[Browser] The person cancelled the demonstration${t.goal ? ` of "${t.goal}"` : ""}: nothing was recorded. Ask in a sentence whether to try again later.`);
+      if (t.agentId && !t.unasked) await this.tell(t, `[Browser] The person cancelled the demonstration${t.goal ? ` of "${t.goal}"` : ""}: nothing was recorded. Ask in a sentence whether to try again later.`);
       return;
     }
     this.journal.save(r);
@@ -176,9 +210,11 @@ export class Learning {
     }
   }
 
-  private async tell(t: Pick<TeachSession, "conversationId" | "taskId">, text: string): Promise<void> {
+  private async tell(t: Pick<TeachSession, "agentId" | "conversationId" | "taskId">, text: string): Promise<void> {
+    // The chat the agent asked from, else its own dialog, else (no agent) the default agent's.
+    const where = t.conversationId ? { conversationId: t.conversationId } : t.agentId ? { agentId: t.agentId } : {};
     try {
-      await this.h.ctx.core.call("conversations.tell", { ...(t.conversationId ? { conversationId: t.conversationId } : {}), ...(t.taskId ? { taskId: t.taskId } : {}), text });
+      await this.h.ctx.core.call("conversations.tell", { ...where, ...(t.taskId ? { taskId: t.taskId } : {}), text });
     } catch (e: any) {
       this.h.ctx.log.warn(`could not tell the agent: ${e?.message ?? e}`);
     }
@@ -362,6 +398,12 @@ export class Learning {
   }
 }
 
+/** A tool name glob of an agent's list (* any characters, ? one), as the hub matches them. */
+function globMatches(glob: string, name: string): boolean {
+  const pattern = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${pattern}$`, "i").test(name);
+}
+
 /** The recording and its pictures into a session's workspace (downloads/): the paths there. */
 export async function exportFiles(ctx: PluginContext, journal: Journal, r: Recording, sessionId: string): Promise<string[]> {
   const put = async (name: string, data: Buffer) => (await ctx.core.call<{ path: string }>("files.deliver", { sessionId, name, data: data.toString("base64") })).path;
@@ -372,14 +414,17 @@ export async function exportFiles(ctx: PluginContext, journal: Journal, r: Recor
 
 function demonstrationNote(t: TeachSession, r: Recording, files: string[]): string {
   const who = t.agentId ? "you" : "an agent (from the browser's Teach button, so you were not asked)";
-  const head = `[Browser] The person finished showing ${who}${t.goal ? ` how to: ${t.goal}` : " something in the browser"} (${t.scope === "step" ? "one step" : "the whole task"}).`;
+  // Teach pressed with this agent's chat open: the lesson is its own, though it did not ask for one.
+  const own = t.agentId && t.unasked ? " They pressed Teach in the browser with your chat open: you did not ask for it." : "";
+  const asked = !!t.agentId && !t.unasked;
+  const head = `[Browser] The person finished showing ${who}${t.goal ? ` how to: ${t.goal}` : " something in the browser"} (${t.scope === "step" ? "one step" : "the whole task"}).${own}`;
   const where = files.length
     ? `Files in your workspace: ${files.join(", ")}.`
     : `Recording ${r.id} (browser_journal export puts its files into your workspace).`;
   const next =
     t.scope === "step"
       ? "Carry on with your task using what the person showed; if you follow a taught skill, offer to update it at the end (hub_skill_save with replaces)."
-      : `${t.agentId ? "" : "Unless it is clear, first ask in one short question what this was for. "}Follow the teach-by-demo skill: retell the steps in a few lines, ask only what is unclear (what changes each time), ask about every step with consequences with quick replies, then save the skill with hub_skill_save and ${files.length ? "these files" : "the recording's files (browser_journal export)"}.`;
+      : `${asked ? "" : "Unless it is clear, first ask in one short question what this was for. "}Follow the teach-by-demo skill: retell the steps in a few lines, ask only what is unclear (what changes each time), ask about every step with consequences with quick replies, then save the skill with hub_skill_save and ${files.length ? "these files" : "the recording's files (browser_journal export)"}.`;
   return [head, where, "", toMarkdown(r), "", next].join("\n");
 }
 

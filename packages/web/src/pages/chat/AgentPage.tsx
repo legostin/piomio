@@ -9,6 +9,7 @@ import { EmptyState, Spinner } from "../../components/ui";
 import { t } from "../../i18n";
 import { AgentHeader } from "./AgentHeader";
 import { ChatMenu } from "./DetailsToggle";
+import { useChatOnScreen } from "../../state/chat-on-screen";
 import { editAgent } from "../../state/panel";
 import { ChatView } from "./ChatView";
 import { SetupGate } from "../../components/BrainSetupCard";
@@ -69,6 +70,7 @@ export function AgentPage({ agentId }: { agentId?: string }) {
   }, [agent, members, member, archivedDialog]);
 
   useReadMarker(conversationId, member?.unread ?? 0);
+  useChatOnScreen(conversationId, agent && !archived ? agent.id : undefined);
 
   if (!s || !id) return null;
 
