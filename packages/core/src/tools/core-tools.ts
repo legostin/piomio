@@ -17,6 +17,7 @@ import type { Transcriber } from "../transcribe.ts";
 import type { RoadRoute } from "../routing.ts";
 import type { UserLocation } from "../user-location.ts";
 import { ruleLine, type WorkRules } from "../work-rules.ts";
+import { THREAD_LAST, THREAD_LAST_MAX } from "../task-thread.ts";
 
 export interface CoreToolDeps {
   registry: ToolRegistry;
@@ -64,6 +65,10 @@ export interface TaskLine {
   /** What each agent is busy with now, one line each. */
   team(): string[];
   message(taskId: string, text: string, from: TaskSender): Promise<{ ok: boolean; text: string }>;
+  /** task_tell: a task's word to whoever started it, mid-work: its answer when they wrote to it, else a progress line. */
+  tell(taskId: string, text: string): Promise<{ ok: boolean; text: string }>;
+  /** task_status: how a task stands and, for whoever may direct it, the tail of its thread; `taint` when it read outside content. */
+  look(taskId: string, from: TaskSender, o: { last?: number; skip?: number }): { ok: boolean; text: string; taint?: boolean };
   cancel(taskId: string, from: TaskSender): { ok: boolean; text: string };
   computers(): Array<{ id: string; name: string; online: boolean; gpus?: string[] }>;
   /** team_message: write to a teammate (a thread on the side; the reply comes back like a task's result). */
@@ -650,15 +655,42 @@ export function registerCoreTools(d: CoreToolDeps): void {
 
   reg(
     {
-      name: "task_status",
-      description: "Get status and result of a task by id.",
-      effect: "read",
-      inputSchema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
+      name: "task_tell",
+      description:
+        "Inside a task: tell whoever started it something now, without ending your turn: where the work stands at a real milestone (the person reads it under the task), or your answer when they wrote to you and asked something (it reaches them at once). One or two lines; nobody answers it, so go on with the work. To ask them something, use task_ask.",
+      effect: "local-write",
+      inputSchema: { type: "object", properties: { text: { type: "string", description: "One or two lines, in the user's language" } }, required: ["text"] },
     },
-    (i) => {
-      const t = d.store.getTask(String(i.taskId));
-      if (!t) return text("Task not found", true);
-      return text(JSON.stringify({ id: t.id, title: t.title, status: t.status, result: t.result, error: t.error }, null, 2));
+    async (i, ctx) => {
+      if (!ctx.taskId) return text("task_tell works inside a task. In your dialog, just write to the user.", true);
+      // A brain that calls it before loading its schema guesses the name: "message" or "note" is the text.
+      const body = [i.text, i.message, i.note].find((v) => typeof v === "string" && v.trim());
+      const r = await d.tasks.tell(ctx.taskId, String(body ?? "").slice(0, 2000));
+      return text(r.text, !r.ok);
+    },
+  );
+
+  reg(
+    {
+      name: "task_status",
+      description:
+        "Look at a task by id: how it stands, the step it is on now, what it last said, its open question and its whole result. For a task you started (or your own) also the tail of its thread: what it wrote, each tool call in a few words, what was written to it. Use it when the user asks how a task is going.",
+      effect: "read",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+          last: { type: "number", description: `How many of the thread's newest entries to show (default ${THREAD_LAST}, at most ${THREAD_LAST_MAX})` },
+          skip: { type: "number", description: "Leave out this many of the newest entries, to read further back" },
+        },
+        required: ["taskId"],
+      },
+    },
+    (i, ctx) => {
+      const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : undefined);
+      const r = d.tasks.look(String(i.taskId), { agentId: ctx.agentId, conversationId: ctx.conversationId, taskId: ctx.taskId }, { last: num(i.last), skip: num(i.skip) });
+      const out = text(r.text, !r.ok);
+      return r.taint ? { ...out, _meta: { taint: true } } : out;
     },
   );
 
