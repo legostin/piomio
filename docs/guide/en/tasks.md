@@ -49,6 +49,8 @@ The task line sits inside the agent's message. It shows the agent's face (pulsin
 | **failed** | It didn't work out |
 | **cancelled** | Stopped by you or the agent |
 
+On long work a task says where it is at real milestones: **found the cause, fixing it**, **three of five checked**. Its latest word stands under the task line with the time, and on the task's page under **Latest update**, until the task ends. Nobody is woken for it; everything the task wrote is in its thread.
+
 Tap the line to open the task.
 
 ### When it is done
@@ -72,7 +74,9 @@ A task you started yourself (with `/task` or **New task**) ends with a notificat
 
 A task can ask whoever started it. The agent in your dialog answers from what it knows; otherwise it asks you in one short message and passes your answer on. Meanwhile the task line says **awaiting reply**, and the task's page shows the question under **Asks**.
 
-You can add to a task while it runs. Tell the agent "for the laptops, only ones under 1.5 kg", and it sends that into the task, which takes it at its next step. A finished task picks up again with a new note. You can also write on the task's own page.
+Ask the agent "how is the laptop task going?" at any time. It looks into the task's thread and tells you what the task has done, what it is doing now and what it last said. It sees this for the tasks it started and its own; of other tasks it sees only the status and the result. You can also have it ask the task itself: "ask it what it has found so far". The task answers without stopping its work, and the answer comes to your dialog as the agent's message.
+
+You can add to a task while it runs. Tell the agent "for the laptops, only ones under 1.5 kg", and it sends that into the task, which takes it at its next step. A finished task picks up again with a new note. You can also write on the task's own page, also once the task is over: a finished, failed or cancelled task goes back to work with what you wrote, and the agent that started it learns what you added and gets the new result.
 
 To stop a task, say "stop that", or press **Cancel** on the task's page. **Stop** in the dialog only stops the agent's current reply, not the tasks it started.
 

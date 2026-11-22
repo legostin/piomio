@@ -191,7 +191,7 @@ function MicButton({
   );
 }
 
-export function DefaultComposer({ conversationId }: { conversationId: string }) {
+export function DefaultComposer({ conversationId, placeholder }: { conversationId: string; placeholder?: string }) {
   const conv = useConversationMessages(conversationId);
   const reply = useStore(replies)[conversationId];
   const { members: mentionable, group: isGroup } = useMentionable(conversationId);
@@ -458,7 +458,7 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             readOnly={listening}
-            placeholder={listening ? t("composer.listening") : isGroup ? t(mobileMode ? "composer.groupPlaceholderShort" : "composer.groupPlaceholder") : mobileMode ? t("composer.placeholderShort") : t("composer.placeholder")}
+            placeholder={listening ? t("composer.listening") : placeholder ? placeholder : isGroup ? t(mobileMode ? "composer.groupPlaceholderShort" : "composer.groupPlaceholder") : mobileMode ? t("composer.placeholderShort") : t("composer.placeholder")}
             aria-label={t("composer.message")}
             className="max-h-[40vh] min-h-9 flex-1 resize-none overflow-hidden bg-transparent py-2 text-[15px] leading-relaxed outline-none focus-visible:outline-none placeholder:text-muted/80"
           />
@@ -515,12 +515,12 @@ export function DefaultComposer({ conversationId }: { conversationId: string }) 
   );
 }
 
-/** The composer slot: a plugin override (highest priority) or the default composer. */
-export function Composer({ conversationId }: { conversationId: string }) {
+/** The composer slot: a plugin override (highest priority) or the default composer. `placeholder`: the default one's hint, when the place has its own. */
+export function Composer({ conversationId, placeholder }: { conversationId: string; placeholder?: string }) {
   const { contributions } = usePluginRegistry();
   const send = useSend(conversationId);
   const override = pickOverride(contributions, "chat.composer");
-  const core = <DefaultComposer conversationId={conversationId} />;
+  const core = <DefaultComposer conversationId={conversationId} placeholder={placeholder} />;
   if (!override) return core;
   const C = override.component;
   return (

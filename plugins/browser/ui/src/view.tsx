@@ -193,7 +193,8 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
   );
   // The teach bar has its own Highlight; the menu's "Teach" is for when no demonstration runs.
   const highlight = control && !teach && <HighlightButton hl={hl} />;
-  const onTeach = state?.running && !teach ? () => send({ type: "teach", action: "start" }) : undefined;
+  // The lesson is for the agent whose chat is open under the window (the backend falls back to the default agent).
+  const onTeach = state?.running && !teach ? () => send({ type: "teach", action: "start", agentId: host.chat.current()?.agentId }) : undefined;
 
   // Cmd/Ctrl+L: to the address bar, even while the keys go to the page.
   const onKeyDownCapture = (e: ReactKeyboardEvent) => {

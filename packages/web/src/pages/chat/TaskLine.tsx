@@ -2,6 +2,7 @@
 // kept live by "task.updated". It opens the task; the work itself stays there.
 // A short errand (Task kind "errand") is no task to the person: "<agent> is thinking about …" while it goes, nothing once
 // it finished (the agent's answer follows in the chat).
+// Under the line, while the task is at work: what it last told whoever started it (task_tell, `Task.progress`).
 // A message to a teammate (a `task` part with `text`) shows as the message itself: who wrote to whom, what, how it
 // goes, and the answer right under it once it came. It opens the thread.
 
@@ -11,7 +12,7 @@ import { ArrowRight, ChevronDown, Target } from "lucide-react";
 import type { AgentDef, Task } from "@piomio/shared";
 import { goalLimit } from "@piomio/shared/commands";
 import { useStore } from "../../lib/store";
-import { taskStatus, threadStatus, type Tone } from "../../lib/format";
+import { formatDateTime, shortTime, taskStatus, threadStatus, type Tone } from "../../lib/format";
 import { agents, ensureAgents, ensureMachineActivity, ensureTasks, machineActivity, tasks } from "../../state/app";
 import { brainMachine, brains } from "../../state/brains";
 import { stepText, useWork } from "./LiveStep";
@@ -42,12 +43,15 @@ export function TaskLine({ taskId, text, reply, from }: { taskId: string; text?:
     if (task.status === "done" || task.status === "failed" || task.status === "cancelled") return null;
     const step = task.status === "running" && work ? stepText(work) : undefined;
     return (
-      <div title={step} className="flex w-full max-w-md items-center gap-2 py-0.5 text-[13px]">
-        <AgentAvatar avatar={agent?.avatar} id={task.agentId} name={name} size={22} running />
-        <span className="min-w-0 flex-1 truncate text-muted">
-          <span className="font-medium text-fg">{name}</span> {t("task.errandThinking", { title: task.title })}
-        </span>
-        <span className="live-dot size-1.5 shrink-0 rounded-full" />
+      <div className="w-full max-w-md">
+        <div title={step} className="flex items-center gap-2 py-0.5 text-[13px]">
+          <AgentAvatar avatar={agent?.avatar} id={task.agentId} name={name} size={22} running />
+          <span className="min-w-0 flex-1 truncate text-muted">
+            <span className="font-medium text-fg">{name}</span> {t("task.errandThinking", { title: task.title })}
+          </span>
+          <span className="live-dot size-1.5 shrink-0 rounded-full" />
+        </div>
+        <Progress task={task} inset="pl-[30px]" />
       </div>
     );
   }
@@ -65,18 +69,35 @@ export function TaskLine({ taskId, text, reply, from }: { taskId: string; text?:
   const rounds = task.rounds ?? 0;
   const round = goal && working ? t("task.goalRound", { n: rounds + 1, of: goalLimit(rounds) }) : undefined;
   return (
-    <Link
-      href={`/tasks/${encodeURIComponent(task.id)}`}
-      title={`${name}: ${task.title}`}
-      className="press flex w-full max-w-md items-center gap-2.5 rounded-full border border-hairline bg-surface/70 py-1.5 pr-3.5 pl-1.5 text-[13px] hover:bg-surface"
-    >
-      <AgentAvatar avatar={agent?.avatar} id={task.agentId} name={name} size={22} running={task.status === "running"} />
-      {goal && <Target className="size-3.5 shrink-0 text-accent-text" aria-label={t("task.goal")} />}
-      <span className="min-w-0 flex-1 truncate font-medium text-fg">{task.title}</span>
-      {/* While it works, its step says more than the brain it runs on. */}
-      {(where || round || (how && !now)) && <span className="hidden shrink-0 text-xs text-muted sm:inline">{[where, round, now ? undefined : how].filter(Boolean).join(" · ")}</span>}
-      <Status label={now ?? st.label} tone={st.tone} working={working} />
-    </Link>
+    <div className="w-full max-w-md">
+      <Link
+        href={`/tasks/${encodeURIComponent(task.id)}`}
+        title={`${name}: ${task.title}`}
+        className="press flex w-full items-center gap-2.5 rounded-full border border-hairline bg-surface/70 py-1.5 pr-3.5 pl-1.5 text-[13px] hover:bg-surface"
+      >
+        <AgentAvatar avatar={agent?.avatar} id={task.agentId} name={name} size={22} running={task.status === "running"} />
+        {goal && <Target className="size-3.5 shrink-0 text-accent-text" aria-label={t("task.goal")} />}
+        <span className="min-w-0 flex-1 truncate font-medium text-fg">{task.title}</span>
+        {/* While it works, its step says more than the brain it runs on. */}
+        {(where || round || (how && !now)) && <span className="hidden shrink-0 text-xs text-muted sm:inline">{[where, round, now ? undefined : how].filter(Boolean).join(" · ")}</span>}
+        <Status label={now ?? st.label} tone={st.tone} working={working} />
+      </Link>
+      <Progress task={task} inset="px-3.5" />
+    </div>
+  );
+}
+
+/** What the task last told whoever started it, while it is still at work: two quiet lines and the time. */
+function Progress({ task, inset }: { task: Task; inset: string }) {
+  const said = task.progress;
+  if (!said || task.status === "done" || task.status === "failed" || task.status === "cancelled") return null;
+  return (
+    <div className={cx("mt-1 flex items-baseline gap-2 text-xs text-muted", inset)}>
+      <span className="line-clamp-2 min-w-0 flex-1 break-words">{said.text}</span>
+      <time dateTime={said.at} title={formatDateTime(said.at)} className="shrink-0 tabular-nums">
+        {shortTime(said.at)}
+      </time>
+    </div>
   );
 }
 

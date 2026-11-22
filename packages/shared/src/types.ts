@@ -648,6 +648,10 @@ export interface Task {
   resumeAt?: ISODate;
   /** A question the task asked whoever started it (task_ask), until it gets an answer. */
   question?: string;
+  /** What the task last told whoever started it (task_tell): the person sees it under the task's line. */
+  progress?: { text: string; at: ISODate };
+  /** Its starter wrote to it (task_message) and has not heard back: the next task_tell reaches them at once. */
+  owesReply?: boolean;
   /**
    * "message": a thread between two agents of the team (team_message); it reads like a conversation, not a job.
    * "goal": a long goal (the /goal command): it keeps going round after round until the agent reports it reached.

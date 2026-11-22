@@ -546,6 +546,7 @@ export default {
   "task.requeued": "Task queued",
   "task.createdAt": "created {time}",
   "task.question": "Asks",
+  "task.progress": "Latest update",
   "task.goal": "Goal",
   "task.result": "Result",
   "task.expand": "More",
@@ -555,6 +556,7 @@ export default {
   "task.subtaskOf": "Subtask of a {parent}",
   "task.parent": "parent task",
   "task.notStarted": "The agent hasn't started on this task yet.",
+  "task.writeToContinue": "Write to continue the task…",
   "thread.open": "Open the conversation",
   "thread.hint": "Two agents talking — the reply goes back to the one who wrote on its own. To step in, just write here.",
 

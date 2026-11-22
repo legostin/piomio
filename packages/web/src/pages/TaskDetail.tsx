@@ -7,7 +7,7 @@ import { ArrowLeft, ArrowLeftRight, Ban, ChevronDown, RotateCcw } from "lucide-r
 import type { Task } from "@piomio/shared";
 import { useStore } from "../lib/store";
 import { api, errorText } from "../lib/api";
-import { ACTIVE_STATUSES, formatDateTime, relativeTime, taskStatus, threadStatus } from "../lib/format";
+import { ACTIVE_STATUSES, formatDateTime, relativeTime, shortTime, taskStatus, threadStatus } from "../lib/format";
 import { agents, ensureAgents, hubEvents, reconnected, tasks } from "../state/app";
 import { toast } from "../state/toast";
 import { t, tRich } from "../i18n";
@@ -68,6 +68,8 @@ export function TaskDetailPage({ id }: { id: string }) {
   const active = ACTIVE_STATUSES.includes(current.status);
   // A thread goes on when its sender writes again; only one that broke off can be retried.
   const canRetry = (thread ? ["failed", "interrupted"] : ["failed", "cancelled", "interrupted", "paused", "done"]).includes(current.status);
+  // A job that is over goes on when the person writes: the field says so.
+  const over = !thread && ["done", "failed", "cancelled"].includes(current.status);
   const from = thread && current.from ? (agentList?.find((a) => a.id === current.from) ?? { id: current.from, name: current.from, avatar: undefined }) : undefined;
   const to = agentList?.find((a) => a.id === current.agentId);
 
@@ -119,6 +121,15 @@ export function TaskDetailPage({ id }: { id: string }) {
         <div className="mt-3 rounded-2xl bg-warning-soft px-3.5 py-2.5 text-sm">
           <div className="mb-0.5 text-xs font-semibold text-warning">{t("task.question")}</div>
           {current.question}
+        </div>
+      )}
+      {/* What it last told whoever started it (task_tell), while it is still at work. */}
+      {current.progress && !["done", "failed", "cancelled"].includes(current.status) && (
+        <div className="mt-3 rounded-2xl bg-surface-2/70 px-3.5 py-2.5 text-sm">
+          <div className="mb-0.5 text-xs font-medium text-muted">
+            {t("task.progress")} · {shortTime(current.progress.at)}
+          </div>
+          <div className="whitespace-pre-wrap break-words">{current.progress.text}</div>
         </div>
       )}
       <div
@@ -196,7 +207,7 @@ export function TaskDetailPage({ id }: { id: string }) {
         )}
       </TopBar>
       <div className="min-h-0 flex-1">
-        <ChatView conversationId={current.conversationId} header={false} top={thread ? hint : summary} emptyHint={t("task.notStarted")} />
+        <ChatView conversationId={current.conversationId} header={false} top={thread ? hint : summary} emptyHint={t("task.notStarted")} placeholder={over ? t("task.writeToContinue") : undefined} />
       </div>
     </div>
   );

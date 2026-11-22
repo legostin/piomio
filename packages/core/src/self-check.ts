@@ -3,6 +3,8 @@
 // and every agent hung, since the egress proxy could not resolve a host for its brains. Nothing inside such a process
 // recovers, so the hub says what hangs and ends its process; what runs it (the desktop app, systemd) starts it again,
 // and the turns it cut short are marked and taken up on the next start.
+// The freeze of that day was macOS no longer waking the pool's threads, which @piomio/shared/thread-pool now keeps
+// from happening; this check stays for whatever else stops a pool.
 
 import { stat } from "node:fs/promises";
 

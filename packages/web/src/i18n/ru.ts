@@ -546,6 +546,7 @@ export default {
   "task.requeued": "Задача поставлена в очередь",
   "task.createdAt": "создана {time}",
   "task.question": "Спрашивает",
+  "task.progress": "Последняя заметка",
   "task.goal": "Цель",
   "task.result": "Результат",
   "task.expand": "Подробнее",
@@ -555,6 +556,7 @@ export default {
   "task.subtaskOf": "Подзадача для {parent}",
   "task.parent": "родительской задачи",
   "task.notStarted": "Агент ещё не начал работу над задачей.",
+  "task.writeToContinue": "Напишите, чтобы продолжить задачу…",
   "thread.open": "Открыть переписку",
   "thread.hint": "Переписка агентов: ответ сам вернётся тому, кто написал. Можно вмешаться — просто напишите сюда.",
 

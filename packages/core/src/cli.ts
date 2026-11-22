@@ -22,6 +22,7 @@ import { InviteRegistry } from "./invites.ts";
 import { homedir, hostname } from "node:os";
 import { installLayout, settleBeforeStart, TRIAL_MAX_MS } from "./self-update.ts";
 import { watchThreadPool } from "./self-check.ts";
+import { keepThreadPoolAwake } from "@piomio/shared/thread-pool";
 import { printLink, remoteStatusFile } from "./remote.ts";
 
 const [cmd = "start", ...args] = process.argv.slice(2);
@@ -70,6 +71,8 @@ async function main(): Promise<void> {
       }
       process.on("unhandledRejection", (e) => console.error("[piomio] unhandled rejection:", e));
       await hub.start();
+      // macOS stops waking a pool that worked long enough (thread-pool.ts); the self-check below is for what still freezes.
+      keepThreadPoolAwake();
       // A hub whose thread pool died serves pages and hangs every agent (self-check.ts): it ends, and is started again.
       watchThreadPool({
         dir: config.dataDir,

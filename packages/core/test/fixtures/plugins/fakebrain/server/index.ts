@@ -1,6 +1,7 @@
 // Scriptable brain for core integration tests.
 // "CALL <tool> <json>" calls a hub tool over MCP; "PICTURE <token>" shows a picture whose address it made; "LIMIT" makes brain `fake` hit its limit; "PROMPT?" echoes the instructions.
-// Group chats: "HANDOFF <id>" on the last line replies "over to @<id>"; "ECHO?" anywhere echoes the turn's "[...]" lines;
+// Group chats: "HANDOFF <id>" on the last line replies "over to @<id>"; "ECHO?" anywhere echoes the turn's "[...]" lines,
+// "WHOLE?" the whole of the turn's text;
 // "SLOW" at the end of the last line keeps the turn going until it is interrupted (or 5 s pass), "BRIEF" for 0.8 s;
 // "CRASH" there breaks the turn off after a first word, the way a brain whose process died does.
 // Brain `fake` takes input into such a turn (steer): the turn then ends with "fake also heard: <its last line>";
@@ -24,7 +25,8 @@ const used = new Map<string, string[]>();
 /** Sessions the hub got ready ahead of a turn (warm). */
 const warmed = new Set<string>();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const lastLine = (text: string) => text.trim().split("\n").at(-1) ?? "";
+/** The hub's hint under a starter's message to a task ("(If they ask you something, …)") is not the message. */
+const lastLine = (text: string) => text.replace(/\n\(If they ask you something[^\n]*\)\s*$/, "").trim().split("\n").at(-1) ?? "";
 
 async function mcpCall(o: BrainSessionOptions, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
   const r = await fetch(o.mcp.url, {
@@ -202,6 +204,11 @@ export default {
             // A quiet look with nothing to say.
             if (last === "QUIET?") {
               yield { type: "text", delta: "[quiet]" };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            if (turn.text.includes("WHOLE?")) {
+              yield { type: "text", delta: `${id} read: ${turn.text}` };
               yield { type: "done", resumeToken: `${id}-resume` };
               return;
             }
