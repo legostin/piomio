@@ -53,6 +53,7 @@ import { MAX_AUTO_TRANSCRIBE_SEC, type Transcriber } from "./transcribe.ts";
 import { firstSpeakers, groupTurn, groupTurnText, handOff, MAX_HANDOFFS, USER_LABEL } from "./group-chat.ts";
 import { localComputerName } from "./pairing.ts";
 import { cardKind, delivered, deliveredNote, recap, type NotificationPart } from "./continuity.ts";
+import { recallText, recentWork, RECALL_MESSAGES, RECALL_TASKS, RECENT_MESSAGES, RECENT_TASKS, RECENT_TASKS_MS, type OwnWork } from "./own-work.ts";
 import { brainOfModel, NO_RULE, parseRuleAnswer, ruleChoice, ruled, ruleLine, rulesPrompt, WorkRules } from "./work-rules.ts";
 import type { QuickModel } from "./bare-ask.ts";
 import { heardParts, type HeardPrefix } from "./speech/interruption.ts";
@@ -317,6 +318,8 @@ export class SessionRunner {
   private seen = new Map<string, string>();
   /** The `at` of the newest trigger note each live session was shown (`[Signals]`). */
   private seenSignals = new Map<string, { at: string; ids: string[] }>();
+  /** What each session was shown of its agent's other work (`[Your recent work]`): when it last looked, and the messages and tasks by id. */
+  private seenWork = new Map<string, { at: string; ids: Set<string> }>();
   private timer?: NodeJS.Timeout;
   private kickoff?: NodeJS.Timeout;
   private streamingMessage = new Map<string, string>(); // conversationId -> messageId
@@ -2435,6 +2438,76 @@ export class SessionRunner {
     return !!where && this.d.store.conversationTainted(where);
   }
 
+  /** The agent's tasks that ended, oldest first: its own work, not its replies in threads or a channel's gathering runs. */
+  private finishedTasks(agentId: string, limit: number): Task[] {
+    return this.d.store.finishedTasks(agentId, limit).reverse();
+  }
+
+  /** The times and names own-work.ts writes its lines with. */
+  private ownWorkWords(agentId: string): Pick<OwnWork, "time" | "from"> {
+    const timezone = this.d.settings.get().timezone;
+    return {
+      time: (iso) => clockTime(iso, timezone),
+      from: (t) => {
+        if (t.createdBy === "user") return " from the user";
+        if (t.createdBy === "trigger") return " from a trigger";
+        const by = this.startedBy(t);
+        return by && by !== agentId ? ` from ${this.agentLabel(by)}` : "";
+      },
+    };
+  }
+
+  /** Whether any of what is shown of an agent's dialog and tasks came from outside content. */
+  private workFromOutside(dialogId: string | undefined, messages: Message[], tasks: Task[]): boolean {
+    if (tasks.some((t) => this.carriesTaint(t))) return true;
+    if (!messages.length) return false;
+    if (dialogId && this.d.store.conversationTainted(dialogId)) return true;
+    return messages.some((m) => m.parts.some((p) => p.type === "notification" && this.cardFromOutside(m, p)));
+  }
+
+  /**
+   * The `[Your recent work]` block for a session's next turn (own-work.ts): for a thread with a teammate and a task
+   * a teammate started, which open knowing nothing of what the agent said in its dialog with the user or of the tasks
+   * it finished. The first time the recent part; later only what is new. A task the agent's own dialog or the person
+   * started carries what it needs in its goal, and a background run has its own job: those look with self_recall.
+   * `outside`: some of it came from outside content.
+   */
+  private ownWorkOf(row: SessionRow, agent: AgentDef, task: Task | undefined): { text: string; outside: boolean } | undefined {
+    if (!task || task.background) return undefined;
+    const by = this.startedBy(task);
+    if (task.kind !== "message" && (!by || by === agent.id)) return undefined;
+    // A session that had a turn before the hub restarted heard the block with it.
+    const seen = this.seenWork.get(row.id) ?? (row.resumeToken ? { at: row.updatedAt, ids: new Set<string>() } : undefined);
+    const at = nowIso();
+    const dialog = this.d.store.agentDialog(agent.id);
+    const messages = (dialog ? this.d.store.listMessages(dialog.id, { limit: RECENT_MESSAGES, ...(seen ? { since: seen.at } : {}) }) : []).filter((m) => !seen?.ids.has(m.id));
+    const from = seen?.at ?? new Date(Date.now() - RECENT_TASKS_MS).toISOString();
+    const tasks = this.finishedTasks(agent.id, 200)
+      .filter((t) => t.id !== task.id && t.updatedAt > from && !seen?.ids.has(t.id))
+      .slice(-RECENT_TASKS);
+    const text = recentWork({ dialog: messages, tasks, ...this.ownWorkWords(agent.id) }, { again: !!seen });
+    // A reply still being written is shown when it is whole.
+    const shown = [...messages.filter((m) => m.status !== "streaming").map((m) => m.id), ...tasks.map((t) => t.id)];
+    this.seenWork.set(row.id, { at, ids: new Set([...(seen?.ids ?? []), ...shown]) });
+    if (!text) return undefined;
+    return { text: this.d.redactor.text(text), outside: this.workFromOutside(dialog?.id, messages, tasks) };
+  }
+
+  /**
+   * self_recall: an agent looks into its own other sessions from any of them: its dialog with the user and the tasks
+   * it finished, the latest or what mentions `query`. `taint`: some of what it shows came from outside content.
+   */
+  recallOwn(agentId: string, o: { query?: string; limit?: number } = {}): { text: string; taint?: boolean } {
+    const dialog = this.d.store.agentDialog(agentId);
+    const messages = dialog ? this.d.store.listMessages(dialog.id, { limit: RECALL_MESSAGES }) : [];
+    let outside = false;
+    const text = recallText(
+      { dialog: messages, tasks: this.finishedTasks(agentId, RECALL_TASKS), ...this.ownWorkWords(agentId) },
+      { ...o, shown: (tasks, shown) => (outside = this.workFromOutside(dialog?.id, shown, tasks)) },
+    );
+    return { text: this.d.redactor.text(text), ...(outside ? { taint: true } : {}) };
+  }
+
   /**
    * What came before in a conversation, for a fresh session of `agent` there (continuity.ts): undefined when the agent
    * has not replied there yet. A card from outside content keeps its text out of the recap of a session that has not
@@ -2908,6 +2981,13 @@ export class SessionRunner {
       }
       const backup = !fresh && seed ? { recap: seed } : {};
       fresh = false;
+      // A thread with a teammate, a task a teammate started: what the agent said and did elsewhere comes first, and
+      // the session carries the mark of what that read.
+      const work = conv.kind === "group" ? undefined : this.ownWorkOf(row!, agent, task);
+      if (work) {
+        if (work.outside) this.markTainted(row!);
+        text = `${work.text}\n\n${text}`;
+      }
       // The dialog's agent sees the tasks it started that are still going, whatever this turn is about.
       if (conv.kind === "main" && !task) {
         const open = this.openTasks(conv.id);

@@ -152,6 +152,7 @@ const IN_A_TASK = [
 function inAThread(from: { id: string; name: string }): string[] {
   return [
     `- ${from.name} wrote to you as a colleague would. Your reply goes back to them by itself: answer what they asked, briefly and to the point, or ask back in your reply if something is unclear and it matters.`,
+    `- ${from.name} asks you as the whole you, not as this new thread: what you told the user or did in a task counts as what you know. When the \`[Your recent work]\` block does not cover it, look with \`self_recall\` (and \`memory_search\`, \`library_find\`) before you answer that you know nothing; if they call it by another name (a "report" for what was a summary in your dialog), say what you do have.`,
     `- Use your tools when the answer needs them. ${from.name} may write again in this thread (\`${from.name} (your teammate) writes: …\`); the user can read it and may write here too.`,
     "- To ask another teammate on the way, use `team_message`.",
   ];
@@ -216,6 +217,7 @@ export function buildSystemPrompt(c: PromptContext): string {
       : "",
     c.thinking ? thinkingLine(c.thinking) : "",
     "Your dialog with the user, your tasks and your threads with teammates are all you, in separate sessions. The `[You now]` block before a message says where this session runs, what else you are doing, what each teammate is busy with and where the user is; it is current, so answer from it when asked what you or a teammate are doing.",
+    "What you said, heard and did in your other sessions is your own memory: a `[Your recent work]` block before a message shows the recent part, and `self_recall` looks into your dialog with the user and your finished tasks from any session. Asked about something that may have come up elsewhere, look with `self_recall` before you say you do not know.",
     "",
     "Tools from the `piomio` MCP server are your hands: browser, memory, tasks, triggers, notifications, machines, vault references, and anything plugins add.",
     "",
