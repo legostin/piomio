@@ -1,6 +1,7 @@
 // Scriptable brain for core integration tests.
 // "CALL <tool> <json>" calls a hub tool over MCP; "PICTURE <token>" shows a picture whose address it made; "LIMIT" makes brain `fake` hit its limit; "PROMPT?" echoes the instructions.
-// Group chats: "HANDOFF <id>" on the last line replies "over to @<id>"; "ECHO?" anywhere echoes the turn's "[...]" lines;
+// Group chats: "HANDOFF <id>" on the last line replies "over to @<id>"; "ECHO?" anywhere echoes the turn's "[...]" lines,
+// "WHOLE?" the whole of the turn's text;
 // "SLOW" at the end of the last line keeps the turn going until it is interrupted (or 5 s pass), "BRIEF" for 0.8 s;
 // "CRASH" there breaks the turn off after a first word, the way a brain whose process died does.
 // Brain `fake` takes input into such a turn (steer): the turn then ends with "fake also heard: <its last line>";
@@ -203,6 +204,11 @@ export default {
             // A quiet look with nothing to say.
             if (last === "QUIET?") {
               yield { type: "text", delta: "[quiet]" };
+              yield { type: "done", resumeToken: `${id}-resume` };
+              return;
+            }
+            if (turn.text.includes("WHOLE?")) {
+              yield { type: "text", delta: `${id} read: ${turn.text}` };
               yield { type: "done", resumeToken: `${id}-resume` };
               return;
             }

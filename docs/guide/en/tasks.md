@@ -76,7 +76,7 @@ A task can ask whoever started it. The agent in your dialog answers from what it
 
 Ask the agent "how is the laptop task going?" at any time. It looks into the task's thread and tells you what the task has done, what it is doing now and what it last said. It sees this for the tasks it started and its own; of other tasks it sees only the status and the result. You can also have it ask the task itself: "ask it what it has found so far". The task answers without stopping its work, and the answer comes to your dialog as the agent's message.
 
-You can add to a task while it runs. Tell the agent "for the laptops, only ones under 1.5 kg", and it sends that into the task, which takes it at its next step. A finished task picks up again with a new note. You can also write on the task's own page.
+You can add to a task while it runs. Tell the agent "for the laptops, only ones under 1.5 kg", and it sends that into the task, which takes it at its next step. A finished task picks up again with a new note. You can also write on the task's own page, also once the task is over: a finished, failed or cancelled task goes back to work with what you wrote, and the agent that started it learns what you added and gets the new result.
 
 To stop a task, say "stop that", or press **Cancel** on the task's page. **Stop** in the dialog only stops the agent's current reply, not the tasks it started.
 
