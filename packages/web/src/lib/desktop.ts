@@ -31,6 +31,21 @@ export function applyDesktopDocument(app = desktopApp()): void {
   addEventListener("resize", update);
 }
 
+/** A file dropped where nothing takes it (the sidebar, the kanban board) is ignored. Otherwise the browser opens it in
+ * place of the hub, and the desktop app's window in the app it belongs to. Where a page takes files (the chat), it
+ * accepts the drag first and this leaves it be. */
+export function guardFileDrops(target: EventTarget = globalThis): void {
+  const files = (e: Event) => [...((e as DragEvent).dataTransfer?.types ?? [])].includes("Files");
+  target.addEventListener("dragover", (e) => {
+    if (e.defaultPrevented || !files(e)) return;
+    e.preventDefault();
+    (e as DragEvent).dataTransfer!.dropEffect = "none";
+  });
+  target.addEventListener("drop", (e) => {
+    if (!e.defaultPrevented && files(e)) e.preventDefault();
+  });
+}
+
 /** Where the window is dragged from when it has no title bar: the element itself, or ("deep") all of it but its
  * buttons, links and fields. */
 export function dragRegion(deep = false, app = desktopApp()): { "data-tauri-drag-region"?: string } {

@@ -93,6 +93,7 @@ export function ChatView({
   header = true,
   emptyHint,
   dock,
+  placeholder,
 }: {
   conversationId: string;
   /** Rendered above the messages (e.g. a task summary). */
@@ -103,6 +104,8 @@ export function ChatView({
   emptyHint?: ReactNode;
   /** In place of the composer (an archived agent's dialog, where nobody writes). */
   dock?: ReactNode;
+  /** The composer's hint, when the place has its own (a finished task: writing takes it up again). */
+  placeholder?: string;
 }) {
   const conv = useConversationMessages(conversationId);
   const convList = useStore(conversations);
@@ -333,7 +336,7 @@ export function ChatView({
       <div ref={composerArea} className="chat-dock relative shrink-0 px-3 pb-3 sm:px-6">
         <div className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-b from-transparent to-bg" aria-hidden />
         <div className="mx-auto w-full max-w-3xl">
-          {dock ?? <Composer key={conversationId} conversationId={conversationId} />}
+          {dock ?? <Composer key={conversationId} conversationId={conversationId} placeholder={placeholder} />}
         </div>
       </div>
     </div>

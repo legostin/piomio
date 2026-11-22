@@ -74,6 +74,7 @@ These wait until you turn them on:
 | **Notion** | Search, read and write pages and databases, comment. | Notion's sign-in |
 | **Linear** | Find and read issues, projects, cycles and documents; create and update issues; comment. | Linear's sign-in |
 | **Kanban** | Projects with columns of their own, a queue, cards with files, agents that take cards by themselves. See [Kanban board](kanban.md). | **Turn on** |
+| **HTTP client** | HTTP requests to any API, by hand on a page of its own or through agents: saved requests, environments, a searchable history. See [HTTP client](http-client.md). | **Turn on** |
 | **Blender** | Blender for the agents through the official MCP server from Blender Lab. | **Turn on** |
 | **Telegram account** | Your own Telegram account for your agents: they read the chats you open to them and write only if you allow it. See [Your Telegram account](telegram-account.md). | A QR code scanned in Telegram |
 | **Composio** | Slack, GitHub, Google apps, Microsoft 365, Jira, Zoom and more through an outside service. | A Composio key, then each app's sign-in |
