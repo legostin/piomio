@@ -102,6 +102,10 @@ pub fn open_main(app: &AppHandle, url: Url) -> tauri::Result<()> {
     .initialization_script(hello)
     .inner_size(1200.0, 820.0)
     .min_inner_size(420.0, 520.0)
+    // The page handles drags itself: kanban cards between columns, files dropped into the chat. Tauri's own file-drop
+    // handler answers WebKit's dragging callbacks instead of passing them on, so the page would hear dragstart and never
+    // dragover or drop.
+    .disable_drag_drop_handler()
     .on_page_load(|w, p| {
       if p.event() == PageLoadEvent::Finished && CLEAR_CACHE.swap(false, Ordering::SeqCst) {
         let _ = w.eval(CLEAR_CACHE_JS);
