@@ -38,6 +38,16 @@ You don't have to put everything into one message.
 
 You can send clarifications at any time without pressing **Stop**. A status under the message shows whether it joined the current work or is queued for the next turn. Queued input starts after the current work ends; it never starts a competing run. In groups, new messages wait for the current round. If delivery fails or the hub restarts before queued input is picked up, the message stays in the chat with a retry notice.
 
+### Long conversations
+
+A dialog goes on in one brain session, and every message makes the model read the conversation so far. Read again within the hour, it is cheap; a long history read cold, or one that keeps growing, is not. So the hub renews the session by itself:
+
+- Once the history is past the **Dialog context cap** (120000 tokens by default), the next message starts a fresh session with a short recap of the conversation: how it started, the older part a line per message, the recent messages in full.
+- After an hour without messages, or when the agent's instructions or tools change, the same happens from a third of the cap. A shorter history carries on whole.
+- A new rule for where work goes, or a new teammate, reaches the agent as a note with your next message; its session carries on.
+
+You see none of this in the chat. After a renewal the agent knows the recap, its memory and its files, but not every detail of an old exchange: say it again if it matters. Both the cap and the recap's size are in **Settings** → **General** → **Brains**, and an agent changes them when you ask: "set the dialog context cap to 80000". Tasks are not renewed: Claude Code compacts a task's history at the **Task context cap**. Only Claude Code tells the hub how big a session is, so dialogs on other brains carry on whole.
+
 ### The live step line
 
 While the agent works, a short line under its name says what it is doing now, in place of typing dots: **Reading plan.md**, **Running: npm test**, **On the web…**, **Starting a task…**, **Writing to a teammate…**. **Waiting for your permission** shows in amber when an action needs your yes (see [Approvals and auto mode](approvals.md)). When the words of the reply start to flow, the line gives way to them.

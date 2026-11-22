@@ -91,14 +91,8 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
     "- When a task finishes, its result comes to you: tell the user the outcome in a few lines, in your own words.",
     "- A task that comes back without what was asked (it could not, stopped halfway, gave up) is not the end: when another way is likely to work (another approach, a teammate, another brain or computer, something it lacked that you can give), start it again at once another way with what the first one learned, and tell the user in a line. Ask the user only for what only they can give or decide; tell them it failed only when the second way failed too or nothing else is left.",
   ];
-  const team = c.dispatch.team.map((a) => {
-    const skills = a.skills?.length ? `skills: ${a.skills.join(", ")}` : "";
-    const brains = a.brains?.length ? `brains: ${a.brains.join(", ")}` : "";
-    const where = a.where.length ? `on: ${a.where.join(", ")}` : "";
-    const about = [skills, brains, where].filter(Boolean).join("; ");
-    return `- ${a.id}: ${a.name}${a.id === c.agent.id ? " (you)" : ""} — ${a.description || "no description"}${about ? ` (${about})` : ""}`;
-  });
-  if (team.length) lines.push("", "Your team (`to` in team_message, `agent` in task_delegate):", ...team);
+  const team = teamBlock(c.dispatch, c.agent.id);
+  if (team.length) lines.push("", ...team);
   const brains = (c.dispatch.brains ?? []).map((b) => `- ${b.id}: ${b.label}${b.models.length ? ` (models: ${b.models.join(", ")})` : ""} — ${BRAIN_FIT[b.id.split(":")[0]] ?? "general work"}${b.ready ? "" : " (not ready now)"}`);
   if (brains.length) lines.push("", "Brains here (`brain` in task_delegate):", ...brains);
   if (c.dispatch.computers.length > 1) {
@@ -108,8 +102,38 @@ function howYouWork(c: PromptContext & { dispatch: NonNullable<PromptContext["di
       ...c.dispatch.computers.map((m) => `- ${m.id}: ${m.name}${m.id === "local" ? " (the hub's own computer)" : ""}${m.gpus?.length ? `; GPU: ${m.gpus.join(", ")}` : ""}${m.commands === false ? "; commands off (hub_machine_commands turns them on with the person's yes)" : ""}${m.online ? "" : " (offline when this session started)"}`),
     );
   }
-  if (c.dispatch.rules?.length) lines.push("", "The user's rules for where work goes (follow them in task_delegate):", ...c.dispatch.rules);
+  if (c.dispatch.rules?.length) lines.push("", RULES_HEAD, ...c.dispatch.rules);
   return lines;
+}
+
+type Dispatch = NonNullable<PromptContext["dispatch"]>;
+
+const RULES_HEAD = "The user's rules for where work goes (follow them in task_delegate):";
+
+/** The team as a dialog's agent reads it, under its heading; empty with no team. */
+function teamBlock(d: Pick<Dispatch, "team">, self: string): string[] {
+  const team = d.team.map((a) => {
+    const skills = a.skills?.length ? `skills: ${a.skills.join(", ")}` : "";
+    const brains = a.brains?.length ? `brains: ${a.brains.join(", ")}` : "";
+    const where = a.where.length ? `on: ${a.where.join(", ")}` : "";
+    const about = [skills, brains, where].filter(Boolean).join("; ");
+    return `- ${a.id}: ${a.name}${a.id === self ? " (you)" : ""} — ${a.description || "no description"}${about ? ` (${about})` : ""}`;
+  });
+  return team.length ? ["Your team (`to` in team_message, `agent` in task_delegate):", ...team] : [];
+}
+
+/**
+ * The parts of a dialog's instructions that change while its session lives: the team and the user's rules for where
+ * work goes. A session keeps the system prompt it started with (session-life.ts), so when these change the hub sends
+ * them in a message (`briefingNote`); the runner keeps a fingerprint of the ones each session was told.
+ */
+export function dispatchBrief(d: Pick<Dispatch, "team" | "rules">, self: string): string {
+  return [...teamBlock(d, self), "", RULES_HEAD, ...(d.rules?.length ? d.rules : ["(none)"])].join("\n");
+}
+
+/** The note that brings a dialog's session the team and rules as they are now. */
+export function briefingNote(brief: string): string {
+  return `[Your team and rules now] These changed since this session started; this replaces the lists in your instructions, without mentioning this note.\n${brief}`;
 }
 
 /** Inside a task: do the work, ask the starter only what only they know. */

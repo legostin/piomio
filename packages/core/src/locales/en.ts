@@ -263,6 +263,9 @@ export default {
   "settings.badVoice": "Voice settings are wrong: {reason}",
   "settings.badTriggersAllowPrivate": "Watching local network addresses can only be on or off",
   "settings.badTriggersWatchTimeout": "The page load timeout must be a whole number of seconds from {min} to {max}",
+  "settings.badDialogContextCap": "A dialog's context cap must be a whole number of tokens from {min} to {max}",
+  "settings.badTaskContextCap": "A task's context cap must be a whole number of tokens from {min} to {max}",
+  "settings.badRecapMaxChars": "The recap's size must be a whole number of characters from {min} to {max}",
 
   // the local speech engine (speech/)
   "speech.voice.piper-ru-dmitri": "Dmitri",

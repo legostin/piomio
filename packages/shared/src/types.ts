@@ -1038,6 +1038,11 @@ export interface BrainSessionOptions {
    * run without asking, the rest ask the hub (`confine.permissionTool`, `askTool`) or are refused with nobody to ask.
    */
   connections?: string[];
+  /**
+   * The context size, in tokens, at which the brain compacts the conversation by itself, when it can be told (Claude
+   * Code's auto-compact window): the hub gives a task's session one, so its history does not grow to the model's limit.
+   */
+  compactWindow?: number;
 }
 
 export type BrainEvent =
@@ -1048,7 +1053,13 @@ export type BrainEvent =
   | { type: "warning"; message: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
-  | { type: "usage"; inputTokens?: number; outputTokens?: number; costUsd?: number }
+  /**
+   * A turn's tokens. `inputTokens` is the whole input; `cacheReadTokens` and `cacheWriteTokens` are the parts of it read
+   * from and written to the provider's prompt cache, when the brain can tell them apart.
+   */
+  | { type: "usage"; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; costUsd?: number }
+  /** The size of one model call's prompt in the session's own conversation, in tokens: how big its context is now. */
+  | { type: "context"; tokens: number }
   /** The model that answers this turn, as the brain names it (an alias it resolved, its default), when it can tell. */
   | { type: "model"; model: string }
   | { type: "limit_hit"; resetAt?: ISODate; detail: string }

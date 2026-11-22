@@ -64,6 +64,9 @@ See [Approvals and auto mode](approvals.md).
 ### Brains
 
 - **Parallel sessions per brain** (2, from 1 to 16): how many tasks and agent threads run at once on one brain on one computer. The rest wait in line; your own conversations never wait.
+- **Dialog context cap, tokens** (120000, from 20000 to 1000000): how much history a dialog's session holds before it starts afresh from a short recap of the conversation. Lower costs less and remembers less. After an hour without messages a third of it is enough, because the whole history would be sent again anyway. See [Long conversations](chat.md#long-conversations).
+- **Task context cap, tokens** (200000, from 100000 to 1000000): the context size at which a task's brain compacts its own history. Claude Code follows it; other brains compact by their own rules.
+- **Recap size, characters** (16000, from 4000 to 200000): how long the recap a fresh session starts from may get.
 - **Extra allowed hosts**: where brains may connect besides the default list (Anthropic, OpenAI, Kimi, GitHub, npm and the like). Wildcards like `*.example.com` work. The built-in list is visible here too. New public hosts can be proposed in chat via a network permission card; Always allow adds the host here. Remove an entry and save to stop new connections using that permanent permission.
 - **Addresses in my network**: hosts inside your own network (home, office, a VPN) that agents may open, such as `jira.corp.example`, `*.corp.example`, `nas.local` or `192.168.1.10`. Everything else there stays closed. When an agent reaches for such a host, a network card in its chat asks you, and Always allow adds the host here; a wildcard is yours to type. Remove an entry and save to close the host again. See [The network filter](security.md#the-network-filter).
 

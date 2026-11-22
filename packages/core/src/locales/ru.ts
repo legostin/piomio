@@ -262,6 +262,9 @@ export default {
   "settings.badVoice": "Неверные настройки голоса: {reason}",
   "settings.badTriggersAllowPrivate": "Слежение за адресами локальной сети можно только включить или выключить",
   "settings.badTriggersWatchTimeout": "Таймаут загрузки страницы — целое число секунд от {min} до {max}",
+  "settings.badDialogContextCap": "Предел контекста диалога — целое число токенов от {min} до {max}",
+  "settings.badTaskContextCap": "Предел контекста задачи — целое число токенов от {min} до {max}",
+  "settings.badRecapMaxChars": "Размер пересказа — целое число символов от {min} до {max}",
 
   // локальный движок речи (speech/)
   "speech.voice.piper-ru-dmitri": "Дмитрий",

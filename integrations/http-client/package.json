@@ -1,0 +1,7 @@
+{
+  "name": "@piomio/integration-http-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HTTP client: requests by hand and by agents, saved requests, environments, a searchable history"
+}

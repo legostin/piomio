@@ -166,6 +166,20 @@ const MIGRATIONS: string[] = [
   alter table tasks add column progress_at text;
   alter table tasks add column owes_reply integer not null default 0;
   `,
+  // A session's life (session-life.ts): the system prompt it started with and a fingerprint of what it was opened with
+  // (the same prompt for its whole life), a fingerprint of the team and rules it was told, how big its context is (the
+  // prompt of its last model call, and of the first one of this life), and when it was last used. Rows from before
+  // (and from an older replica) have none: they are opened with a new prompt, and all of their context counts.
+  `alter table sessions add column system_prompt text;
+  alter table sessions add column stamp text;
+  alter table sessions add column briefed text;
+  alter table sessions add column context_tokens integer;
+  alter table sessions add column base_tokens integer;
+  alter table sessions add column used_at text;`,
+  // Where a turn's tokens went: the model's output, and the input's parts read from and written to the prompt cache.
+  `alter table usage add column output integer not null default 0;
+  alter table usage add column cache_read integer not null default 0;
+  alter table usage add column cache_write integer not null default 0;`,
 ];
 
 /**
