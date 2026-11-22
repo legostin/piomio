@@ -470,6 +470,15 @@ export class Store {
     return this.db.prepare("select * from tasks order by created_at desc limit ?").all(limit).map(taskFrom);
   }
 
+  /**
+   * An agent's own tasks that ended, the latest to end first: not its replies in threads (kind "message") or a
+   * channel's gathering runs. Asked of the table, so other agents' newer tasks do not push them past the limit.
+   */
+  finishedTasks(agentId: string, limit: number): Task[] {
+    const q = "select * from tasks where agent_id = ? and status in ('done', 'failed') and (kind is null or kind != 'message') and feed_id is null order by updated_at desc limit ?";
+    return this.db.prepare(q).all(agentId, limit).map(taskFrom);
+  }
+
   updateTask(id: string, patch: Partial<Pick<Task, "status" | "brainRef" | "machineId" | "result" | "error" | "resumeAt" | "title" | "question" | "tainted" | "rounds" | "kind" | "rule" | "thinking" | "progress" | "owesReply">>): Task | undefined {
     const cols: Record<string, string> = { status: "status", brainRef: "brain_ref", machineId: "machine_id", result: "result", error: "error", resumeAt: "resume_at", title: "title", question: "question", rounds: "rounds", kind: "kind", rule: "rule" };
     for (const [k, col] of Object.entries(cols)) {

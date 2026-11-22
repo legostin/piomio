@@ -305,6 +305,19 @@ describe("an agent knows its own work in a thread with a teammate (integration)"
     expect(other.taint).toBe(false);
   });
 
+  it("finds the agent's finished task behind other agents' newer ones, by when it ended", async () => {
+    const side = await chat();
+    const own = hub.store.createTask({ agentId: "researcher", title: "Count the invoices", goal: "Count the invoices", createdBy: "user", background: false, status: "done" });
+    for (let i = 0; i < 3; i++) hub.store.createTask({ agentId: "assistant", title: `Other work ${i}`, goal: "Other work", createdBy: "user", background: false, status: "done" });
+    await sleep(5);
+    hub.store.updateTask(own.id, { result: "Forty-two invoices." });
+    // The limit counts the agent's own tasks: three newer tasks of another agent do not use it up.
+    expect(hub.store.finishedTasks("researcher", 1).map((t) => t.id)).toEqual([own.id]);
+    expect(hub.store.finishedTasks("researcher", 50).every((t) => t.agentId === "researcher" && t.kind !== "message")).toBe(true);
+    const found = await call("self_recall", { query: "invoices" }, { conversationId: side, agentId: "researcher" });
+    expect(found.text).toContain("Forty-two invoices.");
+  });
+
   it("tells every session that its other sessions are its own memory", () => {
     const agent = { id: "researcher", name: "Researcher", description: "", brains: [], initiative: 1, tools: ["*"], skills: [], policyProfile: "default", budget: { backgroundRunsPerDay: 5 }, prompt: "", source: "builtin" } as AgentDef;
     const base = { agent, timezone: "UTC", language: "en", consoleUrl: "http://x", background: false, skills: [], nativeSkills: false, appended: [] };

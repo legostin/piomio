@@ -2323,10 +2323,7 @@ export class SessionRunner {
 
   /** The agent's tasks that ended, oldest first: its own work, not its replies in threads or a channel's gathering runs. */
   private finishedTasks(agentId: string, limit: number): Task[] {
-    return this.d.store
-      .listTasks({ status: ["done", "failed"], limit })
-      .filter((t) => t.agentId === agentId && t.kind !== "message" && !t.feedId)
-      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+    return this.d.store.finishedTasks(agentId, limit).reverse();
   }
 
   /** The times and names own-work.ts writes its lines with. */
