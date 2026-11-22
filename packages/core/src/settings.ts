@@ -39,6 +39,32 @@ export interface CoreSettings {
   triggersAllowPrivateUrls: boolean;
   /** How long a watch trigger waits for its page, in seconds (TRIGGERS_WATCH_TIMEOUT). */
   triggersWatchTimeoutSec: number;
+  /**
+   * How much history, in tokens, a dialog's session may hold before it starts afresh from the hub's recap
+   * (session-life.ts); a third of it, when the provider's prompt cache is lost anyway.
+   */
+  dialogContextCap: number;
+  /** The context size, in tokens, at which a task's brain compacts its own history (BrainSessionOptions.compactWindow). */
+  taskContextCap: number;
+  /** How long the recap a fresh session starts from may get, in characters (continuity.ts). */
+  recapMaxChars: number;
+}
+
+/** The ranges of the context settings; the task's is the one Claude Code takes for its auto-compact window. */
+export const CONTEXT_LIMITS = {
+  dialogContextCap: { min: 20_000, max: 1_000_000, bad: "settings.badDialogContextCap" },
+  taskContextCap: { min: 100_000, max: 1_000_000, bad: "settings.badTaskContextCap" },
+  recapMaxChars: { min: 4_000, max: 200_000, bad: "settings.badRecapMaxChars" },
+} as const;
+
+/** What is wrong with the context settings in a patch: the catalog key of the reason and its params; undefined when nothing is. */
+export function contextSettingsProblem(p: Record<string, unknown>): { key: string; params: { min: number; max: number } } | undefined {
+  for (const [k, { min, max, bad }] of Object.entries(CONTEXT_LIMITS)) {
+    if (!(k in p)) continue;
+    const n = p[k];
+    if (typeof n !== "number" || !Number.isInteger(n) || n < min || n > max) return { key: bad, params: { min, max } };
+  }
+  return undefined;
 }
 
 /** The range of triggersWatchTimeoutSec, in seconds. */
@@ -110,6 +136,9 @@ export function defaultSettings(timezone: string, language: Locale = localeFromE
     voice: DEFAULT_VOICE_SETTINGS,
     triggersAllowPrivateUrls: false,
     triggersWatchTimeoutSec: 30,
+    dialogContextCap: 120_000,
+    taskContextCap: 200_000,
+    recapMaxChars: 16_000,
   };
 }
 

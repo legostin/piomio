@@ -27,6 +27,8 @@ async function fixture(ref = "fake@local", accepts = true) {
       getMessage: (id: string) => messages.get(id),
       addMessage: (m: Message) => { const value = { ...m, id: `m${messages.size}`, createdAt: "now" }; messages.set(value.id, value); return value; },
       updateMessage: (id: string, patch: Partial<Message>) => { const m = { ...messages.get(id)!, ...patch }; messages.set(id, m); return m; },
+      // A turn's end is kept with its session (when it was last used, how big it is).
+      updateSession() {},
       db: { prepare: () => ({ get: () => undefined, run() {} }) },
     },
   };

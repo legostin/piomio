@@ -55,6 +55,22 @@ describe("ClaudeStreamParser", () => {
     p.push({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1893456000, rateLimitType: "five_hour" } });
     expect(p.limit?.resetAt).toBe(new Date(1893456000 * 1000).toISOString());
   });
+
+  it("says how big each model call's prompt was, once per call, and keeps the cache's share of a turn apart", () => {
+    const p = new ClaudeStreamParser();
+    const call = (id: string, usage: Record<string, number>, parent: string | null = null) =>
+      p.push({ type: "assistant", message: { id, content: [{ type: "text", text: "x" }], usage }, parent_tool_use_id: parent }).filter((e) => e.type !== "text");
+    expect(call("m1", { input_tokens: 12, cache_creation_input_tokens: 3000, cache_read_input_tokens: 140_000, output_tokens: 1 })).toEqual([{ type: "context", tokens: 143_012 }]);
+    // The CLI sends one message per block of the same call.
+    expect(call("m1", { input_tokens: 12, cache_creation_input_tokens: 3000, cache_read_input_tokens: 140_000, output_tokens: 40 })).toEqual([]);
+    // A subagent's calls are not this conversation's context.
+    expect(call("m2", { input_tokens: 9000 }, "tu1")).toEqual([]);
+    expect(call("m3", { input_tokens: 5, cache_read_input_tokens: 143_500 })).toEqual([{ type: "context", tokens: 143_505 }]);
+    expect(call("m4", {})).toEqual([]);
+    expect(p.push({ type: "result", subtype: "success", usage: { input_tokens: 17, cache_creation_input_tokens: 3000, cache_read_input_tokens: 283_500, output_tokens: 90 } })).toEqual([
+      { type: "usage", inputTokens: 286_517, outputTokens: 90, cacheReadTokens: 283_500, cacheWriteTokens: 3000, costUsd: undefined },
+    ]);
+  });
 });
 
 describe("Claude Code provider (fake CLI)", () => {
@@ -74,7 +90,7 @@ describe("Claude Code provider (fake CLI)", () => {
     expect(first.filter((e) => e.type === "text").map((e: any) => e.delta).join("")).toBe("echo:pingresume=none model=sonnet");
     expect(first).toContainEqual({ type: "tool_call", id: "tu1", name: "notify", input: { level: "silent", title: "x" } });
     expect(first).toContainEqual({ type: "tool_result", id: "tu1", output: "ok", isError: false });
-    expect(first).toContainEqual({ type: "usage", inputTokens: 15, outputTokens: 3, costUsd: 0.01 });
+    expect(first).toContainEqual({ type: "usage", inputTokens: 15, outputTokens: 3, cacheReadTokens: 5, cacheWriteTokens: 0, costUsd: 0.01 });
     expect(first.at(-1)).toEqual({ type: "done", resumeToken: "sess-1" });
     const second = await collect(s.send({ text: "again" }));
     expect(second.some((e) => e.type === "text" && e.delta.includes("resume=sess-1"))).toBe(true);
@@ -90,6 +106,20 @@ describe("Claude Code provider (fake CLI)", () => {
     const runs = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(runs.length).toBeGreaterThan(0);
     for (const r of runs) expect(r).toMatchObject({ DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1" });
+    // No window of the hub's unless it gave one: the CLI then compacts as it would by itself.
+    expect(runs[0].CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+  });
+
+  it("compacts a session's history at the window the hub gives it (a task's)", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "owl-cc-env-")), "env.jsonl");
+    const s = await provider.createSession(opts({ env: { FAKE_ENV_FILE: file }, compactWindow: 200_000 }));
+    await collect(s.send({ text: "ping" }));
+    const runs = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(runs[0].CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("200000");
+    // The CLI takes 100k to 1M: a value outside is brought in.
+    const low = await provider.createSession(opts({ env: { FAKE_ENV_FILE: file }, compactWindow: 50_000 }));
+    await collect(low.send({ text: "ping" }));
+    expect(JSON.parse(readFileSync(file, "utf8").trim().split("\n").at(-1)!).CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("100000");
   });
 
   it("starts fresh when the resume id is gone", async () => {

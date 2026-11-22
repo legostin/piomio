@@ -62,6 +62,13 @@ export interface ClaudeCodeOptions {
   connectionsTiming?: ClaudeStatusTiming;
 }
 
+/** The range of CLAUDE_CODE_AUTO_COMPACT_WINDOW, in tokens: the CLI ignores a value outside it. */
+export const CLAUDE_COMPACT_WINDOW = { min: 100_000, max: 1_000_000 } as const;
+
+function compactWindow(tokens: number): number {
+  return Math.min(CLAUDE_COMPACT_WINDOW.max, Math.max(CLAUDE_COMPACT_WINDOW.min, Math.round(tokens)));
+}
+
 /** Turns Claude Code stream-json messages into BrainEvents. Pure: easy to test with recorded fixtures. */
 export class ClaudeStreamParser {
   sessionId?: string;
@@ -74,6 +81,8 @@ export class ClaudeStreamParser {
   replays = 0;
   /** The model that answered (reported once). */
   model?: string;
+  /** The API message whose prompt size was reported last: the CLI sends one `assistant` message per block of it. */
+  private sized?: string;
   private t: Translate;
 
   constructor(t: Translate = brainsT()) {
@@ -113,6 +122,12 @@ export class ClaudeStreamParser {
           this.model = m.model;
           out.push({ type: "model", model: m.model });
         }
+        // How big the conversation is now: the prompt of this model call, cached or not.
+        const prompt = (m.usage?.input_tokens ?? 0) + (m.usage?.cache_creation_input_tokens ?? 0) + (m.usage?.cache_read_input_tokens ?? 0);
+        if (prompt > 0 && m.id !== this.sized) {
+          this.sized = m.id;
+          out.push({ type: "context", tokens: prompt });
+        }
         for (const block of m.content ?? []) {
           if (block.type === "text" && block.text && !this.streamed.has(m.id)) out.push({ type: "text", delta: block.text });
           if (block.type === "tool_use") out.push({ type: "tool_call", id: block.id, name: stripPrefix(block.name), input: block.input ?? {} });
@@ -151,6 +166,8 @@ export class ClaudeStreamParser {
           type: "usage",
           inputTokens: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
           outputTokens: u.output_tokens ?? 0,
+          cacheReadTokens: u.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
           costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : undefined,
         });
         if (msg.is_error || (msg.subtype && msg.subtype !== "success")) {
@@ -458,6 +475,8 @@ class ClaudeCodeSession implements BrainSessionImpl {
       CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1",
       // A permission question may wait for the person for minutes (tools/native-permission.ts).
       ...(this.o.confine ? { MCP_TOOL_TIMEOUT: String(15 * 60_000) } : {}),
+      // The hub's cap on this session's context (a task's): the CLI compacts there instead of near the model's limit.
+      ...(this.o.compactWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(compactWindow(this.o.compactWindow)) } : {}),
     });
     const proc = runLines(this.p.command?.() ?? "claude", this.args(caps), { cwd: this.o.workspace, env, keepInput: true });
     this.child = proc;

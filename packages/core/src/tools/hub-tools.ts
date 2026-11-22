@@ -33,7 +33,7 @@ import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, ski
 import { hasSkill } from "../skills.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { accessView } from "../access/map.ts";
-import { TRIGGERS_WATCH_TIMEOUT } from "../settings.ts";
+import { CONTEXT_LIMITS, TRIGGERS_WATCH_TIMEOUT } from "../settings.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
 
@@ -51,6 +51,9 @@ export const AGENT_SETTABLE = [
   "voice",
   "transcription",
   "triggersWatchTimeoutSec",
+  "dialogContextCap",
+  "taskContextCap",
+  "recapMaxChars",
   // Turning it on shows the person a card (settings_update), as turning auto mode on does.
   "triggersAllowPrivateUrls",
 ] as const;
@@ -266,6 +269,9 @@ export function registerHubTools(hub: Hub): void {
         'voice {voice: a voice id from hub_speech_status, speed: 0.5–2} (how the hub\'s local voice speaks); ' +
         'transcription {provider: "auto"|"openai"|"groq"|"local"|"off", model?} (speech to text for voice messages: "local" is the hub\'s own engine, see hub_speech_install); ' +
         "triggersWatchTimeoutSec 1–120 (how long a watch trigger waits for its page); " +
+        "dialogContextCap 20000–1000000 (tokens of history a dialog's session may hold before it starts afresh from a recap of the conversation: lower costs less and remembers less); " +
+        "taskContextCap 100000–1000000 (tokens at which a task's brain compacts its own history); " +
+        "recapMaxChars 4000–200000 (how long that recap may get, in characters); " +
         "triggersAllowPrivateUrls true|false (watch triggers and triggers' scripts may reach addresses on the local network such as localhost, a router or a NAS; turning it on shows the person a card). " +
         "Propose a network host (a public one, or one inside the person's network) via hub_network_request; only its card or the user settings can change the network lists. A custom speech-to-text server can only be changed by the user in settings.",
       inputSchema: obj({ patch: { type: "object", description: "Keys to change and their new values" } }, ["patch"]),
@@ -1963,6 +1969,9 @@ function validateSettings(p: Record<string, unknown>): string | undefined {
   if ("triggersAllowPrivateUrls" in p && typeof p.triggersAllowPrivateUrls !== "boolean") return "triggersAllowPrivateUrls must be true or false.";
   const timeout = TRIGGERS_WATCH_TIMEOUT;
   for (const [k, min, max] of [["notifyRatePerHour", 0, 100], ["brainConcurrency", 1, 16], ["triggersWatchTimeoutSec", timeout.min, timeout.max]] as const) {
+    if (k in p && (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max)) return `${k} must be a whole number from ${min} to ${max}.`;
+  }
+  for (const [k, { min, max }] of Object.entries(CONTEXT_LIMITS)) {
     if (k in p && (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max)) return `${k} must be a whole number from ${min} to ${max}.`;
   }
   return undefined;
