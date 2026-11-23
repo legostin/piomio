@@ -10,6 +10,7 @@
 // "TIME?" answers with the turn's "[Now: …]" line (or "none"); a turn with files answers with their paths and the note.
 // "SELF?" answers with the last "[You now]" block the session got (or "none"); "INPUT?" with the rest of the turn's input.
 // "CONTEXT <n>" reports a model call with a prompt of n tokens (most of it read from the cache), then answers as usual;
+// "SPEND <model> [usd]" reports a turn on that model (the brain's own cost when usd is given), then answers as usual;
 // "OPENS?" says how many times the hub opened this session's brain, "SYSTEM? <text>" whether its system prompt has the
 // text, "WINDOW?" the compaction window the hub gave it.
 // "NATIVE <events>" uses the brain's own tools (a CLI's WebFetch, its shell), never the hub's: a JSON array of
@@ -99,6 +100,12 @@ export default {
               const tokens = Number(sized[1]);
               yield { type: "context", tokens };
               yield { type: "usage", inputTokens: tokens, outputTokens: 7, cacheReadTokens: tokens - 100, cacheWriteTokens: 60 };
+            }
+            // A turn on that model, priced by the brain when it names a cost: 1000 input (600 from the cache, 300 into it), 50 output.
+            const spent = /^SPEND (\S+)(?: ([\d.]+))?$/.exec(asked);
+            if (spent) {
+              yield { type: "model", model: spent[1] };
+              yield { type: "usage", inputTokens: 1000, outputTokens: 50, cacheReadTokens: 600, cacheWriteTokens: 300, ...(spent[2] ? { costUsd: Number(spent[2]) } : {}) };
             }
             if (asked === "OPENS?") {
               yield { type: "text", delta: `${id} opens: ${opens.get(o.sessionId) ?? 0}` };

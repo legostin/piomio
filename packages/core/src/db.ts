@@ -180,6 +180,15 @@ const MIGRATIONS: string[] = [
   `alter table usage add column output integer not null default 0;
   alter table usage add column cache_read integer not null default 0;
   alter table usage add column cache_write integer not null default 0;`,
+  // What each turn spent, for the conversation or task it was in (spend.ts): the model and effort, tokens by kind and
+  // dollars at API prices (the brain's own figure, or estimated from list prices). Bare sessions have no conversation.
+  // Replicated (cluster.ts): ids are unique across replicas, so turns recorded by different leaders never collide.
+  `create table spend(id text primary key, at text not null, agent_id text not null, conversation_id text,
+    task_id text, session_id text, brain_ref text not null, model text, effort text, purpose text,
+    input integer not null default 0, cache_read integer not null default 0, cache_write integer not null default 0,
+    output integer not null default 0, usd real, estimated integer not null default 0);
+  create index spend_at on spend(at);
+  create index spend_conv on spend(conversation_id, at);`,
 ];
 
 /**

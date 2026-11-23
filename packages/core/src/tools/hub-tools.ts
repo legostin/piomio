@@ -13,8 +13,8 @@
 // The one exception is profile_update at the end: every agent may change its own profile when the user asks.
 
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { AgentDef, AgentDraft, AgentFolder, IntegrationView, JsonSchema, Locale, MachineSettings, SpeechStatus, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
-import { AVATAR_COLORS, AVATAR_SHAPES, connectionToolPrefix, defaultAvatar, expandBrains, formatBrainRef, KEY_PROVIDERS, keyProvider, onMachines, parseAvatar, parseBrainRef, parseThinking } from "@piomio/shared";
+import type { AgentDef, AgentDraft, AgentFolder, IntegrationView, JsonSchema, Locale, MachineSettings, SpeechStatus, SpendPeriod, ToolCallContext, ToolDescriptor, ToolResult } from "@piomio/shared";
+import { AVATAR_COLORS, AVATAR_SHAPES, connectionToolPrefix, defaultAvatar, expandBrains, formatBrainRef, KEY_PROVIDERS, keyProvider, onMachines, parseAvatar, parseBrainRef, parseThinking, SPEND_PERIODS } from "@piomio/shared";
 import { normalizeSettings, SetupError } from "../machine-setup.ts";
 import { siteDomain } from "../secrets.ts";
 import type { Hub } from "../app.ts";
@@ -34,6 +34,7 @@ import { hasSkill } from "../skills.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { accessView } from "../access/map.ts";
 import { CONTEXT_LIMITS, TRIGGERS_WATCH_TIMEOUT } from "../settings.ts";
+import { spendText } from "../spend.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
 
@@ -256,6 +257,30 @@ export function registerHubTools(hub: Hub): void {
   // ---------- settings ----------
 
   reg({ name: "settings_get", effect: "read", description: "Read the hub settings: timezone, language, default agent, quiet hours, digest times, limits.", inputSchema: obj({}) }, () => json(hub.settings.get()));
+
+  reg(
+    {
+      name: "usage_report",
+      effect: "read",
+      description:
+        "What each conversation and task spent: dialogs, group chats, tasks and the hub's own quick model, ranked by dollars at API prices, " +
+        "each with its models and efforts, tokens (fresh input, cache read, cache write, output) and how big its context is now; totals by agent and by model. " +
+        "Call it when the person asks what used their limit or money, which thread or model costs most, or why spending jumped. " +
+        "Dollars are an API-price equivalent, not what a subscription bills: say so. Settings → Spend shows the same.",
+      inputSchema: obj({
+        period: { type: "string", enum: [...SPEND_PERIODS], description: "today (since midnight in the hub's time zone, the default), 7d or 30d" },
+        agent: { type: "string", description: "Only this agent's turns (agent id)" },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "Threads to list (default 10)" },
+      }),
+    },
+    (i) => {
+      const period: SpendPeriod = SPEND_PERIODS.includes(i.period) ? i.period : "today";
+      const agentId = typeof i.agent === "string" && i.agent.trim() ? i.agent.trim() : undefined;
+      if (agentId && !hub.agents.get(agentId)) return text(`No agent "${agentId}". hub_agents_list shows the team.`, true);
+      const limit = Number.isInteger(i.limit) ? Math.min(50, Math.max(1, i.limit)) : 10;
+      return text(spendText(hub.spend(period, { ...(agentId ? { agentId } : {}), limit }), { agentName: (id) => hub.agentLabel(id) }));
+    },
+  );
 
   reg(
     {

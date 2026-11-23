@@ -2,10 +2,10 @@
 // Old page URLs (/brains, /plugins, …) still work: they open the matching panel section over the chat.
 
 import type { ComponentType } from "react";
-import { AlarmClock, Bot, Brain, Inbox, Laptop, ListChecks, Puzzle, Server, SlidersHorizontal, Smartphone, Sparkles, type LucideProps } from "lucide-react";
+import { AlarmClock, Bot, Brain, ChartBar, Inbox, Laptop, ListChecks, Puzzle, Server, SlidersHorizontal, Smartphone, Sparkles, type LucideProps } from "lucide-react";
 import type { MessageKey } from "../i18n";
 
-export type CoreSection = "settings" | "agents" | "brains" | "plugins" | "machines" | "devices" | "mcp" | "skills" | "triggers" | "tasks" | "notifications";
+export type CoreSection = "settings" | "agents" | "brains" | "plugins" | "machines" | "devices" | "mcp" | "skills" | "triggers" | "tasks" | "notifications" | "spend";
 /** A core section, or "plugin:<route key>" for a page a UI plugin added to the navigation. */
 export type PanelSection = CoreSection | `plugin:${string}`;
 
@@ -26,6 +26,7 @@ export const SECTIONS: SectionDef[] = [
   { id: "triggers", path: "/triggers", label: "nav.triggers", hint: "panel.hint.triggers", icon: AlarmClock, group: "assistant" },
   { id: "tasks", path: "/tasks", label: "nav.tasks", hint: "panel.hint.tasks", icon: ListChecks, group: "activity" },
   { id: "notifications", path: "/inbox", label: "nav.notifications", hint: "panel.hint.notifications", icon: Inbox, group: "activity" },
+  { id: "spend", path: "/spend", label: "nav.spend", hint: "panel.hint.spend", icon: ChartBar, group: "activity" },
   { id: "plugins", path: "/plugins", label: "nav.plugins", hint: "panel.hint.plugins", icon: Puzzle, group: "connections" },
   { id: "brains", path: "/brains", label: "nav.brains", hint: "panel.hint.brains", icon: Brain, group: "connections" },
   { id: "machines", path: "/machines", label: "nav.machines", hint: "panel.hint.machines", icon: Laptop, group: "connections" },

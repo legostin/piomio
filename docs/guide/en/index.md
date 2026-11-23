@@ -68,6 +68,7 @@ Already use Claude Code, Codex or Kimi Code? It can install Piomio for you: see 
 **Brains and computers**
 
 - [Brains and sign-in](brains.md): Claude Code, Codex and Kimi Code, limits and backups.
+- [What each conversation and task spends](spend.md): dollars at API prices, models, effort and context, in the chat and in Settings.
 - [Machines and other computers](machines.md): joining computers and servers, and what agents may do there.
 - [The iPhone app](phone.md): pairing your phone and approving on it.
 - [Telegram](telegram.md): your own bot for chats, notifications and approvals.

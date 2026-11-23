@@ -46,7 +46,7 @@ A dialog goes on in one brain session, and every message makes the model read th
 - After an hour without messages, or when the agent's instructions or tools change, the same happens from a third of the cap. A shorter history carries on whole.
 - A new rule for where work goes, or a new teammate, reaches the agent as a note with your next message; its session carries on.
 
-You see none of this in the chat. After a renewal the agent knows the recap, its memory and its files, but not every detail of an old exchange: say it again if it matters. Both the cap and the recap's size are in **Settings** → **General** → **Brains**, and an agent changes them when you ask: "set the dialog context cap to 80000". Tasks are not renewed: Claude Code compacts a task's history at the **Task context cap**. Only Claude Code tells the hub how big a session is, so dialogs on other brains carry on whole.
+You see none of this in the chat. After a renewal the agent knows the recap, its memory and its files, but not every detail of an old exchange: say it again if it matters. Both the cap and the recap's size are in **Settings** → **General** → **Brains**, and an agent changes them when you ask: "set the dialog context cap to 80000". Tasks are not renewed: Claude Code compacts a task's history at the **Task context cap**. Only Claude Code tells the hub how big a session is, so dialogs on other brains carry on whole. How big each conversation's context is now, and what it spent, is in **Settings** → **Spend** ([What each conversation and task spends](spend.md)).
 
 ### The live step line
 

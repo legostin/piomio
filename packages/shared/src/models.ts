@@ -192,6 +192,76 @@ export function catalogOf(models: readonly string[], names: Record<string, strin
   return ids.map((id) => own.find((p) => p.id === id) ?? profileOf(id, names[id]));
 }
 
+/**
+ * What a model costs on its provider's API, in dollars per million tokens: input read fresh, output, input read from
+ * the prompt cache, and input written to it for five minutes (`cacheWrite`) or an hour (`cacheWriteLong`). Unset
+ * cache prices are the usual share of input: reads 0.1×, writes 1.25× and 2×.
+ */
+export interface ModelPrice {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cacheWriteLong?: number;
+}
+
+/**
+ * List prices by model id, first match wins (more specific patterns first), for the spend a brain does not price
+ * itself (core/src/spend.ts). Anthropic's from its model reference (2026-11); OpenAI's and Moonshot's from public price
+ * lists of late 2026, less certain. Aliases (`fable`, `opus`…) take the newest. Haiku 5.5's higher rate for prompts
+ * over 100k tokens is not modelled. Numbers from here are estimates, and always shown as such.
+ */
+export const KNOWN_PRICES: ReadonlyArray<readonly [RegExp, ModelPrice]> = [
+  // Anthropic
+  [/(fable|mythos)-5-2/, { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10, cacheWriteLong: 16 }],
+  [/(fable|mythos)-5-1/, { input: 10, output: 50, cacheRead: 0.25 }],
+  [/(fable|mythos)-5(?!-\d)/, { input: 10, output: 50, cacheRead: 1 }],
+  [/fable|mythos/, { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10, cacheWriteLong: 16 }],
+  [/opus-5-5/, { input: 4, output: 20, cacheRead: 0.2 }],
+  [/opus-(5(?!-\d)|4-[5-9])/, { input: 5, output: 25 }],
+  [/opus-(4(?!-\d)|4-[0-4]|3)/, { input: 15, output: 75 }],
+  [/opus/, { input: 4, output: 20, cacheRead: 0.2 }],
+  [/sonnet-5-5/, { input: 2, output: 10, cacheRead: 0.1 }],
+  [/sonnet-5(?!-\d)/, { input: 2, output: 10, cacheRead: 0.2 }],
+  [/sonnet-[34]/, { input: 3, output: 15 }],
+  [/sonnet/, { input: 2, output: 10, cacheRead: 0.1 }],
+  [/haiku-5-5/, { input: 0.1, output: 0.5, cacheRead: 0.01 }],
+  [/haiku-4/, { input: 1, output: 5 }],
+  [/haiku-3-5/, { input: 0.8, output: 4 }],
+  [/haiku-3/, { input: 0.25, output: 1.25 }],
+  [/haiku/, { input: 0.1, output: 0.5, cacheRead: 0.01 }],
+  // OpenAI's GPT-6 line (Codex): Astra the flagship, then Sol, Terra and Luna.
+  [/gpt-?6[\w.-]*luna/, { input: 0.1, output: 0.5, cacheRead: 0.01 }],
+  [/gpt-?6[\w.-]*terra/, { input: 1, output: 5, cacheRead: 0.1 }],
+  [/gpt-?6[\w.-]*sol/, { input: 2, output: 10, cacheRead: 0.2 }],
+  [/gpt-?6/, { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }],
+  // Moonshot (Kimi Code's kimi-code/k3, k3.1-pro…)
+  [/k3[.-]1[\w.-]*pro/, { input: 2, output: 10, cacheRead: 0.2 }],
+  [/(^|[/-])k3\b/, { input: 3, output: 15, cacheRead: 0.3 }],
+];
+
+/** A model's list price, or undefined when nobody knows it. `claude-opus-5.5` and `claude-opus-5-5` are the same. */
+export function priceOf(model: string | undefined): ModelPrice | undefined {
+  if (!model) return undefined;
+  const id = model.toLowerCase().replace(/\./g, "-").replace(/\[[^\]]*\]$/, "");
+  return KNOWN_PRICES.find(([re]) => re.test(id))?.[1];
+}
+
+/** A turn's tokens: input read fresh, read from and written to the prompt cache, and output. */
+export interface TurnTokens {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+}
+
+/** Dollars `t` costs at `p`; `longCache`: cache writes are the one-hour kind (Claude Code on a subscription). */
+export function turnCost(t: TurnTokens, p: ModelPrice, o: { longCache?: boolean } = {}): number {
+  const write = o.longCache ? (p.cacheWriteLong ?? p.input * 2) : (p.cacheWrite ?? p.input * 1.25);
+  const usd = (t.input * p.input + t.cacheRead * (p.cacheRead ?? p.input * 0.1) + t.cacheWrite * write + t.output * p.output) / 1_000_000;
+  return Math.round(usd * 1e6) / 1e6;
+}
+
 const capital = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
 
 /** A model's name for people: "claude-sonnet-5-5" → "Sonnet 5.5", "opus" → "Opus"; other ids as they are. */

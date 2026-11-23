@@ -73,6 +73,28 @@ describe("ClaudeStreamParser", () => {
   });
 });
 
+describe("Claude Code's cost per turn", () => {
+  const result = (p: ClaudeStreamParser, total?: number) =>
+    p.push({ type: "result", subtype: "success", usage: { input_tokens: 10, output_tokens: 2 }, ...(total !== undefined ? { total_cost_usd: total } : {}) }).find((e) => e.type === "usage") as { costUsd?: number };
+
+  it("is the difference of the process's running total, turn after turn", () => {
+    const ledger = {};
+    expect(result(new ClaudeStreamParser(undefined, ledger), 0.1).costUsd).toBe(0.1);
+    expect(result(new ClaudeStreamParser(undefined, ledger), 0.25).costUsd).toBeCloseTo(0.15, 9);
+    // Steered input answered in the same turn: a second result, priced by its own difference.
+    const p = new ClaudeStreamParser(undefined, ledger);
+    expect(result(p, 0.3).costUsd).toBeCloseTo(0.05, 9);
+    expect(result(p, 0.3).costUsd).toBe(0);
+    expect(result(p).costUsd).toBeUndefined();
+  });
+
+  it("says nothing for the first turn of a resumed process, whose ledger may hold earlier spend", () => {
+    const ledger = { resumed: true };
+    expect(result(new ClaudeStreamParser(undefined, ledger), 4.2).costUsd).toBeUndefined();
+    expect(result(new ClaudeStreamParser(undefined, ledger), 4.5).costUsd).toBeCloseTo(0.3, 9);
+  });
+});
+
 describe("Claude Code provider (fake CLI)", () => {
   const stateDir = mkdtempSync(join(tmpdir(), "owl-cc-state-"));
   const provider = createClaudeCodeProvider({ command: () => fake, stateDir });

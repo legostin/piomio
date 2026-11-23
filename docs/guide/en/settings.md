@@ -27,7 +27,7 @@ It also connects plugins and services, changes their settings and makes agents. 
 | Group | Sections |
 |---|---|
 | **Assistant** | **Agents**, **Skills & commands**, **Triggers** ([below](#triggers)), and pages plugins add ([Agents and the team](agents.md)) |
-| **Activity** | **Tasks**, **Inbox** ([Tasks, schedules and the Inbox](tasks.md)) |
+| **Activity** | **Tasks**, **Inbox** ([Tasks, schedules and the Inbox](tasks.md)), **Spend** ([What each conversation and task spends](spend.md)) |
 | **Connections** | **Plugins** ([Plugins and integrations](plugins.md)), **Brains** ([Brains and sign-in](brains.md)), **Machines** ([Machines and other computers](machines.md)), **Devices** ([The iPhone app](phone.md)), **MCP servers** |
 | **General** | **General** (below), **Security console** ([Security model](security.md)), **Sign out** |
 

@@ -8,8 +8,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
-import type { AgentDef, LibraryKind, TaskStatus } from "@piomio/shared";
-import { formatBrainRef, GROUP_MAX_MEMBERS, GROUP_MIN_MEMBERS, isWorkKind, LOCALES, parseBrainRef, type Locale, type ThinkingPatch } from "@piomio/shared";
+import type { AgentDef, LibraryKind, SpendPeriod, TaskStatus } from "@piomio/shared";
+import { formatBrainRef, GROUP_MAX_MEMBERS, GROUP_MIN_MEMBERS, isWorkKind, LOCALES, parseBrainRef, SPEND_PERIODS, type Locale, type ThinkingPatch } from "@piomio/shared";
 import { hubLocale, localizePluginValue, requestLocale, tFor } from "../i18n.ts";
 import type { Hub } from "../app.ts";
 import { toUiEvent } from "../bus.ts";
@@ -566,6 +566,14 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     return [...own, ...hub.skills.listCommands().filter((c) => !names.has(c.name)).map((c) => ({ name: c.name, description: c.description, source: c.source }))];
   });
   api.get("/api/channels", async () => Promise.all(hub.channels.list().map(async (c) => ({ ...c, ...(await hub.channels.status(c.id)) }))));
+
+  // ----- what each conversation and task spent (spend.ts): Settings → Spend; the chat has hub_usage_report -----
+  api.get("/api/spend", async (req) => {
+    const q = req.query as { period?: unknown; agent?: unknown; limit?: unknown };
+    const period = SPEND_PERIODS.includes(q.period as SpendPeriod) ? (q.period as SpendPeriod) : "today";
+    const limit = Number(q.limit);
+    return hub.spend(period, { ...(typeof q.agent === "string" && q.agent ? { agentId: q.agent } : {}), ...(Number.isInteger(limit) && limit > 0 ? { limit: Math.min(limit, 200) } : {}) });
+  });
 
   // ----- the team's work rules (work-rules.ts): made and changed in a chat (work_rule_set); here they are seen and dropped -----
   api.get("/api/work-rules", async () => hub.workRules());

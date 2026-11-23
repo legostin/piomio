@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { BrainEvent, BrainSessionOptions, ProbeResult } from "@piomio/shared";
 import type { BrainHandle, BrainRegistry } from "../src/brains.ts";
 import { brainReviewer, cheapestModel, reviewModel } from "../src/policy/reviewer.ts";
+import type { SpendEntry } from "../src/spend.ts";
 
 describe("the model a brain reviews with", () => {
   it("is Codex's newest Luna, the person's pick", () => {
@@ -37,7 +38,10 @@ function registry(probes: Record<string, Partial<ProbeResult>>, answers: Record<
         ref,
         async send(_turn, onEvent: (e: BrainEvent) => void) {
           if (said.startsWith("!")) onEvent({ type: "error", message: said.slice(1) });
-          else onEvent({ type: "text", delta: said });
+          else {
+            onEvent({ type: "text", delta: said });
+            onEvent({ type: "usage", inputTokens: 500, outputTokens: 5 });
+          }
         },
         steer: async () => false,
         warm: async () => {},
@@ -69,6 +73,15 @@ describe("the reviewer", () => {
     // Another brain's session (Kimi on a hub without it, an API brain): the first that can.
     expect(await review("p", 1, "api")).toBe("CLAUDE");
     expect(opened.at(-1)?.opts.model).toBe("claude-haiku-5-5");
+  });
+
+  it("hands what each review spent to the hub's record, with no conversation", async () => {
+    const { brains } = registry(lineups, { codex: "CODEX" });
+    const spent: SpendEntry[] = [];
+    const review = brainReviewer({ brains, dataDir, spend: (e) => spent.push(e) })()!;
+    expect(await review("p", 1, "codex")).toBe("CODEX");
+    expect(spent).toEqual([expect.objectContaining({ agentId: "auto-review", brainRef: "codex@local", model: "gpt-6-luna", effort: "low", purpose: "auto-review", inputTokens: 500, outputTokens: 5 })]);
+    expect(spent[0].conversationId).toBeUndefined();
   });
 
   it("hands the review to the next brain when one cannot, and lets that one rest", async () => {

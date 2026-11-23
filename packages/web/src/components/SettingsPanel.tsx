@@ -26,6 +26,7 @@ import { SkillsPage } from "../pages/Skills";
 import { SettingsPage } from "../pages/Settings";
 import { TasksPage } from "../pages/Tasks";
 import { TriggersPage } from "../pages/Triggers";
+import { SpendPage } from "../pages/Spend";
 
 function SectionBody({ section }: { section: PanelSection }) {
   const { routes } = usePluginRegistry();
@@ -52,6 +53,8 @@ function SectionBody({ section }: { section: PanelSection }) {
       return <SettingsPage />;
     case "tasks":
       return <TasksPage />;
+    case "spend":
+      return <SpendPage />;
   }
   const route = routes.find((r) => `plugin:${r.key}` === section);
   if (!route) return null;
@@ -70,6 +73,7 @@ const TILE: Record<string, AvatarColor> = {
   triggers: "teal",
   tasks: "blue",
   notifications: "red",
+  spend: "green",
   brains: "indigo",
   plugins: "orange",
   machines: "slate",
