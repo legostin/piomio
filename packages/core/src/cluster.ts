@@ -55,6 +55,7 @@ export const MAIN_TABLES: ReplTable[] = [
   { name: "devices", pk: ["id"] },
   { name: "settings", pk: ["key"] },
   { name: "usage", pk: ["day", "agent_id", "kind"] },
+  { name: "spend", pk: ["id"] },
   { name: "brain_limits", pk: ["brain_ref"] },
   { name: "secret_requests", pk: ["id"] },
   { name: "agent_drafts", pk: ["id"] },

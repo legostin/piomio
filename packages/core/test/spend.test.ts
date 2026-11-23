@@ -11,6 +11,8 @@ import { openDb } from "../src/db.ts";
 import { Store } from "../src/store.ts";
 import { periodStart, priceTurn, recordSpend, spendReport, spendText, SPEND_KEEP_DAYS, type SpendEntry } from "../src/spend.ts";
 import { Hub, loadConfig } from "../src/index.ts";
+import { MAIN_TABLES } from "../src/cluster.ts";
+import { DbReplicator, type ReplEntry } from "@piomio/replica";
 
 const turn = (o: Partial<SpendEntry> = {}): SpendEntry => ({
   agentId: "assistant",
@@ -153,6 +155,31 @@ describe("the report", () => {
     // The next day's first turn prunes the old one.
     recordSpend(db2, turn({ costUsd: 1 }), new Date(now.getTime() + 2 * 86_400_000));
     expect((db2.prepare("select count(*) as n from spend").get() as { n: number }).n).toBe(1);
+  });
+});
+
+describe("spend across hub replicas", () => {
+  it("reaches every replica, and turns recorded by different leaders never collide", () => {
+    const tables = MAIN_TABLES.filter((t) => t.name === "spend");
+    expect(tables).toHaveLength(1);
+    const replica = (origin: string) => {
+      const db = openDb(":memory:");
+      const r = new DbReplicator({ db, origin, tables });
+      r.install();
+      return { db, r };
+    };
+    const pull = (to: ReturnType<typeof replica>, from: ReturnType<typeof replica>) => {
+      from.r.drain();
+      to.r.apply(JSON.parse(JSON.stringify(from.r.changesSince(to.r.vector(), 100).entries)) as ReplEntry[]);
+    };
+    const now = new Date();
+    const a = replica("a");
+    const b = replica("b");
+    recordSpend(a.db, turn({ costUsd: 1 }), now);
+    recordSpend(b.db, turn({ costUsd: 2 }), now);
+    pull(a, b);
+    pull(b, a);
+    for (const x of [a, b]) expect(spendReport(x.db, { period: "today", timezone: "UTC", now }).total).toMatchObject({ usd: 3, turns: 2 });
   });
 });
 

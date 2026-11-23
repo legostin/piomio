@@ -4,7 +4,7 @@
 // prices has tokens and no dollars. Dollars are an API-price equivalent, never what a subscription bills.
 
 import type { SpendModel, SpendPeriod, SpendReport, SpendThread, SpendTotals } from "@piomio/shared";
-import { priceOf, turnCost } from "@piomio/shared";
+import { newId, priceOf, turnCost } from "@piomio/shared";
 import type { Db } from "./db.ts";
 import { localDate, parseDateTime } from "./signals/schedule.ts";
 
@@ -56,8 +56,9 @@ export function recordSpend(db: Db, e: SpendEntry, now: Date = new Date()): void
   const { usd, estimated } = priceTurn(e);
   if (!t.input && !t.cacheRead && !t.cacheWrite && !t.output && !usd) return;
   db.prepare(
-    "insert into spend(at, agent_id, conversation_id, task_id, session_id, brain_ref, model, effort, purpose, input, cache_read, cache_write, output, usd, estimated) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "insert into spend(id, at, agent_id, conversation_id, task_id, session_id, brain_ref, model, effort, purpose, input, cache_read, cache_write, output, usd, estimated) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
   ).run(
+    newId("sp_"),
     now.toISOString(),
     e.agentId,
     e.conversationId ?? null,

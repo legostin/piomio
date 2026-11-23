@@ -34,7 +34,7 @@ and effort, and how big its context is now: in the Settings panel and in the cha
 ### 1. Recording (`packages/core/src/spend.ts`)
 
 ```sql
-create table spend(id integer primary key autoincrement, at text not null, agent_id text not null,
+create table spend(id text primary key, at text not null, agent_id text not null,
   conversation_id text, task_id text, session_id text, brain_ref text not null, model text, effort text,
   purpose text, input integer not null default 0, cache_read integer not null default 0,
   cache_write integer not null default 0, output integer not null default 0, usd real, estimated integer not null default 0);
@@ -42,7 +42,8 @@ create index spend_at on spend(at);
 create index spend_conv on spend(conversation_id, at);
 ```
 
-`input` is the input read fresh (the event's whole input minus cache reads and writes). The runner records one row at
+Ids are `sp_…` (`newId`), unique across replicas, and the table is in `MAIN_TABLES`: every replica shares it, as it
+shares `usage` and `machine_spend`. `input` is the input read fresh (the event's whole input minus cache reads and writes). The runner records one row at
 the end of every turn, beside `countUsage`: the conversation, the task, the session, the brain ref, the model that
 answered (the `model` event, else the one asked for) and the effort. A bare session records one with no conversation
 and `purpose` = its folder (`quick`, `review`): `BareAskDeps.spend` taps the handle's events in `openBare`.

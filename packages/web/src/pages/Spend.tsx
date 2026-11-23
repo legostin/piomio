@@ -2,7 +2,7 @@
 // (GET /api/spend; docs/superpowers/specs/2026-11-23-thread-spend-design.md). The chat answers the same
 // (hub_usage_report): "Ask in chat" sends the question to the default agent.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { MessageCircleMore } from "lucide-react";
 import type { SpendPeriod, SpendReport, SpendThread, SpendTotals } from "@piomio/shared";
@@ -37,12 +37,15 @@ export function SpendPage() {
   const [report, setReport] = useState<SpendReport | null>();
   const [error, setError] = useState<string>();
   const ask = useAsk();
+  /** The newest request: an answer to an earlier one (another period, a retry since) is dropped. */
+  const latest = useRef(0);
 
   const load = (p: SpendPeriod) => {
+    const asked = ++latest.current;
     setError(undefined);
     api.get<unknown>(`/api/spend?period=${p}`).then(
-      (r) => setReport(asReport(r) ?? null),
-      (e) => setError(errorText(e)),
+      (r) => asked === latest.current && setReport(asReport(r) ?? null),
+      (e) => asked === latest.current && setError(errorText(e)),
     );
   };
   useEffect(() => {
