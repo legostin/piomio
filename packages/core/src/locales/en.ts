@@ -71,6 +71,7 @@ export default {
   "skills.update": "Update the skill «{name}»: {description}",
   "skills.allow": "Without asking: «{label}» on {site}{amount}",
   "skills.allowAmount": ", up to {amount}",
+  "skills.allowRequest": "Without asking: request {method} {address}{amount}",
   "skills.withScript": "with a script that does its steps",
   "skills.delete": "Delete the skill «{name}» and what it may do without asking",
   "skills.assign": "Give the skill «{name}» only to {agents}",

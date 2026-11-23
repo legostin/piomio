@@ -1,0 +1,11 @@
+{
+  "id": "browser-traffic",
+  "name": "%name%",
+  "version": "0.1.0",
+  "author": "Piomio",
+  "description": "%description%",
+  "builtin": true,
+  "defaultEnabled": false,
+  "offer": "Browser traffic: with it on, agents see what the pages in their browser ask the network and get back (the API calls behind a page, as in a browser's developer tools), save them to a file, block requests, replace answers, and send requests of their own from the browser. Cookies, tokens and passwords stay hidden from them. Changing what the browser sends, or sending a request that is not a GET, still asks the person each time. Useful for work with web apps, for finding a site's data behind its page, and for testing. Turn it on with hub_plugin_enable {id: \"browser-traffic\", enabled: true} when the person wants it.",
+  "integration": {"category": "work", "icon": "activity", "connect": "none", "summary": "%integration.summary%", "example": "%integration.example%"}
+}

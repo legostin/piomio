@@ -118,6 +118,16 @@ describe("core methods for plugins", () => {
     await expect(call("browser", "conversations.tell", { text: "  " })).rejects.toThrow(/text is required/);
   });
 
+  it("plugins.enabled says whether another plugin is on: an ability whose catalog card is a plugin of its own", async () => {
+    const f = fakeHub();
+    (f.hub as any).plugins = { get: (id: string) => ({ "browser-traffic": { enabled: true }, pio: { enabled: false } })[id] };
+    const call = createCoreCall(f.hub);
+    expect(await call("browser", "plugins.enabled", { id: "browser-traffic" })).toEqual({ enabled: true });
+    expect(await call("browser", "plugins.enabled", { id: "pio" })).toEqual({ enabled: false });
+    expect(await call("browser", "plugins.enabled", { id: "no-such" })).toEqual({ enabled: false });
+    expect(await call("browser", "plugins.enabled", {})).toEqual({ enabled: false });
+  });
+
   it("agents.list says what each agent may use, so a plugin can tell who can work with its tools", async () => {
     const list = (await createCoreCall(fakeHub().hub)("browser", "agents.list", {})) as Array<{ id: string; tools: string[] }>;
     expect(list.map((a) => [a.id, a.tools])).toEqual([

@@ -122,6 +122,8 @@ export type EventName =
   /** `{ agentId }`: the person deleted an agent for good; drop what the plugin keeps for it. */
   | "agent.removed"
   | "vault.state"
+  /** A plugin was turned on or off, installed or removed, or its settings changed (ask core "plugins.enabled" what holds now). */
+  | "plugins.updated"
   /** `{ ids }`: vault items just stored, changed or removed (chat, security console…), e.g. the token this plugin waits for. */
   | "vault.updated";
 

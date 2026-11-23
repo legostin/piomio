@@ -14,6 +14,7 @@ import { createChromiumInstaller, INSTALL_WAIT_MS, isMissingExecutableError, typ
 import { Learning } from "./learning.ts";
 import { pageCall } from "./page-script.ts";
 import { CHECK_PASSING_RE, PAGE_RULES, type FocusInfo } from "./safety.ts";
+import { Traffic } from "./traffic/index.ts";
 import {
   againAfterNavigation,
   cut,
@@ -102,6 +103,8 @@ export class BrowserManager {
    * cannot take the form another is filling (an upload approved for one site found the other on the page).
    */
   private agentTabs = new Map<string, Page>();
+  /** What the tabs ask and get, for agents (traffic/): kept and changed only while that ability is on. */
+  readonly traffic = new Traffic(() => this.scheduleState());
   /** A tab opened here for an agent of its own: not news for it ("a new tab opened"). */
   private openingOwnTab = false;
   /** A page asked for files (a file field was clicked) and nobody has answered yet. */
@@ -380,6 +383,7 @@ export class BrowserManager {
     this.inputCdp = null;
     this.touchWorld = null;
     if (c) await withTimeout(c.close(), 10_000).catch(() => {});
+    this.traffic.rules.reset();
     this.scheduleState();
   }
 
@@ -401,10 +405,12 @@ export class BrowserManager {
     this.touchWorld = null;
     this.captcha = false;
     if (this.userControl) this.setControl(false);
+    this.traffic.rules.reset();
     this.scheduleState();
   }
 
   private trackPage(p: Page): void {
+    this.traffic.log.track(p, () => this.tabId(p));
     p.on("dialog", (d) => void this.onDialog(d));
     // Listening takes the page's file dialog over (none would show in this browser): the person answers it in the
     // live view, an agent with browser_upload.
@@ -427,6 +433,17 @@ export class BrowserManager {
     let id = this.tabIds.get(p);
     if (!id) this.tabIds.set(p, (id = String(++this.tabSeq)));
     return id;
+  }
+
+  /** A tab's number in the traffic log and its rules (kept for the tab's life, unlike its place in the tab strip). */
+  tabNumber(p: Page): string {
+    return this.tabId(p);
+  }
+
+  /** The number of the tab `agentId` works in, when it has one open. */
+  tabOf(agentId: string): string | undefined {
+    const own = this.agentTabs.get(agentId);
+    return own && !own.isClosed() ? this.tabId(own) : undefined;
   }
 
   /** Who sent the tab where it landed. */
@@ -958,6 +975,9 @@ export class BrowserManager {
         }
         return;
       }
+      case "traffic.clear":
+        // The person's «Remove» in the live view: every agent's rules go.
+        return run(() => this.traffic.rules.remove(undefined));
       case "start":
         this.touch();
         return run(() => this.ensurePage());
@@ -1316,6 +1336,8 @@ export class BrowserManager {
       ...(this.machine ? { machine: this.machine } : {}),
       install: this.installer.status(),
       teach: this.learning.state(),
+      // Agents changing a tab's traffic (their rules): the live view says so and lets the person remove them.
+      traffic: this.traffic.rules.summary(),
     });
   }
 

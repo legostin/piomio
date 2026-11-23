@@ -83,7 +83,8 @@
       "conversations.tell",
       "agents.list",
       "speech.transcribe",
-      "files.fetch"
+      "files.fetch",
+      "plugins.enabled"
     ],
     "ui": [
       "live.view",

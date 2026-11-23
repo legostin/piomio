@@ -126,6 +126,13 @@ export default async function ({ quantity = 2 }, browser) {
 - With consequences: `submit(t, {description, amount, currency})` is `browser_submit`; the skill's approved limit
   applies or the person gets a card, and the script cannot go past a card. `upload(t, files, description)`,
   `fillSecret(t, vaultRef, field)` and `download(t)` are the tools of the same names.
+- With the person's «Browser traffic» ability on (you then have `browser_requests`): `requests({match, method, since,
+  waitMs})` is the list of what the page asked the network, each with its `status` and `responseBody` (JSON parsed),
+  so a script reads prices or an order's number from the site's own API answer instead of the page's text;
+  `fetch(url, {query, headers, from})` is a GET of your own; `send({method, url, data or body, from, set, description,
+  amount, currency})` is `browser_request_send`: the person's card, or a request they approved ahead of time
+  (`hub_skill_save` allow: `{request: "POST https://api.5vodi.kz/v1/orders*", maxAmount, currency}`). Both go only to
+  the skill's sites. Cookies and tokens read `«hidden»` and still go along with `from` (a recorded request's `id`).
 - Check what the instructions say to check and `throw new Error("…")` when it does not hold: you then take over.
   `browser.log(…)` lines come back with the result. Return what the person will want to hear (the total, the order
   number), not whole pages.
