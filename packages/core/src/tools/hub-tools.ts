@@ -29,7 +29,8 @@ import { hubName, inviteUrl, machineHubUrl } from "../pairing.ts";
 import { replicaVersionNote, UpdateError } from "../self-update.ts";
 import { isSetupStep, SETUP_STEPS } from "../setup.ts";
 import { sanitizeToolName } from "./registry.ts";
-import { checkSkillSave, deleteTaughtSkill, parseSkillSave, saveTaughtSkill, skillSaveSummary } from "../taught-skills.ts";
+import { checkSkillScript } from "../skill-scripts.ts";
+import { checkSkillSave, deleteTaughtSkill, parseSkillSave, readSkillScript, saveTaughtSkill, skillSaveSummary } from "../taught-skills.ts";
 import { hasSkill } from "../skills.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { accessView } from "../access/map.ts";
@@ -1550,7 +1551,9 @@ export function registerHubTools(hub: Hub): void {
         "`allow` lists only what the person agreed to in their own words in this chat (\"yes, order without asking up to 3000\"); never add one they " +
         "did not say: each is a browser_submit on that site, on the control named `label` exactly as the snapshot names it (numbers in it may change), " +
         "up to `maxAmount` in `currency` when money is involved; it then runs without a card. " +
-        "`files` are paths in your workspace to keep with the skill, like downloads/teach-<id>.md. `sites`: the sites it works on.",
+        "`files` are paths in your workspace to keep with the skill, like downloads/teach-<id>.md. `sites`: the sites it works on. " +
+        "`script` (optional): the skill's script, when its steps are the same every time (the teach-by-demo skill says how to write one); " +
+        "an update without it keeps the script the skill has.",
       inputSchema: obj(
         {
           name: { type: "string", description: "Lowercase Latin letters, digits and dashes, up to 40 characters, e.g. order-water" },
@@ -1573,6 +1576,7 @@ export function registerHubTools(hub: Hub): void {
             },
           },
           replaces: { type: "string", description: "The name of the taught skill this one updates" },
+          script: { type: "string", description: "The skill's script: export default async function (input, browser) { … }" },
         },
         ["name", "description", "instructions"],
       ),
@@ -1584,6 +1588,10 @@ export function registerHubTools(hub: Hub): void {
       const local = parseBrainRef(s.brainRef).machineId === "local";
       const check = () => checkSkillSave(skill, { skills: hub.skills, skillsDir, ...(local ? { workspace: hub.runner.workspacePath(s) } : {}) });
       check();
+      if (skill.script !== undefined) {
+        const wrong = await checkSkillScript(skill.script);
+        if (wrong !== undefined) return text(`Nothing was saved and nobody was asked, the script does not compile: ${wrong}`, true);
+      }
       const save = (via: string): ToolResult => {
         const holders = hub.skills.holders!;
         const had = skill.replaces ? holders.get(skill.replaces) : [];
@@ -1602,7 +1610,9 @@ export function registerHubTools(hub: Hub): void {
           sites: skill.sites,
           rules: saved.rules.map((r) => r.id),
         });
-        const allowed = saved.rules.length ? ` ${saved.rules.length} pre-approved click(s) now run without a card.` : "";
+        const allowed =
+          (saved.rules.length ? ` ${saved.rules.length} pre-approved click(s) now run without a card.` : "") +
+          (readSkillScript({ dir: saved.dir }) !== undefined ? ` It has a script: skill_run {name: "${skill.name}"} does its steps in one call.` : "");
         const whose = skill.replaces
           ? "Who has it stays the same."
           : `It is yours: only you have it (skill_load ${skill.name}); hub_skill_assign gives it to teammates too when the person wants.`;

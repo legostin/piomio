@@ -96,44 +96,95 @@ function itemLine(it: any): string {
   return s;
 }
 
-async function snapshot(mgr: BrowserManager, page: Page, limit: number): Promise<string> {
+/** browser_snapshot's narrowing: only elements of this role and name (`*` stands for any run of characters). */
+interface Wanted {
+  role?: string;
+  name?: string;
+}
+
+interface Found {
+  info: any;
+  items: any[];
+  /** Each item's frame, for the ones inside an iframe (its host). */
+  frames: Array<string | undefined>;
+  total: number;
+  modal: string;
+  /** Nothing matched: names the page has instead. */
+  others: string[];
+}
+
+/** The page's interactive elements (the main frame's, then its visible iframes'), all of them or only those `want` names. */
+async function collect(mgr: BrowserManager, page: Page, limit: number, want: Wanted = {}): Promise<Found> {
   await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
   const main = page.mainFrame();
   const info = await mgr.evalIn<any>(main, "info");
-  const snap = await mgr.evalIn<any>(main, "snapshot", { limit });
+  const snap = await mgr.evalIn<any>(main, "snapshot", { limit, ...want });
+  const out: Found = { info, items: [...snap.items], frames: snap.items.map(() => undefined), total: snap.total, modal: snap.modal, others: snap.others ?? [] };
+  if (snap.modal) return out;
+  let remaining = Math.max(20, limit - snap.items.length);
+  for (const frame of page.frames().slice(1, 12)) {
+    if (frame.isDetached() || remaining <= 0) continue;
+    const el = await frame.frameElement().catch(() => null);
+    const box = el ? await el.boundingBox().catch(() => null) : null;
+    if (!box || box.width < 2 || box.height < 2) continue;
+    const s = await mgr.evalIn<any>(frame, "snapshot", { limit: remaining, ...want }, 3000).catch(() => null);
+    if (!s) continue;
+    for (const o of s.others ?? []) if (out.others.length < 12 && !out.others.includes(o)) out.others.push(o);
+    if (!s.items.length) continue;
+    let host = frame.url();
+    try {
+      host = new URL(frame.url()).host;
+    } catch {
+      /* keep raw */
+    }
+    out.items.push(...s.items);
+    out.frames.push(...s.items.map(() => host));
+    out.total += s.total;
+    remaining -= s.items.length;
+  }
+  return out;
+}
+
+const wantedText = (w: Wanted) => [w.role, w.name !== undefined ? `"${cut(w.name, 80)}"` : ""].filter(Boolean).join(" ");
+
+async function snapshot(mgr: BrowserManager, page: Page, limit: number, o: { want?: Wanted; json?: boolean; waitMs?: number } = {}): Promise<string> {
+  const want = o.want ?? {};
+  const narrowed = want.role !== undefined || want.name !== undefined;
+  let f = await collect(mgr, page, limit, want);
+  // A script's target may still be on its way (a page loading, a list filling in).
+  for (const until = Date.now() + (narrowed ? (o.waitMs ?? 0) : 0); !f.items.length && Date.now() < until; ) {
+    await sleep(300);
+    f = await collect(mgr, page, limit, want);
+  }
+  const { info } = f;
+  mgr.setCaptcha(!!info.captcha);
+  if (o.json) {
+    // One line: the hub reads it for a skill's script (skill-scripts.ts); what follows it is the usual page line.
+    return JSON.stringify({
+      url: info.url,
+      title: info.title,
+      total: f.total,
+      elements: f.items.map((it, i) => ({ ...it, ...(f.frames[i] ? { frame: f.frames[i] } : {}) })),
+      ...(f.modal ? { modal: f.modal } : {}),
+      ...(narrowed && !f.items.length ? { others: f.others } : {}),
+      ...(info.captcha ? { captcha: true } : {}),
+    });
+  }
   const out: string[] = [];
   const bottom = Math.min(info.scrollHeight, info.scrollY + info.viewportHeight);
   out.push(`Scroll: showing ${info.scrollY}–${bottom} of ${info.scrollHeight} px`);
   if (info.headings.length) out.push(`Headings:\n${info.headings.join("\n")}`);
   if (info.alerts.length) out.push(`Page messages: ${info.alerts.map((a: string) => `"${a}"`).join("; ")}`);
-  mgr.setCaptcha(!!info.captcha);
   if (info.captcha) out.push(CAPTCHA_NOTE);
-  if (snap.modal) out.push(`A modal dialog "${snap.modal}" is open: only its elements are shown.`);
-  const lines: string[] = snap.items.map(itemLine);
-  let shown = snap.items.length;
-  let total = snap.total;
-  if (!snap.modal) {
-    let remaining = Math.max(20, limit - snap.items.length);
-    for (const frame of page.frames().slice(1, 12)) {
-      if (frame.isDetached() || remaining <= 0) continue;
-      const el = await frame.frameElement().catch(() => null);
-      const box = el ? await el.boundingBox().catch(() => null) : null;
-      if (!box || box.width < 2 || box.height < 2) continue;
-      const s = await mgr.evalIn<any>(frame, "snapshot", { limit: remaining }, 3000).catch(() => null);
-      if (!s || !s.items.length) continue;
-      let host = frame.url();
-      try {
-        host = new URL(frame.url()).host;
-      } catch {
-        /* keep raw */
-      }
-      lines.push(`-- iframe ${host} --`, ...s.items.map(itemLine));
-      shown += s.items.length;
-      total += s.total;
-      remaining -= s.items.length;
-    }
-  }
-  out.push(`Elements (${shown === total ? shown : `showing ${shown} of ${total}`}):`);
+  if (f.modal) out.push(`A modal dialog "${f.modal}" is open: only its elements are shown.`);
+  const lines: string[] = [];
+  f.items.forEach((it, i) => {
+    if (f.frames[i] && f.frames[i] !== f.frames[i - 1]) lines.push(`-- iframe ${f.frames[i]} --`);
+    lines.push(itemLine(it));
+  });
+  const shown = f.items.length;
+  const total = f.total;
+  out.push(`Elements${narrowed ? ` matching ${wantedText(want)}` : ""} (${shown === total ? shown : `showing ${shown} of ${total}`}):`);
   let size = out.join("\n").length;
   let cutAt = lines.length;
   for (let i = 0; i < lines.length; i++) {
@@ -145,9 +196,9 @@ async function snapshot(mgr: BrowserManager, page: Page, limit: number): Promise
   }
   out.push(...lines.slice(0, cutAt));
   if (cutAt < lines.length || shown < total) {
-    out.push(`… list truncated: scroll the page (browser_scroll) and call browser_snapshot again to see the rest.`);
+    out.push(narrowed ? "… list truncated: narrow the name or raise maxElements." : `… list truncated: scroll the page (browser_scroll) and call browser_snapshot again to see the rest.`);
   }
-  if (!lines.length) out.push("(no interactive elements visible)");
+  if (!lines.length) out.push(narrowed ? `(nothing matches${f.others.length ? `; the page has: ${f.others.map((n) => `"${n}"`).join(", ")}` : ""})` : "(no interactive elements visible)");
   return out.join("\n");
 }
 
@@ -316,12 +367,23 @@ export function registerTools(ctx: PluginContext, mgr: BrowserManager): void {
     "read",
     "List the visible interactive elements of the current page with refs (e.g. [e12] button \"Save\"), plus scroll position, headings and page messages. " +
       "Refs stay valid while the page is not reloaded; take a new snapshot after navigation. Elements marked (needs browser_submit) submit forms or " +
-      `perform actions with consequences (buy, pay, send, delete, publish) and can only be activated with browser_submit. ${UNTRUSTED} ${CAPTCHA_HINT}`,
-    { maxElements: { type: "number", description: "Maximum number of elements (default 100, max 300). Elements in the viewport come first." } },
+      "perform actions with consequences (buy, pay, send, delete, publish) and can only be activated with browser_submit. " +
+      `With role and/or name, only the matching elements, from anywhere on the page. ${UNTRUSTED} ${CAPTCHA_HINT}`,
+    {
+      maxElements: { type: "number", description: "Maximum number of elements (default 100, max 300). Elements in the viewport come first." },
+      role: { type: "string", description: "Only elements of this role, e.g. button, link, textbox." },
+      name: { type: "string", description: "Only elements with this name (case and extra spaces do not matter; * stands for any run of characters)." },
+      json: { type: "boolean", description: "The list as one line of JSON ({url, title, total, elements}) instead of text." },
+      waitMs: { type: "number", description: "With role or name: wait up to this long for a match to appear (max 15000)." },
+    },
     [],
     async (input) => {
       const limit = Math.min(300, Math.max(10, Number(input.maxElements) || 100));
-      return mgr.tool("snapshot", (page) => snapshot(mgr, page, limit));
+      const want: Wanted = {};
+      if (typeof input.role === "string" && input.role.trim()) want.role = input.role.trim().slice(0, 40);
+      if (typeof input.name === "string") want.name = input.name.slice(0, 300);
+      const waitMs = Math.min(15_000, Math.max(0, Number(input.waitMs) || 0));
+      return mgr.tool("snapshot", (page) => snapshot(mgr, page, limit, { want, json: input.json === true, waitMs }));
     },
   );
 

@@ -1,6 +1,6 @@
 ---
 name: teach-by-demo
-description: Learn a browser task by watching the person do it, save it as a skill, run it later (also on a schedule) and repair it. Use when the person says "let me show you", "смотри как я делаю", "научу тебя", when a demonstration's recording arrives from the hub, when the hub says the person did the same thing several times, or when you run or fix a skill taught by the person.
+description: Learn a browser task by watching the person do it, save it as a skill, run it later (also on a schedule, also with a script that does the steps in one call) and repair it. Use when the person says "let me show you", "смотри как я делаю", "научу тебя", when a demonstration's recording arrives from the hub, when the hub says the person did the same thing several times, or when you run or fix a skill taught by the person.
 ---
 
 # Learning from the person in the browser
@@ -54,7 +54,8 @@ Highlight. You turn that into a skill: instructions you follow with understandin
 
 ## 3. Running a taught skill
 
-- Load it (`skill_load`), fill the inputs from what the person asked (ask for any you cannot know), then do the steps
+- Load it (`skill_load`), fill the inputs from what the person asked (ask for any you cannot know). When it says the
+  skill has a script, run that first (section 6). Otherwise, and from where a script stopped, do the steps
   with the browser tools: snapshot, find the element by the name the skill gives (names may differ a little: a
   price inside a button's name changes), act, check what the skill says to check.
 - A file field ("Chose the file … — an upload" in the recording): `browser_upload` with a file from your workspace. A
@@ -80,6 +81,58 @@ Highlight. You turn that into a skill: instructions you follow with understandin
 The hub may say "[Browser] The person did the same thing on <site> N times…". Offer in one short message with quick
 replies to do it for them. Yes: `browser_journal export` the recordings it names and go on as in section 2. No:
 `browser_journal dismiss` with the last recording's id, so it is not offered again.
+
+## 6. Scripts: the steps in one call
+
+A taught skill can carry a script: JavaScript the hub runs for the mechanical part, so a run is one `skill_run` call
+instead of a call per click. The instructions stay the truth about the task; the script is the fast way through it.
+
+**When to write one.** The steps are the same every time and a run by hand has proven them (the element names in the
+script are the ones you actually clicked). Offer it after such a run, or write it when the person asks. Not for a
+task that is mostly judgement (choosing, reading, writing a text): keep that part yours and script only the rest.
+
+**Running.** `skill_run {name, input}`, with `input` as the skill's Inputs name it. You get what the script returned;
+check it against the skill's Checks, then answer the person in your own words. A run of a skill on a schedule does
+the same.
+
+**When it stops.** The answer names the call that failed, why, what the page has instead, and the calls already
+done. The browser is where the script left it: `browser_snapshot`, do the rest by hand from that point (never start
+over: an order placed twice is worse than a slow run), then fix the script with `skill_script_save` (the whole
+script and a one-line `note`) and tell the person in one line what you changed. No card is needed for that. If the
+script stopped at a card waiting for the person, or at a refusal, the script is fine: leave it as it is.
+`skill_script_save {name, restore: true}` brings the version before back if your fix made it worse.
+
+**Writing.** One default function; `input` is the first argument, `browser` the second:
+
+```js
+export default async function ({ quantity = 2 }, browser) {
+  await browser.open("https://5vodi.kz/catalog");
+  await browser.click({ role: "link", name: "Вода 19 л" });
+  await browser.type({ role: "textbox", name: "Количество" }, String(quantity));
+  const total = Number(/Итого:\s*([\d\s]+)/.exec(await browser.text())[1].replace(/\s/g, ""));
+  if (total > 3000) throw new Error(`The total is ${total}, over the limit of 3000`);
+  await browser.submit({ role: "button", name: "Оформить заказ*" }, { description: `Заказ ${quantity} бутылей, ${total} ₸`, amount: total, currency: "KZT" });
+  return { total, page: await browser.page() };
+}
+```
+
+- A target is `{role, name}` as `browser_snapshot` shows them (case and extra spaces do not matter; `*` stands for
+  what changes, like a price inside a button's name), with `nth` (from 1) when several match. It is waited for up to
+  8 s (`waitMs` changes that); none or several is an error that stops the run.
+- `open(url)` (only the skill's sites), `click(t)`, `type(t, text)` (also chooses a `<select>` option),
+  `press(key, t?)`, `scroll(direction or t)`, `back()`, `wait({text, ms})`.
+- Reading: `text()` is the page's text, `page()` is `{url, title}`, `find({role, name})` is the list of matching
+  elements (`ref`, `role`, `name`, `value`, `href`, `checked`) for loops over rows or links.
+- With consequences: `submit(t, {description, amount, currency})` is `browser_submit`; the skill's approved limit
+  applies or the person gets a card, and the script cannot go past a card. `upload(t, files, description)`,
+  `fillSecret(t, vaultRef, field)` and `download(t)` are the tools of the same names.
+- Check what the instructions say to check and `throw new Error("…")` when it does not hold: you then take over.
+  `browser.log(…)` lines come back with the result. Return what the person will want to hear (the total, the order
+  number), not whole pages.
+- No captchas, no guessing: what needs a person or judgement stays outside the script. At most 300 calls and ten
+  minutes a run.
+
+A new skill may be saved with its script at once (`hub_skill_save` with `script`): the card says so.
 
 ## Privacy
 

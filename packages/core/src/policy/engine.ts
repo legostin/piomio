@@ -34,8 +34,11 @@ export interface PolicyResult {
   egress?: boolean;
 }
 
-/** What a run of a taught skill may do by itself beyond reading: drive the browser the person showed it in. */
-export const SKILL_RUN_TOOLS = /^browser_/;
+/**
+ * What a run of a taught skill may do by itself beyond reading: drive the browser the person showed it in, by hand or
+ * with the skill's script (each of the script's steps is a browser tool call of its own), and fix that script.
+ */
+export const SKILL_RUN_TOOLS = /^(?:browser_|skill_run$|skill_script_save$)/;
 
 /** Tools background tasks may always use regardless of effect. */
 // memory_remember, memory_write: the nightly reflection is a background task; a remembered or updated fact is local,

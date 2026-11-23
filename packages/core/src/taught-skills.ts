@@ -3,14 +3,16 @@
 // with the files the agent keeps from the recording, and one browser_submit rule per click the person pre-approved
 // (created via "skill", noted `skill:<name>`). Errors are English: they go back to the model.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { stringify as toYaml } from "yaml";
 import type { Locale, Rule, RuleCondition } from "@piomio/shared";
 import { hostOf, parseFrontmatter } from "@piomio/shared";
 import { tFor } from "./i18n.ts";
 import type { RuleStore } from "./policy/rules.ts";
-import { USER_SKILLS, type SkillIndex } from "./skills.ts";
+import { MAX_SCRIPT_BYTES } from "./signals/sandbox.ts";
+import { SKILL_SCRIPT_FILE, SKILL_SCRIPT_PREV } from "./skill-scripts.ts";
+import { USER_SKILLS, type Skill, type SkillIndex } from "./skills.ts";
 
 export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 export const MAX_SKILL_DESCRIPTION = 300;
@@ -38,6 +40,8 @@ export interface SkillSave {
   sites: string[];
   allow: SkillAllow[];
   replaces?: string;
+  /** The skill's script (skill-scripts.ts): JavaScript for the mechanical part of the task, run with skill_run. */
+  script?: string;
 }
 
 /** The rule note that ties a pre-approval to its skill. */
@@ -121,7 +125,16 @@ export function parseSkillSave(input: any): SkillSave {
   ];
   const out: SkillSave = { name, description, instructions, files, sites, allow };
   if (i.replaces !== undefined && i.replaces !== null && i.replaces !== "") out.replaces = str(i.replaces, "replaces", 40);
+  if (i.script !== undefined && i.script !== null && i.script !== "") out.script = scriptText(i.script);
   return out;
+}
+
+/** A script's text as it is kept: at most 64 KB, with one line break at its end. */
+export function scriptText(v: unknown): string {
+  if (typeof v !== "string" || !v.trim()) fail("script is required: the whole JavaScript of the skill's script.");
+  const code = `${(v as string).replace(/\s+$/, "")}\n`;
+  if (Buffer.byteLength(code) > MAX_SCRIPT_BYTES) fail(`script is longer than ${MAX_SCRIPT_BYTES / 1024} KB.`);
+  return code;
 }
 
 /** A path in the workspace (relative to it or absolute inside it): the real file, or what is wrong with it. */
@@ -182,7 +195,7 @@ export function formatAmount(n: number, currency: string | undefined, locale: Lo
 }
 
 /** The approval card's line: the skill, then each click it may do without asking (numbers in a label shown as "…"). */
-export function skillSaveSummary(s: Pick<SkillSave, "name" | "description" | "allow" | "replaces">, locale: Locale): string {
+export function skillSaveSummary(s: Pick<SkillSave, "name" | "description" | "allow" | "replaces" | "script">, locale: Locale): string {
   const t = tFor(locale);
   const head = s.replaces
     ? t("skills.update", { name: s.replaces === s.name ? s.name : `${s.replaces} → ${s.name}`, description: s.description })
@@ -193,7 +206,7 @@ export function skillSaveSummary(s: Pick<SkillSave, "name" | "description" | "al
     const amount = a.maxAmount !== undefined ? t("skills.allowAmount", { amount: formatAmount(a.maxAmount, a.currency, locale) }) : "";
     return t("skills.allow", { label, site: a.site, amount });
   });
-  return [head, ...allows].join(" · ");
+  return [head, ...(s.script ? [t("skills.withScript")] : []), ...allows].join(" · ");
 }
 
 /** "recording.md", "recording-2.md": a name not yet used in the folder (SKILL.md stays the skill's own). */
@@ -218,6 +231,8 @@ export function saveTaughtSkill(
   const now = (d.now ?? new Date()).toISOString();
   const old = checked.replaced ? d.skills.get(checked.replaced) : undefined;
   let created = now;
+  // An update that brings no script keeps the one the skill has (and the version before it).
+  const kept = old ? { script: readOr(join(old.dir, SKILL_SCRIPT_FILE)), prev: readOr(join(old.dir, SKILL_SCRIPT_PREV)) } : {};
   if (old) {
     try {
       const prev = parseFrontmatter(readFileSync(join(old.dir, "SKILL.md"), "utf8")).data.created;
@@ -231,7 +246,7 @@ export function saveTaughtSkill(
 
   const dir = join(d.skillsDir, s.name);
   mkdirSync(dir, { recursive: true });
-  const used = new Set(["skill.md"]);
+  const used = new Set(["skill.md", SKILL_SCRIPT_FILE, SKILL_SCRIPT_PREV]);
   const files = checked.files.map((src) => {
     const name = freeName(basename(src), used);
     cpSync(src, join(dir, name), { dereference: true });
@@ -239,6 +254,10 @@ export function saveTaughtSkill(
   });
   const front = { name: s.name, description: s.description, taught: true, sites: s.sites, agent: d.agentId, created, updated: now };
   writeFileSync(join(dir, "SKILL.md"), `---\n${toYaml(front).trimEnd()}\n---\n\n${s.instructions.trim()}\n`);
+  const script = s.script ?? kept.script;
+  const prev = s.script !== undefined && kept.script !== undefined && kept.script !== s.script ? kept.script : kept.prev;
+  if (script !== undefined) writeFileSync(join(dir, SKILL_SCRIPT_FILE), script);
+  if (script !== undefined && prev !== undefined) writeFileSync(join(dir, SKILL_SCRIPT_PREV), prev);
 
   const rules = s.allow.map((a) => d.rules.create(allowRule(s.name, a)));
   d.rules.addKnownTargets(s.sites.flatMap((h) => [h, `www.${h}`]));
@@ -268,4 +287,45 @@ export function deleteTaughtSkill(name: string, d: { skills: SkillIndex; rules: 
   const rules = removeSkillRules(d.rules, [name]);
   d.skills.reload();
   return { rules };
+}
+
+function readOr(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** A taught skill's script, when it has one. */
+export function readSkillScript(skill: Pick<Skill, "dir">): string | undefined {
+  return readOr(join(skill.dir, SKILL_SCRIPT_FILE));
+}
+
+/**
+ * skill_script_save: a new version of a taught skill's script. The one it had stays beside it as the previous version.
+ * Nothing else of the skill changes (its sites and pre-approvals are the person's, through hub_skill_save's card).
+ */
+export function saveSkillScript(skill: Pick<Skill, "dir" | "taught" | "name">, code: string): { replaced: boolean } {
+  if (!skill.taught) fail(`"${skill.name}" was not taught by showing: only a taught skill has a script.`);
+  const file = join(skill.dir, SKILL_SCRIPT_FILE);
+  const old = readOr(file);
+  if (old === code) fail("That is the script the skill already has: nothing changed.");
+  if (old !== undefined) writeFileSync(join(skill.dir, SKILL_SCRIPT_PREV), old);
+  writeFileSync(file, code);
+  return { replaced: old !== undefined };
+}
+
+/** skill_script_save restore: the previous version becomes the script again, and the one it replaces becomes the previous. */
+export function restoreSkillScript(skill: Pick<Skill, "dir" | "name">): void {
+  const file = join(skill.dir, SKILL_SCRIPT_FILE);
+  const prevFile = join(skill.dir, SKILL_SCRIPT_PREV);
+  const prev = readOr(prevFile);
+  if (prev === undefined) fail(`"${skill.name}" has no previous version of its script to go back to.`);
+  const now = readOr(file);
+  if (now === undefined) renameSync(prevFile, file);
+  else {
+    writeFileSync(prevFile, now);
+    writeFileSync(file, prev as string);
+  }
 }
