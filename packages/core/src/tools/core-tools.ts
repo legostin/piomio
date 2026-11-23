@@ -6,6 +6,8 @@ import type { BehindEntry, ImageItem, InboxEntry, LibraryItem, LibraryKind, MapI
 import { brainsFor, EFFORT_SCALE, isThinkingPreset, MAP_ICONS, sameBrain, truncate } from "@piomio/shared";
 import type { ToolRegistry } from "./registry.ts";
 import type { SkillIndex } from "../skills.ts";
+import { numbered, SKILL_SCRIPT_FILE } from "../skill-scripts.ts";
+import { readSkillScript } from "../taught-skills.ts";
 import type { VaultService } from "../vault/service.ts";
 import type { Store } from "../store.ts";
 import { notifyInputError, notifyRefusal, type Notifier } from "../notifier.ts";
@@ -725,9 +727,9 @@ export function registerCoreTools(d: CoreToolDeps): void {
   reg(
     {
       name: "skill_load",
-      description: "Load the full instructions (SKILL.md) of a skill by name.",
+      description: "Load the full instructions (SKILL.md) of a skill by name. A taught skill may have a script (the answer says so): `script: true` returns its text instead.",
       effect: "read",
-      inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+      inputSchema: { type: "object", properties: { name: { type: "string" }, script: { type: "boolean", description: "The skill's script instead of its instructions" } }, required: ["name"] },
     },
     (i, ctx) => {
       const name = String(i.name);
@@ -742,8 +744,21 @@ export function registerCoreTools(d: CoreToolDeps): void {
           true,
         );
       }
+      const skill = d.skills.get(name);
+      const script = skill?.taught ? readSkillScript(skill) : undefined;
+      if (i.script === true) {
+        return script === undefined ? text(`${name} has no script.`, true) : text(`The script of "${name}" (${SKILL_SCRIPT_FILE}; skill_script_save replaces it):\n${numbered(script)}`);
+      }
       const s = d.skills.load(name);
-      return s ? text(s) : text(`Skill ${name} not found`, true);
+      if (!s) return text(`Skill ${name} not found`, true);
+      // The script is the fast way through the skill's steps: said first, so it is tried before a run by hand.
+      const has =
+        script === undefined
+          ? ""
+          : `\n\n---\nThis skill has a script (${script.split("\n").length} lines). Run it first: skill_run {name: "${name}", input: {…}} with the Inputs above. ` +
+            "It does the steps in one call; where it stops, go on by hand as the instructions say, then fix it with skill_script_save " +
+            "(skill_load with script: true shows its text).";
+      return text(s + has);
     },
   );
 

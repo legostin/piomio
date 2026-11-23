@@ -7,7 +7,7 @@
 // ones it never awaited, so what a script set off cannot pile up on the hub or land after its run.
 
 import { Worker } from "node:worker_threads";
-import type { FromSandbox, SandboxJob, ToSandbox } from "./sandbox-worker.ts";
+import type { FromSandbox, SandboxJob, ScriptApi, ToSandbox } from "./sandbox-worker.ts";
 
 // What a script decides about its signal(s): the trigger model's Verdict.
 import type { Verdict } from "./types.ts";
@@ -31,6 +31,8 @@ export type HostCall = (name: string, args: unknown[]) => Promise<unknown>;
 
 export interface ScriptResult {
   verdict?: Verdict;
+  /** What a taught skill's script returned (api "browser"): any JSON. */
+  value?: unknown;
   logs: string[];
   error?: string;
   ms: number;
@@ -62,15 +64,18 @@ interface Job {
   input: unknown;
   host: HostCall;
   limits: SandboxLimits;
+  api: ScriptApi;
+  check?: boolean;
   resolve: (r: ScriptResult) => void;
 }
 
-type Outcome = { verdict?: Verdict; error?: string; unavailable?: true };
+type Outcome = { verdict?: Verdict; value?: unknown; error?: string; unavailable?: true };
 
 interface Running {
   id: number;
   worker: Worker;
   host: HostCall;
+  api: ScriptApi;
   logs: string[];
   calls: number;
   /** pio calls handed to the host and not back yet. */
@@ -98,12 +103,23 @@ export class ScriptSandbox {
     this.stackMb = opts.stackMb ?? WORKER_STACK_MB;
   }
 
-  run(code: string, input: unknown, host: HostCall, limits: SandboxLimits = SCRIPT_LIMITS): Promise<ScriptResult> {
+  /** `api`: what the script is given and gives back: a trigger's `pio` and verdict, or a taught skill's `browser` and any JSON. */
+  run(code: string, input: unknown, host: HostCall, limits: SandboxLimits = SCRIPT_LIMITS, api: ScriptApi = "trigger"): Promise<ScriptResult> {
     const refused = (error: string, unavailable = false) => Promise.resolve({ error, logs: [], ms: 0, calls: 0, ...(unavailable ? { unavailable: true as const } : {}) });
     if (Buffer.byteLength(code) > MAX_SCRIPT_BYTES) return refused(`the script is longer than ${MAX_SCRIPT_BYTES / 1024} KB`);
     if (this.waiting.length >= MAX_WAITING) return refused(`too many scripts waiting (${MAX_WAITING})`, true);
     return new Promise<ScriptResult>((resolve) => {
-      this.waiting.push({ code, input, host, limits, resolve });
+      this.waiting.push({ code, input, host, limits, api, resolve });
+      this.next();
+    });
+  }
+
+  /** Compile a script without running it: `error` says what is wrong with it (its syntax, no default function). */
+  check(code: string, api: ScriptApi = "trigger"): Promise<ScriptResult> {
+    if (Buffer.byteLength(code) > MAX_SCRIPT_BYTES) return Promise.resolve({ error: `the script is longer than ${MAX_SCRIPT_BYTES / 1024} KB`, logs: [], ms: 0, calls: 0 });
+    return new Promise<ScriptResult>((resolve) => {
+      const host: HostCall = () => Promise.reject(new Error("a script is not run while it is checked"));
+      this.waiting.push({ code, input: null, host, limits: { ...SCRIPT_LIMITS, wallMs: 10_000 }, api, check: true, resolve });
       this.next();
     });
   }
@@ -128,6 +144,7 @@ export class ScriptSandbox {
       id,
       worker,
       host: job.host,
+      api: job.api,
       logs: [],
       calls: 0,
       inflight: 0,
@@ -137,7 +154,7 @@ export class ScriptSandbox {
     };
     this.running.set(id, run);
     try {
-      worker.postMessage({ kind: "run", run: id, code: job.code, input: job.input, limits: job.limits } satisfies SandboxJob);
+      worker.postMessage({ kind: "run", run: id, code: job.code, input: job.input, limits: job.limits, api: job.api, ...(job.check ? { check: true } : {}) } satisfies SandboxJob);
     } catch (e) {
       // The input cannot be copied to another thread (a function in it, say): the worker never saw the run.
       this.end(run, { error: `the script's input cannot be passed to the sandbox: ${message(e)}` }, "park");
@@ -173,6 +190,7 @@ export class ScriptSandbox {
     } else if (m.kind === "done") {
       const after = m.retire ? "terminate" : "park";
       if (m.error !== undefined) return this.end(run, { error: m.error }, after);
+      if (run.api === "browser") return this.end(run, m.value === undefined ? {} : { value: m.value }, after);
       const v = parseVerdict(m.value);
       this.end(run, v && "invalid" in v ? { error: `invalid verdict: ${v.invalid}` } : v ? { verdict: v } : {}, after);
     }

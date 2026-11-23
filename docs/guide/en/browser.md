@@ -151,6 +151,25 @@ data folder, under `skills/`.
 When the site changes and the agent gets stuck, it asks you to take over or to show that one step again. Afterwards
 it offers to update the skill, and you confirm on a card again.
 
+### Scripts: the same steps without the clicking
+
+When a skill's steps are the same every time, the agent writes a script for them: a short program that opens the
+pages, finds the buttons by their names and fills the fields. From then on the agent runs the whole thing with one
+action instead of thinking over every click, so a run is faster and takes far less of your plan's limits. Say "write
+a script for the water skill" to ask for one, or the agent offers it after a run by hand went well.
+
+- **The agent still runs it and answers you.** It starts the script, reads what it brought back, checks what you
+  asked it to check and tells you how it went, also on a schedule.
+- **The same rules as by hand.** Every step of a script is checked like the agent's own click. Steps with
+  consequences run without a card only within the limit you approved; anything else shows a card, and the script
+  stops there until you answer. A script opens only the sites of its skill.
+- **When a step fails** (the site renamed a button, a page looks different), the script stops. The agent goes on by
+  hand from that point, finishes the task, then fixes the script and tells you in a line what it changed. That needs no
+  card: your sites and the clicks you allowed stay as you approved them, and the version before is kept. "Bring the
+  old script back" restores it.
+
+A script lives beside its skill, in `skills/<name>/script.js` in the hub's data folder.
+
 ### Who on the team has it
 
 A taught skill belongs to the agent that learned it. To share it, say "give the water skill to Anna too" or "let

@@ -26,7 +26,17 @@ export interface SandboxJob {
   code: string;
   input: unknown;
   limits: SandboxLimits;
+  /** What the script is given: a trigger's `pio` (default), or a taught skill's `browser` (skill-scripts.ts). */
+  api?: ScriptApi;
+  /** Only compile it and see that it exports a default function: nothing of it is called. */
+  check?: boolean;
 }
+
+/** A trigger's script (`pio`, a verdict back) or a taught skill's (`browser`, any JSON back). */
+export type ScriptApi = "trigger" | "browser";
+
+/** What a skill's script calls on `browser`: each is a host call "browser.<name>" (skill-scripts.ts answers them). */
+export const BROWSER_METHODS = ["open", "click", "type", "press", "scroll", "back", "wait", "text", "page", "find", "submit", "upload", "fillSecret", "download"] as const;
 
 /** Hub → worker: what a pio call came back with: `result` the JSON of the host's answer (absent: undefined), or `error`. */
 export interface SandboxAnswer {
@@ -92,6 +102,7 @@ const PRELUDE = String.raw`(() => {
   const exec = (re, s) => bindCall(execFn, re, s);
   const isArray = Array.isArray;
   const { InternalError, RangeError, SyntaxError } = globalThis;
+  const Err = Error;
   // QuickJS's own: its stack check (InternalError; SyntaxError from the parser and JSON.parse) and its allocator.
   const isOverflow = (e) => (e instanceof InternalError || e instanceof RangeError || e instanceof SyntaxError) && e.message === "stack overflow";
   const kindOf = (e) => {
@@ -103,9 +114,9 @@ const PRELUDE = String.raw`(() => {
     }
   };
   const clip = (s, n) => (s.length > n ? slice(s, 0, n - 1) + "…" : s);
-  const call = async (name, args) => {
+  const call = async (name, args, shown) => {
     const json = stringify(args);
-    if (json.length > ${MAX_JSON_CHARS}) throw new Error("the arguments of pio " + name + " are over 1 MB of JSON");
+    if (json.length > ${MAX_JSON_CHARS}) throw new Error("the arguments of " + (shown || "pio " + name) + " are over 1 MB of JSON");
     const r = await host(name, json);
     return r === undefined ? undefined : parse(r);
   };
@@ -127,7 +138,7 @@ const PRELUDE = String.raw`(() => {
           const name = e.name;
           const stack = e.stack;
           const head = typeof name === "string" && name !== "" && name !== "Error" ? clip(name, 100) + ": " + clip(message, ${MAX_ERROR_CHARS}) : clip(message, ${MAX_ERROR_CHARS});
-          const at = typeof stack === "string" ? exec(/trigger\.mjs:\d+(?::\d+)?/, slice(stack, 0, 4000)) : null;
+          const at = typeof stack === "string" ? exec(/(?:trigger|script)\.mjs:\d+(?::\d+)?/, slice(stack, 0, 4000)) : null;
           return at ? head + " (at " + at[0] + ")" : head;
         }
       }
@@ -138,7 +149,37 @@ const PRELUDE = String.raw`(() => {
       return "the script threw a value that cannot be shown" + (x !== null && typeof x === "object" && typeof x.message === "string" ? " (" + clip(x.message, 200) + ")" : "");
     }
   };
-  const start = async (main, inputJson) => {
+  const logLine = (a) => {
+    let line = "";
+    for (let i = 0; i < a.length; i++) line += (i ? " " : "") + text(a[i]);
+    log(line.length > ${LOG_CHARS} ? slice(line, 0, ${LOG_CHARS + 1}) : line);
+  };
+  const browserMethods = ${JSON.stringify(BROWSER_METHODS)};
+  // A taught skill's script: its input and the agent's browser, nothing of pio.
+  const startBrowser = async (main, inputJson) => {
+    const browser = { log: (...a) => logLine(a) };
+    for (let i = 0; i < browserMethods.length; i++) {
+      const name = "browser." + browserMethods[i];
+      browser[browserMethods[i]] = async (...a) => {
+        // Where the script made the call: an answer that fails carries no line of the script by itself.
+        const stack = new Err().stack;
+        try {
+          return await call(name, a, name);
+        } catch (e) {
+          const at = typeof stack === "string" ? exec(/script\.mjs:\d+/, slice(stack, 0, 4000)) : null;
+          if (at && e !== null && typeof e === "object" && typeof e.message === "string" && !exec(/script\.mjs:\d+/, e.message)) e.message += " (at " + at[0] + ")";
+          throw e;
+        }
+      };
+    }
+    const result = await main(parse(inputJson) ?? {}, Object.freeze(browser));
+    if (result === undefined) return undefined;
+    const json = stringify({ v: result });
+    if (json.length > ${MAX_JSON_CHARS}) throw new Error("invalid result: over 1 MB of JSON");
+    return json;
+  };
+  const start = async (main, inputJson, api) => {
+    if (api === "browser") return startBrowser(main, inputJson);
     const input = parse(inputJson) ?? {};
     const now = input.now;
     const pio = Object.freeze({
@@ -251,6 +292,8 @@ class Session {
   private runtime: QuickJSRuntime;
   private vm: QuickJSContext;
   private limits: SandboxLimits;
+  /** A taught skill's script: its calls are `browser.*` and what it returns is a result, not a verdict. */
+  private browser: boolean;
   /** Handles this run holds, disposed in reverse at the end. */
   private handles: QuickJSHandle[] = [];
   /** pio calls waiting for the hub, by call number. */
@@ -276,6 +319,7 @@ class Session {
   constructor(job: SandboxJob, runtime: QuickJSRuntime) {
     this.job = job;
     this.limits = job.limits;
+    this.browser = job.api === "browser";
     this.runtime = runtime;
     runtime.setMemoryLimit(job.limits.memoryBytes);
     runtime.setMaxStackSize(QUICKJS_STACK_BYTES);
@@ -315,7 +359,7 @@ class Session {
     this.describeFn = this.keep(vm.getProp(fns, "describe"));
     this.kindOfFn = this.keep(vm.getProp(fns, "kindOf"));
 
-    const mod = this.guest(() => vm.evalCode(code, "trigger.mjs", { type: "module" }));
+    const mod = this.guest(() => vm.evalCode(code, this.browser ? "script.mjs" : "trigger.mjs", { type: "module" }));
     if (mod.error) return this.failed(this.keep(mod.error));
     let ns = this.keep(mod.value);
     // A module with a top-level await evaluates to a promise of its namespace: it has to settle without pio.
@@ -329,8 +373,10 @@ class Session {
 
     const main = this.keep(vm.getProp(ns, "default"));
     if (vm.typeof(main) !== "function") return { error: "the script must export a default function" };
+    if (this.job.check) return {};
     const inputH = this.keep(vm.newString(JSON.stringify(this.job.input ?? null)));
-    const called = this.guest(() => vm.callFunction(this.startFn!, vm.undefined, main, inputH));
+    const apiH = this.keep(vm.newString(this.browser ? "browser" : "trigger"));
+    const called = this.guest(() => vm.callFunction(this.startFn!, vm.undefined, main, inputH, apiH));
     if (called.error) return this.failed(this.keep(called.error));
     this.promise = this.keep(called.value);
     this.step();
@@ -347,17 +393,18 @@ class Session {
       return d.handle;
     };
     if (this.ended) return refuse("the script has ended");
-    if (this.calls >= this.limits.maxCalls) return refuse(`too many pio calls (${this.limits.maxCalls})`);
-    if (argsJson.length > MAX_JSON_CHARS) return refuse(`the arguments of pio ${name} are over ${MAX_JSON_CHARS / 1024 / 1024} MB of JSON`);
+    const shown = this.browser ? name : `pio ${name}`;
+    if (this.calls >= this.limits.maxCalls) return refuse(`too many ${this.browser ? "browser" : "pio"} calls (${this.limits.maxCalls})`);
+    if (argsJson.length > MAX_JSON_CHARS) return refuse(`the arguments of ${shown} are over ${MAX_JSON_CHARS / 1024 / 1024} MB of JSON`);
     let args: unknown;
     try {
       args = JSON.parse(argsJson);
     } catch (e) {
-      return refuse(`the arguments of pio ${name} are not JSON: ${message(e)}`);
+      return refuse(`the arguments of ${shown} are not JSON: ${message(e)}`);
     }
     // The prelude hands an array; a script's Array.prototype.toJSON could turn it into anything else.
-    if (!Array.isArray(args)) return refuse(`the arguments of pio ${name} are not a list`);
-    if (deeperThan(args, MAX_JSON_DEPTH)) return refuse(`the arguments of pio ${name} are nested deeper than ${MAX_JSON_DEPTH} levels`);
+    if (!Array.isArray(args)) return refuse(`the arguments of ${shown} are not a list`);
+    if (deeperThan(args, MAX_JSON_DEPTH)) return refuse(`the arguments of ${shown} are nested deeper than ${MAX_JSON_DEPTH} levels`);
     this.calls++;
     const call = ++this.seq;
     this.pending.set(call, d);
@@ -412,7 +459,8 @@ class Session {
     const v = this.keep(state.value);
     if (this.vm.typeof(v) === "undefined") return this.end({});
     const json = this.vm.typeof(v) === "string" ? this.vm.getString(v) : "";
-    if (json.length > MAX_JSON_CHARS) return this.end({ error: `invalid verdict: over ${MAX_JSON_CHARS / 1024 / 1024} MB of JSON` });
+    const what = this.browser ? "result" : "verdict";
+    if (json.length > MAX_JSON_CHARS) return this.end({ error: `invalid ${what}: over ${MAX_JSON_CHARS / 1024 / 1024} MB of JSON` });
     let wrapped: unknown;
     try {
       wrapped = JSON.parse(json);
@@ -420,10 +468,10 @@ class Session {
       wrapped = undefined;
     }
     if (!wrapped || typeof wrapped !== "object" || !Object.hasOwn(wrapped, "v")) {
-      return this.end({ error: "invalid verdict: it cannot be JSON (a function, or a toJSON that gives nothing)" });
+      return this.end({ error: `invalid ${what}: it cannot be JSON (a function, or a toJSON that gives nothing)` });
     }
     const value = (wrapped as { v: unknown }).v;
-    if (deeperThan(value, MAX_JSON_DEPTH)) return this.end({ error: `invalid verdict: nested deeper than ${MAX_JSON_DEPTH} levels` });
+    if (deeperThan(value, MAX_JSON_DEPTH)) return this.end({ error: `invalid ${what}: nested deeper than ${MAX_JSON_DEPTH} levels` });
     this.end({ value });
   }
 

@@ -302,6 +302,31 @@ describe("browser plugin (headless Chromium)", { timeout: 60_000 }, () => {
     expect(refOf(await ok("snapshot"), /"О нас"/)).toBe(refOf(snap, /"О нас"/));
   });
 
+  it("narrows the list by role and name, and gives it as JSON for a skill's script", async () => {
+    await ok("open", { url: base + "/" });
+    // The name without case or extra spaces; * for any run of characters; the ref is the one a plain snapshot gives.
+    const one = await ok("snapshot", { role: "link", name: "о  НАС" });
+    expect(one).toMatch(/Elements matching link "о {2}НАС" \(1\):\n\[e\d+\] link "О нас" -> \/about/);
+    expect(refOf(one, /"О нас"/)).toBe(refOf(await ok("snapshot"), /"О нас"/));
+    const json = JSON.parse((await ok("snapshot", { name: "*аккаунт", json: true })).split("\n")[0]);
+    expect(json).toMatchObject({ url: `${base}/`, title: "Главная", total: 1, elements: [{ role: "link", name: "Удалить аккаунт", submit: true }] });
+    expect(json.elements[0].ref).toMatch(/^e\d+$/);
+    // Every element of a role, in the page's order.
+    const buttons = JSON.parse((await ok("snapshot", { role: "button", json: true })).split("\n")[0]);
+    expect(buttons.elements.map((e: any) => e.name)).toEqual(["Купить", "Найти"]);
+    // Nothing matches: what the page has instead, for whoever fixes the script.
+    const none = JSON.parse((await ok("snapshot", { role: "link", name: "Каталог", json: true })).split("\n")[0]);
+    expect(none).toMatchObject({ total: 0, elements: [] });
+    expect(none.others).toEqual(expect.arrayContaining(["О нас", "Скачать отчёт"]));
+    expect(await ok("snapshot", { role: "link", name: "Каталог" })).toMatch(/\(nothing matches; the page has: "О нас"/);
+    // A target still on its way is waited for.
+    const t0 = Date.now();
+    await ok("snapshot", { name: "Каталог", waitMs: 700, json: true });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(600);
+    // A regular expression's own characters in a name are plain text.
+    expect(JSON.parse((await ok("snapshot", { name: "О нас (.*)", json: true })).split("\n")[0]).total).toBe(0);
+  });
+
   it("clicks a link and goes back", async () => {
     const snap = await ok("snapshot");
     const r = await ok("click", { ref: refOf(snap, /link "О нас"/) });

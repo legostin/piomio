@@ -335,12 +335,36 @@ export function pageScript(op: string, a: any): any {
       const dist = r.bottom < 0 ? -r.bottom : r.top > vh ? r.top - vh : r.right < 0 || r.left > vw ? 1 : 0;
       cands.push({ el, r, dist, index });
     }
-    const total = cands.length;
-    const chosen = cands
-      .slice()
-      .sort((x, y) => x.dist - y.dist || x.index - y.index)
-      .slice(0, limit)
-      .sort((x, y) => x.index - y.index);
+    // By role and name (a script's target, or the agent narrowing the list): every match on the page in document
+    // order, not only those near the viewport. `*` in the name stands for any run of characters.
+    const low = (v: any) => norm(v).toLowerCase();
+    const wantRole = a.role ? low(a.role) : "";
+    const wantName = a.name === undefined || a.name === null ? null : low(a.name);
+    const nameRe =
+      wantName !== null && wantName.includes("*")
+        ? new RegExp("^" + wantName.split("*").map((part: string) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s\\S]*") + "$", "u")
+        : null;
+    const filtered = !!wantRole || wantName !== null;
+    const others: string[] = [];
+    const pool = !filtered
+      ? cands
+      : cands.filter(({ el }) => {
+          const c = classify(el);
+          if (wantRole && c.role !== wantRole) return false;
+          const n = low(c.name);
+          const hit = wantName === null || (nameRe ? nameRe.test(n) : n === wantName);
+          // What the page has instead, for the error a miss becomes.
+          if (!hit && c.name && others.length < 12 && !others.includes(cut(c.name, 60))) others.push(cut(c.name, 60));
+          return hit;
+        });
+    const total = pool.length;
+    const chosen = filtered
+      ? pool.slice(0, limit)
+      : pool
+          .slice()
+          .sort((x, y) => x.dist - y.dist || x.index - y.index)
+          .slice(0, limit)
+          .sort((x, y) => x.index - y.index);
     const items = chosen.map(({ el, r }) => {
       const c = classify(el);
       const it: any = { ref: assignRef(el), role: c.role, name: c.name };
@@ -372,7 +396,7 @@ export function pageScript(op: string, a: any): any {
       else if (r.top > vh) it.pos = "below";
       return it;
     });
-    return { items, total, seq: a.seq, modal: modal ? cut(nameOf(modal), 80) || "untitled" : "" };
+    return { items, total, seq: a.seq, modal: modal ? cut(nameOf(modal), 80) || "untitled" : "", ...(filtered && !total ? { others } : {}) };
   }
 
   if (op === "info") {

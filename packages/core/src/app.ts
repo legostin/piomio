@@ -97,6 +97,8 @@ import { RealtimeSockets } from "./server/realtime.ts";
 import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watchAgentMessages } from "./push.ts";
 import { pageReader } from "./signals/extract.ts";
 import { scriptSandbox } from "./signals/sandbox.ts";
+import { skillSandbox } from "./skill-scripts.ts";
+import { registerSkillScriptTools } from "./tools/skill-script-tools.ts";
 import { quickModel, type QuickModel } from "./bare-ask.ts";
 import { recordSpend, spendReport } from "./spend.ts";
 import type { FastifyInstance } from "fastify";
@@ -633,6 +635,15 @@ export class Hub {
       route: (mode, stops) => roadRoute(config.routerUrl, mode, stops),
       userLocation: () => this.locations.get(),
       library: (q) => this.library(q),
+    });
+    registerSkillScriptTools({
+      registry: this.tools,
+      skills: this.skills,
+      agents: this.agents,
+      store: this.store,
+      audit: this.audit,
+      call: (sessionId, tool, input) => this.gateway.call(sessionId, tool, input),
+      changed: () => this.bus.emit("skills.updated", {}),
     });
     this.machines.registerTools(this.tools);
     registerVaultExec({
@@ -1560,6 +1571,7 @@ export class Hub {
     this.media.previews.stop();
     pageReader.stop();
     scriptSandbox.stop();
+    skillSandbox.stop();
     this.machines.closeAll();
     this.activity.close();
     await this.plugins.stopAll();
