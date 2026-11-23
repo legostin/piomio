@@ -5,7 +5,7 @@ import { wireNetworkApprovals } from "./network-approvals.ts";
 import { NetworkDenied, networkPattern, privatePattern } from "./egress.ts";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, TaskStatus, ThinkingView, WorkRuleView } from "@piomio/shared";
+import type { AgentDef, CatalogEntryState, Computer, ConnectionAccount, CoreMethod, DeviceNetwork, DevicePairing, GroupChat, Invite, MachineInfo, SpendPeriod, SpendReport, TaskStatus, ThinkingView, WorkRuleView } from "@piomio/shared";
 import { DEFAULT_LOCALE, catalogLookup, formatBrainRef, localizeValue, modelLabel, normalizeLocale, parseBrainRef, toolPrefixOf } from "@piomio/shared";
 import type { Config } from "./config.ts";
 import { hubDbFile, openDb, type Db } from "./db.ts";
@@ -98,6 +98,7 @@ import { DevicePushes, PushRelay, desktopNotifyLine, messageNote, pushNote, watc
 import { pageReader } from "./signals/extract.ts";
 import { scriptSandbox } from "./signals/sandbox.ts";
 import { quickModel, type QuickModel } from "./bare-ask.ts";
+import { recordSpend, spendReport } from "./spend.ts";
 import type { FastifyInstance } from "fastify";
 
 /** How long a chat waits to hear about an entry's sign-in it started. */
@@ -266,7 +267,7 @@ export class Hub {
     });
     // The reviewer runs on this computer's own Claude Code, through the egress proxy like any brain.
     this.auto = new AutoMode({
-      reviewer: brainReviewer({ brains: this.brains, dataDir: config.dataDir, env: () => this.reviewerEnv(), log: (m) => console.log(m) }),
+      reviewer: brainReviewer({ brains: this.brains, dataDir: config.dataDir, env: () => this.reviewerEnv(), spend: (e) => recordSpend(this.db, e), log: (m) => console.log(m) }),
       context: (w, a) => this.autoContext(w, a),
       dataDir: config.dataDir,
       language: () => this.settings.get().language,
@@ -394,7 +395,7 @@ export class Hub {
       agents: this.agents,
       brains: this.brains,
       // Which of the team's work rules a task falls under, asked before its first run: a line of its own.
-      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
+      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv(), spend: (e) => recordSpend(this.db, e) }),
       skills: this.skills,
       hooks: this.hooks,
       notifier: this.notifier,
@@ -481,7 +482,7 @@ export class Hub {
     });
     this.pages = new Pages({ db: this.db, bus: this.bus, dir: join(config.dataDir, "pages") });
     this.mcpClients = new McpClientManager({ config, registry: this.tools, vault: this.vault, audit: this.audit, egress: this.egress });
-    this.readers = quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }, { maxInFlight: READERS_IN_FLIGHT });
+    this.readers = quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv(), spend: (e) => recordSpend(this.db, e) }, { maxInFlight: READERS_IN_FLIGHT });
     const coreCall = createCoreCall(this);
     this.plugins = new PluginHost({
       config,
@@ -558,7 +559,7 @@ export class Hub {
       // Triggers' scripts read with their agents' tools; triage and pio.llm.ask ask the quick model; a script's fetches
       // go through the egress proxy on a token of each run's own.
       gateway: this.gateway,
-      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv() }),
+      quick: quickModel({ brains: this.brains, dataDir: config.dataDir, env: () => this.quickEnv(), spend: (e) => recordSpend(this.db, e) }),
       egress: { proxy: this.egress, port: config.egressPort },
       vault: this.vault,
       sources: this.sources,
@@ -1086,6 +1087,17 @@ export class Hub {
       .prepare("select r.name, m.name as machine from replicas r left join machines m on m.id = r.machine_id and m.revoked = 0 where r.id = ? and r.revoked = 0")
       .get(id) as { name: string; machine: string | null } | undefined;
     return r ? (r.machine ?? r.name) : undefined;
+  }
+
+  /** What each conversation and task spent in a period (GET /api/spend, hub_usage_report; spend.ts). */
+  spend(period: SpendPeriod, o: { agentId?: string; limit?: number } = {}): SpendReport {
+    return spendReport(this.db, { period, timezone: this.settings.get().timezone, ...o, agentName: (id) => this.agentLabel(id) });
+  }
+
+  /** An agent's name for people in the hub's language; undefined for an id that is no agent. */
+  agentLabel(id: string): string | undefined {
+    const a = this.agents.get(id);
+    return a ? agentName(a, hubLocale()) : undefined;
   }
 
   /** The team's work rules with the names, for people, of what they name (GET /api/work-rules). */

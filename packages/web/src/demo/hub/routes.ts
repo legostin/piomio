@@ -212,6 +212,11 @@ export function registerRoutes(hub: DemoHub, notInDemo: string): void {
   r.route("GET", "/api/speech", refuse);
   // "Rules for work" in the settings: a new hub has none.
   r.route("GET", "/api/work-rules", () => []);
+  // Settings → Spend: the demo's agents think in the browser and spend nothing.
+  r.route("GET", "/api/spend", () => {
+    const zero = { usd: 0, estimatedUsd: 0, turns: 0, unpriced: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+    return { period: "today", since: new Date().toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, total: zero, threads: [], moreThreads: 0, agents: [], models: [] };
+  });
   r.route("PATCH", "/api/settings", ({ body }) => {
     Object.assign(changed, body ?? {});
     return settings();

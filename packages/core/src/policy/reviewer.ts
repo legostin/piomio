@@ -6,7 +6,7 @@
 // is shared with trigger triage: bare-ask.ts.
 
 import { askOn, BARE_BRAINS, openBare, quickCandidates, REST_MS } from "../bare-ask.ts";
-import type { BareThinking } from "../bare-ask.ts";
+import type { BareAskDeps, BareThinking } from "../bare-ask.ts";
 import type { BrainHandle, BrainRegistry } from "../brains.ts";
 import type { Reviewer } from "./auto.ts";
 
@@ -27,6 +27,8 @@ export interface BrainReviewerDeps {
   dataDir: string;
   /** The brain's environment: the hub's egress proxy, as for any brain session. */
   env?: () => Record<string, string>;
+  /** What each review spent (spend.ts). */
+  spend?: BareAskDeps["spend"];
   log?: (m: string) => void;
 }
 

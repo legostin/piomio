@@ -1055,7 +1055,9 @@ export type BrainEvent =
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
   /**
    * A turn's tokens. `inputTokens` is the whole input; `cacheReadTokens` and `cacheWriteTokens` are the parts of it read
-   * from and written to the provider's prompt cache, when the brain can tell them apart.
+   * from and written to the provider's prompt cache, when the brain can tell them apart. `costUsd`: what the turn cost
+   * at the provider's API prices as the brain itself reckons it (Claude Code), when it says; otherwise the hub prices
+   * the tokens from its table (core/src/spend.ts).
    */
   | { type: "usage"; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; costUsd?: number }
   /** The size of one model call's prompt in the session's own conversation, in tokens: how big its context is now. */
@@ -1403,6 +1405,67 @@ export interface MachineSetupView {
   spent: { usd: number; period: "day" | "month"; since: ISODate };
   /** Providers with a key in the vault. */
   keys: string[];
+}
+
+// ---------- Spend per conversation and task (docs/superpowers/specs/2026-11-23-thread-spend-design.md) ----------
+
+/** The span a spend report covers: since midnight in the hub's time zone, or the last 7 or 30 days. */
+export type SpendPeriod = "today" | "7d" | "30d";
+export const SPEND_PERIODS: readonly SpendPeriod[] = ["today", "7d", "30d"];
+
+/**
+ * Turns and what they spent. Dollars are an API-price equivalent: what the same tokens would cost on the provider's
+ * API (a subscription bills differently). `estimatedUsd` is the part of `usd` the hub priced from its list prices,
+ * not the brain; `unpriced` counts turns with no known price (their tokens count, their dollars do not).
+ */
+export interface SpendTotals {
+  usd: number;
+  estimatedUsd: number;
+  turns: number;
+  unpriced: number;
+  /** Input read fresh, read from the prompt cache, written to it, and output, in tokens. */
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+}
+
+/** A model and effort a thread thought with, and what that spent. */
+export interface SpendModel extends SpendTotals {
+  model: string;
+  effort?: string;
+}
+
+/** One thread: a dialog, a group chat, a task, or the hub's own quick model (auto mode's reviewer, triage). */
+export interface SpendThread extends SpendTotals {
+  /** The task's id, the conversation's, or "hub:<purpose>". */
+  id: string;
+  kind: "dialog" | "group" | "task" | "hub";
+  title: string;
+  agentId: string;
+  conversationId?: string;
+  taskId?: string;
+  /** For "hub": what the quick model was asked for ("quick", "review"). */
+  purpose?: string;
+  /** Most spent first. */
+  models: SpendModel[];
+  /** The prompt of its newest session's last model call, in tokens, when its brain says. */
+  contextTokens?: number;
+  lastAt: ISODate;
+}
+
+/** What was spent in a period (GET /api/spend, hub_usage_report). */
+export interface SpendReport {
+  period: SpendPeriod;
+  since: ISODate;
+  timezone: string;
+  total: SpendTotals;
+  /** Most spent first. */
+  threads: SpendThread[];
+  /** Threads beyond the ones listed. */
+  moreThreads: number;
+  agents: Array<SpendTotals & { agentId: string }>;
+  models: Array<SpendTotals & { model: string }>;
 }
 
 // ---------- Cluster: hub replicas ----------

@@ -69,6 +69,16 @@ function compactWindow(tokens: number): number {
   return Math.min(CLAUDE_COMPACT_WINDOW.max, Math.max(CLAUDE_COMPACT_WINDOW.min, Math.round(tokens)));
 }
 
+/**
+ * The CLI's cost ledger as one process has reported it: `total_cost_usd` in a result is the whole process's spend so
+ * far (every turn, subagents too), not the turn's. `resumed`: the process started with --resume, where the CLI may
+ * carry an earlier ledger over, so its first total says nothing about the turn.
+ */
+export interface CostLedger {
+  resumed?: boolean;
+  seen?: number;
+}
+
 /** Turns Claude Code stream-json messages into BrainEvents. Pure: easy to test with recorded fixtures. */
 export class ClaudeStreamParser {
   sessionId?: string;
@@ -84,9 +94,21 @@ export class ClaudeStreamParser {
   /** The API message whose prompt size was reported last: the CLI sends one `assistant` message per block of it. */
   private sized?: string;
   private t: Translate;
+  private ledger: CostLedger;
 
-  constructor(t: Translate = brainsT()) {
+  /** `ledger`: the running process's, shared by the parsers of its turns (a fresh one: a new process). */
+  constructor(t: Translate = brainsT(), ledger: CostLedger = {}) {
     this.t = t;
+    this.ledger = ledger;
+  }
+
+  /** The turn's cost from the process's running total; undefined when it cannot tell. */
+  private turnCost(total: unknown): number | undefined {
+    if (typeof total !== "number" || !Number.isFinite(total)) return undefined;
+    const before = this.ledger.seen;
+    this.ledger.seen = total;
+    if (before !== undefined) return Math.round(Math.max(0, total - before) * 1e6) / 1e6;
+    return this.ledger.resumed ? undefined : total;
   }
 
   push(msg: any): BrainEvent[] {
@@ -168,7 +190,7 @@ export class ClaudeStreamParser {
           outputTokens: u.output_tokens ?? 0,
           cacheReadTokens: u.cache_read_input_tokens ?? 0,
           cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
-          costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : undefined,
+          costUsd: this.turnCost(msg.total_cost_usd),
         });
         if (msg.is_error || (msg.subtype && msg.subtype !== "success")) {
           const text = String(msg.result ?? msg.subtype ?? "error");
@@ -348,6 +370,8 @@ class ClaudeCodeSession implements BrainSessionImpl {
   private idle?: NodeJS.Timeout;
   /** The model and effort the running process thinks with. */
   private runs: { model?: string; effort?: string } = {};
+  /** The running process's cost so far, as its results said (each turn's cost is the difference). */
+  private ledger: CostLedger = {};
   private o: BrainSessionOptions;
   private p: ClaudeCodeOptions;
   private dir: string;
@@ -480,6 +504,7 @@ class ClaudeCodeSession implements BrainSessionImpl {
     });
     const proc = runLines(this.p.command?.() ?? "claude", this.args(caps), { cwd: this.o.workspace, env, keepInput: true });
     this.child = proc;
+    this.ledger = { resumed: !!this.resumeId && !this.o.bare };
     this.runs = { model: this.o.model, effort: this.o.effort && caps.efforts?.includes(this.o.effort) ? this.o.effort : undefined };
     this.reader = new LineReader(proc.lines);
     this.closing = false;
@@ -554,9 +579,9 @@ class ClaudeCodeSession implements BrainSessionImpl {
       const caps = await this.caps().catch((): ClaudeCaps => ({ snapshot: false }));
       for (let attempt = 0; attempt < 2; attempt++) {
         const t = brainsT(this.p.locale?.());
-        const parser = new ClaudeStreamParser(t);
         // A dialog's process may be waiting already (warm, or the turn before); else it starts now.
         const proc = this.alive() ? this.child! : await this.start(caps);
+        const parser = new ClaudeStreamParser(t, this.ledger);
         const reader = this.reader!;
         this.switchTo(caps);
         for (const text of this.inputs) proc.write(userLine(text));

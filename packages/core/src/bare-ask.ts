@@ -9,6 +9,7 @@ import type { AgentDef, BrainSessionOptions, ProbeResult } from "@piomio/shared"
 import { fitEffort, newId } from "@piomio/shared";
 import type { BrainHandle, BrainRegistry } from "./brains.ts";
 import { modelsOf } from "./model-router.ts";
+import type { SpendEntry } from "./spend.ts";
 
 /** The brains that can answer, in the order tried after the preferred one. */
 export const BARE_BRAINS = ["claude-code", "codex", "kimi"];
@@ -30,6 +31,8 @@ export interface BareAskDeps {
   dataDir: string;
   /** The brain's environment: the hub's egress proxy, as for any brain session. */
   env?: () => Record<string, string>;
+  /** What each question spent (spend.ts): no conversation, `purpose` the session's folder. */
+  spend?: (e: SpendEntry) => void;
 }
 
 type Lineup = Pick<ProbeResult, "models" | "modelNames" | "catalog" | "presets">;
@@ -102,7 +105,39 @@ export async function openBare(d: BareAskDeps, t: BareThinking, o: BareOpen): Pr
   };
   const handle = await d.brains.create(t.ref, opts);
   if (o.warm) await handle.warm();
-  return handle;
+  return d.spend ? spending(handle, d.spend, { agentId: opts.agent.id, brainRef: t.ref, sessionId: opts.sessionId, model: t.model, effort: t.effort, purpose: o.folder }) : handle;
+}
+
+/** `handle` with what its turns spend handed to `spend`. */
+function spending(handle: BrainHandle, spend: (e: SpendEntry) => void, base: Omit<SpendEntry, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">): BrainHandle {
+  let model = base.model;
+  return {
+    ref: handle.ref,
+    send: (turn, onEvent) =>
+      handle.send(turn, (e) => {
+        if (e.type === "model") model = e.model;
+        else if (e.type === "usage") {
+          try {
+            spend({
+              ...base,
+              model,
+              inputTokens: e.inputTokens ?? 0,
+              outputTokens: e.outputTokens ?? 0,
+              cacheReadTokens: e.cacheReadTokens ?? 0,
+              cacheWriteTokens: e.cacheWriteTokens ?? 0,
+              costUsd: e.costUsd,
+            });
+          } catch {
+            /* spend is a record, never a reason to fail a question */
+          }
+        }
+        onEvent(e);
+      }),
+    steer: (turn) => handle.steer(turn),
+    warm: () => handle.warm(),
+    interrupt: () => handle.interrupt(),
+    close: () => handle.close(),
+  };
 }
 
 /** Why an aborted question stopped (the abort's reason when it gave one). */

@@ -37,6 +37,7 @@ import { previewOf } from "./policy/previews.ts";
 import { DEFAULT_BRAIN_EGRESS } from "./settings.ts";
 import { briefingNote, buildSystemPrompt, dispatchBrief, goalPrompt, taskEnding } from "./prompt.ts";
 import { fingerprint, lifePlan, nextBase, type LifePlan } from "./session-life.ts";
+import { recordSpend } from "./spend.ts";
 import { humanFailure } from "./notifier.ts";
 import { agentName } from "./agents.ts";
 import { hubLocale, LocalizedError, t } from "./i18n.ts";
@@ -3252,6 +3253,25 @@ export class SessionRunner {
           used.output += e.outputTokens ?? 0;
           used.cacheRead += e.cacheReadTokens ?? 0;
           used.cacheWrite += e.cacheWriteTokens ?? 0;
+          // What it spent, for this conversation or task (spend.ts): a row for each usage the brain reports.
+          try {
+            recordSpend(this.d.store.db, {
+              agentId: agent.id,
+              brainRef: live.brainRef,
+              conversationId: conv.id,
+              taskId: task?.id,
+              sessionId: row.id,
+              model,
+              effort,
+              inputTokens: e.inputTokens ?? 0,
+              outputTokens: e.outputTokens ?? 0,
+              cacheReadTokens: e.cacheReadTokens ?? 0,
+              cacheWriteTokens: e.cacheWriteTokens ?? 0,
+              costUsd: e.costUsd,
+            });
+          } catch (err: any) {
+            console.warn(`[spend] not recorded: ${err?.message ?? err}`);
+          }
           break;
         case "context":
           context = e.tokens;
