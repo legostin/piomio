@@ -4,7 +4,7 @@
 
 import type { ToolDescriptor, ToolResult } from "@piomio/shared";
 import type { AuditLog } from "../audit.ts";
-import { CODE_EXECUTE, CODE_SEARCH, describeCodeRun, describeFound, runCode, searchTools, type CodeDeps } from "../code-mode.ts";
+import { CODE_EXECUTE, CODE_SEARCH, describeCodeRun, describeFound, describeSaved, runCode, searchSaved, searchTools, type CodeDeps, type SavedScript } from "../code-mode.ts";
 import { MAX_SCRIPT_BYTES } from "../signals/sandbox.ts";
 import type { Store } from "../store.ts";
 import type { ToolRegistry } from "./registry.ts";
@@ -15,6 +15,8 @@ export interface CodeToolDeps {
   audit: Pick<AuditLog, "append">;
   /** ToolGateway.availableFor: every tool the session may call, listed to the model or not. */
   available: (sessionId: string) => ToolDescriptor[];
+  /** The skills with a script the agent of that session has (a task following a skill has that one too). */
+  saved?: (sessionId: string) => SavedScript[];
   /** ToolGateway.call: one of the agent's tools, called as the agent in that session. */
   call: (sessionId: string, tool: string, input: unknown) => Promise<ToolResult>;
   /** Tests run scripts in a sandbox of their own. */
@@ -35,7 +37,8 @@ export function registerCodeTools(d: CodeToolDeps): void {
       effect: "read",
       forTriggers: false,
       description:
-        "Find tools to call from a script (code_execute): every tool you have, the ones on your list and the ones that are not (services the " +
+        "Find tools to call from a script (code_execute), and the scripts you saved before (skills with a script: they come first, and one that " +
+        "fits is run with skill_run instead of writing a new one): every tool you have, the ones on your list and the ones that are not (services the " +
         "person connected, plugins). `query` is words for what you need (\"calendar events\", \"send email\", \"linear issue\"); each answer is the " +
         "call a script makes, `tools.<name>({…})` with its input's fields, and a line on what it does. Leave query out to list them all; " +
         "full: true gives the whole description and schema of the few that match.",
@@ -55,7 +58,10 @@ export function registerCodeTools(d: CodeToolDeps): void {
       const all = d.available(ctx.sessionId);
       const callable = searchTools(all, "", Number.MAX_SAFE_INTEGER).length;
       const found = searchTools(all, query, Math.min(want, full ? FULL_MAX : SEARCH_MAX));
-      return text(describeFound(found, callable, query, full));
+      const saved = searchSaved(d.saved?.(ctx.sessionId) ?? [], query);
+      const tools = describeFound(found, callable, query, full);
+      // A saved script that fits is an answer even when no tool is.
+      return text(saved.length && !found.length ? `${describeSaved(saved).trimEnd()}\nNo tool fits "${query.trim().slice(0, 100)}" among the ${callable} a script can call.` : `${describeSaved(saved)}${tools}`);
     },
   );
 

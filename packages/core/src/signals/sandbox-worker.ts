@@ -181,27 +181,33 @@ const PRELUDE = String.raw`(() => {
     if (json.length > ${MAX_JSON_CHARS}) throw new Error("invalid result: over 1 MB of JSON");
     return json;
   };
-  // A taught skill's script: its input and the agent's browser, nothing of pio.
-  const startBrowser = async (main, inputJson) => {
-    const browser = { log: (...a) => logLine(a) };
-    for (let i = 0; i < browserMethods.length; i++) browser[browserMethods[i]] = fn("browser." + browserMethods[i]);
-    return result(await main(parse(inputJson) ?? {}, Object.freeze(browser)));
-  };
-  // Code mode's script: its input and the agent's tools, each a function by its name (tools.web_search({…})); the
-  // hub says which names are tools.
-  const startCode = async (main, inputJson) => {
+  // The agent's tools, each a function by its name (tools.web_search({…})); the hub says which names are tools.
+  const makeTools = () => {
     const made = { __proto__: null };
     const own = { __proto__: null, call: (name, input) => fn("tools." + toText(name))(input), log: (...a) => logLine(a) };
-    const tools = new Proxy(Object.freeze({}), {
+    return new Proxy(Object.freeze({}), {
       get: (_, key) => {
         if (typeof key !== "string") return undefined;
         if (includes(toolsOwn, key)) return own[key];
         return (made[key] ??= fn("tools." + key));
       },
     });
+  };
+  const withConsole = () => {
     const say = (...a) => logLine(a);
     globalThis.console = Object.freeze({ log: say, info: say, warn: say, error: say, debug: say });
-    return result(await main(parse(inputJson) ?? {}, tools));
+  };
+  // A skill's script: its input, the agent's browser and the agent's tools, nothing of pio.
+  const startBrowser = async (main, inputJson) => {
+    const browser = { log: (...a) => logLine(a) };
+    for (let i = 0; i < browserMethods.length; i++) browser[browserMethods[i]] = fn("browser." + browserMethods[i]);
+    withConsole();
+    return result(await main(parse(inputJson) ?? {}, Object.freeze(browser), makeTools()));
+  };
+  // Code mode's script: its input and the agent's tools.
+  const startCode = async (main, inputJson) => {
+    withConsole();
+    return result(await main(parse(inputJson) ?? {}, makeTools()));
   };
   const start = async (main, inputJson, api) => {
     if (api === "browser") return startBrowser(main, inputJson);
@@ -420,7 +426,7 @@ class Session {
     };
     if (this.ended) return refuse("the script has ended");
     const shown = this.api === "trigger" ? `pio ${name}` : name;
-    if (this.calls >= this.limits.maxCalls) return refuse(`too many ${this.api === "trigger" ? "pio" : this.api === "code" ? "tool" : "browser"} calls (${this.limits.maxCalls})`);
+    if (this.calls >= this.limits.maxCalls) return refuse(`too many ${this.api === "trigger" ? "pio" : this.api === "code" ? "tool" : "browser and tool"} calls (${this.limits.maxCalls})`);
     if (argsJson.length > MAX_JSON_CHARS) return refuse(`the arguments of ${shown} are over ${MAX_JSON_CHARS / 1024 / 1024} MB of JSON`);
     let args: unknown;
     try {

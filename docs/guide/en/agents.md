@@ -192,3 +192,15 @@ What a script can and cannot do:
 - **In the audit log.** Each run and each call a script made is recorded, as the agent's own calls are.
 
 A brain's own tools (the shell and files of Claude Code or Codex) are not the hub's, so a script does not reach them.
+
+### Scripts the agent keeps
+
+When a script did a job you will want again, the agent offers to keep it, or you say "keep this as a script". It is saved as a skill with a script, on a card you confirm. Next time the agent runs it in one step instead of writing it again: "the morning summary", and it is done.
+
+- **What it may do without asking.** If you agreed to it in the chat, the card lists actions the script may take with no further card, each one tool with limits: `Without asking: gmail_send_message when to = *@kolesa.kz`. A call outside the limits shows its card as usual. Nothing is pre-approved without a limit, and what changes the hub itself is never pre-approved.
+- **After outside content.** Once the agent has read a web page or an email in that conversation, an action to someone you did not approve by name still asks, even inside a pattern like `*@kolesa.kz`.
+- **When a run stops** (a service changed, an answer looks different), the agent finishes by hand, fixes the script and tells you in a line what it changed. That needs no card: what the script may do without asking stays as you approved it, and the version before is kept. "Bring the old script back" restores it.
+- **On a schedule.** A trigger wakes the agent, and the agent runs the script and answers you. In background runs an agent below **Acts** only reads (see [Initiative](#initiative)), so a script that sends or changes something on a schedule needs **Acts**.
+- **No offers.** Say "do not offer to save scripts" and the agent keeps that as a work rule.
+
+A kept script lives with its skill, in `skills/<name>/script.js` in the hub's data folder, and deleting the skill removes what it was allowed to do without asking.

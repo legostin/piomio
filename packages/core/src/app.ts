@@ -101,6 +101,7 @@ import { skillSandbox } from "./skill-scripts.ts";
 import { registerSkillScriptTools } from "./tools/skill-script-tools.ts";
 import { registerCodeTools } from "./tools/code-tools.ts";
 import { codeSandbox } from "./code-mode.ts";
+import { readSkillScript } from "./taught-skills.ts";
 import { quickModel, type QuickModel } from "./bare-ask.ts";
 import { recordSpend, spendReport } from "./spend.ts";
 import type { FastifyInstance } from "fastify";
@@ -654,6 +655,16 @@ export class Hub {
       available: (sessionId) => {
         const s = this.store.getSession(sessionId);
         return s ? this.gateway.availableFor(s) : [];
+      },
+      saved: (sessionId) => {
+        const s = this.store.getSession(sessionId);
+        const agent = s && this.agents.get(s.agentId);
+        if (!s || !agent) return [];
+        const follows = s.taskId ? this.store.getTask(s.taskId)?.skill : undefined;
+        return this.skills
+          .forAgent(agent, follows)
+          .filter((k) => k.taught && readSkillScript(k) !== undefined)
+          .map((k) => ({ name: k.name, description: k.description }));
       },
       call: (sessionId, tool, input) => this.gateway.call(sessionId, tool, input),
     });

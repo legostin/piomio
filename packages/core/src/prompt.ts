@@ -259,6 +259,11 @@ export function buildSystemPrompt(c: PromptContext): string {
     );
   }
   const code = codeModeOf(c.agent);
+  if (code !== "off" && !c.background) {
+    lines.push(
+      "- A script that did a job the person will want again (they ask for the same thing a second time, or say it is regular) is worth keeping: offer once, in a line, to save it as a skill with a script (`hub_skill_save` with `script`; they confirm on its card), then later runs are one `skill_run`, which you call yourself, not from a script. `code_search` lists the scripts you have: run one that fits instead of writing it again. Do not offer for one-off work, and not again after a no.",
+    );
+  }
   if (code === "first") {
     lines.push(
       "- Code mode: only part of your tools is on your list. The others (triggers, pages, channels, the web, machines, the services the person connected, plugins) you find with `code_search` and call from a script you run with `code_execute`, where each is a function: `tools.<name>({…})`. A tool these rules name that is not on your list is still yours: look its input up with `code_search` (its name as the query, full: true) and call it from a script. Before you say you have no tool for something or cannot reach a service, search for it. A script does several calls, loops and filtering in one step of yours, and only what it returns comes back to you: return what you need, not whole answers.",
