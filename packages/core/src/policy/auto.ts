@@ -95,6 +95,8 @@ export function alwaysPerson(a: AutoAction): string | undefined {
   // A read (a web address after outside content, policy/egress.ts) pays and sends nothing itself: the reviewer judges it.
   if (a.kind !== "tool" || a.effect === "read") return undefined;
   if (i.amount !== undefined && i.amount !== null) return "money";
+  // A raw request from the person's browser, or a change to what it sends: nobody can tell from its text what the site will do.
+  if (/^browser_request_(?:send|change)$/.test(a.tool)) return "a request sent from the person's browser";
   const label = [str("label"), str("text"), a.summary].join(" ");
   if (moneyIn(label)) return "money";
   if (a.effect === "external") {

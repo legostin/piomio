@@ -213,6 +213,8 @@ export function createCoreCall(hub: Hub) {
           consoleUrl: hub.config.consoleUrl,
         };
       }
+      case "plugins.enabled":
+        return { enabled: hub.plugins.get(String(p.id ?? ""))?.enabled === true };
       case "agents.list":
         // tools (name globs): a plugin tells from them who can work with its own tools.
         return hub.agents.list().map((a) => ({ id: a.id, name: agentName(a, hubLocale()), description: a.description, initiative: a.initiative, tools: a.tools }));

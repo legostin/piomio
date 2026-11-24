@@ -154,5 +154,10 @@
   "approval.tabs": "Браузер: открыть {url} в новой вкладке",
   "approval.download": "Браузер: скачать {url}",
   "ui.machine.hint": "Этот браузер работает на «{machine}». Входы на сайты и история у него свои: у браузера на другом компьютере — свои.",
-  "ui.machine.where": "Браузер на «{machine}»"
+  "ui.machine.where": "Браузер на «{machine}»",
+  "approval.requestGet": "Браузер: запросить {url}",
+  "approval.requestSend": "Браузер, {url|host}: отправить {method} {url} — {description}",
+  "approval.requestChange": "Браузер, {url|host}: изменить трафик «{match}» — {description}",
+  "ui.traffic.changing": "{agent} меняет трафик этого браузера",
+  "ui.traffic.remove": "Убрать"
 }

@@ -6,12 +6,12 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { freePort } from "@piomio/testkit";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolResult } from "@piomio/shared";
+import type { Rule, ToolResult } from "@piomio/shared";
 import { parseFrontmatter } from "@piomio/shared";
 import { Hub, loadConfig } from "../src/index.ts";
 import { agentFromMarkdown } from "../src/agents.ts";
 import { allowRule, labelCondition, parseSkillSave, skillSaveSummary } from "../src/taught-skills.ts";
-import { decide } from "../src/policy/engine.ts";
+import { conditionMatches, decide } from "../src/policy/engine.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures");
 
@@ -56,6 +56,34 @@ describe("taught skills: what a pre-approval becomes", () => {
       note: "skill:order-water",
       createdVia: "skill",
     });
+  });
+
+  it("a request approved ahead of time is a rule for browser_request_send: the method, and an address that starts exactly as approved", () => {
+    const s = parseSkillSave({ ...WATER, allow: [{ request: "post api.5vodi.kz/v1/orders*", maxAmount: 3000, currency: "kzt" }] });
+    expect(s.allow).toEqual([{ site: "api.5vodi.kz", request: { method: "POST", address: "https://api.5vodi.kz/v1/orders*" }, maxAmount: 3000, currency: "KZT" }]);
+    expect(s.sites).toContain("api.5vodi.kz");
+    const rule = allowRule("order-water", s.allow[0]) as Rule;
+    expect(rule).toMatchObject({ tool: "browser_request_send", decision: "allow", note: "skill:order-water", createdVia: "skill" });
+    const matches = (input: Record<string, unknown>) => rule.conditions.every((c) => conditionMatches(c, input));
+    const order = { method: "POST", url: "https://api.5vodi.kz/v1/orders", amount: 2400, currency: "KZT" };
+    expect(matches(order)).toBe(true);
+    expect(matches({ ...order, url: "https://api.5vodi.kz/v1/orders/42/confirm" })).toBe(true);
+    // Another method, more money, no amount at all, another path, and the approved address smuggled into another one.
+    expect(matches({ ...order, method: "DELETE" })).toBe(false);
+    expect(matches({ ...order, amount: 3001 })).toBe(false);
+    expect(matches({ method: "POST", url: order.url })).toBe(false);
+    expect(matches({ ...order, url: "https://api.5vodi.kz/v1/account" })).toBe(false);
+    expect(matches({ ...order, url: "https://api.5vodi.kz/v1/account?next=https://api.5vodi.kz/v1/orders" })).toBe(false);
+    expect(matches({ ...order, url: "https://evil.example/https://api.5vodi.kz/v1/orders" })).toBe(false);
+    expect(matches({ ...order, url: "http://api.5vodi.kz/v1/orders" })).toBe(false);
+
+    const plain = (x: string) => x.replace(/\s/g, " ");
+    expect(plain(skillSaveSummary(s, "en"))).toContain("Without asking: request POST api.5vodi.kz/v1/orders*, up to");
+    expect(plain(skillSaveSummary(s, "ru"))).toContain("Без вопросов: запрос POST api.5vodi.kz/v1/orders*, до");
+    expect(() => parseSkillSave({ ...WATER, allow: [{ request: "GET https://5vodi.kz/api" }] })).toThrow(/POST, PUT, PATCH or DELETE/);
+    expect(() => parseSkillSave({ ...WATER, allow: [{ request: "POST https://*.kz/api" }] })).toThrow(/host and a path/);
+    expect(() => parseSkillSave({ ...WATER, allow: [{ request: "POST https://5vodi.kz/api?x=1" }] })).toThrow(/without a query/);
+    expect(() => parseSkillSave({ ...WATER, allow: [{ site: "5vodi.kz", label: "Buy", request: "POST https://5vodi.kz/api" }] })).toThrow(/not both/);
   });
 
   it("the card says the skill and each click it may do without asking, in the reader's language", () => {

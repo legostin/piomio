@@ -271,7 +271,50 @@ export async function runSkillScript(code: string, input: unknown, d: SkillScrip
       }
       return answer(await tool("browser_download", { ref: (await target(t, "download")).ref }));
     },
+    // ---------- the browser's traffic (the «Browser traffic» ability) ----------
+    requests: async ([o]) => {
+      const q = isObject(o) ? o : {};
+      const r = traffic(await trafficTool("browser_requests", { ...q, json: true, bodies: q.bodies !== false }), "requests");
+      return Array.isArray(r.requests) ? r.requests : [];
+    },
+    fetch: async ([url, o]) => {
+      const u = str(url, "fetch: the address");
+      onSites(u, "fetch");
+      return traffic(await trafficTool("browser_request_get", { ...(isObject(o) ? o : {}), url: u, json: true }), "fetch");
+    },
+    send: async ([o]) => {
+      if (!isObject(o)) fail('send: pass {method, url, data or body, description}, e.g. {method: "POST", url: "https://api.shop.kz/v1/cart", data: {item: 7}, description: "Add to the cart"}');
+      const q = o as Record<string, unknown>;
+      onSites(str(q.url, "send: url"), "send");
+      return traffic(await trafficTool("browser_request_send", { ...q, method: str(q.method, "send: method").toUpperCase(), description: str(q.description, "send: description (what the request does, for the person's card)"), json: true }), "send");
+    },
   };
+
+  /** A request of the script's own goes only to the skill's sites, like the pages it opens. */
+  function onSites(url: string, what: string): void {
+    if (!onSkillSite(url, d.sites)) fail(`${what}: ${clip(url, 200)} is not on the skill's sites (${d.sites.join(", ") || "none"}). A script reaches only those; a site is added to the skill with hub_skill_save (the person's card).`);
+  }
+
+  /** A traffic tool: the same call, with a plain word when the ability is off. */
+  async function trafficTool(name: string, toolInput: Record<string, unknown>): Promise<string> {
+    try {
+      return await tool(name, toolInput);
+    } catch (e) {
+      if (e instanceof Error && !(e instanceof Halt) && /is not available/.test(e.message)) e.message = "the browser's traffic is closed to agents here: the person turns «Browser traffic» on in the Plugins catalog. Without it, read the page (browser.text, browser.find).";
+      throw e;
+    }
+  }
+
+  /** The JSON a traffic tool answers with on its first line. */
+  function traffic(text: string, what: string): Record<string, unknown> {
+    try {
+      const v = JSON.parse(text.split("\n", 1)[0]);
+      if (isObject(v)) return v;
+    } catch {
+      /* not the JSON line */
+    }
+    return fail(`${what}: the browser did not answer with the request`);
+  }
 
   const host: HostCall = async (name, args) => {
     const method = name.startsWith("browser.") ? methods[name.slice("browser.".length)] : undefined;

@@ -185,6 +185,47 @@ as above; say no and it won't offer that one again.
 
 "Forget what I did in the browser today" clears it. Turn the setting off, and what you do by yourself isn't kept.
 
+## Traffic: what a page asks the network
+
+A page is the top of what a site sends: under it the site's own app asks its server for data (a price list, a table,
+your orders) and gets it back as plain structured text. With **Browser traffic** on, agents see those requests, the
+way a browser's developer tools show them. It is off until you turn it on: **Plugins → Browser traffic → Turn on**, or
+say "turn on browser traffic".
+
+What an agent can do with it:
+
+- **See the requests** of its tab: the address, the answer's status and size, and for any of them the headers and the
+  bodies. "Which request does this page take its prices from?" is answered from the request itself, not from the
+  screen.
+- **Save them** to a file in its working folder (HAR, the format developer tools open): "record what the site does
+  when I add to the cart".
+- **Block requests** and **replace answers** in its own tab: cut ads off, see how a page behaves when its server
+  answers with an error, change a number in the answer. This works on data only (the calls a page makes, pictures,
+  media), and a replaced answer may not point the page at another site.
+- **Ask the site's API itself**: repeat a request the page made, with other parameters.
+
+**Your secrets stay hidden.** Cookies, tokens, passwords, one-time codes and card numbers never reach the agent: in
+everything it reads, and in the saved file, they read `«hidden»`. A request the agent repeats still carries them, so
+the site answers as it does to you, but the agent only uses them and never sees them. Nothing of the log is written to
+disk as it is; it lives in the hub's memory and is dropped when you turn the ability off.
+
+**What asks you first**, each time, on a card that shows the site and what will change:
+
+- changing what the browser **sends** (a header, a parameter, the body, another address);
+- replacing a **page or a script** (that is the agent's code running on the site as you);
+- a request of the agent's own that is **not a plain read** (POST, PUT, PATCH, DELETE).
+
+Your own words in the chat do not stand in for these cards, and "Always allow" is not offered for them. For a
+[taught skill](#teach-mode-show-a-task-once) you can approve a request ahead of time on the skill's card ("POST to
+api.5vodi.kz/v1/orders, up to 3 000 ₸"); a [script](#scripts-the-same-steps-without-the-clicking) then reads the
+site's answers and places the order without a click.
+
+While an agent changes a tab's traffic, the live view says so above the page, with **Remove**. A rule lives for 30
+minutes unless the agent asks for longer (four hours at most) and goes away with its tab.
+
+Limits of this version: messages of a live connection (WebSocket) are seen, not changed; requests the agent sends
+itself leave from the hub, not from Chrome, so a site that fingerprints connections can tell them apart.
+
 ## Related
 
 - [Approvals and auto mode](approvals.md): cards, "you asked", rules.

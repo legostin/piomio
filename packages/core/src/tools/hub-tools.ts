@@ -1484,6 +1484,8 @@ export function registerHubTools(hub: Hub): void {
         return text("The hub's own tools and the CLI's commands are not allowed this way: their cards keep an \"Always allow\" button of their own.", true);
       }
       if (!exact && family.some((d) => d.name === "browser_submit")) return text("browser_submit acts for the person (buys, sends, posts): allow it by its exact name only, and only when they said so.", true);
+      // A request or a change of traffic approved once says nothing of the next one: a card each time, or a taught skill's own rule.
+      if (family.some((d) => /^browser_request_(?:send|change)$/.test(d.name))) return text("Requests and traffic changes of the browser (browser_request_send, browser_request_change) are approved one at a time, or ahead of time for a taught skill (hub_skill_save's allow).", true);
       const pattern = exact ? exact.name : `${prefix}_*`;
       const agentId = i.agent === "this" ? ctx.agentId : undefined;
       const who = agentId ? (hub.agents.get(agentId)?.name ?? agentId) : undefined;
@@ -1563,16 +1565,16 @@ export function registerHubTools(hub: Hub): void {
           sites: { type: "array", items: { type: "string" }, description: "Sites it works on, e.g. 5vodi.kz" },
           allow: {
             type: "array",
-            description: "Clicks the person agreed may run without asking (browser_submit)",
+            description: "What the person agreed may run without asking: clicks (browser_submit: site and label) and, with the browser traffic ability, requests of your own (browser_request_send: request)",
             items: {
               type: "object",
               properties: {
                 site: { type: "string", description: "The site, e.g. 5vodi.kz" },
                 label: { type: "string", description: "The control's name as browser_snapshot shows it, e.g. Оформить заказ" },
+                request: { type: "string", description: "Instead of site and label: the method and the address a request of yours may go to, * for what changes in the path, e.g. POST https://api.5vodi.kz/v1/orders*" },
                 maxAmount: { type: "number", description: "The largest amount it may cost, when money is involved" },
                 currency: { type: "string", description: "Currency code of maxAmount, e.g. KZT" },
               },
-              required: ["site", "label"],
             },
           },
           replaces: { type: "string", description: "The name of the taught skill this one updates" },

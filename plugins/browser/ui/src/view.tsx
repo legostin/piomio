@@ -19,6 +19,7 @@ import { Screen, useBoxSize, type Keyboard } from "./screen.tsx";
 import { addStyles } from "./styles.ts";
 import { TabStrip, TabSwitcher } from "./tabs.tsx";
 import { TeachBar, useLesson } from "./teach.tsx";
+import { TrafficNote } from "./traffic.tsx";
 
 /** Narrower than this, the large view is a phone browser. */
 const PHONE_WIDTH = 640;
@@ -212,6 +213,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
           <Omnibox state={state} variant="phone" inputRef={omniRef} trailing={isBlank(state?.url) ? undefined : reload} />
           {teachBar}
           {error && <div className="obb-error">{error}</div>}
+          <TrafficNote traffic={state?.traffic} />
           {body(false)}
           {state?.running && !teach && (
             <div className="obb-pstatus">
@@ -266,6 +268,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
         </div>
         {teachBar}
         {error && <div className="obb-error">{error}</div>}
+        <TrafficNote traffic={state?.traffic} />
         <div className="obb-body">
           {body(true)}
           {panel === "history" && <HistoryPanel sheet={false} onClose={() => setPanel(null)} />}

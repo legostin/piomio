@@ -59,6 +59,8 @@ const CSS = `
 .obb-zoomchip svg{width:14px;height:14px}
 .obb-foot{display:flex;align-items:center;gap:8px;min-height:36px;padding:5px 10px;border-top:1px solid var(--border);color:var(--muted);font-size:12px}
 .obb-error{padding:6px 12px;color:var(--danger);font-size:12px;border-bottom:1px solid var(--border)}
+.obb-traffic{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 12px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--border)}
+.obb-traffic button{flex:none;padding:0;border:0;background:transparent;color:var(--accent);font:inherit;font-weight:600;cursor:pointer}
 
 .obb-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;min-width:230px;padding:4px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
 .obb-menu button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}

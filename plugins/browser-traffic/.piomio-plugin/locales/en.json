@@ -1,0 +1,6 @@
+{
+  "name": "Browser traffic",
+  "description": "Agents see what the pages in their browser ask the network and get back, save it, block requests, replace answers and send requests of their own. Cookies, tokens and passwords stay hidden from them; changing what the browser sends asks you first",
+  "integration.summary": "Agents see and change the requests behind a page; cookies and passwords stay hidden from them",
+  "integration.example": "Open kaspi.kz and tell me which requests the page makes when it loads the product list"
+}

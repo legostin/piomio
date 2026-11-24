@@ -53,6 +53,9 @@ describe("always the person's call", () => {
     expect(alwaysPerson(tool("browser_submit", { label: "Оформить заказ", site: "https://ozon.kz" }))).toBe("money");
     expect(alwaysPerson(tool("browser_submit", { label: "Save", site: "https://example.com" }))).toBeUndefined();
     expect(alwaysPerson(tool("pay", { amount: 10 }))).toBe("money");
+    // A raw request from the person's browser, or a change to what it sends: its text does not say what the site will do.
+    expect(alwaysPerson(tool("browser_request_send", { method: "POST", url: "https://shop.example/api/cart", description: "Add to the cart" }))).toMatch(/person's browser/);
+    expect(alwaysPerson(tool("browser_request_change", { match: "/api/*", url: "https://shop.example", description: "Add a header" }))).toMatch(/person's browser/);
     expect(alwaysPerson(tool("machine_exec", { command: "ls", machine: "vps" }))).toBeUndefined();
   });
 });

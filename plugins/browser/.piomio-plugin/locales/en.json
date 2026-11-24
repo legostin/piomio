@@ -154,5 +154,10 @@
   "approval.tabs": "Browser: open {url} in a new tab",
   "approval.download": "Browser: download {url}",
   "ui.machine.hint": "This browser runs on {machine}. Its sign-ins and history are that computer's own: a browser on another computer has its own.",
-  "ui.machine.where": "The browser on {machine}"
+  "ui.machine.where": "The browser on {machine}",
+  "approval.requestGet": "Browser: request {url}",
+  "approval.requestSend": "Browser, {url|host}: send {method} {url} — {description}",
+  "approval.requestChange": "Browser, {url|host}: change the traffic of “{match}” — {description}",
+  "ui.traffic.changing": "{agent} is changing this browser's traffic",
+  "ui.traffic.remove": "Remove"
 }

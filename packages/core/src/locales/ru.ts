@@ -70,6 +70,7 @@ export default {
   "skills.update": "Обновить навык «{name}»: {description}",
   "skills.allow": "Без вопросов: «{label}» на {site}{amount}",
   "skills.allowAmount": ", до {amount}",
+  "skills.allowRequest": "Без вопросов: запрос {method} {address}{amount}",
   "skills.withScript": "со скриптом, который проходит шаги сам",
   "skills.delete": "Удалить навык «{name}» и то, что ему можно без вопросов",
   "skills.assign": "Оставить навык «{name}» только у: {agents}",

@@ -223,7 +223,7 @@ async function deliverDownload(ctx: PluginContext, call: ToolCallContext | undef
 }
 
 /** A file made here (a screenshot) into the session's workspace (downloads/), in 4 MB pieces: its path there. */
-async function deliverBuffer(ctx: PluginContext, sessionId: string, name: string, buf: Buffer): Promise<string> {
+export async function deliverBuffer(ctx: PluginContext, sessionId: string, name: string, buf: Buffer): Promise<string> {
   let path: string | undefined;
   for (let at = 0; at < buf.length || path === undefined; at += 4 * 1024 * 1024) {
     const r = await ctx.core.call<{ path: string }>("files.deliver", { sessionId, name, ...(path ? { path } : {}), data: buf.subarray(at, at + 4 * 1024 * 1024).toString("base64") });
@@ -715,6 +715,8 @@ export function registerTools(ctx: PluginContext, mgr: BrowserManager): void {
         } else value = fields[field];
         if (!value) throw new ToolError(`Item ${vaultRef} has no ${field} field.`);
         if (field !== "username") await mgr.evalIn(frame, "markSecret", { ref });
+        // The request that carries it is in the traffic log: agents never read it there either.
+        if (field !== "username") mgr.traffic.secrets.add(value, true);
         try {
           await loc.fill(value, { timeout: 8000 });
         } catch (e: any) {

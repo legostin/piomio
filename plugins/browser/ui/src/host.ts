@@ -38,6 +38,8 @@ export interface BrowserState {
   install?: InstallStatus;
   /** The person is showing an agent a task (teach mode); null otherwise. */
   teach?: TeachState | null;
+  /** Agents whose rules change a tab's traffic right now (blocked requests, replaced answers). */
+  traffic?: Array<{ agentId: string; tab: string; rules: number }>;
 }
 
 /** A demonstration going on: the person shows the agent a task (or one step of it) in this browser. */

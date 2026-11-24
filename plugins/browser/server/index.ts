@@ -3,7 +3,11 @@
 import type { PluginContext, PluginModule } from "@piomio/plugin-sdk";
 import { historyHttp } from "./history.ts";
 import { BrowserManager } from "./manager.ts";
-import { registerTools, uploadHttp } from "./tools.ts";
+import { deliverBuffer, registerTools, uploadHttp } from "./tools.ts";
+import { trafficSwitch } from "./traffic/tools.ts";
+
+/** The catalog's «Browser traffic» ability (plugins/browser-traffic): a card with a switch; its engine is here. */
+const TRAFFIC_PLUGIN = "browser-traffic";
 
 let manager: BrowserManager | null = null;
 
@@ -25,6 +29,20 @@ const plugin: PluginModule = {
       return historyHttp(mgr.history, req);
     });
     ctx.onSettingsChange((s) => mgr.updateSettings(s));
+    // The traffic tools exist only while the person has that ability on: asked now and whenever plugins change.
+    const setTraffic = trafficSwitch(ctx, mgr, (sessionId, name, buf) => deliverBuffer(ctx, sessionId, name, buf));
+    let syncing: Promise<void> = Promise.resolve();
+    const syncTraffic = () =>
+      (syncing = syncing.then(async () => {
+        try {
+          const r = await ctx.core.call<{ enabled?: boolean }>("plugins.enabled", { id: TRAFFIC_PLUGIN });
+          await setTraffic(!!r?.enabled);
+        } catch {
+          /* an older hub has no such ability: the tools stay away */
+        }
+      }));
+    void syncTraffic();
+    ctx.events.on("plugins.updated", () => void syncTraffic());
   },
   async deactivate() {
     await manager?.dispose();

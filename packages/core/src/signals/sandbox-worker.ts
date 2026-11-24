@@ -36,7 +36,7 @@ export interface SandboxJob {
 export type ScriptApi = "trigger" | "browser";
 
 /** What a skill's script calls on `browser`: each is a host call "browser.<name>" (skill-scripts.ts answers them). */
-export const BROWSER_METHODS = ["open", "click", "type", "press", "scroll", "back", "wait", "text", "page", "find", "submit", "upload", "fillSecret", "download"] as const;
+export const BROWSER_METHODS = ["open", "click", "type", "press", "scroll", "back", "wait", "text", "page", "find", "submit", "upload", "fillSecret", "download", "requests", "fetch", "send"] as const;
 
 /** Hub → worker: what a pio call came back with: `result` the JSON of the host's answer (absent: undefined), or `error`. */
 export interface SandboxAnswer {

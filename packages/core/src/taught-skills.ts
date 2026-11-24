@@ -23,10 +23,15 @@ const MAX_SITES = 20;
 const MAX_ALLOW = 10;
 const MAX_LABEL = 120;
 
-/** A click the person agreed may run without a card: browser_submit on `site`, on the control named `label`. */
+/**
+ * What the person agreed may run without a card: a click (browser_submit on `site`, on the control named `label`), or
+ * a request of the agent's own (browser_request_send of `request.method` to an address that starts as
+ * `request.address` does).
+ */
 export interface SkillAllow {
   site: string;
-  label: string;
+  label?: string;
+  request?: { method: string; address: string };
   maxAmount?: number;
   currency?: string;
 }
@@ -68,10 +73,28 @@ export function labelCondition(label: string): RuleCondition {
 
 /** The rule one pre-approval becomes. */
 export function allowRule(skill: string, a: SkillAllow): Omit<Rule, "id" | "createdAt"> {
-  const conditions: RuleCondition[] = [{ field: "url", op: "domain", value: a.site }, labelCondition(a.label)];
+  const conditions: RuleCondition[] = a.request
+    ? // The address is matched from its first character (scheme and host as approved), so nothing before the path can vary.
+      [{ field: "url", op: "domain", value: a.site }, { field: "method", op: "eq", value: a.request.method }, { field: "url", op: "glob", value: a.request.address }]
+    : [{ field: "url", op: "domain", value: a.site }, labelCondition(a.label ?? "")];
   if (a.maxAmount !== undefined) conditions.push({ field: "amount", op: "max", value: a.maxAmount });
   if (a.currency) conditions.push({ field: "currency", op: "eq", value: a.currency });
-  return { tool: "browser_submit", conditions, decision: "allow", note: skillNote(skill), createdVia: "skill" };
+  return { tool: a.request ? "browser_request_send" : "browser_submit", conditions, decision: "allow", note: skillNote(skill), createdVia: "skill" };
+}
+
+const REQUEST_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/** "POST https://api.5vodi.kz/v1/orders*" → the method and the address pattern (its host spelled out, no query). */
+function allowRequest(v: unknown): { method: string; address: string; site: string } {
+  const m = typeof v === "string" ? /^\s*([A-Za-z]+)\s+(\S+)\s*$/.exec(v) : null;
+  const method = m?.[1].toUpperCase() ?? "";
+  const example = 'e.g. "POST https://api.5vodi.kz/v1/orders*"';
+  if (!m || !REQUEST_METHODS.has(method)) fail(`allow.request is a method (POST, PUT, PATCH or DELETE) and an address, ${example}.`);
+  const address = /^https?:\/\//i.test(m![2]) ? m![2] : `https://${m![2]}`;
+  const parts = /^(https?:\/\/)([^/?#*]+)(\/[^?#]*)$/i.exec(address);
+  if (!parts || address.length > 300) fail(`allow.request: the address needs its host and a path, without a query, and * only in the path, ${example}.`);
+  const site = siteHost(parts![2]) ?? fail(`allow.request: ${JSON.stringify(parts![2])} is not a site.`);
+  return { method, address: `${parts![1].toLowerCase()}${parts![2].toLowerCase()}${parts![3]}`, site };
 }
 
 function fail(message: string): never {
@@ -101,9 +124,15 @@ export function parseSkillSave(input: any): SkillSave {
   const instructions = str(i.instructions, "instructions", MAX_SKILL_INSTRUCTIONS);
   const files = list(i.files, "files", MAX_SKILL_FILES).map((f) => (typeof f === "string" && f.trim() ? f.trim() : fail("files: each one is a path in your workspace, e.g. downloads/teach-1.md.")));
   const allow = list(i.allow, "allow", MAX_ALLOW).map((raw: any): SkillAllow => {
-    const site = siteHost(raw?.site) ?? fail(`allow: ${JSON.stringify(raw?.site ?? null)} is not a site; give its address, e.g. 5vodi.kz.`);
-    const label = str(raw?.label, "allow.label", MAX_LABEL);
-    const a: SkillAllow = { site, label };
+    let a: SkillAllow;
+    if (raw?.request !== undefined && raw?.request !== null && raw?.request !== "") {
+      if (raw?.label) fail("allow: one entry is a click (label) or a request, not both.");
+      const { site, ...request } = allowRequest(raw.request);
+      a = { site, request };
+    } else {
+      const site = siteHost(raw?.site) ?? fail(`allow: ${JSON.stringify(raw?.site ?? null)} is not a site; give its address, e.g. 5vodi.kz.`);
+      a = { site, label: str(raw?.label, "allow.label", MAX_LABEL) };
+    }
     if (raw?.maxAmount !== undefined && raw?.maxAmount !== null) {
       const v = raw.maxAmount;
       const n = typeof v === "number" ? v : typeof v === "string" && /^\d+(?:\.\d+)?$/.test(v.trim()) ? Number(v.trim()) : Number.NaN;
@@ -201,9 +230,10 @@ export function skillSaveSummary(s: Pick<SkillSave, "name" | "description" | "al
     ? t("skills.update", { name: s.replaces === s.name ? s.name : `${s.replaces} → ${s.name}`, description: s.description })
     : t("skills.save", { name: s.name, description: s.description });
   const allows = s.allow.map((a) => {
-    const c = labelCondition(a.label);
-    const label = c.op === "glob" ? a.label.trim().replace(DIGIT_RUN, "…") : a.label.trim();
     const amount = a.maxAmount !== undefined ? t("skills.allowAmount", { amount: formatAmount(a.maxAmount, a.currency, locale) }) : "";
+    if (a.request) return t("skills.allowRequest", { method: a.request.method, address: a.request.address.replace(/^https:\/\//, ""), amount });
+    const text = (a.label ?? "").trim();
+    const label = labelCondition(text).op === "glob" ? text.replace(DIGIT_RUN, "…") : text;
     return t("skills.allow", { label, site: a.site, amount });
   });
   return [head, ...(s.script ? [t("skills.withScript")] : []), ...allows].join(" · ");
