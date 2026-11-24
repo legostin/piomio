@@ -15,7 +15,7 @@ import { t, type MessageKey } from "../i18n";
 import { archiveAgent } from "../state/agentActions";
 import { useAgentMenu } from "./chat/AgentMenu";
 import { AgentAvatar } from "../components/AgentAvatar";
-import { Badge, Button, cx, EmptyState, ErrorNote, Field, IconButton, Input, Loading, Modal, Page, TagInput, Textarea } from "../components/ui";
+import { Badge, Button, cx, EmptyState, ErrorNote, Field, IconButton, Input, Loading, Modal, Page, Select, TagInput, Textarea } from "../components/ui";
 
 const INITIATIVE: Array<{ value: 0 | 1 | 2; title: MessageKey; text: MessageKey }> = [
   { value: 0, title: "agents.initiative0", text: "agents.initiative0Text" },
@@ -426,6 +426,9 @@ export function AvatarPicker({
   );
 }
 
+/** What stays on the list of an agent that works "code first" unless it says otherwise (core's CODE_KEEP_DEFAULT). */
+const CODE_KEEP_DEFAULT = ["browser_*", "memory_*"];
+
 /** Edit an agent: who it is and what it does up front, the technical knobs under "More settings". */
 export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () => void }) {
   const [name, setName] = useState(agent.name);
@@ -439,6 +442,8 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
   const [skills, setSkills] = useState<string[]>(agent.skills);
   const [policyProfile, setPolicyProfile] = useState(agent.policyProfile);
   const [runs, setRuns] = useState(String(agent.budget.backgroundRunsPerDay));
+  const [codeMode, setCodeMode] = useState<"off" | "beside" | "first">(agent.codeMode ?? "off");
+  const [codeKeep, setCodeKeep] = useState<string[]>(agent.codeKeep ?? CODE_KEEP_DEFAULT);
   const [prompt, setPrompt] = useState(agent.prompt);
   const [more, setMore] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -466,6 +471,8 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
         skills,
         policyProfile: policyProfile.trim() || "default",
         budget: { ...agent.budget, backgroundRunsPerDay: n },
+        codeMode,
+        ...(codeMode === "first" ? { codeKeep } : {}),
         prompt,
       });
       toast(t("agents.saved"), "success");
@@ -546,6 +553,20 @@ export function AgentEditor({ agent, onClose }: { agent: AgentDef; onClose: () =
               <Field label={t("agents.runs")} hint={t("agents.runsHint")}>
                 <Input type="number" min={0} value={runs} onChange={(e) => setRuns(e.target.value)} className="sm:w-40" />
               </Field>
+              <Field label={t("agents.codeMode")} hint={t(`agents.codeModeHint.${codeMode}`)}>
+                <Select value={codeMode} onChange={(e) => setCodeMode(e.target.value as "off" | "beside" | "first")} className="sm:w-64">
+                  {(["off", "beside", "first"] as const).map((m) => (
+                    <option key={m} value={m}>
+                      {t(`agents.codeMode.${m}`)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {codeMode === "first" && (
+                <Field group label={t("agents.codeKeep")} hint={t("agents.codeKeepHint")}>
+                  <TagInput value={codeKeep} onChange={setCodeKeep} placeholder="browser_*" />
+                </Field>
+              )}
             </div>
           )}
         </div>

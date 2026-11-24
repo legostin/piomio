@@ -358,7 +358,7 @@ export async function checkSkillScript(code: string, sandbox: ScriptSandbox = sk
 const RESULT_CHARS = 20_000;
 const LOG_LINES = 30;
 
-const traceLines = (trace: TraceLine[], from = 0) => trace.map((t, i) => `${from + i + 1}. ${t.call}(${t.args}) ${t.ok ? "ok" : `FAILED: ${t.error ?? "?"}`}`);
+export const traceLines = (trace: TraceLine[], from = 0) => trace.map((t, i) => `${from + i + 1}. ${t.call}(${t.args}) ${t.ok ? "ok" : `FAILED: ${t.error ?? "?"}`}`);
 
 /** The script with line numbers, as the agent that fixes it reads it. */
 export function numbered(code: string): string {

@@ -31,7 +31,7 @@ export type HostCall = (name: string, args: unknown[]) => Promise<unknown>;
 
 export interface ScriptResult {
   verdict?: Verdict;
-  /** What a taught skill's script returned (api "browser"): any JSON. */
+  /** What a taught skill's script or code mode's returned (api "browser", "code"): any JSON. */
   value?: unknown;
   logs: string[];
   error?: string;
@@ -103,7 +103,7 @@ export class ScriptSandbox {
     this.stackMb = opts.stackMb ?? WORKER_STACK_MB;
   }
 
-  /** `api`: what the script is given and gives back: a trigger's `pio` and verdict, or a taught skill's `browser` and any JSON. */
+  /** `api`: what the script is given and gives back: a trigger's `pio` and verdict, a taught skill's `browser` or code mode's `tools` and any JSON. */
   run(code: string, input: unknown, host: HostCall, limits: SandboxLimits = SCRIPT_LIMITS, api: ScriptApi = "trigger"): Promise<ScriptResult> {
     const refused = (error: string, unavailable = false) => Promise.resolve({ error, logs: [], ms: 0, calls: 0, ...(unavailable ? { unavailable: true as const } : {}) });
     if (Buffer.byteLength(code) > MAX_SCRIPT_BYTES) return refused(`the script is longer than ${MAX_SCRIPT_BYTES / 1024} KB`);
@@ -190,7 +190,7 @@ export class ScriptSandbox {
     } else if (m.kind === "done") {
       const after = m.retire ? "terminate" : "park";
       if (m.error !== undefined) return this.end(run, { error: m.error }, after);
-      if (run.api === "browser") return this.end(run, m.value === undefined ? {} : { value: m.value }, after);
+      if (run.api !== "trigger") return this.end(run, m.value === undefined ? {} : { value: m.value }, after);
       const v = parseVerdict(m.value);
       this.end(run, v && "invalid" in v ? { error: `invalid verdict: ${v.invalid}` } : v ? { verdict: v } : {}, after);
     }

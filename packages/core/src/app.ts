@@ -99,6 +99,8 @@ import { pageReader } from "./signals/extract.ts";
 import { scriptSandbox } from "./signals/sandbox.ts";
 import { skillSandbox } from "./skill-scripts.ts";
 import { registerSkillScriptTools } from "./tools/skill-script-tools.ts";
+import { registerCodeTools } from "./tools/code-tools.ts";
+import { codeSandbox } from "./code-mode.ts";
 import { quickModel, type QuickModel } from "./bare-ask.ts";
 import { recordSpend, spendReport } from "./spend.ts";
 import type { FastifyInstance } from "fastify";
@@ -644,6 +646,16 @@ export class Hub {
       audit: this.audit,
       call: (sessionId, tool, input) => this.gateway.call(sessionId, tool, input),
       changed: () => this.bus.emit("skills.updated", {}),
+    });
+    registerCodeTools({
+      registry: this.tools,
+      store: this.store,
+      audit: this.audit,
+      available: (sessionId) => {
+        const s = this.store.getSession(sessionId);
+        return s ? this.gateway.availableFor(s) : [];
+      },
+      call: (sessionId, tool, input) => this.gateway.call(sessionId, tool, input),
     });
     this.machines.registerTools(this.tools);
     registerVaultExec({
@@ -1572,6 +1584,7 @@ export class Hub {
     pageReader.stop();
     scriptSandbox.stop();
     skillSandbox.stop();
+    codeSandbox.stop();
     this.machines.closeAll();
     this.activity.close();
     await this.plugins.stopAll();
