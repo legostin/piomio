@@ -1,7 +1,7 @@
 import type { MessagePart } from "@piomio/shared";
 import { useEffect, useState } from "react";
 import { Globe, Network } from "lucide-react";
-import { ApprovalActions } from "./ApprovalActions";
+import { AllowStopped, ApprovalActions } from "./ApprovalActions";
 import { t } from "../../i18n";
 import { api, errorText } from "../../lib/api";
 import { Button } from "../../components/ui";
@@ -16,6 +16,9 @@ export function NetworkApprovalCard({ part }: { part: Extract<MessagePart, { typ
   const seconds = deadline === undefined ? undefined : Math.max(0, Math.ceil((deadline - now) / 1000));
   const pending = part.status === "pending" && (seconds === undefined || seconds > 0);
   const status = part.status === "pending" && !pending ? "expired" : part.status;
+  // Auto mode stopped the connection: the reviewer's reason and "Allow" instead of the question, which no longer waits.
+  const auto = part.auto;
+  const stopped = !!auto && part.status === "blocked";
   useEffect(() => {
     if (!pending || deadline === undefined) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -34,11 +37,21 @@ export function NetworkApprovalCard({ part }: { part: Extract<MessagePart, { typ
       {ask.private && !!ask.addresses?.length && <div className="mt-1 break-all font-mono text-xs text-muted">{t("message.network.resolves", { addresses: ask.addresses.join(", ") })}</div>}
       <div className="mt-2 text-xs text-muted">{t("message.network.agent", { agent: ask.agent ?? "" })}</div>
       {ask.task && <div className="mt-1 break-words text-xs text-muted">{t("message.network.task", { task: ask.task })}</div>}
-      <p className="mt-2 text-xs text-muted">{t("message.network.scope")}</p>
-      {pending && seconds !== undefined && <p className="mt-1 text-xs text-muted" role="timer">{t("message.network.remaining", { minutes: Math.floor(seconds / 60), seconds: seconds % 60 })}</p>}
-      <p className="mt-1 text-xs text-muted">{t(ask.private ? "message.network.privateAlways" : ask.listed ? "message.network.listed" : "message.network.always")}</p>
-      {ask.ipLiteral && !ask.private && <p role="note" className="mt-2 text-xs font-medium text-warning">{t("message.network.ip")}</p>}
-      {pending ? <ApprovalActions approvalId={part.approvalId} network always={!ask.listed} /> : <div className="mt-2 text-sm">{t(`approvalStatus.${status}`)}</div>}
+      {auto ? (
+        <>
+          {stopped && <div className="mt-2 text-xs font-medium text-warning">{t("message.approval.stopped")}</div>}
+          <p className="mt-1 text-sm leading-relaxed break-words text-fg/80">{auto.reason}</p>
+          {stopped && <p className="mt-2 text-xs text-muted">{t("message.network.stoppedScope")}</p>}
+        </>
+      ) : (
+        <>
+          <p className="mt-2 text-xs text-muted">{t("message.network.scope")}</p>
+          {pending && seconds !== undefined && <p className="mt-1 text-xs text-muted" role="timer">{t("message.network.remaining", { minutes: Math.floor(seconds / 60), seconds: seconds % 60 })}</p>}
+          <p className="mt-1 text-xs text-muted">{t(ask.private ? "message.network.privateAlways" : ask.listed ? "message.network.listed" : "message.network.always")}</p>
+          {ask.ipLiteral && !ask.private && <p role="note" className="mt-2 text-xs font-medium text-warning">{t("message.network.ip")}</p>}
+        </>
+      )}
+      {pending ? <ApprovalActions approvalId={part.approvalId} network always={!ask.listed} /> : stopped ? <AllowStopped approvalId={part.approvalId} /> : <div className="mt-2 text-sm">{t(`approvalStatus.${status}`)}</div>}
       {status === "expired" && <p className="mt-1 text-xs text-muted">{t(ask.networkClosedReason === "connection_closed" ? "message.network.disconnected" : ask.networkClosedReason === "session_ended" ? "message.network.sessionEnded" : ask.networkClosedReason === "timeout" || (part.status === "pending" && !pending) ? "message.network.timedOut" : "message.network.expired")}</p>}
       {["expired", "denied"].includes(status) && (
         requested || ask.networkRetryRequestedAt

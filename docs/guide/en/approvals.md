@@ -111,7 +111,7 @@ It is told to block sending data off the computer that the request doesn't need,
 
 ### When auto mode stops something
 
-You see a quiet line: what it was · **auto mode stopped it:** and the reason, with an **Allow** button. The agent gets the same reason and is told to find another way or ask you. **Allow** lets that exact call through once; the agent hears it may try again, and the line says **you allowed it**. The console shows such a request as **stopped by auto mode**.
+You see a quiet line: what it was · **auto mode stopped it:** and the reason, with an **Allow** button. The agent gets the same reason and is told to find another way or ask you. **Allow** lets that exact call through once; the agent hears it may try again, and the line says **you allowed it**. The console shows such a request as **stopped by auto mode**. A network host it stopped keeps its network card, with the reason and **Allow**: the host and port open to the agent's current session, and the agent hears it can run the command again.
 
 ### Turning it off and on
 

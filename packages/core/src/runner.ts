@@ -1994,12 +1994,12 @@ export class SessionRunner {
 
   /**
    * The person allowed an action auto mode had stopped: the agent hears it may run that very call again (it goes
-   * through once, ApprovalService.takeAllowance). A task waits for it no more than for any note.
+   * through once, ApprovalService.takeAllowance), or reach that host again. A task waits for it no more than for any note.
    */
   private async onBlockedAllowed(a: Approval): Promise<void> {
     const conv = this.d.store.getConversation(a.conversationId);
     if (!conv) return;
-    const note = `[System] The user allowed the action auto mode stopped: “${a.summary}”. If you still need it, run exactly the same call again: it goes through this once.`;
+    const note = allowedAfterStop(a);
     const task = a.taskId ? this.d.store.getTask(a.taskId) : undefined;
     if (await this.steerInto(conv.id, note)) return;
     this.d.store.addMessage({ conversationId: conv.id, role: "system", parts: [{ type: "text", text: note }], status: "complete", taskId: a.taskId });
@@ -3432,6 +3432,20 @@ function finalAnswer(parts: MessagePart[]): string {
 }
 
 /** A quiet look said something: not empty and not the "[quiet]" it answers with when it has nothing. */
+/**
+ * What the agent hears when the person allowed what auto mode stopped. A connection cannot be replayed: the host and
+ * port are open to the session from its next connection on (egress.ts keeps it once allowed), so the agent reruns the
+ * command that needed it. Any other call goes through once, when the agent makes it again unchanged.
+ */
+export function allowedAfterStop(a: Pick<Approval, "tool" | "summary" | "input" | "ask">): string {
+  const i = (a.input && typeof a.input === "object" ? a.input : {}) as { host?: unknown; port?: unknown };
+  const host = a.ask?.host ?? (typeof i.host === "string" ? i.host : undefined);
+  const port = a.ask?.port ?? (typeof i.port === "number" ? i.port : undefined);
+  if (a.tool === "hub_network_request" && host)
+    return `[System] The user allowed network access to ${host}${port ? `:${port}` : ""} that auto mode stopped: this session may connect there now. If you still need it, run the command that needed it again.`;
+  return `[System] The user allowed the action auto mode stopped: “${a.summary}”. If you still need it, run exactly the same call again: it goes through this once.`;
+}
+
 export function quietSaid(text: string): boolean {
   const said = text.trim();
   return !!said && !/^\[quiet\]/i.test(said);

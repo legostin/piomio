@@ -14,6 +14,7 @@ import { Settings } from "../src/settings.ts";
 import { EgressProxy, NETWORK_APPROVAL_WAIT_MS, networkHost, networkPattern } from "../src/egress.ts";
 import { wireNetworkApprovals } from "../src/network-approvals.ts";
 import { AutoMode, type Reviewer } from "../src/policy/auto.ts";
+import { allowedAfterStop } from "../src/runner.ts";
 
 async function until<T>(f: () => T | undefined): Promise<T> {
   for (let i = 0; i < 100; i++) { const v = f(); if (v) return v; await new Promise((r) => setTimeout(r, 5)); }
@@ -326,7 +327,13 @@ describe("network decisions in auto mode and after outside content", () => {
     await expect(ask()).rejects.toThrow("auto mode stopped it: [exfiltration] The task does not need this site.");
     const line = approvals.list(["blocked"])[0];
     expect(line).toMatchObject({ tool: "hub_network_request", input: { host: "new.example", port: 443 }, auto: { rule: "exfiltration" } });
-    approvals.resolve(line.id, "approve", { via: "web" });
+    const allowed = approvals.resolve(line.id, "approve", { via: "web" });
+    // The agent hears the host is open to its session, not to repeat a call: a connection cannot be replayed.
+    expect(allowedAfterStop(allowed)).toContain("allowed network access to new.example:443 that auto mode stopped: this session may connect there now");
+    await ask();
+    expect(reviews).toHaveLength(2);
+    expect(approvals.get(line.id)?.status).toBe("executed");
+    // Open to the session from then on: the next connection asks nobody.
     await ask();
     expect(reviews).toHaveLength(2);
   });
