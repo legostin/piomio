@@ -97,6 +97,11 @@ const STARTUP_GRACE_MS = 6_000;
 /** How long a leader waits for its turns before it hands over. */
 const DRAIN_MS = 120_000;
 const FILES_EVERY_MS = 5_000;
+/**
+ * The file roots are scanned only while another replica or a machine reads this hub's journal (they do every
+ * FILES_EVERY_MS): a hub nobody syncs files with leaves its workspaces alone.
+ */
+export const FILES_WHILE_ASKED_MS = 60_000;
 /** A file over a link goes in pieces this big: small enough that hellos and phones' requests don't wait long behind one. */
 const FILE_PIECE = 1024 * 1024;
 
@@ -344,7 +349,7 @@ export class Cluster {
   /** Called by Hub.start once its servers listen: a replica of several starts as standby and listens first. */
   async start(): Promise<void> {
     this.running = true;
-    this.files.start(4_000);
+    this.files.start(4_000, { whileAskedMs: FILES_WHILE_ASKED_MS });
     if (!this.identity) return;
     this.main!.start(250);
     this.vaultRepl!.start(250);

@@ -1,13 +1,13 @@
 // File replication (files.ts): rounds between in-process sides through a FilePeer that goes through JSON like a real
 // transport. Both directions, no ping-pong, conflicts, deletes against edits, relays, ignores, live SQLite files,
 // unicode paths, restarts, versions a peer cannot serve, and paths a peer must not be able to write.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { conflictName, FileSync } from "../src/files.ts";
+import { conflictName, FileSync, SCAN_PACE } from "../src/files.ts";
 import type { FileChange, FilePeer } from "../src/files.ts";
 import { Ignore, matchGitignore, parseGitignore } from "../src/ignore.ts";
 
@@ -540,6 +540,104 @@ describe("file sync", () => {
     await s.close();
     expect(paths).toEqual(["hello.txt"]);
     expect(counts).toEqual([1]);
+  });
+
+  it("waits after a background scan many times as long as it took, however short the interval and busy the folder", async () => {
+    const a = side("a");
+    const proto = FileSync.prototype as unknown as { scanNow(periodic: boolean): Promise<number> };
+    const real = proto.scanNow;
+    const runs: { start: number; end: number }[] = [];
+    // A scan that takes 40 ms, as one of a big tree does.
+    const spy = vi.spyOn(proto, "scanNow").mockImplementation(async function (this: unknown, periodic: boolean) {
+      const run = { start: Date.now(), end: 0 };
+      runs.push(run);
+      await new Promise((r) => setTimeout(r, 40));
+      try {
+        return await real.call(this, periodic);
+      } finally {
+        run.end = Date.now();
+      }
+    });
+    try {
+      a.sync.start(1);
+      // File events all along (where the OS reports them) do not hurry it either.
+      for (let i = 0; i < 20; i++) {
+        put(a, `busy-${i}.txt`, String(i));
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    } finally {
+      await a.sync.close();
+      spy.mockRestore();
+    }
+    expect(runs.length).toBeGreaterThanOrEqual(1);
+    expect(runs.length).toBeLessThanOrEqual(2);
+    for (let i = 1; i < runs.length; i++) expect(runs[i].start - runs[i - 1].end).toBeGreaterThanOrEqual(SCAN_PACE * 40 * 0.9);
+  });
+
+  it("looks at single paths without a walk: a new file, a changed one, a deleted one, and leaves out ignored ones", async () => {
+    const a = side("a");
+    put(a, "keep.txt", "one");
+    put(a, "gone.txt", "bye");
+    await a.sync.scan();
+    const cursor = a.sync.changesSince(0).cursor;
+    put(a, "keep.txt", "two");
+    put(a, "new/inside.txt", "new");
+    put(a, "node_modules/x.js", "x");
+    put(a, "unasked.txt", "not looked at");
+    unlinkSync(join(a.dir, "gone.txt"));
+    expect(await a.sync.look("workspaces", ["keep.txt", "new/inside.txt", "node_modules/x.js", "gone.txt", "../out.txt", "new"])).toBe(3);
+    const changes = a.sync.changesSince(cursor).changes.map((c) => [c.path, c.sha === null ? "deleted" : "here"]);
+    expect(changes.sort()).toEqual([["gone.txt", "deleted"], ["keep.txt", "here"], ["new/inside.txt", "here"]]);
+    // The full scan finds the rest.
+    expect(await a.sync.scan()).toBe(1);
+    await a.sync.close();
+  });
+
+  it.skipIf(process.platform !== "darwin" && process.platform !== "win32")("takes a file event's path in soon, with no full scan of the tree", async () => {
+    const a = side("a");
+    const proto = FileSync.prototype as unknown as { scanNow(periodic: boolean): Promise<number> };
+    const spy = vi.spyOn(proto, "scanNow");
+    try {
+      a.sync.start(60_000);
+      const first = Date.now() + 5000;
+      while (spy.mock.calls.length < 1 && Date.now() < first) await new Promise((r) => setTimeout(r, 20));
+      // Watching starts a moment after the call.
+      await new Promise((r) => setTimeout(r, 300));
+      put(a, "deep/er/news.txt", "news");
+      const until = Date.now() + 5000;
+      while (!a.sync.changesSince(0).changes.length && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
+      expect(a.sync.changesSince(0).changes.map((c) => c.path)).toEqual(["deep/er/news.txt"]);
+      expect(spy.mock.calls.length).toBe(1);
+    } finally {
+      await a.sync.close();
+      spy.mockRestore();
+    }
+  });
+
+  it("started on demand, scans only while peers read the journal", async () => {
+    const a = side("a");
+    a.sync.start(20, { whileAskedMs: 300 });
+    put(a, "hello.txt", "hi");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(a.sync.scanning).toBe(false);
+    // The first read wakes it; the scan's result is in a later one.
+    expect(a.sync.changesSince(0).changes).toEqual([]);
+    expect(a.sync.scanning).toBe(true);
+    const until = Date.now() + 5000;
+    while (!a.sync.changesSince(0).changes.length && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
+    expect(a.sync.changesSince(0).changes.map((c) => c.path)).toEqual(["hello.txt"]);
+    // Nobody reads it any more: it rests, and sees nothing new until asked again.
+    const quiet = Date.now() + 5000;
+    while (a.sync.scanning && Date.now() < quiet) await new Promise((r) => setTimeout(r, 20));
+    expect(a.sync.scanning).toBe(false);
+    put(a, "later.txt", "later");
+    await new Promise((r) => setTimeout(r, 200));
+    const cursor = a.sync.changesSince(0).cursor;
+    const again = Date.now() + 5000;
+    while (!a.sync.changesSince(cursor).changes.length && Date.now() < again) await new Promise((r) => setTimeout(r, 20));
+    expect(a.sync.changesSince(cursor).changes.map((c) => c.path)).toEqual(["later.txt"]);
+    await a.sync.close();
+    expect(a.sync.scanning).toBe(false);
   });
 
   it("skips files over the size limit and symbolic links", async () => {

@@ -102,6 +102,23 @@ const STALE_TEMP_MS = 10 * 60_000;
 const SKIP = Symbol("skip");
 /** Unreadable right now (being written, a locked database): the change waits for the next round. */
 const LATER = Symbol("later");
+/**
+ * A background scan waits at least this many times as long as the last one took, file events or not: a big tree
+ * (an agent's cloned repositories, 100k+ files) costs a slice of one core instead of all of it.
+ */
+export const SCAN_PACE = 20;
+/** After file events (where the OS watches whole trees), the paths they name are looked at this soon, pace permitting. */
+const HINT_MS = 300;
+/** More paths than this from file events before a look: the full scan sees them instead. */
+const MAX_HINTED = 1000;
+
+export interface StartOptions {
+  /**
+   * Scan only while peers read the journal: each changesSince keeps the scanning going this long, then it rests
+   * (no scans, no watchers) until the next one. Unset: scan for as long as it is started.
+   */
+  whileAskedMs?: number;
+}
 
 export class FileSync {
   private readonly roots = new Map<string, FileRoot>();
@@ -115,10 +132,24 @@ export class FileSync {
   private chain: Promise<unknown> = Promise.resolve();
   private journaled = 0;
   private closed = false;
+  /** start()'s settings while started; undefined: stopped. */
+  private started?: { intervalMs: number; whileAskedMs?: number };
+  /** Timers and watchers are on (started, and asked for lately when only on demand). */
+  private running = false;
+  private askedAt = 0;
   private timer?: NodeJS.Timeout;
-  private hintTimer?: NodeJS.Timeout;
+  private timerAt = 0;
+  /** No background scan starts before this (SCAN_PACE). */
+  private paceUntil = 0;
   private watchers: FSWatcher[] = [];
-  private scanQueued = false;
+  /** A background scan is queued or running; `rescan`: something asked for one meanwhile. */
+  private scanPending = false;
+  private rescan = false;
+  /** Paths file events named, per root, for the next look (lookHinted). */
+  private readonly hinted = new Map<string, Set<string>>();
+  private hintTimer?: NodeJS.Timeout;
+  private lookPending = false;
+  private lookPaceUntil = 0;
   private readonly noted = new Set<string>();
   private readonly sqliteCopiedAt = new Map<string, number>();
 
@@ -158,9 +189,15 @@ export class FileSync {
     return this.exclusive(() => this.scanNow(false));
   }
 
+  /** Bring these paths of one root up to date in the journal now, without a walk; returns how many changed. */
+  look(root: string, paths: readonly string[]): Promise<number> {
+    return this.exclusive(() => this.lookNow(root, paths));
+  }
+
   /** The newest version of each path changed after `cursor`, oldest first. */
   changesSince(cursor: number, limit = 1000): { changes: FileChange[]; cursor: number; more: boolean } {
-    const lim = Math.max(1, Math.min(Math.floor(limit) || 1000, 10_000));
+    this.asked();
+    const lim =Math.max(1, Math.min(Math.floor(limit) || 1000, 10_000));
     const after = Math.max(0, Math.floor(cursor) || 0);
     const rows = this.q.changes.all(after, this.rootNames, lim + 1) as unknown as (DbRow & { root: string; path: string })[];
     const changes = rows.slice(0, lim).map((r) => ({
@@ -238,20 +275,39 @@ export class FileSync {
     });
   }
 
-  /** Scan every `intervalMs` (default 3 s), and soon after file events where the OS watches whole trees. */
-  start(intervalMs = 3000): void {
-    if (this.timer || this.closed) return;
-    this.timer = setInterval(() => this.kick(), intervalMs);
-    this.timer.unref();
+  /**
+   * Scan every `intervalMs` (default 3 s), never sooner than SCAN_PACE times the last scan's length after it; where
+   * the OS watches whole trees, the paths file events name are looked at on their own soon after. With
+   * `whileAskedMs`, only while peers read the journal.
+   */
+  start(intervalMs = 3000, o: StartOptions = {}): void {
+    if (this.started || this.closed) return;
+    this.started = { intervalMs, whileAskedMs: o.whileAskedMs };
+    if (o.whileAskedMs === undefined) this.run();
+  }
+
+  stop(): void {
+    this.started = undefined;
+    this.rest();
+  }
+
+  /** Whether background scans are on now (started, and asked for lately when only on demand). */
+  get scanning(): boolean {
+    return this.running;
+  }
+
+  /** A peer read the journal: an on-demand scanner wakes up or stays up. */
+  private asked(): void {
+    this.askedAt = Date.now();
+    if (this.started && !this.running && !this.closed) this.run();
+  }
+
+  private run(): void {
+    this.running = true;
     if (process.platform === "darwin" || process.platform === "win32") {
       for (const root of this.roots.values()) {
         try {
-          const w = watch(root.dir, { recursive: true }, (_event, name) => {
-            if (typeof name === "string" && quietEvent(name)) return;
-            clearTimeout(this.hintTimer);
-            this.hintTimer = setTimeout(() => this.kick(), 300);
-            this.hintTimer.unref();
-          });
+          const w = watch(root.dir, { recursive: true }, (_event, name) => this.hint(root.name, name));
           w.on("error", () => w.close());
           w.unref();
           this.watchers.push(w);
@@ -263,12 +319,73 @@ export class FileSync {
     this.kick();
   }
 
-  stop(): void {
-    clearInterval(this.timer);
+  /** No timers, no watchers; a scan in progress finishes. */
+  private rest(): void {
+    this.running = false;
+    clearTimeout(this.timer);
     clearTimeout(this.hintTimer);
     this.timer = this.hintTimer = undefined;
+    this.hinted.clear();
     for (const w of this.watchers) w.close();
     this.watchers = [];
+  }
+
+  /** A file event: its path is looked at on its own soon; one without a name, or too many, wait for the full scan. */
+  private hint(root: string, name: string | Buffer | null): void {
+    if (typeof name !== "string" || !name) return this.schedule(HINT_MS);
+    if (quietEvent(name)) return;
+    let paths = this.hinted.get(root);
+    if (!paths) this.hinted.set(root, (paths = new Set()));
+    paths.add(name.split(/[\\/]/).join("/"));
+    if (paths.size > MAX_HINTED) {
+      this.hinted.clear();
+      return this.schedule(HINT_MS);
+    }
+    this.lookSoon();
+  }
+
+  private lookSoon(): void {
+    if (this.hintTimer || this.lookPending || !this.running) return;
+    this.hintTimer = setTimeout(() => {
+      this.hintTimer = undefined;
+      this.lookHinted();
+    }, Math.max(HINT_MS, this.lookPaceUntil - Date.now()));
+    this.hintTimer.unref();
+  }
+
+  /** The paths file events named, without a walk; paced like the scans, by their own length. */
+  private lookHinted(): void {
+    if (!this.running || this.closed || this.lookPending || !this.hinted.size) return;
+    this.lookPending = true;
+    const batch = [...this.hinted].map(([root, paths]) => [root, [...paths]] as const);
+    this.hinted.clear();
+    this.exclusive(async () => {
+      const t0 = performance.now();
+      try {
+        for (const [root, paths] of batch) await this.lookNow(root, paths);
+      } finally {
+        this.lookPaceUntil = Date.now() + SCAN_PACE * (performance.now() - t0);
+      }
+    })
+      .catch((e: unknown) => this.log(`files: scan failed: ${(e as Error).message}`))
+      .finally(() => {
+        this.lookPending = false;
+        if (this.hinted.size) this.lookSoon();
+      });
+  }
+
+  /** The next background scan in `ms`, unless one comes sooner; the pace may put it off. */
+  private schedule(ms: number): void {
+    if (!this.running) return;
+    const at = Math.max(Date.now() + ms, this.paceUntil);
+    if (this.timer && this.timerAt <= at) return;
+    clearTimeout(this.timer);
+    this.timerAt = at;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      this.kick();
+    }, at - Date.now());
+    this.timer.unref();
   }
 
   /** Stop, let the running scan or round finish, and close the state file. */
@@ -290,18 +407,57 @@ export class FileSync {
   // ---- scanning ----
 
   private kick(): void {
-    if (this.scanQueued || this.closed) return;
-    this.scanQueued = true;
-    this.exclusive(() => {
-      this.scanQueued = false;
-      return this.scanNow(true);
-    }).catch((e: unknown) => this.log(`files: scan failed: ${(e as Error).message}`));
+    if (!this.running || this.closed) return;
+    if (this.scanPending) {
+      this.rescan = true;
+      return;
+    }
+    this.scanPending = true;
+    this.rescan = false;
+    this.exclusive(async () => {
+      const t0 = performance.now();
+      try {
+        return await this.scanNow(true);
+      } finally {
+        this.paceUntil = Date.now() + SCAN_PACE * (performance.now() - t0);
+      }
+    })
+      .catch((e: unknown) => this.log(`files: scan failed: ${(e as Error).message}`))
+      .finally(() => {
+        this.scanPending = false;
+        // A timer set meanwhile (file events) went by the old pace: it is set again by the new one.
+        const hinted = this.rescan || !!this.timer;
+        clearTimeout(this.timer);
+        this.timer = undefined;
+        const s = this.started;
+        if (!this.running || !s) return;
+        if (s.whileAskedMs !== undefined && Date.now() - this.askedAt > s.whileAskedMs) this.rest();
+        else this.schedule(hinted ? HINT_MS : s.intervalMs);
+      });
   }
 
   /** `periodic`: a background scan, which copies a live database at most every SQLITE_EVERY_MS. */
   private async scanNow(periodic: boolean): Promise<number> {
     const before = this.journaled;
     for (const root of this.roots.values()) await this.scanRoot(root, periodic);
+    const n = this.journaled - before;
+    this.changed(n);
+    return n;
+  }
+
+  /**
+   * Single paths (from file events): a file there is observed as the scan would; a folder, or what went with a deleted
+   * folder, is left to the next full scan.
+   */
+  private async lookNow(rootName: string, paths: readonly string[]): Promise<number> {
+    const root = this.roots.get(rootName);
+    if (!root) return 0;
+    const before = this.journaled;
+    const ignore = this.ignoreOf(root);
+    for (const rel of new Set(paths)) {
+      if (!validRel(rel) || ignore.ignored(rel, false) || !(await this.parentsSafe(root, rel))) continue;
+      await this.observe(root, rel, this.rowOf(root.name, rel), true);
+    }
     const n = this.journaled - before;
     this.changed(n);
     return n;
