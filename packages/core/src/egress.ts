@@ -481,7 +481,8 @@ export class EgressProxy {
         host = match[1].replace(/^\[|\]$/g, "").toLowerCase();
         const port = Number(match[2]);
         const addrs = await this.authorize(token, host, port, cancel.signal);
-        if (cancel.signal.aborted || client.destroyed) return;
+        // The client left (FIN) after the approval, while DNS was rechecked: its half-open socket is ours to close.
+        if (cancel.signal.aborted || client.destroyed) return void client.destroy();
         client.pause();
         client.off("data", hold);
         const upstream = net.connect({ host, port, lookup: pinnedLookup(addrs), autoSelectFamily: true }, () => {

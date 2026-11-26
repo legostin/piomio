@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import http from "node:http";
-import { connect } from "node:net";
+import { once } from "node:events";
+import { connect, type Socket } from "node:net";
 import { freePort } from "@piomio/testkit";
 import { EgressProxy, isPrivateAddress } from "../src/egress.ts";
 
@@ -160,4 +161,50 @@ describe("the proxy tells no internet from not allowed", () => {
     proxy.revoke(t);
     expect(proxy.hasSession("s2")).toBe(false);
   });
+});
+
+describe("a CONNECT client that leaves while its permission settles", () => {
+  // Node's HTTP server keeps sockets half-open: once a client sent its FIN, only the proxy closes the socket. A client
+  // that gave up after the approval came back, while the proxy rechecked DNS, was left open for good (CLOSE_WAIT, then
+  // CLOSED once macOS drops the peer): the desktop hub held 885 of them after two hours of auto-mode approvals.
+  for (const leave of ["end", "destroy"] as const) {
+    it(`releases the socket of a client that left (${leave}) after approval, before the tunnel`, async () => {
+      const proxy = new EgressProxy();
+      const sockets = (proxy as unknown as { sockets: Set<Socket> }).sockets;
+      let rechecking!: () => void;
+      let release!: () => void;
+      const recheck = new Promise<void>((r) => (rechecking = r));
+      let lookups = 0;
+      // Documentation space (203.0.113.0/24): public to the policy, reachable by nobody.
+      proxy.lookup = async () => {
+        if (++lookups > 1) {
+          const held = new Promise<void>((r) => (release = r));
+          rechecking();
+          await held;
+        }
+        return ["203.0.113.10"];
+      };
+      proxy.requestApproval = async () => {};
+      const port = await freePort();
+      await proxy.listen(port);
+      const token = proxy.issueToken("brain:s1", [], { sessionId: "s1", conversationId: "c1", agentId: "a1" });
+      try {
+        const client = connect(port, "127.0.0.1", () =>
+          client.write(`CONNECT new.example:443 HTTP/1.1\r\nProxy-Authorization: Basic ${Buffer.from(`${token}:x`).toString("base64")}\r\n\r\n`),
+        );
+        client.on("error", () => {});
+        await recheck;
+        const [server] = sockets;
+        const fin = once(server!, "end");
+        client[leave]();
+        await fin;
+        release();
+        for (let i = 0; i < 100 && !server!.destroyed; i++) await new Promise((r) => setTimeout(r, 5));
+        expect(server!.destroyed).toBe(true);
+        expect(sockets.size).toBe(0);
+      } finally {
+        await proxy.close();
+      }
+    });
+  }
 });
