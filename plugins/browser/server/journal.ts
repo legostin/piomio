@@ -148,6 +148,12 @@ export class Journal {
     return name;
   }
 
+  /** Drop one picture of recording `id` (the person took its frame out of the lesson). */
+  dropImage(id: string, name: string): void {
+    this.file(id);
+    if (name.startsWith(`${id}-`) && /^[\w-]+\.jpg$/.test(name)) rmSync(join(this.dir, name), { force: true });
+  }
+
   get(id: string): Recording | undefined {
     try {
       return JSON.parse(readFileSync(this.file(id), "utf8")) as Recording;

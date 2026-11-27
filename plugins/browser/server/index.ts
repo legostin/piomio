@@ -24,6 +24,9 @@ const plugin: PluginModule = {
     ctx.http.handle((req) => {
       // The person's speech while showing a task (the live view records it in pieces).
       if (!req.public && req.method === "POST" && req.path === "/teach/speech") return mgr.learning.speech(req);
+      // The steps recorded so far, and the person's changes to one of them (a note, what a frame means, taking it out).
+      if (!req.public && req.method === "GET" && req.path === "/teach/steps") return mgr.learning.steps();
+      if (!req.public && req.method === "POST" && req.path === "/teach/step") return mgr.learning.step(req);
       // Files the person picked in the live view for the page's file chooser (or none: they cancelled it).
       if (!req.public && req.method === "POST" && (req.path === "/upload/files" || req.path === "/upload/cancel")) return uploadHttp(mgr, req);
       return historyHttp(mgr.history, req);

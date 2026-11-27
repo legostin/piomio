@@ -10,7 +10,7 @@ import type { Page } from "playwright";
 import type { PluginContext, PluginHttpRequest, PluginHttpResponse } from "@piomio/plugin-sdk";
 import { Journal } from "./journal.ts";
 import { pageCall } from "./page-script.ts";
-import { hintText, Recorder, stepText, toMarkdown, type Recording, type Target } from "./recorder.ts";
+import { hintText, MARKS, Recorder, stepText, toMarkdown, type Mark, type Recording, type Target } from "./recorder.ts";
 import { PAGE_RULES } from "./safety.ts";
 import { ToolError, withTimeout, type BrowserSettings } from "./util.ts";
 
@@ -30,6 +30,8 @@ export interface TeachState {
   scope: "task" | "step";
   startedAt: number;
   steps: number;
+  /** Grows with every change to the steps: the live view's list reloads on it. */
+  rev: number;
   speech: boolean;
 }
 
@@ -111,7 +113,7 @@ export class Learning {
   state(): TeachState | null {
     const t = this.teach;
     if (!t) return null;
-    return { id: t.id, goal: t.goal, scope: t.scope, startedAt: t.startedAt, steps: this.rec?.actions ?? 0, speech: t.speech };
+    return { id: t.id, goal: t.goal, scope: t.scope, startedAt: t.startedAt, steps: this.rec?.actions ?? 0, rev: this.rec?.rev ?? 0, speech: t.speech };
   }
 
   // ---------- a demonstration ----------
@@ -341,7 +343,10 @@ export class Learning {
     if (this.rec && this.h.userControl) this.rec.tab(action, Date.now());
   }
 
-  /** The person framed a place on the page (0..1 of the picture). Emits "highlight" {ok, text}. */
+  /**
+   * The person framed a place on the page (0..1 of the picture). Emits "highlight" {ok, text, step}: `step` names the
+   * new step, for the note and the meaning the person may add to it (POST teach/step).
+   */
   async highlight(m: any): Promise<void> {
     const rec = this.rec;
     const page = this.h.activePage();
@@ -371,14 +376,63 @@ export class Learning {
       this.h.ctx.log.warn(`highlight picture: ${e?.message ?? e}`);
     }
     if (this.rec !== rec) return;
-    rec.highlight({ text: area.text, controls: area.controls, ...(image ? { image } : {}) }, at);
-    this.h.ctx.ui.emit("highlight", { ok: true, text: area.text.slice(0, 200) });
+    const step = rec.highlight({ text: area.text, controls: area.controls, ...(image ? { image } : {}) }, at);
+    if (!step) {
+      // The recording is full: the frame is not in it, so neither is its picture.
+      if (image) this.journal.dropImage(rec.id, image);
+      this.h.ctx.ui.emit("highlight", { ok: false });
+      return;
+    }
+    this.h.ctx.ui.emit("highlight", { ok: true, text: area.text.slice(0, 200), step });
     this.h.changed();
   }
 
-  /** POST teach/speech: a segment of the person's speech while showing; its words go where they were said. */
+  // ---------- the steps so far, for the person ----------
+
+  /** GET teach/steps: what has been recorded so far, for the live view's list (it words the steps itself). */
+  steps(): PluginHttpResponse {
+    return { status: 200, body: { rev: this.rec?.rev ?? 0, steps: this.rec?.list() ?? [] } };
+  }
+
+  /**
+   * POST teach/step {id, remove?, note?, mark?, text?}: the person takes a step out of the recording, puts a note on
+   * it, says what a framed place means, or corrects the words written down from their speech. Changes what the agent
+   * will read, never the page.
+   */
+  step(req: PluginHttpRequest): PluginHttpResponse {
+    const rec = this.rec;
+    if (!rec) return { status: 409, body: { error: "not recording" } };
+    const b = (req.body ?? {}) as { id?: unknown; remove?: unknown; note?: unknown; mark?: unknown; text?: unknown };
+    const id = Number(b.id);
+    const before = rec.list().find((s) => s.id === id);
+    if (!before) return { status: 404, body: { error: "no such step" } };
+    let ok: boolean;
+    if (b.remove === true) {
+      ok = rec.remove(id);
+      if (ok && before.kind === "highlight" && before.image) this.journal.dropImage(rec.id, before.image);
+    } else {
+      const change: { note?: string; mark?: Mark | null; text?: string } = {};
+      if (typeof b.note === "string") change.note = b.note;
+      if (typeof b.text === "string") change.text = b.text;
+      if (b.mark === null) change.mark = null;
+      else if (b.mark !== undefined) {
+        if (!MARKS.includes(b.mark as Mark)) return { status: 400, body: { error: "no such mark" } };
+        change.mark = b.mark as Mark;
+      }
+      if (!Object.keys(change).length) return { status: 400, body: { error: "nothing to change" } };
+      ok = rec.annotate(id, change);
+    }
+    if (!ok) return { status: 400, body: { error: "this step cannot take that change" } };
+    this.h.changed();
+    return { status: 200, body: { ok: true, rev: rec.rev } };
+  }
+
+  /**
+   * POST teach/speech: a segment of the person's speech while showing; its words go where they were said. With
+   * `only`, the words just come back: the person is dictating into a note, which keeps them.
+   */
   async speech(req: PluginHttpRequest): Promise<PluginHttpResponse> {
-    const b = (req.body ?? {}) as { data?: unknown; mimeType?: unknown; durationMs?: unknown };
+    const b = (req.body ?? {}) as { data?: unknown; mimeType?: unknown; durationMs?: unknown; only?: unknown };
     if (!this.teach || !this.rec) return { status: 409, body: { error: "not showing" } };
     const data = typeof b.data === "string" ? b.data : "";
     if (!data || data.length > (MAX_SPEECH_BYTES * 4) / 3) return { status: 400, body: { error: "no audio or too long" } };
@@ -387,7 +441,7 @@ export class Learning {
     try {
       const r = await this.h.ctx.core.call<{ text?: string }>("speech.transcribe", { data, mimeType: typeof b.mimeType === "string" && b.mimeType ? b.mimeType.split(";")[0].trim() : "audio/webm" });
       const text = String(r?.text ?? "").trim();
-      if (text && this.rec === rec) {
+      if (text && this.rec === rec && b.only !== true) {
         rec.say(text, at);
         this.h.changed();
       }
