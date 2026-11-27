@@ -165,7 +165,7 @@ const CSS = `
 .obb-hl-frame.is-ok{animation:obb-flash .7s ease-out forwards}
 @keyframes obb-flash{0%{background:color-mix(in srgb,var(--accent) 50%,transparent);box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}45%{box-shadow:0 0 0 8px transparent}100%{opacity:0;box-shadow:0 0 0 8px transparent}}
 .obb-hl-frame.is-note{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
-.obb-note{position:absolute;z-index:1;box-sizing:border-box;width:min(320px,calc(100% - 16px));padding:8px;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--fg);box-shadow:var(--shadow);pointer-events:auto;cursor:default;touch-action:manipulation}
+.obb-note{position:absolute;z-index:1;box-sizing:border-box;width:min(392px,calc(100% - 16px));padding:8px;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--fg);box-shadow:var(--shadow);pointer-events:auto;cursor:default;touch-action:manipulation}
 .obb-chips{display:flex;flex-wrap:wrap;gap:4px}
 .obb-chip{flex:none;height:26px;padding:0 9px;border:1px solid var(--border);border-radius:13px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:500;white-space:nowrap;cursor:pointer;transition:background .12s,color .12s}
 .obb-chip:hover{background:var(--surface-2);color:var(--fg)}

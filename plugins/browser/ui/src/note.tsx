@@ -72,7 +72,7 @@ export function FrameNote(props: {
   const { step, link } = props;
   const [text, setText] = useState("");
   const [mark, setMark] = useState<Mark | null>(null);
-  const [size, setSize] = useState({ width: 320, height: 104 });
+  const [size, setSize] = useState({ width: 392, height: 104 });
   const textRef = useRef("");
   const markRef = useRef<Mark | null>(null);
   const saved = useRef<{ note: string; mark: Mark | null }>({ note: "", mark: null });
