@@ -464,6 +464,8 @@ export default {
   "command.goal.args": "what to reach",
   "command.schedule.description": "Set up a schedule or a reminder",
   "command.schedule.args": "when and what",
+  "command.learn.description": "Teach the agent a task by showing it in the browser",
+  "command.learn.args": "what you will show",
   "command.brain.description": "Choose the agent's brain",
   "command.effort.description": "How deeply the agent thinks",
   "command.archive.description": "Put the agent in the archive",

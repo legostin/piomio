@@ -114,7 +114,8 @@ to be allowed to reach it (see [Settings and environment variables](settings.md)
 
 ### Show it
 
-Say "let me show you how I order water on 5vodi.kz", or pick **Teach the agent** in the browser's **More** menu. From
+Say "let me show you how I order water on 5vodi.kz", type `/learn how I order water on 5vodi.kz` in the agent's chat,
+or pick **Teach the agent** in the browser's **More** menu. From
 the menu, the lesson is for the agent whose chat is open under the browser: its name is in the window's title, and it
 asks what the lesson was for. With no agent's chat open, or an agent that does not use the browser, the default agent
 gets it. The live view opens with control in your hands and a bar on top: what you are showing, the steps so far, the
