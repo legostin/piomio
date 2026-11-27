@@ -194,13 +194,14 @@ Limits: recordings longer than 10 minutes and files over 25 MB are not transcrib
 
 ## The hub's own commands
 
-Type `/` at the start of the field to see the commands. These six are answered by the hub itself, at once and without the model. The exception is `/schedule`, which goes to the agent as a request.
+Type `/` at the start of the field to see the commands. The hub itself answers them, at once and without the model. The exceptions are `/schedule` and `/learn`, which go to the agent as a request.
 
 | Command | What it does |
 |---|---|
 | `/task <what to do>` | Starts a task for this chat's agent and shows its task line. `/task find three flats near the park` |
 | `/goal <what to reach>` | A long goal: the agent works toward it round after round on its own until it is reached. `/goal` alone shows the open goal |
 | `/schedule <when and what>` | Asks the agent to set up a recurring schedule or a one-time reminder. `/schedule` alone lists what you have |
+| `/learn <what you will show>` | Asks the agent to learn a task by watching you do it in the browser: the live view opens with control in your hands. `/learn how I order water on 5vodi.kz`. See [Teach mode](browser.md#teach-mode-show-a-task-once) |
 | `/brain [name]` | Shows what the agent thinks with, or switches its brain in this chat: `/brain codex` |
 | `/effort [level]` | Shows or sets how deeply it thinks: `auto`, `fast`, `balanced`, `deep`, or one of the brain's own levels such as `high` |
 | `/archive` | Shows a card to put the agent in the archive |
@@ -226,7 +227,7 @@ Say "make a group with Researcher and the assistant for the trip plan" in any ag
 
 The header shows who is answering now and who is next (**Researcher is answering… · then Assistant**). **Stop** ends the whole round.
 
-Each member reads what others said since its own last reply, up to the last 40 messages, and longer messages are trimmed. In a group, `/task`, `/goal` and `/schedule` go to the lead; `/brain`, `/effort` and `/archive` belong in an agent's own dialog.
+Each member reads what others said since its own last reply, up to the last 40 messages, and longer messages are trimmed. In a group, `/task`, `/goal`, `/schedule` and `/learn` go to the lead; `/brain`, `/effort` and `/archive` belong in an agent's own dialog.
 
 > Group chats live in the web UI, the desktop app and the iPhone app. They are not mirrored to Telegram: only the default agent's dialog is.
 

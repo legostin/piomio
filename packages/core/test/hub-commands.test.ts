@@ -1,5 +1,5 @@
 // The hub's own commands (docs/superpowers/specs/2026-11-01-hub-commands-design.md): the composer's list, "/task",
-// "/brain", "/effort", "/archive" answered without the model, "/schedule" as a request to the agent, and "/goal": a
+// "/brain", "/effort", "/archive" answered without the model, "/schedule" and "/learn" as requests to the agent, and "/goal": a
 // task that keeps going round after round until goal_report, pauses every GOAL_ROUNDS rounds and on the person's word.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
@@ -154,7 +154,8 @@ describe("the hub's commands (integration)", () => {
 
   it("lists its own commands first, in the reader's language, with a hint for their words", async () => {
     const en = (await web.req("GET", "/api/commands", undefined, { "accept-language": "en" })) as Array<{ name: string; description: string; source: string; args?: string }>;
-    expect(en.slice(0, 6).map((c) => c.name)).toEqual(["task", "goal", "schedule", "brain", "effort", "archive"]);
+    expect(en.slice(0, 7).map((c) => c.name)).toEqual(["task", "goal", "schedule", "learn", "brain", "effort", "archive"]);
+    expect(en.find((c) => c.name === "learn")).toEqual({ name: "learn", description: "Teach the agent a task by showing it in the browser", source: "hub", args: "what you will show" });
     expect(en[0]).toEqual({ name: "task", description: "Start a task for the agent", source: "hub", args: "what to do" });
     expect(en.find((c) => c.name === "brain")?.args).toBeUndefined();
     const ru = (await web.req("GET", "/api/commands", undefined, { "x-locale": "ru", "accept-language": "ru" })) as Array<{ name: string; description: string }>;
@@ -207,6 +208,16 @@ describe("the hub's commands (integration)", () => {
     const reply = await until(async () => (await messages(dialog)).find((m) => m.role === "assistant" && JSON.stringify(m.parts).includes("when it runs")), "the agent's reply");
     expect(JSON.stringify(reply.parts)).toContain("Then say in one line when it runs.");
     expect((await messages(dialog)).some((m) => m.role === "user" && JSON.stringify(m.parts).includes("/schedule every morning at nine"))).toBe(true);
+  });
+
+  it("/learn goes to the agent as a request to start a lesson in the browser; without words it asks what will be shown", async () => {
+    await say(dialog, "/learn how I order water");
+    const reply = await until(async () => (await messages(dialog)).find((m) => m.role === "assistant" && JSON.stringify(m.parts).includes("browser_teach")), "the agent's reply");
+    expect(JSON.stringify(reply.parts)).toContain("Call browser_teach with that as the goal");
+    expect((await messages(dialog)).some((m) => m.role === "user" && JSON.stringify(m.parts).includes("/learn how I order water"))).toBe(true);
+    await say(dialog, "/learn");
+    const asked = await until(async () => (await messages(dialog)).find((m) => m.role === "assistant" && JSON.stringify(m.parts).includes("Otherwise ask in one line what they will show")), "the agent's reply to /learn alone");
+    expect(asked.role).toBe("assistant");
   });
 
   it("/goal ends when the agent reports it reached", async () => {

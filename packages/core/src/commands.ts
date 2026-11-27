@@ -1,6 +1,7 @@
 // The hub's own commands (docs/superpowers/specs/2026-11-01-hub-commands-design.md): "/task …", "/goal …", "/brain",
 // "/effort", "/archive" are answered by the hub at once, without the model, with a card or a line in the chat (and the
-// same in words on the channel the command came from); "/schedule …" becomes a request the agent's turn gets.
+// same in words on the channel the command came from); "/schedule …" and "/learn …" become a request the agent's turn
+// gets.
 
 import type { AgentDef, Conversation, Locale, MessagePart, OutboundMessage, Task, TaskStatus, ThinkingBrain, ThinkingPreset, ThinkingView } from "@piomio/shared";
 import { COMMANDS_WITH_WORDS, goalControl, HUB_COMMANDS, isHubCommand, parseCommand, sameBrain, THINKING_PRESETS, truncate, type CommandView, type HubCommand } from "@piomio/shared";
@@ -79,6 +80,12 @@ export class HubCommands {
           prompt: args
             ? `The person asks you to set up a schedule (the /schedule command): ${args}\n\nSet it up with your trigger tools: a recurring schedule, or a one-time reminder for a single moment, in their time zone. Then say in one line when it runs.`
             : "The person typed /schedule: show them, in short, the schedules and reminders they have with you (your trigger tools), and ask what to set up.",
+        };
+      case "learn":
+        return {
+          prompt: args
+            ? `The person wants to teach you a task by showing it in the browser (the /learn command): ${args}\n\nCall browser_teach with that as the goal, in their words, and tell them in one short sentence to go ahead and show it. Do not use the browser until the recording comes. If you have no browser_teach tool, say in one line that you have no browser here to learn in.`
+            : "The person typed /learn: they want to teach you a task by showing it in the browser. If this chat already says what they are about to show, call browser_teach with it as the goal and tell them in one short sentence to go ahead. Otherwise ask in one line what they will show. If you have no browser_teach tool, say in one line that you have no browser here to learn in.",
         };
       case "brain":
         return this.brain(args, agent, reply, who);

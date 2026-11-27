@@ -2,11 +2,11 @@
 // (docs/superpowers/specs/2026-11-01-hub-commands-design.md). Browser-safe: the hub parses with it, the web UI lists.
 
 /** The hub's commands, in the order the composer lists them. */
-export const HUB_COMMANDS = ["task", "goal", "schedule", "brain", "effort", "archive"] as const;
+export const HUB_COMMANDS = ["task", "goal", "schedule", "learn", "brain", "effort", "archive"] as const;
 export type HubCommand = (typeof HUB_COMMANDS)[number];
 
 /** The ones whose words come after the name: choosing one puts it in the field; the others are sent at once. */
-export const COMMANDS_WITH_WORDS: readonly HubCommand[] = ["task", "goal", "schedule"];
+export const COMMANDS_WITH_WORDS: readonly HubCommand[] = ["task", "goal", "schedule", "learn"];
 
 /** A goal's rounds before it pauses and says so; `/goal resume` gives it as many again. */
 export const GOAL_ROUNDS = 20;

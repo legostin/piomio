@@ -463,6 +463,8 @@ export default {
   "command.goal.args": "чего добиться",
   "command.schedule.description": "Настроить расписание или напоминание",
   "command.schedule.args": "когда и что",
+  "command.learn.description": "Научить агента задаче, показав её в браузере",
+  "command.learn.args": "что покажешь",
   "command.brain.description": "Выбрать интеллект агента",
   "command.effort.description": "Насколько глубоко агент думает",
   "command.archive.description": "Отправить агента в архив",
