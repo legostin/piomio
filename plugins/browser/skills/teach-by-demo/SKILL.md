@@ -149,6 +149,11 @@ export default async function ({ quantity = 2 }, browser) {
   amount, currency})` is `browser_request_send`: the person's card, or a request they approved ahead of time
   (`hub_skill_save` allow: `{request: "POST https://api.5vodi.kz/v1/orders*", maxAmount, currency}`). Both go only to
   the skill's sites. Cookies and tokens read `«hidden»` and still go along with `from` (a recorded request's `id`).
+- Your other tools are the third argument: `async function (input, browser, tools)`, then `await tools.<name>({…})`
+  with the tool's input, as in `code_execute` (an object back when the tool answers with JSON, else its text). Each
+  call is checked like your own; one that would ask runs without a card only when the person approved it for the skill
+  (`hub_skill_save` allow: `{tool, where}`). The browser stays `browser.*`: `tools.browser_…` is refused in a skill's
+  script.
 - Check what the instructions say to check and `throw new Error("…")` when it does not hold: you then take over.
   `browser.log(…)` lines come back with the result. Return what the person will want to hear (the total, the order
   number), not whole pages.

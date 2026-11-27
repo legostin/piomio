@@ -178,6 +178,9 @@ a script for the water skill" to ask for one, or the agent offers it after a run
   card: your sites and the clicks you allowed stay as you approved them, and the version before is kept. "Bring the
   old script back" restores it.
 
+- **Not only the browser.** A script may also call the agent's other tools: look something up in your mail, add an
+  event, write the result to a table. Those calls follow the same rules; see [Code mode](agents.md#code-mode).
+
 A script lives beside its skill, in `skills/<name>/script.js` in the hub's data folder.
 
 ### Who on the team has it

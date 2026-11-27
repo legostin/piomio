@@ -36,6 +36,7 @@ import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { accessView } from "../access/map.ts";
 import { CONTEXT_LIMITS, TRIGGERS_WATCH_TIMEOUT } from "../settings.ts";
 import { spendText } from "../spend.ts";
+import { CODE_CLOSED, CODE_KEEP_DEFAULT, CODE_MODES, codeModeOf } from "../code-mode.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
 
@@ -410,6 +411,7 @@ export function registerHubTools(hub: Hub): void {
           model: a.model,
           thinking: a.thinking,
           initiative: a.initiative,
+          ...(codeModeOf(a) !== "off" ? { codeMode: codeModeOf(a), ...(codeModeOf(a) === "first" ? { codeKeep: a.codeKeep ?? CODE_KEEP_DEFAULT } : {}) } : {}),
           skills: hub.skills.ownOf(a.id),
           source: a.source,
           default: a.id === def,
@@ -430,7 +432,9 @@ export function registerHubTools(hub: Hub): void {
         "brains is the ordered fallback list (see hub_brains_list), initiative 0 = only reacts, 1 = suggests, 2 = acts within rules. " +
         "machines binds the agent to computers (names or ids, see task_agents): it then thinks only with their brains, and while none of them is online its chat shows an error instead of moving elsewhere; [] unbinds. " +
         'To put an agent on one computer and one brain there (what the person means by "machine, then brain"), offer the computers with show_choices, then that computer\'s brains (hub_brains_list), and save machines: [computer] with brains: [that brain\'s ref]. ' +
-        'thinking: how it thinks per kind of work (chat, task, feed, schedule), each {preset: "fast"|"balanced"|"deep"} or an exact {model, effort, brain}; kinds left out follow chat, except that feed and schedule never take chat\'s deep (they think auto until deep is set for them).',
+        'thinking: how it thinks per kind of work (chat, task, feed, schedule), each {preset: "fast"|"balanced"|"deep"} or an exact {model, effort, brain}; kinds left out follow chat, except that feed and schedule never take chat\'s deep (they think auto until deep is set for them). ' +
+        'codeMode: whether the agent writes scripts that call its tools as functions (code_search, code_execute): "off"; "beside" adds the two tools to its list; "first" also takes most tools off its list (triggers, pages, channels, the web, connected services; it keeps answering the person, tasks, skills, memory and the browser), so it finds them by search and calls them from code: about half the context its tool list takes, more with many connected services. ' +
+        `codeKeep: tool name globs that stay on the list at "first" (default ${CODE_KEEP_DEFAULT.join(", ")}; e.g. add "web_*"). Set it when the person asks for code mode; it takes effect in the agent's next session.`,
       inputSchema: obj({
         id: { type: "string", description: "Existing agent id to edit; omit to create (derived from the name)" },
         ...PROFILE_FIELDS,
@@ -438,6 +442,8 @@ export function registerHubTools(hub: Hub): void {
         machines: { type: "array", items: { type: "string" }, description: "The only computers the agent thinks on; [] = anywhere" },
         model: { type: "string" },
         thinking: { type: "object", description: "Replaces the agent's choices per kind of work" },
+        codeMode: { type: "string", enum: CODE_MODES, description: "Code mode: off, beside (added to the tool list) or first (most tools found by search, called from code)" },
+        codeKeep: { type: "array", items: { type: "string" }, description: 'Tool name globs kept on the list at codeMode "first", e.g. ["browser_*", "memory_*", "web_*"]' },
       }),
     },
     (i) => {
@@ -466,6 +472,14 @@ export function registerHubTools(hub: Hub): void {
       }
       if (i.model !== undefined) patch.model = String(i.model) || undefined;
       if (i.thinking !== undefined) patch.thinking = parseThinking(i.thinking);
+      if (i.codeMode !== undefined) {
+        if (!CODE_MODES.includes(i.codeMode)) return text(`codeMode is one of ${CODE_MODES.join(", ")}.`, true);
+        patch.codeMode = i.codeMode === "off" ? undefined : i.codeMode;
+      }
+      if (i.codeKeep !== undefined) {
+        if (!Array.isArray(i.codeKeep) || i.codeKeep.some((g: unknown) => typeof g !== "string" || !/^[a-zA-Z0-9_*-]{1,64}$/.test(g))) return text('codeKeep is a list of tool name globs, e.g. ["browser_*", "web_*"].', true);
+        patch.codeKeep = [...new Set(i.codeKeep as string[])];
+      }
       const saved = hub.saveAgent({ ...patchAgent(prev ?? agentFromMarkdown(id, "", "user"), patch, hubLocale()), id, source: "user" }, "agent");
       return text(`Agent ${saved.id} ${prev ? "updated" : "created"}${saved.avatar ? ` (avatar: ${saved.avatar.color} ${saved.avatar.shape})` : ""}.`);
     },
@@ -1546,13 +1560,17 @@ export function registerHubTools(hub: Hub): void {
         "Save a skill the person taught you by showing it in the browser: after they showed a task with browser_teach and the recording arrived " +
         "(a note, and files in your workspace), once you retold the steps in a few lines and asked what was unclear; or to update a taught skill " +
         "after the person corrected it or showed a step again (pass replaces with its name: the old version and its pre-approvals are replaced). " +
+        "Also the way to keep a chain of tool calls the person wants again (a script you ran with code_execute that did the job): `script` is that " +
+        "chain with `tools.*`, `instructions` say what it is for, what its input is and what to check, and `sites` may be left out. " +
         "The person sees an approval card with the skill and every pre-approval, and nothing is saved without their tap. " +
         "`instructions` (markdown) is what you or a teammate will follow later, so write it complete: the goal; the inputs that change each time " +
         "(and where to get them or whom to ask); the steps, with the exact element names as browser_snapshot shows them; the checks (what to read " +
         "and compare, from the person's highlights); the consequential steps (browser_submit) and when each may run. " +
         "`allow` lists only what the person agreed to in their own words in this chat (\"yes, order without asking up to 3000\"); never add one they " +
         "did not say: each is a browser_submit on that site, on the control named `label` exactly as the snapshot names it (numbers in it may change), " +
-        "up to `maxAmount` in `currency` when money is involved; it then runs without a card. " +
+        "up to `maxAmount` in `currency` when money is involved; it then runs without a card. For another tool of yours that would ask (sending mail, " +
+        "creating an issue), an entry is {tool, where}: `where` is what its input must be, as narrow as what the person said " +
+        '({"to": "*@kolesa.kz"}, {"team": "ENG"}, {"amount": {"max": 3000}}, {"url": {"domain": "kolesa.kz"}}); the card shows it to them as written. ' +
         "`files` are paths in your workspace to keep with the skill, like downloads/teach-<id>.md. `sites`: the sites it works on. " +
         "`script` (optional): the skill's script, when its steps are the same every time (the teach-by-demo skill says how to write one); " +
         "an update without it keeps the script the skill has.",
@@ -1570,6 +1588,8 @@ export function registerHubTools(hub: Hub): void {
               type: "object",
               properties: {
                 site: { type: "string", description: "The site, e.g. 5vodi.kz" },
+                tool: { type: "string", description: "Instead of site and label: another tool of yours whose call may run without asking while its input is as `where` says" },
+                where: { type: "object", description: 'With tool: input field → what it must be: a value, a pattern with *, {"max": number} or {"domain": "site"}; a list in the input passes when every item does' },
                 label: { type: "string", description: "The control's name as browser_snapshot shows it, e.g. Оформить заказ" },
                 request: { type: "string", description: "Instead of site and label: the method and the address a request of yours may go to, * for what changes in the path, e.g. POST https://api.5vodi.kz/v1/orders*" },
                 maxAmount: { type: "number", description: "The largest amount it may cost, when money is involved" },
@@ -1578,7 +1598,7 @@ export function registerHubTools(hub: Hub): void {
             },
           },
           replaces: { type: "string", description: "The name of the taught skill this one updates" },
-          script: { type: "string", description: "The skill's script: export default async function (input, browser) { … }" },
+          script: { type: "string", description: "The skill's script: export default async function (input, browser, tools) { … }; browser.* for pages, tools.<name>({…}) for your other tools" },
         },
         ["name", "description", "instructions"],
       ),
@@ -1590,6 +1610,18 @@ export function registerHubTools(hub: Hub): void {
       const local = parseBrainRef(s.brainRef).machineId === "local";
       const check = () => checkSkillSave(skill, { skills: hub.skills, skillsDir, ...(local ? { workspace: hub.runner.workspacePath(s) } : {}) });
       check();
+      // A tool's pre-approval is for a tool the agent has, that a script may call, and whose card is not always the
+      // person's own; its limits are on fields the tool's input has.
+      for (const a of skill.allow) {
+        if (!a.tool) continue;
+        const tool = hub.gateway.availableFor(s).find((t) => t.name === a.tool);
+        if (!tool) return text(`Nothing was saved and nobody was asked: allow.tool ${a.tool} is not one of your tools (code_search finds them).`, true);
+        if (/^browser_(?:submit|request_send|request_change)$/.test(a.tool)) return text(`Nothing was saved and nobody was asked: ${a.tool} is pre-approved as a click ({site, label}) or a request ({request}), not as a tool.`, true);
+        if (CODE_CLOSED.test(a.tool) || OWN_CARD_TOOLS.has(a.tool)) return text(`Nothing was saved and nobody was asked: ${a.tool} is never pre-approved: it stays a step the person sees.`, true);
+        const props = (tool.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
+        const unknown = props && Object.keys(props).length ? (a.where ?? []).map((c) => c.field).filter((f) => !(f.split(".")[0] in props)) : [];
+        if (unknown.length) return text(`Nothing was saved and nobody was asked: ${a.tool} has no input field ${unknown.join(", ")} (it has ${Object.keys(props!).join(", ")}).`, true);
+      }
       if (skill.script !== undefined) {
         const wrong = await checkSkillScript(skill.script);
         if (wrong !== undefined) return text(`Nothing was saved and nobody was asked, the script does not compile: ${wrong}`, true);
@@ -1613,7 +1645,7 @@ export function registerHubTools(hub: Hub): void {
           rules: saved.rules.map((r) => r.id),
         });
         const allowed =
-          (saved.rules.length ? ` ${saved.rules.length} pre-approved click(s) now run without a card.` : "") +
+          (saved.rules.length ? ` ${saved.rules.length} pre-approved action(s) now run without a card.` : "") +
           (readSkillScript({ dir: saved.dir }) !== undefined ? ` It has a script: skill_run {name: "${skill.name}"} does its steps in one call.` : "");
         const whose = skill.replaces
           ? "Who has it stays the same."

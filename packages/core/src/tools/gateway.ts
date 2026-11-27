@@ -19,6 +19,7 @@ import { urlsIn, type EgressGiven, type EgressGuard } from "../policy/egress.ts"
 import { picturesIn, type Pictures } from "../policy/pictures.ts";
 import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { HUB_TOOL_PREFIX, HUB_TOOLS_FOR_EVERY_AGENT, OWN_CARD_TOOLS } from "./hub-tools.ts";
+import { CODE_TOOLS, codeModeOf, listedInCodeFirst } from "../code-mode.ts";
 
 export interface AgentLookup {
   get(id: string): AgentDef | undefined;
@@ -153,7 +154,21 @@ export class ToolGateway {
     return !!this.d.registry.get(name);
   }
 
+  /**
+   * The tools on the model's list. An agent that works "code first" (code-mode.ts) keeps the basics, what a script
+   * cannot call, the ones it keeps and its job's; the rest is still its own (availableFor), found by code_search and
+   * called from a script.
+   */
   listFor(s: SessionRow): ToolDescriptor[] {
+    const agent = this.agentFor(s);
+    const all = this.availableFor(s);
+    if (codeModeOf(agent) !== "first") return all;
+    const job = this.d.jobTools?.(s) ?? [];
+    return all.filter((t) => listedInCodeFirst(t, agent) || job.includes(t.name));
+  }
+
+  /** Every tool this session may call, listed to the model or not. */
+  availableFor(s: SessionRow): ToolDescriptor[] {
     const agent = this.agentFor(s);
     const skillRun = this.skillRun(s);
     return this.d.registry.list().filter((t) => this.visible(t, agent, s, skillRun));
@@ -186,6 +201,9 @@ export class ToolGateway {
    * person taught; a trigger's script has its agent's list alone, and never what draws in a chat: it has no chat.
    */
   private listed(t: ToolDescriptor, agent: AgentDef, s: SessionRow, trigger: boolean): boolean {
+    // Code mode's two tools are the agent's while the person has it on, whatever its list names; a trigger's script
+    // is a script already.
+    if (t.owner === "core" && CODE_TOOLS.includes(t.name)) return !trigger && codeModeOf(agent) !== "off";
     const onList = matchesAny(t.name, agent.tools.length ? agent.tools : ["*"]);
     if (trigger) return onList && !SHOW_TOOLS.includes(t.name);
     return onList || SHOW_TOOLS.includes(t.name) || (this.d.jobTools?.(s) ?? []).includes(t.name) || forEveryAgent(t);

@@ -778,6 +778,14 @@ export interface AgentDef {
    * `companion: true` in the frontmatter.
    */
   companion?: boolean;
+  /**
+   * Code mode (core/src/code-mode.ts): the agent writes scripts that call its tools as functions (code_search,
+   * code_execute). "beside": the two tools are added to its list; "first": the list keeps core's own tools and
+   * `codeKeep`, the rest is found by search and called from code. Unset: off.
+   */
+  codeMode?: "beside" | "first";
+  /** Tool name globs that stay on the list at codeMode "first"; unset: browser_* and memory_*. */
+  codeKeep?: string[];
 }
 
 /** One of an agent's project folders (AgentDef.folders). */

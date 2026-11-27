@@ -26,14 +26,17 @@ export interface SandboxJob {
   code: string;
   input: unknown;
   limits: SandboxLimits;
-  /** What the script is given: a trigger's `pio` (default), or a taught skill's `browser` (skill-scripts.ts). */
+  /** What the script is given: a trigger's `pio` (default), a taught skill's `browser` (skill-scripts.ts), or code mode's `tools` (code-mode.ts). */
   api?: ScriptApi;
   /** Only compile it and see that it exports a default function: nothing of it is called. */
   check?: boolean;
 }
 
-/** A trigger's script (`pio`, a verdict back) or a taught skill's (`browser`, any JSON back). */
-export type ScriptApi = "trigger" | "browser";
+/** A trigger's script (`pio`, a verdict back), a taught skill's (`browser`, any JSON back) or code mode's (`tools`, any JSON back). */
+export type ScriptApi = "trigger" | "browser" | "code";
+
+/** Names on `tools` that are not tools: its own two, and what JavaScript itself asks an object for. */
+export const TOOLS_OWN_NAMES = ["call", "log", "then", "toJSON", "constructor", "valueOf", "toString", "prototype", "inspect"] as const;
 
 /** What a skill's script calls on `browser`: each is a host call "browser.<name>" (skill-scripts.ts answers them). */
 export const BROWSER_METHODS = ["open", "click", "type", "press", "scroll", "back", "wait", "text", "page", "find", "submit", "upload", "fillSecret", "download", "requests", "fetch", "send"] as const;
@@ -155,31 +158,60 @@ const PRELUDE = String.raw`(() => {
     log(line.length > ${LOG_CHARS} ? slice(line, 0, ${LOG_CHARS + 1}) : line);
   };
   const browserMethods = ${JSON.stringify(BROWSER_METHODS)};
-  // A taught skill's script: its input and the agent's browser, nothing of pio.
-  const startBrowser = async (main, inputJson) => {
-    const browser = { log: (...a) => logLine(a) };
-    for (let i = 0; i < browserMethods.length; i++) {
-      const name = "browser." + browserMethods[i];
-      browser[browserMethods[i]] = async (...a) => {
-        // Where the script made the call: an answer that fails carries no line of the script by itself.
-        const stack = new Err().stack;
-        try {
-          return await call(name, a, name);
-        } catch (e) {
-          const at = typeof stack === "string" ? exec(/script\.mjs:\d+/, slice(stack, 0, 4000)) : null;
-          if (at && e !== null && typeof e === "object" && typeof e.message === "string" && !exec(/script\.mjs:\d+/, e.message)) e.message += " (at " + at[0] + ")";
-          throw e;
-        }
-      };
+  const toolsOwn = ${JSON.stringify(TOOLS_OWN_NAMES)};
+  const includes = (list, v) => {
+    for (let i = 0; i < list.length; i++) if (list[i] === v) return true;
+    return false;
+  };
+  // A host call as a function of the script's: name is the call ("browser.click", "tools.gmail_send").
+  const fn = (name) => async (...a) => {
+    // Where the script made the call: an answer that fails carries no line of the script by itself.
+    const stack = new Err().stack;
+    try {
+      return await call(name, a, name);
+    } catch (e) {
+      const at = typeof stack === "string" ? exec(/script\.mjs:\d+/, slice(stack, 0, 4000)) : null;
+      if (at && e !== null && typeof e === "object" && typeof e.message === "string" && !exec(/script\.mjs:\d+/, e.message)) e.message += " (at " + at[0] + ")";
+      throw e;
     }
-    const result = await main(parse(inputJson) ?? {}, Object.freeze(browser));
-    if (result === undefined) return undefined;
-    const json = stringify({ v: result });
+  };
+  const result = (v) => {
+    if (v === undefined) return undefined;
+    const json = stringify({ v });
     if (json.length > ${MAX_JSON_CHARS}) throw new Error("invalid result: over 1 MB of JSON");
     return json;
   };
+  // The agent's tools, each a function by its name (tools.web_search({…})); the hub says which names are tools.
+  const makeTools = () => {
+    const made = { __proto__: null };
+    const own = { __proto__: null, call: (name, input) => fn("tools." + toText(name))(input), log: (...a) => logLine(a) };
+    return new Proxy(Object.freeze({}), {
+      get: (_, key) => {
+        if (typeof key !== "string") return undefined;
+        if (includes(toolsOwn, key)) return own[key];
+        return (made[key] ??= fn("tools." + key));
+      },
+    });
+  };
+  const withConsole = () => {
+    const say = (...a) => logLine(a);
+    globalThis.console = Object.freeze({ log: say, info: say, warn: say, error: say, debug: say });
+  };
+  // A skill's script: its input, the agent's browser and the agent's tools, nothing of pio.
+  const startBrowser = async (main, inputJson) => {
+    const browser = { log: (...a) => logLine(a) };
+    for (let i = 0; i < browserMethods.length; i++) browser[browserMethods[i]] = fn("browser." + browserMethods[i]);
+    withConsole();
+    return result(await main(parse(inputJson) ?? {}, Object.freeze(browser), makeTools()));
+  };
+  // Code mode's script: its input and the agent's tools.
+  const startCode = async (main, inputJson) => {
+    withConsole();
+    return result(await main(parse(inputJson) ?? {}, makeTools()));
+  };
   const start = async (main, inputJson, api) => {
     if (api === "browser") return startBrowser(main, inputJson);
+    if (api === "code") return startCode(main, inputJson);
     const input = parse(inputJson) ?? {};
     const now = input.now;
     const pio = Object.freeze({
@@ -292,8 +324,8 @@ class Session {
   private runtime: QuickJSRuntime;
   private vm: QuickJSContext;
   private limits: SandboxLimits;
-  /** A taught skill's script: its calls are `browser.*` and what it returns is a result, not a verdict. */
-  private browser: boolean;
+  /** A trigger's script, a taught skill's (`browser.*`, any result) or code mode's (`tools.*`, any result). */
+  private api: ScriptApi;
   /** Handles this run holds, disposed in reverse at the end. */
   private handles: QuickJSHandle[] = [];
   /** pio calls waiting for the hub, by call number. */
@@ -319,7 +351,7 @@ class Session {
   constructor(job: SandboxJob, runtime: QuickJSRuntime) {
     this.job = job;
     this.limits = job.limits;
-    this.browser = job.api === "browser";
+    this.api = job.api ?? "trigger";
     this.runtime = runtime;
     runtime.setMemoryLimit(job.limits.memoryBytes);
     runtime.setMaxStackSize(QUICKJS_STACK_BYTES);
@@ -359,7 +391,7 @@ class Session {
     this.describeFn = this.keep(vm.getProp(fns, "describe"));
     this.kindOfFn = this.keep(vm.getProp(fns, "kindOf"));
 
-    const mod = this.guest(() => vm.evalCode(code, this.browser ? "script.mjs" : "trigger.mjs", { type: "module" }));
+    const mod = this.guest(() => vm.evalCode(code, this.api === "trigger" ? "trigger.mjs" : "script.mjs", { type: "module" }));
     if (mod.error) return this.failed(this.keep(mod.error));
     let ns = this.keep(mod.value);
     // A module with a top-level await evaluates to a promise of its namespace: it has to settle without pio.
@@ -375,7 +407,7 @@ class Session {
     if (vm.typeof(main) !== "function") return { error: "the script must export a default function" };
     if (this.job.check) return {};
     const inputH = this.keep(vm.newString(JSON.stringify(this.job.input ?? null)));
-    const apiH = this.keep(vm.newString(this.browser ? "browser" : "trigger"));
+    const apiH = this.keep(vm.newString(this.api));
     const called = this.guest(() => vm.callFunction(this.startFn!, vm.undefined, main, inputH, apiH));
     if (called.error) return this.failed(this.keep(called.error));
     this.promise = this.keep(called.value);
@@ -393,8 +425,8 @@ class Session {
       return d.handle;
     };
     if (this.ended) return refuse("the script has ended");
-    const shown = this.browser ? name : `pio ${name}`;
-    if (this.calls >= this.limits.maxCalls) return refuse(`too many ${this.browser ? "browser" : "pio"} calls (${this.limits.maxCalls})`);
+    const shown = this.api === "trigger" ? `pio ${name}` : name;
+    if (this.calls >= this.limits.maxCalls) return refuse(`too many ${this.api === "trigger" ? "pio" : this.api === "code" ? "tool" : "browser and tool"} calls (${this.limits.maxCalls})`);
     if (argsJson.length > MAX_JSON_CHARS) return refuse(`the arguments of ${shown} are over ${MAX_JSON_CHARS / 1024 / 1024} MB of JSON`);
     let args: unknown;
     try {
@@ -459,7 +491,7 @@ class Session {
     const v = this.keep(state.value);
     if (this.vm.typeof(v) === "undefined") return this.end({});
     const json = this.vm.typeof(v) === "string" ? this.vm.getString(v) : "";
-    const what = this.browser ? "result" : "verdict";
+    const what = this.api === "trigger" ? "verdict" : "result";
     if (json.length > MAX_JSON_CHARS) return this.end({ error: `invalid ${what}: over ${MAX_JSON_CHARS / 1024 / 1024} MB of JSON` });
     let wrapped: unknown;
     try {

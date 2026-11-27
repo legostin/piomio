@@ -351,6 +351,9 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
     // The editor showed the name and description in the reader's language: edits to a translated
     // agent go into that translation, so the other languages keep theirs.
     const base = hub.agents.get(id) ?? agentFromMarkdown(id, "", "user");
+    // Code mode as the form sends it: "off" (or anything else) clears it; the kept tools are name globs.
+    if ("codeMode" in b) b.codeMode = b.codeMode === "beside" || b.codeMode === "first" ? b.codeMode : undefined;
+    if ("codeKeep" in b) b.codeKeep = Array.isArray(b.codeKeep) ? [...new Set(b.codeKeep.map(String).filter((g) => /^[a-zA-Z0-9_*-]{1,64}$/.test(g)))] : undefined;
     const agent: AgentDef = b.markdown ? agentFromMarkdown(id, b.markdown, "user") : { ...patchAgent(base, b, requestLocale(req)), id, source: "user" };
     return hub.saveAgent(agent, "user");
   });

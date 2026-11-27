@@ -101,12 +101,13 @@ describe("a skill's script in the sandbox", () => {
   const sites = ["5vodi.kz"];
   afterAll(() => sandbox.stop());
 
-  it("gets its input and the browser, returns any JSON, and has nothing of pio", async () => {
+  it("gets its input, the browser and the agent's tools, returns any JSON, and has nothing of pio", async () => {
     const seen: string[] = [];
     const r = await sandbox.run(
-      `export default async function (input, browser, more) {
+      `export default async function (input, browser, tools, more) {
          const out = await browser.click({ name: "x" });
-         return { n: input.n + 1, out, keys: Object.keys(browser).sort(), frozen: Object.isFrozen(browser), more: typeof more, pio: typeof pio, host: typeof __host };
+         const found = await tools.crm_find({ id: 7 });
+         return { n: input.n + 1, out, found, keys: Object.keys(browser).sort(), frozen: Object.isFrozen(browser), more: typeof more, pio: typeof pio, host: typeof __host };
        }`,
       { n: 1 },
       async (name, args) => {
@@ -117,10 +118,11 @@ describe("a skill's script in the sandbox", () => {
       "browser",
     );
     expect(r.error).toBeUndefined();
-    expect(seen).toEqual(['browser.click [{"name":"x"}]']);
+    expect(seen).toEqual(['browser.click [{"name":"x"}]', 'tools.crm_find [{"id":7}]']);
     expect(r.value).toEqual({
       n: 2,
       out: "clicked",
+      found: "clicked",
       keys: ["back", "click", "download", "fetch", "fillSecret", "find", "log", "open", "page", "press", "requests", "scroll", "send", "submit", "text", "type", "upload", "wait"],
       frozen: true,
       more: "undefined",
@@ -317,7 +319,7 @@ describe("a skill's script in the sandbox", () => {
   it("holds a run to its limits", async () => {
     const b = fakeBrowser(SHOP);
     const few = await runSkillScript("export default async (i, browser) => { for (;;) await browser.back() }", {}, { call: b.call, sites, sandbox, limits: { ...SKILL_SCRIPT_LIMITS, maxCalls: 3 } });
-    expect(few.error).toMatch(/too many browser calls \(3\)/);
+    expect(few.error).toMatch(/too many browser and tool calls \(3\)/);
     expect(b.calls).toHaveLength(3);
     const spin = await runSkillScript("export default async () => { for (;;) {} }", {}, { call: b.call, sites, sandbox, limits: { ...SKILL_SCRIPT_LIMITS, cpuMs: 100 } });
     expect(spin.ok).toBe(false);

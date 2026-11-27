@@ -49,8 +49,8 @@ export function registerSkillScriptTools(d: SkillScriptToolDeps): void {
       // What comes back was read from pages.
       source: true,
       description:
-        "Run the script of a taught skill (skill_load says when it has one): the hub does the skill's browser steps itself, as you would with " +
-        "browser_click and the rest, in one call. `input` is what changes this time, as the skill's Inputs name it. It returns what the script " +
+        "Run the script of a skill that has one (skill_load says when; code_search lists yours): the hub does the skill's steps itself, as you " +
+        "would with the browser's tools and your others, in one call. `input` is what changes this time, as the skill's Inputs name it. It returns what the script " +
         "returned, or where it stopped and why: then finish the task by hand from that point and fix the script with skill_script_save. " +
         "Every step is checked like your own: consequential ones still need the skill's approved limit or the person's tap.",
       inputSchema: {
@@ -88,7 +88,8 @@ export function registerSkillScriptTools(d: SkillScriptToolDeps): void {
       owner: "core",
       effect: "local-write",
       description:
-        "Write or fix the script of a taught skill you have: JavaScript that does the skill's mechanical browser steps, so later runs take one " +
+        "Write or fix the script of a taught skill you have: JavaScript that does the skill's mechanical steps (browser.* on its sites, tools.<name>({…}) " +
+        "for your other tools, as in code_execute), so later runs take one " +
         "call (skill_run). Write one when the steps are the same every time and a run by hand has proven them; fix it after a run stopped and " +
         "you finished by hand. `script` is the whole script; `note` one line on what changed and why. The version before stays: {name, restore: true} " +
         "brings it back. Needs no card: the skill's sites and the clicks it may do without asking stay as the person approved them " +
@@ -97,7 +98,7 @@ export function registerSkillScriptTools(d: SkillScriptToolDeps): void {
         type: "object",
         properties: {
           name: { type: "string", description: "The taught skill's name" },
-          script: { type: "string", description: "The whole script: export default async function (input, browser) { … }" },
+          script: { type: "string", description: "The whole script: export default async function (input, browser, tools) { … }" },
           note: { type: "string", description: "One line: what changed and why" },
           restore: { type: "boolean", description: "Bring the previous version back instead of saving a new one" },
         },
