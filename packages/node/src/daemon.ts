@@ -125,7 +125,8 @@ export function createNodeDaemon(o: NodeDaemonOptions): NodeDaemon {
     if (setup.filesName) hubName = setup.filesName;
     if (setup.files && !filesOn && o.files !== false) {
       filesOn = true;
-      files.start(4_000);
+      // Only while the hub reads this journal (every few seconds while connected): offline, the folder is left alone.
+      files.start(4_000, { whileAskedMs: 60_000 });
     }
   };
   return {
