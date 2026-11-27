@@ -51,8 +51,36 @@ export interface TeachState {
   startedAt: number;
   /** Steps recorded so far. */
   steps: number;
+  /** Grows with every change to the steps: the list of them reloads on it. */
+  rev: number;
   /** The hub can write down speech: the microphone is offered. */
   speech: boolean;
+}
+
+/** What a framed place means, when the person says so with one tap (server/recorder.ts). */
+export type Mark = "check" | "varies" | "avoid" | "wait" | "result";
+export const MARKS: Mark[] = ["check", "varies", "avoid", "wait", "result"];
+
+/** A step of the recording going on, as GET teach/steps lists it (server/recorder.ts: LiveStep). */
+export interface LessonStep {
+  /** Names the step in POST teach/step. */
+  id: number;
+  kind: "page" | "click" | "type" | "key" | "tab" | "scroll" | "highlight" | "file" | "say";
+  /** The person's comment on the step. */
+  note?: string;
+  mark?: Mark;
+  /** What a frame holds, or what the person said. */
+  text?: string;
+  url?: string;
+  title?: string;
+  target?: { role: string; name: string; frame?: string };
+  count?: number;
+  button?: "right" | "middle";
+  value?: string;
+  secret?: boolean;
+  key?: string;
+  action?: "new" | "switch" | "close";
+  names?: string[];
 }
 
 /** The backend's "activity" event: sent on every change, whether or not anyone watches. */

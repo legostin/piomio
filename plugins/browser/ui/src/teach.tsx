@@ -1,14 +1,17 @@
 // Teach mode in the live view: while the person shows an agent a task, a thin bar says so (a red dot, what is being
 // shown, the steps so far) and holds the microphone, Highlight, Done and Cancel. The voice goes to the hub in short
 // recordings (voice.ts) and is written down there; Done waits for the last words before it ends the demonstration.
+// While the note of a frame is open (note.tsx) the words go into that note instead. The count of steps opens the list
+// of them (steps.tsx).
 
 import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
-import { Mic, MicOff, X } from "lucide-react";
+import { ChevronRight, Mic, MicOff, X } from "lucide-react";
 import { Button, Spinner } from "@piomio/ui";
 import { IconButton } from "./chrome.tsx";
 import { HighlightButton, type Highlight } from "./highlight.tsx";
 import { host, send, t, type TeachState } from "./host.ts";
+import type { NoteLink } from "./note.tsx";
 import { blobToBase64, startVoice, VoiceError, type Segment, type Voice } from "./voice.ts";
 
 /** How long a hint (no voice, the mic not allowed) stays in the bar. */
@@ -41,8 +44,11 @@ function problemText(e: unknown): string {
   return t("ui.teach.voiceFailed", { detail: (e as Error)?.message || t("ui.error.generic") });
 }
 
-/** A demonstration's voice and its Done / Cancel; runs while the view is open (the bar shows in the large view). */
-export function useLesson(teach: TeachState | null): Lesson {
+/**
+ * A demonstration's voice and its Done / Cancel; runs while the view is open (the bar shows in the large view).
+ * `link`: the note of a frame that takes the words while it is open, and the notes still being saved.
+ */
+export function useLesson(teach: TeachState | null, link: MutableRefObject<NoteLink>): Lesson {
   const id = teach?.id ?? null;
   const speech = !!teach?.speech;
   const [want, setWant] = useState(false);
@@ -94,13 +100,18 @@ export function useLesson(teach: TeachState | null): Lesson {
     const post = async (seg: Segment) => {
       try {
         const data = await blobToBase64(seg.blob);
+        // Words that began while a frame's note was open are that note's: the hub only writes them down.
+        const d = link.current.target;
+        const note = d && seg.wordsAt >= d.since && (d.until === null || seg.wordsAt < d.until) ? d : null;
         // durationMs: how long ago the words began; the hub places them at now - durationMs.
         const r = await host.plugin.http<{ text?: string; error?: string }>("POST", "teach/speech", {
           data,
           mimeType: seg.mimeType,
           durationMs: Math.max(0, Date.now() - seg.wordsAt),
+          ...(note ? { only: true } : {}),
         });
         if (r && typeof r === "object" && r.error) fail(t("ui.teach.voiceFailed", { detail: r.error }));
+        else if (note && r?.text) note.put(r.text);
       } catch (e) {
         fail(t("ui.teach.voiceFailed", { detail: (e as Error)?.message || t("ui.error.generic") }));
       }
@@ -149,6 +160,9 @@ export function useLesson(teach: TeachState | null): Lesson {
         // The words still being written down land before the demonstration ends.
         const left = [...uploads.current];
         if (left.length) await Promise.race([Promise.allSettled(left), new Promise((r) => setTimeout(r, UPLOAD_WAIT_MS))]);
+        // So do the notes still being saved (the last words may have gone into one).
+        const notes = [...link.current.saves];
+        if (notes.length) await Promise.race([Promise.allSettled(notes), new Promise((r) => setTimeout(r, UPLOAD_WAIT_MS))]);
         setWant(false);
         send({ type: "teach", action: "done" });
       })();
@@ -180,7 +194,8 @@ function MicButton({ lesson }: { lesson: Lesson }) {
 }
 
 /** The bar on top of the page while the person is showing (desktop: under the toolbar; phone: under the address). */
-export function TeachBar({ teach, lesson, hl, phone }: { teach: TeachState; lesson: Lesson; hl: Highlight; phone: boolean }) {
+export function TeachBar(props: { teach: TeachState; lesson: Lesson; hl: Highlight; phone: boolean; stepsOpen: boolean; onSteps(): void }) {
+  const { teach, lesson, hl, phone } = props;
   const [confirm, setConfirm] = useState(false);
   useEffect(() => {
     if (!confirm) return;
@@ -191,7 +206,6 @@ export function TeachBar({ teach, lesson, hl, phone }: { teach: TeachState; less
   const goal = teach.goal.trim();
   const title = goal ? t("ui.teach.showing", { goal }) : t("ui.teach.showingAgent");
   const tip = lesson.hint ?? (lesson.mic === "on" ? t("ui.teach.say") : null);
-  const sub = [t("ui.teach.steps", { count: teach.steps }), tip].filter(Boolean).join(" · ");
   // Nothing shown yet: nothing to lose. Otherwise the first press asks.
   const cancel = () => (teach.steps > 0 && !confirm ? setConfirm(true) : lesson.cancel());
 
@@ -200,7 +214,13 @@ export function TeachBar({ teach, lesson, hl, phone }: { teach: TeachState; less
       <span className="obb-rec" aria-hidden />
       <div className="obb-teach-text" title={goal || undefined}>
         <span className="obb-teach-goal obb-trunc">{title}</span>
-        <span className="obb-teach-sub obb-trunc">{sub}</span>
+        <span className="obb-teach-sub obb-trunc">
+          <button type="button" className="obb-teach-steps" aria-expanded={props.stepsOpen} title={t("ui.steps.open")} onClick={props.onSteps}>
+            {t("ui.teach.steps", { count: teach.steps })}
+            <ChevronRight aria-hidden />
+          </button>
+          {tip && <span> · {tip}</span>}
+        </span>
       </div>
       {teach.speech && <MicButton lesson={lesson} />}
       <HighlightButton hl={hl} />

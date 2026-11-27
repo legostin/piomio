@@ -1,7 +1,8 @@
 // The browser's live view: the compact picture in the corner window, and in the large view a browser — tabs, a
 // toolbar, the address bar, history — laid out like a desktop browser on a wide view and like a phone browser
 // (address on top, buttons at the bottom) on a narrow one. While the person shows an agent a task, the teach bar sits
-// on top of the page (teach.tsx), and Highlight frames a part of the picture (highlight.tsx).
+// on top of the page (teach.tsx) with the list of the steps so far (steps.tsx), and Highlight frames a part of the
+// picture (highlight.tsx) and takes a comment on it (note.tsx).
 
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -14,9 +15,11 @@ import { HighlightButton, HighlightLayer, useHighlight } from "./highlight.tsx";
 import { HistoryPanel } from "./history.tsx";
 import { errorText, host, isBlank, send, t, toolLabel, touchScreen, viewerId, type BrowserState } from "./host.ts";
 import { NewTabPage } from "./newtab.tsx";
+import { newNoteLink } from "./note.tsx";
 import { Omnibox } from "./omnibox.tsx";
 import { Screen, useBoxSize, type Keyboard } from "./screen.tsx";
 import { addStyles } from "./styles.ts";
+import { StepsPanel } from "./steps.tsx";
 import { TabStrip, TabSwitcher } from "./tabs.tsx";
 import { TeachBar, useLesson } from "./teach.tsx";
 import { TrafficNote } from "./traffic.tsx";
@@ -31,7 +34,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
   const [hasFrame, setHasFrame] = useState(false);
   const [frameSize, setFrameSize] = useState({ w: 1280, h: 800 });
   const [error, setError] = useState<string | null>(null);
-  const [panel, setPanel] = useState<null | "history" | "tabs">(null);
+  const [panel, setPanel] = useState<null | "history" | "tabs" | "steps">(null);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   // The latest frame: a new <img> (the layout changes between the compact and the large view) shows it at once.
@@ -46,7 +49,9 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
   const phone = (width || (typeof window === "undefined" ? PHONE_WIDTH : window.innerWidth)) < PHONE_WIDTH;
   const touch = touchScreen();
   const teach = state?.teach ?? null;
-  const lesson = useLesson(teach);
+  // What the notes on frames share with the lesson: its voice goes into an open note, its Done waits for their saves.
+  const noteLink = useRef(newNoteLink());
+  const lesson = useLesson(teach, noteLink);
 
   useEffect(() => {
     send({ type: "watch", on: true, id: viewerId, refresh: true });
@@ -82,6 +87,8 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
   // A demonstration starts in the large view, so the person can act at once.
   useEffect(() => {
     if (teach && !expanded) expand();
+    // The list of steps is the lesson's: it goes when the lesson does.
+    if (!teach) setPanel((p) => (p === "steps" ? null : p));
   }, [teach?.id]);
 
   useEffect(() => {
@@ -155,7 +162,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
       screen(
         <>
           {blank && <NewTabPage state={state} search={search} />}
-          {(hl.on || hl.sent) && <HighlightLayer hl={hl} imgRef={imgRef} />}
+          {(hl.on || hl.sent || hl.note) && <HighlightLayer hl={hl} imgRef={imgRef} link={noteLink} voice={lesson.mic === "on"} onError={setError} />}
         </>,
       )
     );
@@ -188,7 +195,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
         : t("ui.status.agent");
   const teachBar = (
     <>
-      {teach && <TeachBar teach={teach} lesson={lesson} hl={hl} phone={phone} />}
+      {teach && <TeachBar teach={teach} lesson={lesson} hl={hl} phone={phone} stepsOpen={panel === "steps"} onSteps={() => setPanel(panel === "steps" ? null : "steps")} />}
       <FileAsk phone={phone} />
     </>
   );
@@ -244,6 +251,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
           </div>
           {panel === "tabs" && <TabSwitcher tabs={tabs} onClose={() => setPanel(null)} onHistory={() => setPanel("history")} />}
           {panel === "history" && <HistoryPanel sheet onClose={() => setPanel(null)} />}
+          {panel === "steps" && teach && <StepsPanel sheet teach={teach} onClose={() => setPanel(null)} />}
         </div>
       </div>
     );
@@ -272,6 +280,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
         <div className="obb-body">
           {body(true)}
           {panel === "history" && <HistoryPanel sheet={false} onClose={() => setPanel(null)} />}
+          {panel === "steps" && teach && <StepsPanel sheet={false} teach={teach} onClose={() => setPanel(null)} />}
         </div>
         <div className="obb-foot">
           {state?.running && (control || teach ? <Badge tone="warning">{status}</Badge> : state.busy ? <Badge tone="info">{status}</Badge> : <Badge tone="neutral">{status}</Badge>)}

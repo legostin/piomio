@@ -1,13 +1,16 @@
 // Highlight: the person draws a frame over the live picture to point at what matters ("look here"). While the mode is
 // on, a layer over the picture takes the drag, so nothing reaches the page or the zoom; on release the frame goes to
-// the hub in the picture's 0..1 coordinates (as input does, the zoom included) and the mode ends. The frame flashes
-// once the hub has taken it.
+// the hub in the picture's 0..1 coordinates (as input does, the zoom included) and the mode ends. Once the hub has
+// taken it, the frame stays with a card next to it for a comment and for what the place means (note.tsx); a hub that
+// names no step for the frame gets the old flash.
 
 import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject, PointerEvent as ReactPointerEvent, SyntheticEvent } from "react";
 import { SquareDashedMousePointer } from "lucide-react";
 import { IconButton } from "./chrome.tsx";
-import { host, send, t } from "./host.ts";
+import { host, send, t, touchScreen } from "./host.ts";
+import { FrameNote, type NoteLink } from "./note.tsx";
+import type { Box } from "./note-place.ts";
 
 export interface Frame {
   x0: number;
@@ -50,27 +53,39 @@ export interface Highlight {
   /** The frame sent last, until it has flashed (ok) or the hub said nothing for a while. */
   sent: (Frame & { ok: boolean }) | null;
   submit(f: Frame): void;
+  /** The frame the hub has taken, while its note is open: `step` names it there, `since` is when it was drawn. */
+  note: { step: number; frame: Frame; since: number } | null;
+  closeNote(): void;
 }
 
 /** The highlight mode of one view; `onError` shows a line in the view. */
 export function useHighlight(allowed: boolean, onError: (text: string) => void): Highlight {
   const [on, setOn] = useState(false);
   const [sent, setSent] = useState<(Frame & { ok: boolean }) | null>(null);
+  const [note, setNote] = useState<Highlight["note"]>(null);
   const pending = useRef(false);
+  /** The frame sent last and when it was drawn. */
+  const last = useRef<{ frame: Frame; at: number } | null>(null);
   const errorRef = useRef(onError);
   errorRef.current = onError;
 
   useEffect(() => {
-    if (!allowed) setOn(false);
+    if (allowed) return;
+    setOn(false);
+    setNote(null);
   }, [allowed]);
 
   // The hub's answer to the frame this view sent (another open view of the browser ignores it).
   useEffect(
     () =>
-      host.plugin.on("highlight", (r: { ok?: boolean; text?: string }) => {
+      host.plugin.on("highlight", (r: { ok?: boolean; text?: string; step?: number }) => {
         if (!pending.current) return;
         pending.current = false;
-        if (r?.ok) setSent((s) => (s ? { ...s, ok: true } : s));
+        const drawn = last.current;
+        if (r?.ok && typeof r.step === "number" && r.step > 0 && drawn) {
+          setSent(null);
+          setNote({ step: r.step, frame: drawn.frame, since: drawn.at });
+        } else if (r?.ok) setSent((s) => (s ? { ...s, ok: true } : s));
         else {
           setSent(null);
           errorRef.current(t("ui.highlight.failed"));
@@ -100,9 +115,13 @@ export function useHighlight(allowed: boolean, onError: (text: string) => void):
     submit: (f) => {
       send({ type: "highlight", ...f });
       pending.current = true;
+      last.current = { frame: f, at: Date.now() };
+      setNote(null);
       setSent({ ...f, ok: false });
       setOn(false);
     },
+    note: allowed ? note : null,
+    closeNote: () => setNote(null),
   };
 }
 
@@ -118,12 +137,46 @@ export function HighlightButton({ hl }: { hl: Highlight }) {
 
 const stop = (e: SyntheticEvent) => e.stopPropagation();
 
-/** Over the picture area: takes the drag while the mode is on, shows the frame while it flashes. */
-export function HighlightLayer({ hl, imgRef }: { hl: Highlight; imgRef: MutableRefObject<HTMLImageElement | null> }) {
+/** Over the picture area: takes the drag while the mode is on, shows the frame while it flashes or has its note open. */
+export function HighlightLayer(props: {
+  hl: Highlight;
+  imgRef: MutableRefObject<HTMLImageElement | null>;
+  /** The notes' link to the lesson (its voice, its Done). */
+  link: MutableRefObject<NoteLink>;
+  /** The lesson's microphone is on. */
+  voice: boolean;
+  onError(text: string): void;
+}) {
+  const { hl, imgRef } = props;
   const layerRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<{ id: number; a: Point; b: Point } | null>(null);
   const dragRef = useRef(drag);
   dragRef.current = drag;
+  const [, redraw] = useState(0);
+  const noteStep = hl.note?.step ?? null;
+
+  // The note stays for a while: its frame follows the picture (the view resized, the zoom, the phone's keyboard).
+  useEffect(() => {
+    if (noteStep === null) return;
+    let seen = "";
+    const look = () => {
+      const img = imgRef.current?.getBoundingClientRect();
+      const layer = layerRef.current?.getBoundingClientRect();
+      const now = img && layer ? [img.left, img.top, img.width, img.height, layer.left, layer.top, layer.width, layer.height].map(Math.round).join() : "";
+      if (now === seen) return;
+      seen = now;
+      redraw((n) => n + 1);
+    };
+    look();
+    const timer = setInterval(look, 200);
+    return () => clearInterval(timer);
+  }, [noteStep]);
+
+  const closeNote = (keys: boolean) => {
+    hl.closeNote();
+    // Closed from the keyboard or a button: the keys are the page's again (a press elsewhere takes them itself).
+    if (keys && !touchScreen()) imgRef.current?.closest<HTMLElement>(".obb-screen")?.focus();
+  };
 
   useEffect(() => {
     if (!hl.on) setDrag(null);
@@ -187,8 +240,14 @@ export function HighlightLayer({ hl, imgRef }: { hl: Highlight; imgRef: MutableR
   };
 
   // The frame in the layer's own pixels, from the picture's box as it is now.
-  const shown: (Frame & { cls: string }) | null = drag ? { ...frameOf(drag.a, drag.b), cls: "" } : hl.sent ? { ...hl.sent, cls: hl.sent.ok ? " is-ok" : " is-sent" } : null;
-  let box: { left: number; top: number; width: number; height: number } | null = null;
+  const shown: (Frame & { cls: string }) | null = drag
+    ? { ...frameOf(drag.a, drag.b), cls: "" }
+    : hl.sent
+      ? { ...hl.sent, cls: hl.sent.ok ? " is-ok" : " is-sent" }
+      : hl.note
+        ? { ...hl.note.frame, cls: " is-note" }
+        : null;
+  let box: Box | null = null;
   const img = imgRef.current?.getBoundingClientRect();
   const layer = layerRef.current?.getBoundingClientRect();
   if (shown && img && layer && img.width && img.height) {
@@ -220,6 +279,19 @@ export function HighlightLayer({ hl, imgRef }: { hl: Highlight; imgRef: MutableR
     >
       {hl.on && !drag && <div className="obb-hl-hint">{t("ui.highlight.hint")}</div>}
       {shown && box && <div className={`obb-hl-frame${shown.cls}`} style={box} />}
+      {hl.note && !drag && !hl.sent && (
+        <FrameNote
+          key={hl.note.step}
+          step={hl.note.step}
+          since={hl.note.since}
+          voice={props.voice}
+          link={props.link}
+          frame={box}
+          layer={layer ? { width: layer.width, height: layer.height } : null}
+          onClose={closeNote}
+          onError={props.onError}
+        />
+      )}
     </div>
   );
 }
