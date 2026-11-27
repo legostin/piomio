@@ -40,6 +40,17 @@ describe("network permission card", () => {
     const overdue = render({ ...part, ask: { ...part.ask!, networkExpiresAt: new Date(Date.now() - 1).toISOString() } });
     expect(overdue).not.toMatch(/<button[^>]*>Allow once<\/button>/); expect(overdue).toContain("Request again");
   });
+  it("a host auto mode stopped shows the reason and one Allow, never the question's always or deadline", () => {
+    const stopped = { ...part, status: "blocked" as const, auto: { rule: "exfiltration", reason: "The task does not need this site." } };
+    const html = render(stopped);
+    for (const word of ["new.example", "443", "Developer", "Auto mode stopped it", "The task does not need this site.", "current session", ">Allow<"]) expect(html).toContain(word);
+    expect(html.match(/<button/g)).toHaveLength(1);
+    for (const word of ["Always allow", "Deny", "10 minutes", "stopped by auto mode"]) expect(html).not.toContain(word);
+    const allowed = render({ ...stopped, status: "approved" });
+    expect(allowed).toContain("The task does not need this site.");
+    expect(allowed).toContain("approved");
+    expect(allowed).not.toContain("<button");
+  });
   it("explains a disconnected client and never offers late permission", () => {
     const html = render({ ...part, status: "expired", ask: { ...part.ask!, networkClosedReason: "connection_closed" } });
     expect(html).toContain("connection closed"); expect(html).not.toMatch(/<button[^>]*>Allow once<\/button>/);

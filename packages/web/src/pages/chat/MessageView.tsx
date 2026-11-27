@@ -1,7 +1,7 @@
 // Rendering of one message and its parts. Plugins can override whole messages (chat.message) or tool cards
 // (chat.toolResult); overrides run inside an error boundary that falls back to the core rendering.
 
-import { ApprovalActions } from "./ApprovalActions";
+import { AllowStopped, ApprovalActions } from "./ApprovalActions";
 import { NetworkApprovalCard } from "./NetworkApprovalCard";
 import { memo, useState } from "react";
 import { Check, CircleAlert, CornerUpLeft, FilePen, FileText, Mic, Play, ShieldAlert, SquareTerminal, X } from "lucide-react";
@@ -9,7 +9,7 @@ import type { AgentDef, ApprovalStatus, Message, MessagePart } from "@piomio/sha
 import { groupParts } from "../../lib/parts";
 import { fileSize, formatDuration, formatTime } from "../../lib/format";
 import { useStore } from "../../lib/store";
-import { api, errorText } from "../../lib/api";
+import { errorText } from "../../lib/api";
 import { selectReply } from "../../state/replies";
 import { jumpToMessage } from "../../state/reply-navigation";
 import { toast } from "../../state/toast";
@@ -19,7 +19,7 @@ import { fileHref, mediaKind, partKey } from "../../lib/gallery";
 import { previewSrc, useCachedImage } from "../../lib/media-cache";
 import { toolCall } from "../../lib/approval-summary";
 import { Markdown } from "../../components/markdown";
-import { Badge, Button, cx } from "../../components/ui";
+import { Badge, cx } from "../../components/ui";
 import { AgentAvatar } from "../../components/AgentAvatar";
 import { PluginBoundary } from "../../plugins/boundary";
 import { pickMessageRenderer, pickToolRenderer } from "../../plugins/registry";
@@ -93,34 +93,6 @@ function AskedLine({ part }: { part: Extract<MessagePart, { type: "approval" }> 
         <span className="text-muted/70"> · {t(failed ? "message.approval.askedFailed" : "message.approval.asked")}</span>
       </span>
     </button>
-  );
-}
-
-/** "Allow" on an action auto mode stopped: it goes through once, when the agent runs the same call again. */
-function AllowStopped({ approvalId }: { approvalId: string }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const allow = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.post(`/api/approvals/${encodeURIComponent(approvalId)}`, { decision: "approve" });
-    } catch (e) {
-      setError(t("message.approval.failed", { error: errorText(e) }));
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="mt-3 flex flex-col gap-1.5">
-      <Button variant="secondary" loading={busy} disabled={busy} onClick={() => void allow()}>
-        {t("message.approval.approve")}
-      </Button>
-      {error && (
-        <div className="text-xs break-words text-danger" role="alert">
-          {error}
-        </div>
-      )}
-    </div>
   );
 }
 

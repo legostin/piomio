@@ -46,3 +46,34 @@ export function ApprovalActions({ approvalId, network = false, always = true }: 
   );
 }
 
+
+/**
+ * "Allow" on an action auto mode stopped: the agent hears it may try again. A call goes through once, when the agent
+ * runs it again; a network host is open to that session from then on.
+ */
+export function AllowStopped({ approvalId }: { approvalId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const allow = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/api/approvals/${encodeURIComponent(approvalId)}`, { decision: "approve" });
+    } catch (e) {
+      setError(t("message.approval.failed", { error: errorText(e) }));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-3 flex flex-col gap-1.5">
+      <Button variant="secondary" loading={busy} disabled={busy} onClick={() => void allow()}>
+        {t("message.approval.approve")}
+      </Button>
+      {error && (
+        <div className="text-xs break-words text-danger" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}

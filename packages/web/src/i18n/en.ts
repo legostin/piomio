@@ -20,6 +20,7 @@ export default {
   "message.network.retryHint": "Ask the agent for a new request in its current session. This does not approve access or replay the old connection.",
   "message.network.retryRequested": "The request was sent to the agent. It will check access again.",
   "message.network.scope": "Allow once covers this host and port in the current session. A live request gives you up to 10 minutes; a closed connection cannot be resumed.",
+  "message.network.stoppedScope": "Allow opens this host and port to the agent's current session. The agent hears it and can try again.",
   "message.network.always": "Always adds this host to the allowlist for all agents and ports. External actions still need their own permission.",
   "message.network.listed": "This host is on the allowlist, but the agent has read outside content: allowing lets this session send data there.",
   "message.network.ip": "This is an IP address. Its owner may change; allowing it always trusts that address for all agents.",
