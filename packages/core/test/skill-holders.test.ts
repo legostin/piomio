@@ -11,6 +11,7 @@ import { Hub, loadConfig } from "../src/index.ts";
 import { agentFromMarkdown } from "../src/agents.ts";
 import { openDb } from "../src/db.ts";
 import { hasSkill, SkillHolders, SkillIndex } from "../src/skills.ts";
+import { SKILL_SCRIPT_FILE } from "../src/skill-scripts.ts";
 import { buildSystemPrompt } from "../src/prompt.ts";
 
 const agent = (id: string, skills: string[] = ["*"]) => ({ id, skills });
@@ -179,6 +180,24 @@ describe("skills of their own on the hub", () => {
     const skills = await (await fetch(base + "/api/skills", { headers: { origin: base, cookie } })).json();
     expect(skills.find((s: any) => s.name === "insta-post").agents).toEqual(["smm"]);
     expect(skills.find((s: any) => s.name === "web-search").agents).toEqual([]);
+    expect(skills.find((s: any) => s.name === "insta-post").script).toBe(false);
+  });
+
+  it("the web's list says which taught skill has a script (the trigger form's switch for runs with no model)", async () => {
+    const dir = (n: string) => join(hub.config.dataDir, "skills", n);
+    for (const n of ["weekly-mail", "shown-only"]) {
+      mkdirSync(dir(n), { recursive: true });
+      writeFileSync(join(dir(n), "SKILL.md"), `---\nname: ${n}\ndescription: ${n} things\ntaught: true\n---\nDo ${n}.`);
+    }
+    writeFileSync(join(dir("weekly-mail"), SKILL_SCRIPT_FILE), "return 'sent';");
+    // A script beside a skill nobody taught is not one a trigger runs.
+    writeFileSync(join(dir("web-search"), SKILL_SCRIPT_FILE), "return 1;");
+    hub.reindex();
+    const skills = await (await fetch(base + "/api/skills", { headers: { origin: base, cookie } })).json();
+    const of = (n: string) => skills.find((s: any) => s.name === n);
+    expect(of("weekly-mail")).toMatchObject({ taught: true, script: true });
+    expect(of("shown-only")).toMatchObject({ taught: true, script: false });
+    expect(of("web-search")).toMatchObject({ taught: false, script: false });
   });
 
   it("an agent who leaves the team gives its only skill back to everyone", () => {
