@@ -164,6 +164,25 @@ export function settingsPatch(orig: TriggerSettings, allowPrivate: boolean, time
   return { patch };
 }
 
+/** A skill as the form needs it (the hub's /api/skills): one the person taught, and whether it has a script. */
+export interface FormSkill {
+  name: string;
+  taught?: boolean;
+  script?: boolean;
+}
+
+/**
+ * What the form sends about a trigger's skill and its runs with no model: only what changed, so input the agent gave
+ * the script in the chat (`scriptRun.input`) stays. No skill means no script to run, whatever the switch says.
+ */
+export function skillPatch(initial: Pick<TriggerView, "skill" | "scriptRun"> | null, skill: string, noModel: boolean): { skill?: string | null; scriptRun?: true | null } {
+  const patch: { skill?: string | null; scriptRun?: true | null } = {};
+  if (skill !== (initial?.skill ?? "")) patch.skill = skill || null;
+  const runs = !!skill && noModel;
+  if (runs !== !!initial?.scriptRun) patch.scriptRun = runs ? true : null;
+  return patch;
+}
+
 /** The kinds the form makes; a signal trigger is made in the chat (it needs `on`). */
 export const FORM_KINDS: TriggerKind[] = ["schedule", "once", "watch", "event", "heartbeat"];
 

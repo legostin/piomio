@@ -1,14 +1,30 @@
 // The form: the second way to make or change a trigger (the chat is the first, and the form's top line leads there).
-// It has every field the plugin's form had; a signal trigger is made in the chat.
+// It has every field the plugin's form had; a signal trigger is made in the chat. A trigger may follow a skill the
+// person taught, and then run that skill's script with no model (docs/superpowers/specs/2026-11-24-code-mode-design.md).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MessageCircleMore } from "lucide-react";
 import { api, errorText } from "../../lib/api";
-import { FORM_KINDS, KIND_HINT, KIND_LABEL, parseTimes, toLocalInput, triggerUrl, TRIGGERS_API, WEEKDAY_ORDER, weekdayName, type TriggerKind, type TriggersList, type TriggerView } from "../../lib/triggers";
+import {
+  FORM_KINDS,
+  KIND_HINT,
+  KIND_LABEL,
+  parseTimes,
+  skillPatch,
+  toLocalInput,
+  triggerUrl,
+  TRIGGERS_API,
+  WEEKDAY_ORDER,
+  weekdayName,
+  type FormSkill,
+  type TriggerKind,
+  type TriggersList,
+  type TriggerView,
+} from "../../lib/triggers";
 import { useAsk } from "../../state/ask";
 import { toast } from "../../state/toast";
 import { t } from "../../i18n";
-import { Button, cx, ErrorNote, Field, Input, Modal, Select, Textarea } from "../../components/ui";
+import { Button, cx, ErrorNote, Field, Input, Modal, Select, Textarea, Toggle } from "../../components/ui";
 
 export function TriggerForm({ initial, list, onClose, onSaved }: { initial: TriggerView | null; list: TriggersList; onClose: () => void; onSaved: () => void }) {
   const ask = useAsk();
@@ -31,6 +47,19 @@ export function TriggerForm({ initial, list, onClose, onSaved }: { initial: Trig
   const [times, setTimes] = useState((initial?.times ?? ["10:00", "18:00"]).join(", "));
   const [weekdays, setWeekdays] = useState<number[]>(initial?.weekdays ?? [1, 2, 3, 4, 5]);
   const [maxRuns, setMaxRuns] = useState(String(initial?.maxRunsPerDay ?? 24));
+  const [skill, setSkill] = useState(initial?.skill ?? "");
+  const [noModel, setNoModel] = useState(!!initial?.scriptRun);
+  // The taught skills (shown by the person, or a script the agent kept): the ones a trigger's runs follow. Not loaded:
+  // the form goes without the choice.
+  const [skills, setSkills] = useState<FormSkill[]>([]);
+  useEffect(() => {
+    api.get<FormSkill[]>("/api/skills").then(
+      (l) => setSkills((l ?? []).filter((s) => s.taught)),
+      () => {},
+    );
+  }, []);
+  // A skill the list says has no script cannot run by itself; one the list does not have is the hub's to judge.
+  const noScript = skills.some((s) => s.name === skill && !s.script);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -38,6 +67,7 @@ export function TriggerForm({ initial, list, onClose, onSaved }: { initial: Trig
     const body: Record<string, unknown> = { name, prompt, agent, maxRunsPerDay: Number(maxRuns) };
     if (!editing) body.kind = kind;
     if (machine !== (initial?.machine ?? "")) body.machine = machine;
+    Object.assign(body, skillPatch(initial, skill, noModel && !noScript));
     if (kind === "schedule") body.cron = cron;
     // Resend the time only when it changed: a fired one-off keeps its past time on rename.
     if (kind === "once" && (!editing || at !== toLocalInput(initial?.at, tz))) body.at = at;
@@ -71,6 +101,8 @@ export function TriggerForm({ initial, list, onClose, onSaved }: { initial: Trig
   // Likewise an agent the list no longer has (archived) stays the trigger's until the person picks another.
   const agentOptions = agents.some((a) => a.id === agent) ? agents : [...agents, { id: agent, name: agent }];
   const kinds = FORM_KINDS.includes(kind) ? FORM_KINDS : [...FORM_KINDS, kind];
+  // Likewise the trigger's skill when the list has not come or no longer has it.
+  const skillOptions = !skill || skills.some((s) => s.name === skill) ? skills : [...skills, { name: skill }];
 
   return (
     <Modal
@@ -136,6 +168,25 @@ export function TriggerForm({ initial, list, onClose, onSaved }: { initial: Trig
               ))}
             </Select>
           </Field>
+        )}
+        {/* Only when there is a skill to follow: one the person taught, or the one the trigger has. */}
+        {skillOptions.length > 0 && (
+          <Field label={t("triggers.form.skill")} hint={t("triggers.form.skillHint")}>
+            <Select value={skill} onChange={(e) => setSkill(e.target.value)}>
+              <option value="">{t("triggers.form.skillNone")}</option>
+              {skillOptions.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {skill && (
+          <div>
+            <Toggle checked={noModel && !noScript} disabled={noScript} onChange={setNoModel} label={<span className="font-medium">{t("triggers.form.noModel")}</span>} />
+            <div className="mt-1 pl-12 text-xs leading-relaxed text-muted">{noScript ? t("triggers.form.noModelNoScript") : t("triggers.form.noModelHint")}</div>
+          </div>
         )}
 
         {kind === "schedule" && (

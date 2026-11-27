@@ -16,6 +16,7 @@ import {
   runBadge,
   runNowText,
   settingsPatch,
+  skillPatch,
   sourceLabel,
   stageLines,
   statusBadge,
@@ -195,5 +196,21 @@ describe("triggers in the web UI", () => {
     expect(parseTimes(" 09:30  21:00 ,")).toEqual(["09:30", "21:00"]);
     expect(weekdayName(1)).toBe("Mon");
     expect(weekdayName(0)).toBe("Sun");
+  });
+
+  it("the form sends a skill and runs with no model only when they changed", () => {
+    // A new trigger: nothing chosen, nothing sent; a skill alone; a skill whose script runs by itself.
+    expect(skillPatch(null, "", false)).toEqual({});
+    expect(skillPatch(null, "", true)).toEqual({});
+    expect(skillPatch(null, "weekly-mail", false)).toEqual({ skill: "weekly-mail" });
+    expect(skillPatch(null, "weekly-mail", true)).toEqual({ skill: "weekly-mail", scriptRun: true });
+    // Editing: what the chat set (the script's input) is not resent, so a rename keeps it.
+    const set = { skill: "weekly-mail", scriptRun: { input: { list: "friends" } } };
+    expect(skillPatch(set, "weekly-mail", true)).toEqual({});
+    expect(skillPatch(set, "weekly-mail", false)).toEqual({ scriptRun: null });
+    expect(skillPatch({ skill: "weekly-mail" }, "weekly-mail", true)).toEqual({ scriptRun: true });
+    expect(skillPatch(set, "digest", true)).toEqual({ skill: "digest" });
+    // No skill, no script to run.
+    expect(skillPatch(set, "", true)).toEqual({ skill: null, scriptRun: null });
   });
 });

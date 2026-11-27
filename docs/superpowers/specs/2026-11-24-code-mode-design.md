@@ -102,8 +102,11 @@ A saved script is a skill with a script, as taught skills have: one library, one
 A trigger runs a saved script by itself: the agent's model is used only when the script cannot finish.
 
 - A trigger with a `skill` takes `scriptRun: {input}`: each run is that skill's script, run by the hub with this
-  input. Refused when the trigger is saved: no `skill`, a skill that was not taught or has no script, one the
-  trigger's agent does not have.
+  input. Refused when the trigger is saved: no `skill`, a skill that was not taught or has no script (a run follows
+  its skill whoever holds it, so the holder is not asked about).
+- Set in the chat (`trigger_create`, `trigger_update`) or in the trigger's form: a **Skill** choice of the taught
+  skills and, under it, the switch for runs with no model, off for a skill with no script (`/api/skills` says
+  `script`). The form sends only what changed, so the input the chat gave stays.
 - The run is still a task (the Tasks list, the trigger's journal, the daily limit, Stop), with a session of its own
   and no brain: every call of the script is `ToolGateway.call` in it, decided as the agent's own. It does not count
   against the agent's background runs of the day: it spends no model.

@@ -16,6 +16,7 @@ import { toUiEvent } from "../bus.ts";
 import { agentFromMarkdown, localizedAgent, patchAgent } from "../agents.ts";
 import { draftPatch } from "../agent-drafts.ts";
 import { applyThinking } from "../thinking.ts";
+import { readSkillScript } from "../taught-skills.ts";
 import { canPipeToLeader, pipeToLeader } from "./forward.ts";
 import { isPing, keepAlive, PONG } from "./realtime.ts";
 import { attachmentDisposition, HttpError, safeFile, sendFile } from "./http.ts";
@@ -557,10 +558,11 @@ export async function registerApi(api: FastifyInstance, hub: Hub, opts: ApiOptio
 
   // ----- tools, skills, commands, channels -----
   api.get("/api/tools", async () => hub.tools.list().map((t) => ({ name: t.name, description: t.description, effect: t.effect, owner: t.owner, source: !!t.source })));
-  // `agents`: who has it; empty: the whole team.
+  // `agents`: who has it; empty: the whole team. `script`: a taught skill has a script, so a trigger can run it with
+  // no model (the trigger form's switch asks).
   api.get("/api/skills", async () => {
     const held = hub.skills.holders?.all() ?? new Map<string, string[]>();
-    return hub.skills.list().map((s) => ({ ...s, agents: held.get(s.name) ?? [] }));
+    return hub.skills.list().map((s) => ({ ...s, agents: held.get(s.name) ?? [], script: s.taught && readSkillScript(s) !== undefined }));
   });
   // The hub's own commands first, then the skills' (one named like a hub command is the hub's).
   api.get("/api/commands", async (req) => {

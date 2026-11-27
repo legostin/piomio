@@ -216,4 +216,4 @@ When a kept script does a regular job whole, with nothing for the agent to judge
 - **After a restart in the middle**, the hub never starts the script again, since part of it may be done: the agent checks where things stand and finishes.
 - **What came in.** A script started by a webhook, a watched page or a trigger's own script gets what came in as data. That is outside content: the run is marked as having read it, so an action to someone you did not approve by name still asks.
 
-Say "let the agent run it again" (or "wake the agent for this trigger") to go back to runs with the model.
+Say "let the agent run it again" (or "wake the agent for this trigger") to go back to runs with the model. The trigger's form has the same switch: under **Skill**, **Run its script with no model**. It works for a skill that has a script.
