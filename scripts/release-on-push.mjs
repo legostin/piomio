@@ -8,7 +8,7 @@ import { githubApi, publishTagRelease } from "./release-tag.mjs";
 export function ships(file) {
   if (!file) return false;
   if (/^(packages\/(site|testkit)\/|docs\/)/.test(file)) return false;
-  if ([".github/workflows/site.yml", ".github/workflows/release-on-push.yml", ".github/workflows/checks.yml", "scripts/release-on-push.mjs", "scripts/release-tag.mjs"].includes(file)) return false;
+  if ([".github/workflows/site.yml", ".github/workflows/release-on-push.yml", ".github/workflows/checks.yml", "scripts/release-on-push.mjs", "scripts/release-tag.mjs", "vitest.config.ts"].includes(file)) return false;
   if (file.startsWith(".github/workflows/")) return true;
   if (file.startsWith(".github/") || /\/test\/|\.test\.tsx?$/.test(file)) return false;
   return file.includes("/") || (!file.endsWith(".md") && file !== "LICENSE");
