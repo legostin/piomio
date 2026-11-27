@@ -41,6 +41,8 @@ export function agentFromMarkdown(id: string, text: string, source: string): Age
     avatar: parseAvatar(data.avatar),
     i18n: parseAgentI18n(data.i18n),
     ...(data.companion === true ? { companion: true } : {}),
+    ...(data.codeMode === "beside" || data.codeMode === "first" ? { codeMode: data.codeMode } : {}),
+    ...(Array.isArray(data.codeKeep) ? { codeKeep: list(data.codeKeep, []) } : {}),
   };
 }
 
@@ -113,6 +115,8 @@ export function agentToMarkdown(a: AgentDef): string {
     budget: a.budget,
     ...(a.i18n ? { i18n: a.i18n } : {}),
     ...(a.companion ? { companion: true } : {}),
+    ...(a.codeMode === "beside" || a.codeMode === "first" ? { codeMode: a.codeMode } : {}),
+    ...(a.codeKeep ? { codeKeep: a.codeKeep } : {}),
   };
   return `---\n${toYaml(fm).trim()}\n---\n${a.prompt.trim()}\n`;
 }

@@ -4,6 +4,7 @@ import { folderLine } from "./agent-folders.ts";
 /** Language names for the system prompt (English, since prompts are English). */
 const LANGUAGE_NAMES: Record<Locale, string> = { en: "English", ru: "Russian" };
 import type { Skill } from "./skills.ts";
+import { codeModeOf } from "./code-mode.ts";
 
 export interface PromptContext {
   agent: AgentDef;
@@ -255,6 +256,16 @@ export function buildSystemPrompt(c: PromptContext): string {
     lines.push(
       "- Your own shell and file tools work freely inside your folder; outside it, the user says yes to each step on a card in the chat, which shows your command's description. Write that description in the user's language, in plain words: what it does and why (\"See what loads the processor\"), never jargon. Commands that only report how the computer is doing (ps, top, vm_stat, df, sysctl) need no yes.",
       "- What you make for the user (pictures, pages, documents, code) goes in your folder; in a task, in the task's own folder. Never put it on the Desktop, in Documents or anywhere else in the user's home unless they named that place: show it in the chat instead (`show_images` for pictures, `send_files` for documents and other files; the dialog that started a task can show the task's pictures and files too). Everything the person and you sent each other stays in your library: `library_find` finds it again.",
+    );
+  }
+  const code = codeModeOf(c.agent);
+  if (code === "first") {
+    lines.push(
+      "- Code mode: only part of your tools is on your list. The others (triggers, pages, channels, the web, machines, the services the person connected, plugins) you find with `code_search` and call from a script you run with `code_execute`, where each is a function: `tools.<name>({…})`. A tool these rules name that is not on your list is still yours: look its input up with `code_search` (its name as the query, full: true) and call it from a script. Before you say you have no tool for something or cannot reach a service, search for it. A script does several calls, loops and filtering in one step of yours, and only what it returns comes back to you: return what you need, not whole answers.",
+    );
+  } else if (code === "beside") {
+    lines.push(
+      "- Code mode: when the work is several tool calls in a row, a loop over many items, or a big answer of which you need a little, write a script and run it with `code_execute` instead of calling the tools one by one; inside it each of your tools is a function, `tools.<name>({…})`, and only what the script returns comes back to you. `code_search` finds tools and their inputs. One call, or steps you decide one at a time (a page you look at), you still make yourself.",
     );
   }
   // A trigger's run of a skill the person taught: it follows the skill, whichever way its result reaches them.

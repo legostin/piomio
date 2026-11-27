@@ -36,6 +36,7 @@ import { NATIVE_PERMISSION_TOOL } from "./native-permission.ts";
 import { accessView } from "../access/map.ts";
 import { CONTEXT_LIMITS, TRIGGERS_WATCH_TIMEOUT } from "../settings.ts";
 import { spendText } from "../spend.ts";
+import { CODE_KEEP_DEFAULT, CODE_MODES, codeModeOf } from "../code-mode.ts";
 
 export const HUB_TOOL_PREFIX = "hub_";
 
@@ -410,6 +411,7 @@ export function registerHubTools(hub: Hub): void {
           model: a.model,
           thinking: a.thinking,
           initiative: a.initiative,
+          ...(codeModeOf(a) !== "off" ? { codeMode: codeModeOf(a), ...(codeModeOf(a) === "first" ? { codeKeep: a.codeKeep ?? CODE_KEEP_DEFAULT } : {}) } : {}),
           skills: hub.skills.ownOf(a.id),
           source: a.source,
           default: a.id === def,
@@ -430,7 +432,9 @@ export function registerHubTools(hub: Hub): void {
         "brains is the ordered fallback list (see hub_brains_list), initiative 0 = only reacts, 1 = suggests, 2 = acts within rules. " +
         "machines binds the agent to computers (names or ids, see task_agents): it then thinks only with their brains, and while none of them is online its chat shows an error instead of moving elsewhere; [] unbinds. " +
         'To put an agent on one computer and one brain there (what the person means by "machine, then brain"), offer the computers with show_choices, then that computer\'s brains (hub_brains_list), and save machines: [computer] with brains: [that brain\'s ref]. ' +
-        'thinking: how it thinks per kind of work (chat, task, feed, schedule), each {preset: "fast"|"balanced"|"deep"} or an exact {model, effort, brain}; kinds left out follow chat, except that feed and schedule never take chat\'s deep (they think auto until deep is set for them).',
+        'thinking: how it thinks per kind of work (chat, task, feed, schedule), each {preset: "fast"|"balanced"|"deep"} or an exact {model, effort, brain}; kinds left out follow chat, except that feed and schedule never take chat\'s deep (they think auto until deep is set for them). ' +
+        'codeMode: whether the agent writes scripts that call its tools as functions (code_search, code_execute): "off"; "beside" adds the two tools to its list; "first" also takes most tools off its list (triggers, pages, channels, the web, connected services; it keeps answering the person, tasks, skills, memory and the browser), so it finds them by search and calls them from code: about half the context its tool list takes, more with many connected services. ' +
+        `codeKeep: tool name globs that stay on the list at "first" (default ${CODE_KEEP_DEFAULT.join(", ")}; e.g. add "web_*"). Set it when the person asks for code mode; it takes effect in the agent's next session.`,
       inputSchema: obj({
         id: { type: "string", description: "Existing agent id to edit; omit to create (derived from the name)" },
         ...PROFILE_FIELDS,
@@ -438,6 +442,8 @@ export function registerHubTools(hub: Hub): void {
         machines: { type: "array", items: { type: "string" }, description: "The only computers the agent thinks on; [] = anywhere" },
         model: { type: "string" },
         thinking: { type: "object", description: "Replaces the agent's choices per kind of work" },
+        codeMode: { type: "string", enum: CODE_MODES, description: "Code mode: off, beside (added to the tool list) or first (most tools found by search, called from code)" },
+        codeKeep: { type: "array", items: { type: "string" }, description: 'Tool name globs kept on the list at codeMode "first", e.g. ["browser_*", "memory_*", "web_*"]' },
       }),
     },
     (i) => {
@@ -466,6 +472,14 @@ export function registerHubTools(hub: Hub): void {
       }
       if (i.model !== undefined) patch.model = String(i.model) || undefined;
       if (i.thinking !== undefined) patch.thinking = parseThinking(i.thinking);
+      if (i.codeMode !== undefined) {
+        if (!CODE_MODES.includes(i.codeMode)) return text(`codeMode is one of ${CODE_MODES.join(", ")}.`, true);
+        patch.codeMode = i.codeMode === "off" ? undefined : i.codeMode;
+      }
+      if (i.codeKeep !== undefined) {
+        if (!Array.isArray(i.codeKeep) || i.codeKeep.some((g: unknown) => typeof g !== "string" || !/^[a-zA-Z0-9_*-]{1,64}$/.test(g))) return text('codeKeep is a list of tool name globs, e.g. ["browser_*", "web_*"].', true);
+        patch.codeKeep = [...new Set(i.codeKeep as string[])];
+      }
       const saved = hub.saveAgent({ ...patchAgent(prev ?? agentFromMarkdown(id, "", "user"), patch, hubLocale()), id, source: "user" }, "agent");
       return text(`Agent ${saved.id} ${prev ? "updated" : "created"}${saved.avatar ? ` (avatar: ${saved.avatar.color} ${saved.avatar.shape})` : ""}.`);
     },

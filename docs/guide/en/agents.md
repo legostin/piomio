@@ -1,6 +1,6 @@
 ---
 title: Agents and the team
-description: The team you start with, what an agent is on disk, making and changing agents in the chat, initiative, which brain answers, pin, archive and delete, agents bound to a computer, project folders, what agents know, memory and skills.
+description: The team you start with, what an agent is on disk, making and changing agents in the chat, initiative, which brain answers, pin, archive and delete, agents bound to a computer, project folders, what agents know, memory, skills and code mode.
 ---
 
 Piomio is a team, not one bot. Each agent is a role with its own name, face, character, brains and tools, and its own long dialog with you. They know about each other, pass work along and remember what matters about you.
@@ -65,6 +65,7 @@ You plan meals for the family. Ask about allergies once, remember them, and keep
 | `initiative` | 0, 1 or 2 (see below). Default 1 |
 | `tools`, `skills` | Which tools and skills it may use, as name patterns. `*` is all |
 | `budget.backgroundRunsPerDay` | How many times a day it may work on its own. Default 30 |
+| `codeMode`, `codeKeep` | Code mode: `beside` or `first`, and the tool name patterns that stay on its list at `first` (see [Code mode](#code-mode)). Absent: off |
 | `i18n` | Its name and description in other languages |
 
 ## Making a new agent
@@ -83,7 +84,7 @@ The new agent's id is made from its name. An existing agent is never replaced. A
 
 Talk to the agent itself: "call yourself Ada", "answer shorter", "show me how you look". It changes its own name, description, face, initiative and instructions, and shows a **How I look** card with the face pickers and **How proactive**. After it has read outside content (a web page, an email), it asks you on a card first. The assistant can change any agent the same way.
 
-The same is on the **Agents** page: **Settings** → **Agents**. Each card shows the face, name, description and badges: the initiative, **built-in** or **yours**, the brain in use (for an agent bound to a computer, the computer and its brain: **LEGOSTIN-PC → Claude Code**), and the agent's own skills. **Edit** opens **Name**, the face, **Description**, **Prompt**, **Initiative** and **Where it thinks**; **More settings** adds **ID**, **Model**, **Policy profile**, **Tools**, **Skills** and **Background runs per day**.
+The same is on the **Agents** page: **Settings** → **Agents**. Each card shows the face, name, description and badges: the initiative, **built-in** or **yours**, the brain in use (for an agent bound to a computer, the computer and its brain: **LEGOSTIN-PC → Claude Code**), and the agent's own skills. **Edit** opens **Name**, the face, **Description**, **Prompt**, **Initiative** and **Where it thinks**; **More settings** adds **ID**, **Model**, **Policy profile**, **Tools**, **Skills**, **Background runs per day** and **Code mode**.
 
 ## Initiative
 
@@ -167,3 +168,27 @@ A skill is a set of instructions an agent loads when it needs it. A skill belong
 - Say "give the invoices skill only to Ada" or "give it back to the whole team".
 - **Settings** → **Skills & commands** lists skills, commands and tools. Each skill shows who has it: **Whole team** or the agents' faces. Tap that line to decide in the chat.
 - Your own skills are folders with a `SKILL.md` in `skills/` in the hub's data folder.
+
+## Code mode
+
+Normally an agent calls its tools one at a time: each call is a step of the model, and each answer goes through it whole. With code mode on, the agent can also write a short script that calls the tools as functions and run it in one step: go through forty emails, look each sender up in the calendar, and bring back three lines. The answers stay in the script; the model reads only what the script returns. That is faster and spends less of the brain's limit when the work is many calls in a row or big answers of which little is needed.
+
+It is off by default and is set per agent. Say to the assistant "turn code mode on for Ada", or pick it in the agent's **More settings** → **Code mode**:
+
+| Level | What changes |
+|---|---|
+| **Off** | The agent calls its tools one at a time |
+| **Beside the tools** | The agent keeps its whole tool list and gets two more tools: one finds a tool by words, the other runs a script |
+| **Code first** | Most tools leave the agent's list. It finds them by search and calls them from a script. The list takes about half the context, and less still with many connected services |
+
+At **Code first** the list keeps what an agent uses a step at a time: answering you (buttons, cards, pictures, files), tasks and teammates, skills, memory and the browser. Triggers, pages, channels, web search, computers and every connected service are found by search. **Tools that stay on the list** changes that: add `web_*` to keep web search there, for example, or `trigger_*` for an agent that sets reminders all day. A change takes effect in the agent's next session.
+
+What a script can and cannot do:
+
+- **The same rules as by hand.** Every call a script makes is checked like the agent's own: reading is free, an action with consequences shows its card, and your "always allow" rules apply. If you do not answer a card soon, the script stops at that step; after your yes the hub does that step itself and the agent does the rest.
+- **Only the agent's tools.** A script has no network, files or programs of its own. It reaches a service only through the tools the agent already has.
+- **Not the hub itself.** A script cannot change rights, plugins, skills or settings, cannot start another script and cannot use the vault. Those stay the agent's own steps.
+- **Limits.** Up to 300 calls and 10 minutes a run.
+- **In the audit log.** Each run and each call a script made is recorded, as the agent's own calls are.
+
+A brain's own tools (the shell and files of Claude Code or Codex) are not the hub's, so a script does not reach them.
