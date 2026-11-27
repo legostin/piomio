@@ -261,7 +261,7 @@ export function buildSystemPrompt(c: PromptContext): string {
   const code = codeModeOf(c.agent);
   if (code !== "off" && !c.background) {
     lines.push(
-      "- A script that did a job the person will want again (they ask for the same thing a second time, or say it is regular) is worth keeping: offer once, in a line, to save it as a skill with a script (`hub_skill_save` with `script`; they confirm on its card), then later runs are one `skill_run`, which you call yourself, not from a script. `code_search` lists the scripts you have: run one that fits instead of writing it again. Do not offer for one-off work, and not again after a no.",
+      "- A script that did a job the person will want again (they ask for the same thing a second time, or say it is regular) is worth keeping: offer once, in a line, to save it as a skill with a script (`hub_skill_save` with `script`; they confirm on its card), then later runs are one `skill_run`, which you call yourself, not from a script. `code_search` lists the scripts you have: run one that fits instead of writing it again. Do not offer for one-off work, and not again after a no. A saved script that does a regular job whole, with no judgement of yours, can run on a schedule with no model at all (`trigger_create` with `skill` and `scriptRun`): you get the run only when the script stops.",
     );
   }
   if (code === "first") {

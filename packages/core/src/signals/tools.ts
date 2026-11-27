@@ -63,6 +63,17 @@ const FIELDS: Record<string, JsonSchema> = {
     type: "string",
     description: "A skill every run follows, e.g. one the person taught by showing (\"order water every Friday\"); its runs may click and type as the skill says. An empty string clears it.",
   },
+  scriptRun: {
+    type: "object",
+    description:
+      "With `skill`: each run is that skill's script, run by the hub itself with this `input` and no model, so a run costs no tokens. For a skill whose script does the whole job " +
+      "with no judgement (run it once with skill_run first). The script also gets `input.trigger`: {reason, at} and what came in (payload and query of a webhook, change of a watched page, " +
+      "summary, context and signals of the trigger's own script). What it returns as a string, or as {message}, is the run's words: a trigger that reports delivers them as its report; " +
+      "with none the run says nothing, and a script that wants the person's attention calls tools.notify. You get the task only when the script stops: a step failed, something was " +
+      "refused, or a step waited for the person's yes (then after it). Every call is still checked as your own; in a background run that follows the skill, the actions its card " +
+      "pre-approved need no one. null clears it: runs wake you as usual.",
+    properties: { input: { type: "object", description: "What the script gets each run, as the skill's Inputs name it, e.g. {\"quantity\": 2}" } },
+  },
   report: {
     type: "boolean",
     description:
@@ -204,6 +215,7 @@ function summary(e: TriggerEngine, t: Trigger) {
     agent: t.agentId,
     machine: t.machineName ?? null,
     skill: t.skill ?? null,
+    ...(t.scriptRun ? { scriptRun: t.scriptRun } : {}),
     when: describeSchedule(t),
     report: t.report ?? false,
     nextRun: t.state.nextRunAt ? formatLocal(t.state.nextRunAt, e.tz) : null,
@@ -228,7 +240,12 @@ function describeCreated(e: TriggerEngine, t: Trigger, verb: string): string {
   const on = (t.machineName ? `; runs on the computer ${t.machineName}` : "") + (t.skill ? `; follows the skill ${t.skill}` : "");
   const lines = [`${verb} trigger ${t.id} "${t.name}" (${t.kind}: ${describeSchedule(t)}; timezone ${e.tz}; agent ${t.agentId}${on}; ${t.enabled ? "enabled" : "disabled"}).`];
   if (t.state.nextRunAt) lines.push(`Next run: ${formatLocal(t.state.nextRunAt, e.tz)}.`);
-  if (t.report) lines.push("Each run's final reply is delivered to the user as a report.");
+  if (t.scriptRun && t.skill) {
+    lines.push(
+      `Each run is the script of ${t.skill}, run by the hub with no model: you get the task only when the script stops.` +
+        (t.report ? " The string it returns (or its {message}) is delivered to the user as the report; a run that returns neither delivers nothing." : " It says nothing by itself: a script that wants the person's attention calls tools.notify."),
+    );
+  } else if (t.report) lines.push("Each run's final reply is delivered to the user as a report.");
   if (t.kind === "watch") lines.push("The first check stores a baseline; the agent runs only when the extracted value changes.");
   if (t.kind === "event") {
     const url = e.webhookUrl(t);
@@ -256,7 +273,7 @@ function describeCreated(e: TriggerEngine, t: Trigger, verb: string): string {
 const pick = (input: any): TriggerInput => {
   const out: Record<string, unknown> = {};
   for (const k of [
-    "kind", "name", "prompt", "agent", "machine", "skill", "report", "enabled", "maxRunsPerDay", "cron", "at", "url", "selector", "jsonPath", "intervalMinutes", "times", "weekdays",
+    "kind", "name", "prompt", "agent", "machine", "skill", "scriptRun", "report", "enabled", "maxRunsPerDay", "cron", "at", "url", "selector", "jsonPath", "intervalMinutes", "times", "weekdays",
     "on", "batch", "script", "triage", "triagePerDay", "verify",
   ]) {
     if (input?.[k] !== undefined) out[k] = input[k];
@@ -345,7 +362,7 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
       "event (a webhook URL; the POST body is passed to the agent), " +
       "heartbeat (a proactive review at fixed local times on chosen weekdays), signal (only `on`, other sources). " +
       "When the runs need a particular computer (its files, apps, hardware), set `machine`: every run happens there. " +
-      "When each run should do a skill the person taught (\"order water every Friday\"), set `skill` to its name. " +
+      "When each run should do a skill the person taught (\"order water every Friday\"), set `skill` to its name; when that skill's script does the whole job, add `scriptRun` and the runs need no model. " +
       `${PIPELINE} Returns the trigger id.`,
     effect: "local-write",
     // A trigger outlives the session: after outside content (a page could ask for one) the person says yes on a card.
@@ -390,7 +407,7 @@ export function registerTools(ctx: TriggerHost, e: TriggerEngine): void {
   ctx.tools.register({
     name: "update",
     description:
-      "Change a trigger: name, prompt, agent, machine, skill, report, enabled, maxRunsPerDay, the kind-specific fields (cron, at, url, selector, jsonPath, intervalMinutes, times, weekdays, verify), " +
+      "Change a trigger: name, prompt, agent, machine, skill, scriptRun, report, enabled, maxRunsPerDay, the kind-specific fields (cron, at, url, selector, jsonPath, intervalMinutes, times, weekdays, verify), " +
       "and what it does before it wakes the agent: on, batch, script, triage, triagePerDay (null clears one). The kind cannot change. Test a change with trigger_test (id and trigger) before making it.",
     effect: "local-write",
     // As for create: after outside content the person says yes.

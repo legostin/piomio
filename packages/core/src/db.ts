@@ -189,6 +189,8 @@ const MIGRATIONS: string[] = [
     output integer not null default 0, usd real, estimated integer not null default 0);
   create index spend_at on spend(at);
   create index spend_conv on spend(conversation_id, at);`,
+  // A task that starts with its skill's script, run by the hub with no model (Task.script, JSON {input}).
+  `alter table tasks add column script text;`,
 ];
 
 /**

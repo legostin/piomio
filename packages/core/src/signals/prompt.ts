@@ -9,6 +9,9 @@ const VALUE_LIMIT = 3000;
 /** A wake's context from the pipeline, as JSON, is cut past this. */
 export const CONTEXT_LIMIT_BYTES = 8 * 1024;
 const SIGNALS_LISTED = 10;
+/** What a script of a run with no model gets of a watched value and a webhook's payload: code reads more than a prompt holds. */
+const SCRIPT_VALUE_LIMIT = 20_000;
+const SCRIPT_PAYLOAD_BYTES = 256 * 1024;
 const SUMMARY_MAX = 1000;
 const SUBJECT_MAX = 200;
 
@@ -158,6 +161,44 @@ export function renderPrompt(t: Trigger, c: FireContext): string {
       : 'When you are done, call `notify` exactly once: level "notify" only if this genuinely deserves the user\'s attention right now, "digest" if it can wait for the next summary, "silent" if nothing needs their attention.',
   );
   return lines.join("\n");
+}
+
+/**
+ * What a run with no model gives its skill's script (Trigger.scriptRun): the trigger's fixed input, and under `trigger`
+ * why it fired and what came in, as the agent's prompt would say it. `outside`: some of it is outside content (a
+ * webhook's payload, a watched page, a pipeline run that read some), so the run starts marked as having read it.
+ */
+export function scriptRunInput(t: Trigger, c: FireContext): { input: Record<string, unknown>; outside: boolean } {
+  const trigger: Record<string, unknown> = { id: t.id, name: t.name, reason: c.reason, at: c.now.toISOString() };
+  if (c.missedAt) trigger.missedAt = c.missedAt;
+  if (c.change) {
+    trigger.change = {
+      ...(c.change.previous !== undefined ? { previous: truncateChars(c.change.previous, SCRIPT_VALUE_LIMIT) } : {}),
+      current: truncateChars(c.change.current, SCRIPT_VALUE_LIMIT),
+      ...(c.change.diff ? { diff: truncateChars(c.change.diff, SCRIPT_VALUE_LIMIT) } : {}),
+    };
+  } else if (c.currentValue !== undefined) trigger.currentValue = truncateChars(c.currentValue, SCRIPT_VALUE_LIMIT);
+  if (c.payload !== undefined) {
+    const { text, truncated } = truncateBytes(c.payload, SCRIPT_PAYLOAD_BYTES);
+    let payload: unknown = text;
+    if (!truncated) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        /* not JSON: the text as it came */
+      }
+    }
+    trigger.payload = payload;
+    if (c.query && Object.keys(c.query).length) trigger.query = c.query;
+    if (c.contentType) trigger.contentType = c.contentType;
+  }
+  if (c.pipeline) {
+    trigger.summary = c.pipeline.summary;
+    if (c.pipeline.context !== undefined) trigger.context = c.pipeline.context;
+    trigger.signals = c.pipeline.signals.slice(0, SIGNALS_LISTED);
+  }
+  const outside = !!c.change || c.currentValue !== undefined || c.payload !== undefined || !!c.pipeline?.external;
+  return { input: { ...(t.scriptRun?.input ?? {}), trigger }, outside };
 }
 
 export const DEFAULT_HEARTBEAT_PROMPT = [

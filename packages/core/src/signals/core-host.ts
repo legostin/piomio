@@ -73,6 +73,8 @@ export interface CoreTriggersDeps {
    * subscriptions. They start with the engine and stop with it. Unset: only core's four.
    */
   sources?: Pick<SignalSources, "list" | "sync" | "start" | "stop"> & Partial<Pick<SignalSources, "check" | "refused">>;
+  /** Why an agent cannot run a skill's script with no model (TriggerHost.skillScript); unset: not checked. */
+  skillScript?: (name: string) => string | undefined;
 }
 
 /** What one start registered: released together, so a stop during a start takes back exactly that start's. */
@@ -382,6 +384,7 @@ export class CoreTriggers {
       ...(d.vault ? { vault: { get: (ref: string, actor: string, agentId?: string) => open(async () => d.vault!.access(ref, { actor, ...(agentId ? { agentId } : {}) })) } } : {}),
       core: { call: (method, params) => open(() => d.coreCall(TRIGGERS_ID, method, params) as Promise<any>, true) },
       ...(fetch ? { fetch: (url, init) => open(() => fetch(url, init)) } : {}),
+      ...(d.skillScript ? { skillScript: d.skillScript } : {}),
       pipeline,
       // Listed in the hub language (trigger_sources is for the model); a sync once the session closed does nothing.
       ...(d.sources
