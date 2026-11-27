@@ -124,7 +124,17 @@ microphone, Highlight, **Done** and **Cancel**.
 - **Talk.** Your words are written into the recording. That needs speech to text set up (see [The chat](chat.md)) and
   a microphone; without them you show without voice, and the agent asks about the why afterwards.
 - **Highlight a part of the page** to point at what matters: draw a frame around the total, the right size, the
-  delivery date.
+  delivery date. A small card opens next to the frame:
+  - **A comment.** Type it, or just say it: while the card is open, your voice goes into the comment as text you can
+    correct.
+  - **What the place means**, in one tap: **Check** (the agent checks it every time), **Changes** (it differs from
+    time to time: the quantity, the date), **Don't touch**, **Wait** (the agent waits until it appears) or **Result**
+    (what the agent brings back). With none chosen, the frame means "look here".
+
+  Enter or a click anywhere else closes the card and keeps what you wrote; the bin removes the frame.
+- **Look at the steps.** The count in the bar ("5 steps") opens the list of what has been recorded so far, in words.
+  Remove a click you made by mistake, correct words that were written down wrong, add a comment to any step. This
+  changes what the agent learns; nothing on the page is undone.
 - Press **Done**. The recording goes to the agent's chat, with pictures of what you framed in its working folder.
 
 ### From the recording to a skill

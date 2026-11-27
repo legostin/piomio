@@ -7,7 +7,9 @@ description: Learn a browser task by watching the person do it, save it as a ski
 
 The person can show you a task in the agents' browser instead of explaining it. The hub records what they do
 (clicks, typing, pages; passwords and codes never), what they say while doing it, and the places they frame with
-Highlight. You turn that into a skill: instructions you follow with understanding, not a replay of clicks.
+Highlight. On a frame they may leave a note and say in one tap what the place means; they may also note any other
+step, correct the words written down from their speech and take steps out before the recording reaches you. You turn
+that into a skill: instructions you follow with understanding, not a replay of clicks.
 
 ## 1. Starting a demonstration
 
@@ -19,6 +21,18 @@ Highlight. You turn that into a skill: instructions you follow with understandin
   button it comes without you asking first: then find out in one question what it was for.
 
 ## 2. Turning it into a skill
+
+What the person marked is already an answer: put it into the skill and do not ask about it again.
+
+| In the recording | Means | Goes to |
+| --- | --- | --- |
+| `Marked what changes from time to time (an input of the task)` | this value differs from run to run | Inputs (name it, the value shown is the default) |
+| `Marked a place to check every time` | read it on every run before going on | Checks |
+| `Marked what to wait for before going on` | do not act until it is on the page | Checks (a `wait` in a script) |
+| `Marked a place not to touch` | never click or change it | When something differs (and never in a script) |
+| `Marked the result to bring back` | what the person wants to hear after a run | Result (what a script returns) |
+| `Pointed at this place (look here)` | it matters; the note or the words nearby say why | where the note says; ask if nothing does |
+| `The person's note: "…"` on any step | their words about exactly that step | the step it is on, kept in their words |
 
 1. Retell what you saw in three to six short lines, in the person's language, as a colleague would ("Открываешь
    каталог, берёшь 19 л, ставишь количество, оформляешь на домашний адрес").
@@ -42,7 +56,9 @@ Highlight. You turn that into a skill: instructions you follow with understandin
      ## Steps
      1. Open <url>. 2. Click link «Каталог». 3. Click button «Вода 19 л» … (exact names from the recording)
      ## Checks
-     - Before paying, read «Итого» (the person pointed at it) and compare with the limit.
+     - Before paying, read «Итого» (the person marked it to check: "не больше трёх тысяч") and compare with the limit.
+     ## Result
+     - The order's number and the total (the person marked them as the result).
      ## With consequences
      - «Оформить заказ»: browser_submit with amount and currency; allowed without asking up to 3 000 ₸.
      ## When something differs
