@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { Learning, type LearningHost } from "../server/learning.ts";
 
 /** A browser that is not there: the isolated world answers from a list of what is under each press. */
-function setup(o: { remember?: boolean } = {}) {
+function setup(o: { remember?: boolean; speech?: string } = {}) {
   const calls: Array<{ method: string; params: any }> = [];
+  const emitted: Array<{ name: string; data: any }> = [];
   const notes: string[] = [];
   const under: string[] = [];
   let control = false;
@@ -15,13 +16,14 @@ function setup(o: { remember?: boolean } = {}) {
       call: async (method: string, params: any) => {
         calls.push({ method, params });
         if (method === "agents.list") return TEAM;
-        return method === "speech.transcribe" ? { available: false } : {};
+        if (method === "speech.transcribe") return params.check ? { available: !!o.speech } : { text: o.speech };
+        return {};
       },
     },
     log: { info() {}, warn() {}, error() {}, debug() {} },
-    ui: { emit() {} },
+    ui: { emit: (name: string, data: any) => void emitted.push({ name, data }) },
   } as any;
-  const page = { url: () => "https://water.example/catalog/7" } as any;
+  const page = { url: () => "https://water.example/catalog/7", screenshot: async () => Buffer.from("jpg") } as any;
   let learning: Learning;
   const host: LearningHost = {
     ctx,
@@ -33,7 +35,13 @@ function setup(o: { remember?: boolean } = {}) {
       control = on;
       learning.onControl(on);
     },
-    inspect: async (expression: string) => (expression.includes('"at"') ? ({ role: "button", name: under.shift() ?? "?" } as any) : null),
+    inspect: async (expression: string) =>
+      // The call ends with the operation and its arguments: ("area", {"x0":…}).
+      expression.includes('("area", {')
+        ? ({ text: "Итого 2 400 ₸", controls: [{ role: "button", name: "Оплатить" }] } as any)
+        : expression.includes('"at"')
+          ? ({ role: "button", name: under.shift() ?? "?" } as any)
+          : null,
     viewport: () => ({ w: 1000, h: 800 }),
     activePage: () => page,
     ensurePage: async () => page,
@@ -53,7 +61,12 @@ function setup(o: { remember?: boolean } = {}) {
     }
     host.setControl(false);
   };
-  return { learning, host, calls, notes, takeover };
+  /** The person presses a button while in control. */
+  const press = async (button: string) => {
+    under.push(button);
+    await learning.beforeInput({ event: "mouse", action: "down", x: 0.5, y: 0.5, button: "left" });
+  };
+  return { learning, host, calls, notes, takeover, emitted, press };
 }
 
 const ORDER = ["Вода 19 л", "В корзину", "Оформить заказ", "Подтвердить"];
@@ -166,5 +179,83 @@ describe("learning from takeovers", () => {
     await learning.finish("cancel");
     expect(learning.journal.list()).toEqual([]);
     expect(calls.filter((c) => c.method === "conversations.tell")).toEqual([]);
+  });
+});
+
+describe("what the person adds to a lesson", () => {
+  const FRAME = { x0: 0.6, y0: 0.7, x1: 0.9, y1: 0.8 };
+  const post = (body: unknown) => ({ method: "POST", path: "/teach/step", query: {}, headers: {}, body, public: false, locale: "en" }) as any;
+  const steps = (learning: any) => learning.steps().body as { rev: number; steps: any[] };
+  const told = (calls: Array<{ method: string; params: any }>) => String(calls.find((c) => c.method === "conversations.tell")?.params.text ?? "");
+
+  it("names the step of a frame, so the person can say what it means and note why", async () => {
+    const { learning, calls, emitted } = setup();
+    await learning.start({ goal: "заказ воды", agentId: "assistant" });
+    await learning.highlight(FRAME);
+    const answer = emitted.find((e) => e.name === "highlight")?.data;
+    expect(answer).toMatchObject({ ok: true, text: "Итого 2 400 ₸" });
+    expect(steps(learning).steps.find((s) => s.id === answer.step)).toMatchObject({ kind: "highlight", text: "Итого 2 400 ₸" });
+    const before = learning.state()!.rev;
+    expect(learning.step(post({ id: answer.step, mark: "check", note: "не больше трёх тысяч" }))).toMatchObject({ status: 200, body: { ok: true } });
+    expect(learning.state()!.rev).toBeGreaterThan(before);
+    await learning.finish("done");
+    expect(told(calls)).toContain("Marked a place to check every time: «Итого 2 400 ₸». Controls there: button «Оплатить».");
+    expect(told(calls)).toContain('The person\'s note: "не больше трёх тысяч"');
+  });
+
+  it("takes a slip out of the lesson, with the picture of a frame taken out", async () => {
+    const { learning, calls, emitted, press } = setup();
+    await learning.start({ goal: "заказ воды", agentId: "assistant" });
+    await press("Мимо");
+    await press("В корзину");
+    await learning.highlight(FRAME);
+    expect(learning.journal.images(learning.state()!.id)).toHaveLength(1);
+    const list = steps(learning).steps;
+    const slip = list.find((s) => s.kind === "click" && s.target.name === "Мимо");
+    const page = list.find((s) => s.kind === "page");
+    expect(learning.step(post({ id: slip.id, remove: true })).status).toBe(200);
+    expect(learning.step(post({ id: emitted.find((e) => e.name === "highlight")!.data.step, remove: true })).status).toBe(200);
+    expect(learning.journal.images(learning.state()!.id)).toEqual([]);
+    // A page stays; a step that is gone is not found; a mark nobody knows is refused.
+    expect(learning.step(post({ id: page.id, remove: true })).status).toBe(400);
+    expect(learning.step(post({ id: slip.id, note: "x" })).status).toBe(404);
+    expect(learning.step(post({ id: list.find((s) => s.target?.name === "В корзину").id, mark: "check" })).status).toBe(400);
+    expect(learning.step(post({ id: page.id })).status).toBe(400);
+    expect(learning.state()).toMatchObject({ steps: 1 });
+    await learning.finish("done");
+    expect(told(calls)).not.toContain("Мимо");
+    expect(told(calls)).not.toContain("Pointed at this place");
+    expect(told(calls)).toContain("Clicked button «В корзину»");
+  });
+
+  it("refuses a mark that is not one of the five", async () => {
+    const { learning, emitted } = setup();
+    await learning.start({ goal: "заказ воды" });
+    await learning.highlight(FRAME);
+    const id = emitted.find((e) => e.name === "highlight")!.data.step;
+    expect(learning.step(post({ id, mark: "important" })).status).toBe(400);
+    expect(learning.step(post({ id, mark: "result" })).status).toBe(200);
+    expect(learning.step(post({ id, mark: null })).status).toBe(200);
+    expect(steps(learning).steps.find((s) => s.id === id).mark).toBeUndefined();
+  });
+
+  it("has nothing to list or change when nothing is being recorded", () => {
+    const { learning } = setup();
+    expect(learning.steps().body).toEqual({ rev: 0, steps: [] });
+    expect(learning.step(post({ id: 1, note: "x" })).status).toBe(409);
+  });
+
+  it("writes speech into the lesson, or only hands the words back for a note", async () => {
+    const { learning } = setup({ speech: "выбираю самое дешёвое" });
+    await learning.start({ goal: "заказ воды" });
+    const speech = (body: object) => learning.speech({ method: "POST", path: "/teach/speech", query: {}, headers: {}, body: { data: "AAAA", mimeType: "audio/webm", ...body }, public: false, locale: "en" } as any);
+    expect((await speech({ only: true })).body).toEqual({ text: "выбираю самое дешёвое" });
+    expect(steps(learning).steps.filter((s) => s.kind === "say")).toEqual([]);
+    expect((await speech({})).body).toEqual({ text: "выбираю самое дешёвое" });
+    const said = steps(learning).steps.filter((s) => s.kind === "say");
+    expect(said).toHaveLength(1);
+    // The person corrects what was written down.
+    expect(learning.step(post({ id: said[0].id, text: "выбираю самое дешёвое за литр" })).status).toBe(200);
+    expect(steps(learning).steps.find((s) => s.kind === "say").text).toBe("выбираю самое дешёвое за литр");
   });
 });
