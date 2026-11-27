@@ -101,7 +101,7 @@ import { skillSandbox } from "./skill-scripts.ts";
 import { registerSkillScriptTools } from "./tools/skill-script-tools.ts";
 import { registerCodeTools } from "./tools/code-tools.ts";
 import { codeSandbox } from "./code-mode.ts";
-import { readSkillScript } from "./taught-skills.ts";
+import { noModelProblem, readSkillScript } from "./taught-skills.ts";
 import { quickModel, type QuickModel } from "./bare-ask.ts";
 import { recordSpend, spendReport } from "./spend.ts";
 import type { FastifyInstance } from "fastify";
@@ -548,6 +548,7 @@ export class Hub {
       },
       coreCall,
       hubUrl: config.internalUrl,
+      skillScript: (name) => noModelProblem(this.skills, name),
       // Page loads go through the egress proxy, checked and audited like the plugin process's were: a token per start,
       // revoked with its connections when the engine stops (as the plugin's went with its process).
       fetch: () => {

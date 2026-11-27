@@ -45,6 +45,8 @@ export interface TriggerView {
   machine?: string;
   machineName?: string;
   skill?: string;
+  /** Each run is the skill's script, run by the hub with no model. */
+  scriptRun?: { input: Record<string, unknown> };
   report?: boolean;
   cron?: string;
   at?: string;

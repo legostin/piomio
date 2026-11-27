@@ -23,6 +23,7 @@ describe("notification storage", () => {
     const old = openDb(file);
     // The schema before the Inbox: no kinds, no read state, no task delivery.
     old.exec(`
+      alter table tasks drop column script;
       drop index notifications_kind;
       alter table notifications drop column kind; alter table notifications drop column reason;
       alter table notifications drop column message_id; alter table notifications drop column read_at;
@@ -47,7 +48,7 @@ describe("notification storage", () => {
       alter table sessions drop column system_prompt;
       alter table tasks drop column rule;
       alter table tasks drop column progress; alter table tasks drop column progress_at; alter table tasks drop column owes_reply;
-      update schema_version set v = v - 18;`);
+      update schema_version set v = v - 19;`);
     const ins = old.prepare("insert into notifications(id, level, title, body, created_at, delivered_at) values (?,?,?,?,?,?)");
     ins.run("n1", "notify", "A", "a", "2026-10-30T10:00:00.000Z", "2026-10-30T10:00:01.000Z");
     ins.run("n2", "digest", "B", "b", "2026-10-30T11:00:00.000Z", null);

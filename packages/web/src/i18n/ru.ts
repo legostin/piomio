@@ -1372,6 +1372,7 @@ export default {
   "triggers.detail.value": "Текущее значение",
   "triggers.detail.machine": "На {machine}",
   "triggers.detail.skill": "Скилл «{skill}»",
+  "triggers.detail.scriptRun": "Скрипт, без модели",
   "triggers.detail.secret": "Секрет (заголовок x-piomio-secret)",
   "triggers.detail.signature": "Проверяет подпись {name} (заголовок {header})",
   "triggers.detail.errorExternal": "Эта ошибка — из запуска, который читал что-то извне (страницу, вебхук, письмо): в её тексте может быть прочитанное.",

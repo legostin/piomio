@@ -679,6 +679,11 @@ export interface Task {
   rule?: string;
   /** The skill the task follows (a trigger's run of a taught skill): a taught one may click and type in the background. */
   skill?: string;
+  /**
+   * The task starts with its skill's script, run by the hub itself with this input and no model (a trigger's
+   * `scriptRun`); the agent takes the task only when the script stops.
+   */
+  script?: { input: Record<string, unknown> };
   createdAt: ISODate;
   updatedAt: ISODate;
 }

@@ -211,7 +211,7 @@ function TriggerDetail({ tr, list, reload, note }: { tr: TriggerView; list: Trig
             <Badge tone={badge.tone}>{badge.label}</Badge>
           </div>
           <p className="mt-0.5 text-xs break-words text-muted">
-            {[t(KIND_LABEL[tr.kind]), agentName, tr.machineName && t("triggers.detail.machine", { machine: tr.machineName }), tr.skill && t("triggers.detail.skill", { skill: tr.skill })]
+            {[t(KIND_LABEL[tr.kind]), agentName, tr.machineName && t("triggers.detail.machine", { machine: tr.machineName }), tr.skill && t("triggers.detail.skill", { skill: tr.skill }), tr.skill && tr.scriptRun && t("triggers.detail.scriptRun")]
               .filter(Boolean)
               .join(" · ")}
           </p>

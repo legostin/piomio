@@ -326,6 +326,44 @@ describe("trigger engine", () => {
     e.stop();
   });
 
+  it("runs a skill's script with no model: the task carries the script's input and what came in", async () => {
+    const f = fakeCtx(new Map<string, unknown>([["initialized", true]]));
+    (f.ctx as any).skillScript = (name: string) => (name === "no-script" ? "it has no script yet" : undefined);
+    const e = new TriggerEngine(f.ctx);
+    await e.start();
+    const schedule = { kind: "schedule", name: "Water", prompt: "Order water as usual", cron: "0 9 * * 5" };
+    await expect(e.create({ ...schedule, scriptRun: true }, { createdBy: "user" })).rejects.toMatchObject({ code: "scriptRunNeedsSkill" });
+    await expect(e.create({ ...schedule, skill: "order-water", scriptRun: [] as any }, { createdBy: "user" })).rejects.toMatchObject({ code: "scriptRunShape" });
+    await expect(e.create({ ...schedule, skill: "order-water", scriptRun: { input: { trigger: 1 } } }, { createdBy: "user" })).rejects.toMatchObject({ code: "scriptRunReserved" });
+    await expect(e.create({ ...schedule, skill: "order-water", scriptRun: { input: { big: "x".repeat(20_000) } } }, { createdBy: "user" })).rejects.toMatchObject({ code: "scriptRunTooBig" });
+    await expect(e.create({ ...schedule, skill: "no-script", scriptRun: true }, { createdBy: "user" })).rejects.toMatchObject({ code: "scriptRunSkill", message: expect.stringContaining("it has no script yet") });
+
+    const t = await e.create({ ...schedule, skill: "order-water", scriptRun: { input: { quantity: 2 } } }, { createdBy: "agent:assistant" });
+    expect(t.scriptRun).toEqual({ input: { quantity: 2 } });
+    await e.runNow(t.id);
+    const first = f.created()[0].params;
+    expect(first).toMatchObject({ skill: "order-water", triggerId: t.id, script: { input: { quantity: 2, trigger: { id: t.id, name: "Water", reason: "manual" } } } });
+    expect(first.tainted).toBeUndefined();
+    // Pointing it at a skill with no script is refused; the trigger stays as it was.
+    await expect(e.update(t.id, { skill: "no-script" })).rejects.toMatchObject({ code: "scriptRunSkill" });
+    expect(e.get(t.id)!.skill).toBe("order-water");
+    // What came in is the script's too, and it is outside content: the run starts marked.
+    await e.fire(e.get(t.id)!, "webhook", { payload: '{"order":7}', query: { a: "1" }, contentType: "application/json" }, { force: true });
+    expect(f.created()[1].params).toMatchObject({ tainted: true, script: { input: { quantity: 2, trigger: { reason: "webhook", payload: { order: 7 }, query: { a: "1" } } } } });
+    await e.fire(e.get(t.id)!, "change", { change: { previous: "1", current: "2" } }, { force: true });
+    expect(f.created()[2].params).toMatchObject({ tainted: true, script: { input: { trigger: { change: { previous: "1", current: "2" } } } } });
+    // null gives the runs back to the agent; so does taking the skill away.
+    expect((await e.update(t.id, { scriptRun: null })).scriptRun).toBeUndefined();
+    await e.runNow(t.id, { force: true });
+    expect(f.created()[3].params.script).toBeUndefined();
+    await e.update(t.id, { scriptRun: true });
+    expect(e.get(t.id)!.scriptRun).toEqual({ input: {} });
+    const bare = await e.update(t.id, { skill: "" });
+    expect(bare.skill).toBeUndefined();
+    expect(bare.scriptRun).toBeUndefined();
+    e.stop();
+  });
+
   it("runs on the computer the trigger names, and says so when that computer cannot take a run", async () => {
     const now = Date.now();
     const f = fakeCtx(new Map<string, unknown>([["initialized", true]]));

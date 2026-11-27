@@ -18,6 +18,8 @@ export interface PolicyInput {
    * agent only suggests; anything external still needs a rule (the skill's pre-approvals) or a card.
    */
   skillRun?: boolean;
+  /** That skill's name: the calls its card pre-approved (rules noted `skill:<name>`) are the run's too. */
+  skill?: string;
   /** The person asked for this call in their own words (policy/asked.ts, checked by the gateway): an external action needs no card. */
   asked?: boolean;
   /** The call opens a web address that may carry data out of a tainted session (policy/egress.ts): its host. */
@@ -39,6 +41,23 @@ export interface PolicyResult {
  * with the skill's script (each of the script's steps is a browser tool call of its own), and fix that script.
  */
 export const SKILL_RUN_TOOLS = /^(?:browser_|skill_run$|skill_script_save$)/;
+
+/** The note of the rules a skill's card made (taught-skills.ts skillNote): they go with the skill. */
+export const skillRuleNote = (skill: string): string => `skill:${skill}`;
+
+/** A rule the person approved on the card of the skill `skill`: one of the actions it may do without asking. */
+export const isSkillRule = (r: Rule, skill: string): boolean => r.decision === "allow" && r.createdVia === "skill" && r.note === skillRuleNote(skill);
+
+/**
+ * What a background run of a taught skill may do beyond reading, though its agent only suggests: the browser and the
+ * skill's script (SKILL_RUN_TOOLS), and the calls the person pre-approved on the skill's card, whoever makes them (the
+ * script or the model that took the run over). `input` unset: whether the tool could be allowed for some input.
+ */
+export function skillRunAllows(rules: Rule[], skill: string | undefined, tool: string, agentId: string, input?: unknown): boolean {
+  if (SKILL_RUN_TOOLS.test(tool)) return true;
+  if (!skill) return false;
+  return rules.some((r) => isSkillRule(r, skill) && (input === undefined ? globToRegExp(r.tool).test(tool) && (!r.agentId || r.agentId === agentId) : allowRuleMatches(r, tool, agentId, input)));
+}
 
 /** Tools background tasks may always use regardless of effect. */
 // memory_remember, memory_write: the nightly reflection is a background task; a remembered or updated fact is local,
@@ -143,7 +162,7 @@ export function decide(p: PolicyInput, rules: Rule[], isKnownTarget: (t: string)
     }
   }
 
-  if (p.background && p.initiative < 2 && !(p.skillRun && SKILL_RUN_TOOLS.test(tool.name)) && tool.effect !== "read" && !BACKGROUND_ALWAYS_ALLOWED.includes(tool.name)) {
+  if (p.background && p.initiative < 2 && !(p.skillRun && skillRunAllows(rules, p.skill, tool.name, agentId, input)) && tool.effect !== "read" && !BACKGROUND_ALWAYS_ALLOWED.includes(tool.name)) {
     return { decision: "deny", reason: t("policy.backgroundReadOnly") };
   }
 

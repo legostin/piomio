@@ -12,7 +12,7 @@ import type { ApprovalService } from "../approvals.ts";
 import type { AuditLog } from "../audit.ts";
 import type { Redactor } from "../vault/redact.ts";
 import type { Settings } from "../settings.ts";
-import { BACKGROUND_ALWAYS_ALLOWED, decide, SKILL_RUN_TOOLS } from "../policy/engine.ts";
+import { BACKGROUND_ALWAYS_ALLOWED, decide, skillRunAllows } from "../policy/engine.ts";
 import { checkAsked, type AskedCheck, type PersonWords } from "../policy/asked.ts";
 import type { AutoMode } from "../policy/auto.ts";
 import { urlsIn, type EgressGiven, type EgressGuard } from "../policy/egress.ts";
@@ -174,15 +174,15 @@ export class ToolGateway {
     return this.d.registry.list().filter((t) => this.visible(t, agent, s, skillRun));
   }
 
-  /** A background run of a skill the person taught: its task names a skill that is `taught`. */
-  private skillRun(s: SessionRow): boolean {
-    if (!s.background || !s.taskId || !this.d.skills) return false;
+  /** A background run of a skill the person taught: its task names a skill that is `taught`. Returns that skill's name. */
+  private skillRun(s: SessionRow): string | undefined {
+    if (!s.background || !s.taskId || !this.d.skills) return undefined;
     const skill = this.d.store.getTask(s.taskId)?.skill;
-    return !!skill && !!this.d.skills.get(skill)?.taught;
+    return skill && this.d.skills.get(skill)?.taught ? skill : undefined;
   }
 
   /** `trigger`: a trigger's script calls it (callRead), with only its agent's list to go by. */
-  private visible(t: ToolDescriptor, agent: AgentDef, s: SessionRow, skillRun = false, trigger = false): boolean {
+  private visible(t: ToolDescriptor, agent: AgentDef, s: SessionRow, skillRun?: string, trigger = false): boolean {
     // The CLIs' permission prompt (native-permission.ts): theirs only, never on the model's list of an API brain.
     if (t.name === NATIVE_PERMISSION_TOOL) return /^(claude-code|codex)\b/.test(s.brainRef ?? "");
     if (this.d.hubOnly?.(t.owner) && parseBrainRef(s.brainRef).machineId !== "local") return false;
@@ -192,7 +192,9 @@ export class ToolGateway {
     if (t.availability === "background" && !s.background) return false;
     if (t.availability === "interactive" && s.background) return false;
     if (t.agents?.length && !t.agents.includes(agent.id)) return false;
-    if (s.background && agent.initiative < 2 && !(skillRun && SKILL_RUN_TOOLS.test(t.name)) && t.effect !== "read" && !BACKGROUND_ALWAYS_ALLOWED.includes(t.name)) return false;
+    // A background run of an agent that only suggests reads; one that follows a taught skill also drives the browser
+    // and makes the calls the skill's card pre-approved (policy/engine.ts decides each by its input).
+    if (s.background && agent.initiative < 2 && t.effect !== "read" && !BACKGROUND_ALWAYS_ALLOWED.includes(t.name) && !(skillRun && skillRunAllows(this.d.rules.list(), skillRun, t.name, agent.id))) return false;
     return true;
   }
 
@@ -271,7 +273,7 @@ export class ToolGateway {
     // The CLI's question carries its own tool's input: native_permission records it once it is answered.
     if (name !== NATIVE_PERMISSION_TOOL) this.d.egress?.wrote(s.id, input);
     const policy = decide(
-      { tool, input, agentId: s.agentId, tainted: s.tainted, background: s.background, initiative: agent.initiative, profile: agent.policyProfile, skillRun, asked: asked?.ok, egress: egress?.host },
+      { tool, input, agentId: s.agentId, tainted: s.tainted, background: s.background, initiative: agent.initiative, profile: agent.policyProfile, skillRun: !!skillRun, ...(skillRun ? { skill: skillRun } : {}), asked: asked?.ok, egress: egress?.host },
       this.d.rules.list(),
       (t) => this.d.rules.isKnownTarget(t),
     );
@@ -416,7 +418,7 @@ export class ToolGateway {
     if (tool.forTriggers === false) return refuse(`Tool ${name} is not for triggers: it acts or spends though it only reads, so a trigger's script cannot call it`, "tool.denied", "not for triggers");
     if (!this.listed(tool, agent, s, true)) return refuse(unavailable, "tool.denied", "not available");
     if (tool.effect !== "read") return refuse(`Triggers only read: ${name} changes things (effect ${tool.effect}), so a trigger's script cannot call it`, "tool.denied", `effect ${tool.effect}`);
-    if (!this.visible(tool, agent, s, false, true)) return refuse(unavailable, "tool.denied", "not available");
+    if (!this.visible(tool, agent, s, undefined, true)) return refuse(unavailable, "tool.denied", "not available");
     const ctx = this.contextFor(s, newId("call_"));
 
     const hooked = await this.d.hooks.run("tool.before", { tool: name, input: rawInput ?? {}, context: ctx }, (p, r) =>
