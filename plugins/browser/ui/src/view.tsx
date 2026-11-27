@@ -15,7 +15,7 @@ import { HighlightButton, HighlightLayer, useHighlight } from "./highlight.tsx";
 import { HistoryPanel } from "./history.tsx";
 import { errorText, host, isBlank, send, t, toolLabel, touchScreen, viewerId, type BrowserState } from "./host.ts";
 import { NewTabPage } from "./newtab.tsx";
-import { newNoteLink } from "./note.tsx";
+import { newNoteLink } from "./note-link.ts";
 import { Omnibox } from "./omnibox.tsx";
 import { Screen, useBoxSize, type Keyboard } from "./screen.tsx";
 import { addStyles } from "./styles.ts";
@@ -251,7 +251,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
           </div>
           {panel === "tabs" && <TabSwitcher tabs={tabs} onClose={() => setPanel(null)} onHistory={() => setPanel("history")} />}
           {panel === "history" && <HistoryPanel sheet onClose={() => setPanel(null)} />}
-          {panel === "steps" && teach && <StepsPanel sheet teach={teach} onClose={() => setPanel(null)} />}
+          {panel === "steps" && teach && <StepsPanel sheet teach={teach} link={noteLink} onClose={() => setPanel(null)} />}
         </div>
       </div>
     );
@@ -280,7 +280,7 @@ export function BrowserView({ mode, expand }: LiveViewProps) {
         <div className="obb-body">
           {body(true)}
           {panel === "history" && <HistoryPanel sheet={false} onClose={() => setPanel(null)} />}
-          {panel === "steps" && teach && <StepsPanel sheet={false} teach={teach} onClose={() => setPanel(null)} />}
+          {panel === "steps" && teach && <StepsPanel sheet={false} teach={teach} link={noteLink} onClose={() => setPanel(null)} />}
         </div>
         <div className="obb-foot">
           {state?.running && (control || teach ? <Badge tone="warning">{status}</Badge> : state.busy ? <Badge tone="info">{status}</Badge> : <Badge tone="neutral">{status}</Badge>)}

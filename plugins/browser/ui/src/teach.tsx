@@ -11,7 +11,7 @@ import { Button, Spinner } from "@piomio/ui";
 import { IconButton } from "./chrome.tsx";
 import { HighlightButton, type Highlight } from "./highlight.tsx";
 import { host, send, t, type TeachState } from "./host.ts";
-import type { NoteLink } from "./note.tsx";
+import { dictationFor, type NoteLink } from "./note-link.ts";
 import { blobToBase64, startVoice, VoiceError, type Segment, type Voice } from "./voice.ts";
 
 /** How long a hint (no voice, the mic not allowed) stays in the bar. */
@@ -46,7 +46,7 @@ function problemText(e: unknown): string {
 
 /**
  * A demonstration's voice and its Done / Cancel; runs while the view is open (the bar shows in the large view).
- * `link`: the note of a frame that takes the words while it is open, and the notes still being saved.
+ * `link`: the notes of frames that take the words said into them, and the changes to steps still being saved.
  */
 export function useLesson(teach: TeachState | null, link: MutableRefObject<NoteLink>): Lesson {
   const id = teach?.id ?? null;
@@ -100,9 +100,9 @@ export function useLesson(teach: TeachState | null, link: MutableRefObject<NoteL
     const post = async (seg: Segment) => {
       try {
         const data = await blobToBase64(seg.blob);
-        // Words that began while a frame's note was open are that note's: the hub only writes them down.
-        const d = link.current.target;
-        const note = d && seg.wordsAt >= d.since && (d.until === null || seg.wordsAt < d.until) ? d : null;
+        // Words that began while a frame's note was open are that note's (also when it has closed and another has
+        // opened since): the hub only writes them down.
+        const note = dictationFor(link.current, seg.wordsAt);
         // durationMs: how long ago the words began; the hub places them at now - durationMs.
         const r = await host.plugin.http<{ text?: string; error?: string }>("POST", "teach/speech", {
           data,
@@ -160,7 +160,9 @@ export function useLesson(teach: TeachState | null, link: MutableRefObject<NoteL
         // The words still being written down land before the demonstration ends.
         const left = [...uploads.current];
         if (left.length) await Promise.race([Promise.allSettled(left), new Promise((r) => setTimeout(r, UPLOAD_WAIT_MS))]);
-        // So do the notes still being saved (the last words may have gone into one).
+        // A note still open (Done by the keyboard, or the last words went into it) saves what it holds; then the
+        // changes to steps still on their way land too, from the notes and from the list of steps.
+        link.current.flush?.();
         const notes = [...link.current.saves];
         if (notes.length) await Promise.race([Promise.allSettled(notes), new Promise((r) => setTimeout(r, UPLOAD_WAIT_MS))]);
         setWant(false);

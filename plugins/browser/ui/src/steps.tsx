@@ -4,12 +4,13 @@
 // on the page is undone.
 
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import { AppWindow, ArrowDownUp, Globe, Keyboard, Mic, MousePointerClick, Paperclip, Pencil, SquareDashedMousePointer, Type, X } from "lucide-react";
 import { Button } from "@piomio/ui";
 import { IconButton } from "./chrome.tsx";
 import { host, t, type LessonStep, type Mark, type TeachState } from "./host.ts";
 import { MarkChips, postStep } from "./note.tsx";
+import type { NoteLink } from "./note-link.ts";
 import { canNote, canRemove, stepLine } from "./step-text.ts";
 
 const ICONS: Record<LessonStep["kind"], ReactNode> = {
@@ -72,7 +73,7 @@ function Editor({ step, onSave, onCancel }: { step: LessonStep; onSave(change: {
   );
 }
 
-export function StepsPanel({ teach, sheet, onClose }: { teach: TeachState; sheet: boolean; onClose(): void }) {
+export function StepsPanel({ teach, link, sheet, onClose }: { teach: TeachState; link: MutableRefObject<NoteLink>; sheet: boolean; onClose(): void }) {
   const [steps, setSteps] = useState<LessonStep[] | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
@@ -103,11 +104,11 @@ export function StepsPanel({ teach, sheet, onClose }: { teach: TeachState; sheet
     return () => clearTimeout(timer);
   }, [failed]);
 
-  /** Shown at once; the hub's list (on its next `rev`, or now if it refused) is the truth. */
+  /** Shown at once; the hub's list (on its next `rev`, or now if it refused) is the truth. Done waits for it (`link`). */
   const change = (next: LessonStep[], body: Record<string, unknown>) => {
     setSteps(next);
     setEditing(null);
-    void postStep(null, body).then((ok) => {
+    void postStep(link.current, body).then((ok) => {
       if (ok) return;
       setFailed(true);
       void load();

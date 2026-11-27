@@ -8,23 +8,8 @@ import type { MutableRefObject, SyntheticEvent } from "react";
 import { Check, Trash2 } from "lucide-react";
 import { IconButton } from "./chrome.tsx";
 import { host, MARKS, t, touchScreen, type Mark } from "./host.ts";
+import { openDictation, type Dictation, type NoteLink } from "./note-link.ts";
 import { placeNote, type Box } from "./note-place.ts";
-
-/** Where the lesson's voice goes while a note is open: words that began in [since, until) are the note's. */
-export interface Dictation {
-  since: number;
-  /** When the card closed (null: still open). Words that began before it still belong to the note. */
-  until: number | null;
-  put(words: string): void;
-}
-
-/** What the notes and the lesson share: the note taking dictation, and the saves still on their way (Done waits). */
-export interface NoteLink {
-  target: Dictation | null;
-  saves: Set<Promise<unknown>>;
-}
-
-export const newNoteLink = (): NoteLink => ({ target: null, saves: new Set() });
 
 /** POST teach/step; true when the hub took the change. Tracked in `link`, so Done can wait for it. */
 export function postStep(link: NoteLink | null, body: Record<string, unknown>): Promise<boolean> {
@@ -98,7 +83,8 @@ export function FrameNote(props: {
     });
   };
 
-  // The lesson's voice goes here while the card is open; words that began before it closed still arrive after.
+  // The lesson's voice goes here while the card is open; words that began before it closed still arrive after, even
+  // when the next frame's card is open by then.
   useEffect(() => {
     open.current = true;
     const d: Dictation = {
@@ -112,10 +98,14 @@ export function FrameNote(props: {
         else save();
       },
     };
-    link.current.target = d;
+    openDictation(link.current, d);
+    // Done pressed with the card open (by the keyboard, or the last words just arrived): what it holds is saved first.
+    const flush = () => save();
+    link.current.flush = flush;
     return () => {
       open.current = false;
       d.until = Date.now();
+      if (link.current.flush === flush) link.current.flush = null;
       save();
     };
   }, [step]);

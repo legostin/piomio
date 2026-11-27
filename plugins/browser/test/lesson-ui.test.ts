@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import en from "../.piomio-plugin/locales/en.json" with { type: "json" };
 import type { LessonStep } from "../ui/src/host.ts";
+import { dictationFor, KEEP_MS, newNoteLink, openDictation, type Dictation } from "../ui/src/note-link.ts";
 import { placeNote } from "../ui/src/note-place.ts";
 import { canNote, canRemove, stepLine } from "../ui/src/step-text.ts";
 
@@ -72,5 +73,45 @@ describe("where the note of a frame goes", () => {
     expect(placeNote({ left: 300, top: 50, width: 60, height: 40 }, { width: 340, height: 500 }, card).left).toBe(12);
     // A picture smaller than the card: its corner, never outside.
     expect(placeNote({ left: 0, top: 0, width: 20, height: 20 }, { width: 300, height: 90 }, card)).toEqual({ left: 8, top: 8 });
+  });
+});
+
+describe("whose note the person's words are", () => {
+  const note = (since: number, until: number | null = null): Dictation => ({ since, until, put: () => {} });
+
+  it("gives the words to the note that was open when they began", () => {
+    const link = newNoteLink();
+    expect(dictationFor(link, 1000)).toBeNull();
+    const a = note(1000);
+    openDictation(link, a, 1000);
+    expect(dictationFor(link, 999)).toBeNull();
+    expect(dictationFor(link, 1000)).toBe(a);
+    expect(dictationFor(link, 5000)).toBe(a);
+  });
+
+  it("keeps a closed note's words for it when the next note is already open", () => {
+    const link = newNoteLink();
+    const a = note(1000);
+    openDictation(link, a, 1000);
+    a.until = 4000;
+    const b = note(6000);
+    openDictation(link, b, 6000);
+    // Said into the first note, sent after a pause, routed when the second is open.
+    expect(dictationFor(link, 3000)).toBe(a);
+    // Between the two cards: the lesson's own stream.
+    expect(dictationFor(link, 5000)).toBeNull();
+    expect(dictationFor(link, 7000)).toBe(b);
+  });
+
+  it("prefers the newest note when two fit and forgets notes closed long ago", () => {
+    const link = newNoteLink();
+    const a = note(1000, 4000);
+    openDictation(link, a, 1000);
+    const b = note(3500);
+    openDictation(link, b, 3500);
+    expect(dictationFor(link, 3800)).toBe(b);
+    openDictation(link, note(4000 + KEEP_MS), 4000 + KEEP_MS);
+    expect(link.targets).not.toContain(a);
+    expect(link.targets).toContain(b);
   });
 });

@@ -9,7 +9,8 @@ import type { MutableRefObject, PointerEvent as ReactPointerEvent, SyntheticEven
 import { SquareDashedMousePointer } from "lucide-react";
 import { IconButton } from "./chrome.tsx";
 import { host, send, t, touchScreen } from "./host.ts";
-import { FrameNote, type NoteLink } from "./note.tsx";
+import { FrameNote } from "./note.tsx";
+import type { NoteLink } from "./note-link.ts";
 import type { Box } from "./note-place.ts";
 
 export interface Frame {
