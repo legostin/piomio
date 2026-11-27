@@ -58,6 +58,9 @@ import { recallText, recentWork, RECALL_MESSAGES, RECALL_TASKS, RECENT_MESSAGES,
 import { brainOfModel, NO_RULE, parseRuleAnswer, ruleChoice, ruled, ruleLine, rulesPrompt, WorkRules } from "./work-rules.ts";
 import type { QuickModel } from "./bare-ask.ts";
 import { heardParts, type HeardPrefix } from "./speech/interruption.ts";
+import { runSkillScript } from "./skill-scripts.ts";
+import { readSkillScript } from "./taught-skills.ts";
+import { SCRIPT_BRAIN, SCRIPT_RUN_MARK, scriptHandover, scriptMissing, scriptNoteIn, scriptStarted, scriptValue, scriptWaiting, scriptWords } from "./script-runs.ts";
 
 export interface RunnerDeps {
   config: Config;
@@ -1001,6 +1004,8 @@ export class SessionRunner {
     feedId?: string;
     /** The skill the task follows (a trigger's run of a taught skill). */
     skill?: string;
+    /** The task starts with that skill's script, run by the hub with no model (a trigger's scriptRun). */
+    script?: Task["script"];
     /** How the result reaches the person (a schedule's report, the digest). */
     deliver?: Task["deliver"];
     /** The brain and depth for this job (the digest: fast, writing). */
@@ -1195,6 +1200,17 @@ export class SessionRunner {
       if (fresh.deliver === "digest") await this.d.notifier.digestWritten(fresh.id, undefined);
       return;
     }
+    // A task that starts with its skill's script (a trigger's scriptRun): the hub runs it with no model, and the agent
+    // takes the task only when the script stopped (`handover` says how far it got). The script uses no brain, so it
+    // neither needs one of the day's background runs nor counts as one.
+    let handover: string | undefined;
+    if (fresh.script && fresh.skill) {
+      const before = this.d.store.listMessages(conv.id, { limit: 50 });
+      if (!before.some((m) => m.role === "assistant")) {
+        handover = scriptNoteIn(before, fresh.skill) ?? (await this.scriptFirst(fresh, agent, conv));
+        if (handover === undefined) return;
+      }
+    }
     if (fresh.background && !this.budgetOk(agent)) {
       this.d.store.updateTask(fresh.id, { status: "failed", error: t("task.budgetExhausted") });
       // The card is the answer for the digest: no notice about the budget for the next digest to carry.
@@ -1221,7 +1237,9 @@ export class SessionRunner {
     // What reached the task before it started (its starter's clarifications, the user's words on its page).
     // Inputs still being prepared join through steering afterwards; do not deliver their text twice.
     const pendingInputs = history.filter((m) => m.parts.some((p) => p.type === "input_status" && p.state === "queued"));
-    const readyHistory = history.slice(1).filter((m) => !m.parts.some((p) => p.type === "input_status" && p.state === "sending"));
+    // The notes of the task's own script (scriptFirst) reach the agent as its handover, not as messages.
+    const scriptNote = (m: Message) => m.role === "system" && m.parts.some((p) => p.type === "text" && p.text.startsWith(SCRIPT_RUN_MARK));
+    const readyHistory = history.slice(1).filter((m) => !scriptNote(m) && !m.parts.some((p) => p.type === "input_status" && p.state === "sending"));
     const notes = (resumed ? pendingInputs : readyHistory).flatMap((m) => m.parts.flatMap((p) => (p.type === "text" && p.text.trim() ? [p.text.trim()] : [])));
     const sender = fresh.kind === "message" ? this.threadSender(fresh) : undefined;
     // A teammate's thread reads as their message; the reply is the answer.
@@ -1233,12 +1251,13 @@ export class SessionRunner {
       ? thread()
       : fresh.kind === "goal"
         ? [goalPrompt(fresh, !resumed, goalLimit(fresh.rounds ?? 0)), ...notes].join("\n\n")
-        : resumed
+        : resumed && handover === undefined
         ? ["Continue working on the task from where you stopped.", ...notes].join("\n\n")
         : [
             `Task: ${fresh.title}`,
             "",
             fresh.goal,
+            ...(handover !== undefined ? ["", handover] : []),
             ...(notes.length ? ["", "Messages that came after the task was created:", ...notes] : []),
             "",
             taskEnding(fresh),
@@ -1249,6 +1268,96 @@ export class SessionRunner {
     // A run counts against the day's budget once it really ran, not for each look at whether its brains are back.
     if (fresh.background && r.errorCode !== "brain-offline") this.countUsage(agent.id, "background_run");
     await this.afterTaskTurn(fresh.id, r);
+  }
+
+  /**
+   * A task that starts with its skill's script (Task.script, a trigger's scriptRun): the hub runs the script in a
+   * session of the task's own that has no brain, each of its calls decided as the agent's (ToolGateway.call). Returns
+   * nothing when the task needs no agent now (it is done, waits for a card, or was stopped), else the note the agent
+   * takes the task with (script-runs.ts). The run's notes stay in the thread: a task found with them never runs its
+   * script again (runTask), since nobody knows which of its steps are done.
+   */
+  private async scriptFirst(task: Task, agent: AgentDef, conv: Conversation): Promise<string | undefined> {
+    const name = task.skill!;
+    const say = (text: string) => void this.d.store.addMessage({ conversationId: conv.id, role: "system", parts: [{ type: "text", text }], status: "complete", taskId: task.id });
+    const skill = this.d.skills.get(name);
+    const code = skill?.taught ? readSkillScript(skill) : undefined;
+    if (!skill || code === undefined) {
+      const note = scriptMissing(name);
+      say(note);
+      return note;
+    }
+    this.d.store.updateTask(task.id, { status: "running", resumeAt: undefined, error: undefined });
+    const prior = this.d.store.activeSession(conv.id, agent.id);
+    if (prior) this.d.store.updateSession(prior.id, { status: "closed" });
+    // The hub runs the script itself, whatever computer the task is placed on: that one matters once the agent takes it.
+    const { row } = this.d.store.createSession({
+      conversationId: conv.id,
+      taskId: task.id,
+      agentId: agent.id,
+      brainRef: formatBrainRef({ brainId: SCRIPT_BRAIN, machineId: "local" }),
+      background: task.background,
+      tainted: !!task.tainted || !!prior?.tainted,
+    });
+    mkdirSync(this.workspacePath(row), { recursive: true });
+    say(scriptStarted(name));
+    // Stop, or the hub stopping: the script's next call is refused, which ends the run there.
+    const off = () => this.stopped || this.d.store.getTask(task.id)?.status === "cancelled";
+    const run = await runSkillScript(code, task.script!.input, {
+      call: async (tool, input) =>
+        off() ? { content: [{ type: "text", text: "The task was stopped." }], isError: true, _meta: { status: "denied" } } : this.d.gateway.call(row.id, tool, input),
+      sites: skill.sites,
+    });
+    // The hub stopped leading under the script: nothing more is written here, and the leader finds the run cut off.
+    if (this.stopped) return undefined;
+    this.d.audit.append(`agent:${agent.id}`, "skill.script.run", name, {
+      ok: run.ok,
+      calls: run.trace.length,
+      ms: run.ms,
+      noModel: true,
+      taskId: task.id,
+      ...(task.triggerId ? { triggerId: task.triggerId } : {}),
+      ...(run.halted ? { halted: run.halted } : {}),
+      ...(run.error ? { error: run.error.slice(0, 300) } : {}),
+    });
+    const cur = this.d.store.getTask(task.id);
+    if (!cur || cur.status === "cancelled") {
+      this.d.store.updateSession(row.id, { status: "closed" });
+      return undefined;
+    }
+    if (run.ok) {
+      const words = scriptWords(run.value);
+      const value = scriptValue(run.value);
+      const finished = t("task.scriptDone", { skill: name });
+      say(`${SCRIPT_RUN_MARK} The script of the skill "${name}" finished: ${run.trace.length} call(s), ${(run.ms / 1000).toFixed(1)} s.`);
+      this.d.store.addMessage({ conversationId: conv.id, role: "assistant", agentId: agent.id, parts: [{ type: "text", text: words ?? finished }], status: "complete", taskId: task.id });
+      this.d.store.updateSession(row.id, { status: "closed" });
+      const done = this.d.store.updateTask(task.id, { status: "done", result: words ?? (value ? `${finished}\n${value}` : finished), error: undefined });
+      // A report is the script's own words; a run that returned none says nothing (its script calls notify to be heard).
+      if (done?.deliver === "report" && words) await this.d.notifier.deliverReport(done);
+      return undefined;
+    }
+    if (run.halted === "approval") {
+      // The card is in front of the person: the task waits for it with no model (onDeferredApproved, onDeferredDenied).
+      say(scriptWaiting(name, run));
+      this.d.store.updateTask(task.id, { status: "waiting_approval", result: t("task.scriptWaits", { skill: name }) });
+      return undefined;
+    }
+    const note = scriptHandover(name, run, code);
+    say(note);
+    return note;
+  }
+
+  /**
+   * The first turn of an agent whose task's script waited for a card (scriptFirst): the task itself, how far its
+   * script got, and the person's answer. Any later turn gets the answer alone.
+   */
+  private afterScriptCard(task: Task, note: string): string {
+    if (!task.script || !task.skill) return note;
+    const history = this.d.store.listMessages(task.conversationId, { limit: 50 });
+    if (history.some((m) => m.role === "assistant")) return note;
+    const ran = scriptNoteIn(history, task.skill);
+    return ran === undefined ? note : [`Task: ${task.title}`, "", task.goal, "", ran, "", note, "", taskEnding(task)].join("\n");
   }
 
   /** Look at the tasks again at `at` (the time one waiting is due), not only on the next sweep. */
@@ -1983,7 +2092,7 @@ export class SessionRunner {
     if (task && task.status === "waiting_approval") {
       this.d.store.updateTask(task.id, { status: "running" });
       void this.enqueue(conv.id, async () => {
-        const r = await this.runTurn(conv, note, { task });
+        const r = await this.runTurn(conv, this.afterScriptCard(task, note), { task });
         await this.afterTaskTurn(task.id, r);
       });
     } else {

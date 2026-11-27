@@ -156,6 +156,10 @@ export function createCoreCall(hub: Hub) {
           if (!hub.skills.get(skill)) throw new Error(`No skill "${skill}" on the hub (it may have been deleted)`);
           goal = `${goal}\n\n[System] This task follows the skill "${skill}": read its instructions (skill_load) first and do the task as they say.`;
         }
+        // script: the hub runs the skill's script itself first, with no model (a trigger's scriptRun; runner.ts). The
+        // trigger engine's alone: a plugin's task is its agent's to do.
+        const given = pluginId === "triggers" && skill && p.script && typeof p.script === "object" ? p.script.input : undefined;
+        const script = given && typeof given === "object" && !Array.isArray(given) ? { input: given as Record<string, unknown> } : undefined;
         // machine: the computer the task runs on (id or name, see machines.list), like task_delegate's.
         let machineId: string | undefined;
         if (typeof p.machine === "string" && p.machine.trim()) {
@@ -182,6 +186,7 @@ export function createCoreCall(hub: Hub) {
           parentConversationId: p.parentConversationId,
           ...(machineId ? { machineId } : {}),
           ...(skill ? { skill } : {}),
+          ...(script ? { script } : {}),
         });
         return t;
       }

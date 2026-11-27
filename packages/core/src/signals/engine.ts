@@ -2,7 +2,7 @@
 
 import type { TriggerHost, TriggerHttpRequest, TriggerHttpResponse } from "./host.ts";
 import { errorFields, TriggerError, type ErrorParams } from "./errors.ts";
-import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, type FireContext } from "./prompt.ts";
+import { DEFAULT_HEARTBEAT_PROMPT, renderPrompt, scriptRunInput, type FireContext } from "./prompt.ts";
 import { computeNextRun, defaultReport, localDate, validTimezone, zonedParts } from "./schedule.ts";
 import type { RunReason, Signal, Trigger, TriggerInput, TriggerRun, TriggerState } from "./types.ts";
 import { applyUpdate, buildTrigger, DEFAULT_HEARTBEAT_TIMES, DEFAULT_WEEKDAYS, MAX_BRIEF, ValidationError } from "./validate.ts";
@@ -512,7 +512,10 @@ export class TriggerEngine {
         if (reason !== "manual") await this.tellMachineAway(t, away);
       } else {
         try {
-          const goal = renderPrompt(t, { reason, now, tz: this.tz, ...extra });
+          const context = { reason, now, tz: this.tz, ...extra };
+          const goal = renderPrompt(t, context);
+          // A run with no model: the skill's script gets the trigger's input and what came in (Task.script).
+          const script = t.skill && t.scriptRun ? scriptRunInput(t, context) : undefined;
           const task = await this.ctx.core.call<{ id?: string; skipped?: string }>("tasks.create", {
             agentId: t.agentId,
             goal,
@@ -522,7 +525,8 @@ export class TriggerEngine {
             ...(t.report ? { report: true } : {}),
             ...(t.machine ? { machine: t.machine } : {}),
             ...(t.skill ? { skill: t.skill } : {}),
-            ...(opts.tainted ? { tainted: true } : {}),
+            ...(script ? { script: { input: script.input } } : {}),
+            ...(opts.tainted || script?.outside ? { tainted: true } : {}),
           });
           if (task?.skipped) {
             // The agent sleeps in the archive: nothing ran, and nothing counts against the day's runs.
@@ -717,10 +721,18 @@ export class TriggerEngine {
     }
   }
 
+  /** A run with no model needs a script to run: a taught skill that has one. */
+  private assertScriptRun(t: Trigger): void {
+    if (!t.scriptRun || !t.skill) return;
+    const why = this.ctx.skillScript?.(t.skill);
+    if (why) throw new ValidationError("scriptRunSkill", `scriptRun cannot run the skill "${t.skill}" with no model: ${why}`, { skill: t.skill, why });
+  }
+
   async create(input: TriggerInput, o: { createdBy: string; defaultAgent?: string }): Promise<Trigger> {
     const now = new Date(this.now());
     const t = buildTrigger(input, { now, tz: this.tz, defaultAgent: o.defaultAgent ?? this.defaultAgent, createdBy: o.createdBy });
     await this.assertAgent(t.agentId);
+    this.assertScriptRun(t);
     await this.setMachine(t, input.machine);
     t.state.nextRunAt = computeNextRun(t, this.tz, now)?.toISOString();
     this.triggers.set(t.id, t);
@@ -738,6 +750,8 @@ export class TriggerEngine {
       const now = new Date(this.now());
       const next = applyUpdate(cur, patch, { now, tz: this.tz });
       if (next.agentId !== cur.agentId) await this.assertAgent(next.agentId);
+      // Checked when it is turned on or pointed elsewhere: a skill that lost its script later is the run's to say.
+      if (patch.scriptRun !== undefined || next.skill !== cur.skill || next.agentId !== cur.agentId) this.assertScriptRun(next);
       await this.setMachine(next, patch.machine);
       next.state.nextRunAt = computeNextRun(next, this.tz, now)?.toISOString();
       this.triggers.set(id, next);

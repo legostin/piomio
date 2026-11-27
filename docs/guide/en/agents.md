@@ -200,7 +200,20 @@ When a script did a job you will want again, the agent offers to keep it, or you
 - **What it may do without asking.** If you agreed to it in the chat, the card lists actions the script may take with no further card, each one tool with limits: `Without asking: gmail_send_message when to = *@kolesa.kz`. A call outside the limits shows its card as usual. Nothing is pre-approved without a limit, and what changes the hub itself is never pre-approved.
 - **After outside content.** Once the agent has read a web page or an email in that conversation, an action to someone you did not approve by name still asks, even inside a pattern like `*@kolesa.kz`.
 - **When a run stops** (a service changed, an answer looks different), the agent finishes by hand, fixes the script and tells you in a line what it changed. That needs no card: what the script may do without asking stays as you approved it, and the version before is kept. "Bring the old script back" restores it.
-- **On a schedule.** A trigger wakes the agent, and the agent runs the script and answers you. In background runs an agent below **Acts** only reads (see [Initiative](#initiative)), so a script that sends or changes something on a schedule needs **Acts**.
+- **On a schedule.** A trigger wakes the agent, and the agent runs the script and answers you. Or the script runs by itself, with no model: see [Runs with no model](#runs-with-no-model).
 - **No offers.** Say "do not offer to save scripts" and the agent keeps that as a work rule.
 
 A kept script lives with its skill, in `skills/<name>/script.js` in the hub's data folder, and deleting the skill removes what it was allowed to do without asking.
+
+### Runs with no model
+
+When a kept script does a regular job whole, with nothing for the agent to judge, a trigger can run it by itself: "run the weekly mailing every Friday at nine, without the model". The hub then runs the script at that time, and the agent's model is not used at all, so a run spends none of your plan. In **Triggers** such a trigger says **Script, no model**.
+
+- **What you hear.** What the script returns as text is the run's message. A schedule that reports delivers it to you at its time; a check stays silent until its script has something to tell you. The run is in **Tasks** like any other.
+- **What it may do.** Each step is checked exactly as the agent's own would be. In a background run that follows the skill, the actions you approved on the skill's card need no one, even for an agent below **Acts**; anything else that changes something is refused there (see [Initiative](#initiative)).
+- **When the script stops** (a step failed, something was refused), the agent takes the run from that point: it finishes by hand, fixes the script and tells you. Only then is a model used.
+- **When a step needs your yes**, the task waits for its card with no model. After your yes the hub does that step and the agent does the rest; after a no the run ends.
+- **After a restart in the middle**, the hub never starts the script again, since part of it may be done: the agent checks where things stand and finishes.
+- **What came in.** A script started by a webhook, a watched page or a trigger's own script gets what came in as data. That is outside content: the run is marked as having read it, so an action to someone you did not approve by name still asks.
+
+Say "let the agent run it again" (or "wake the agent for this trigger") to go back to runs with the model.

@@ -129,6 +129,12 @@ export interface TriggerHost {
    */
   vault?: { get(ref: string, actor: string, agentId?: string): Promise<Record<string, string>> };
   core: { call<T = any>(method: CoreMethod, params?: unknown): Promise<T> };
+  /**
+   * Why the hub cannot run the script of the skill `name` with no model (no such skill, not taught, no script), in
+   * English for the model; undefined when it can. Unset: nothing is checked here (tasks.create still refuses a skill
+   * that is gone).
+   */
+  skillScript?(name: string): string | undefined;
   /** How the watch loads pages; unset: the global fetch. */
   fetch?: FetchLike;
   /** What scripts and quick checks reach (pipeline.ts); unset: none of it is available. */

@@ -133,7 +133,7 @@ The agent sets it up and says in one line when it runs. `/schedule` does the sam
 
 You never write the cron line yourself: the agent turns your words into it. Times are in the hub's time zone. The assistant starts with one review, **Daily review**, at 10:00 and 18:00 on weekdays.
 
-A schedule can name a computer. If that computer is offline when it is due, the run doesn't start and you get **“…” did not run**. A schedule can also follow a skill you taught (see [The browser and teach mode](browser.md)).
+A schedule can name a computer. If that computer is offline when it is due, the run doesn't start and you get **“…” did not run**. A schedule can also follow a skill you taught (see [The browser and teach mode](browser.md)), and when that skill has a script that does the whole job, run it with no model at all (see [Runs with no model](agents.md#runs-with-no-model)).
 
 Limits: each schedule runs at most 24 times a day unless you raise it; a run is skipped while the previous one is still going; runs missed while the hub was off catch up once; addresses on your local network can't be watched unless you turn on **Allow watching local network addresses** (open **Settings** at the bottom of the **Triggers** section, see [Triggers](settings.md#triggers)). A watched page that takes more than 10 seconds to read (very large or very deeply nested) is not compared: its check ends with an error on the card.
 

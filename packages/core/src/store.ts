@@ -98,6 +98,7 @@ const taskFrom = (r: any): Task => ({
   ...(r.tainted ? { tainted: true } : {}),
   ...(r.feed_id ? { feedId: r.feed_id } : {}),
   ...(r.skill ? { skill: r.skill } : {}),
+  ...(r.script ? { script: json<NonNullable<Task["script"]>>(r.script, { input: {} }) } : {}),
   ...(r.deliver === "report" || r.deliver === "digest" ? { deliver: r.deliver as "report" | "digest" } : {}),
   ...(r.rule ? { rule: r.rule } : {}),
   ...(parseThinkingChoice(json(r.thinking, undefined)) ? { thinking: parseThinkingChoice(json(r.thinking, undefined)) } : {}),
@@ -460,7 +461,7 @@ export class Store {
     const task: Task = { ...t, id, conversationId: conv.id, status: t.status ?? "queued", createdAt: now, updatedAt: now };
     this.db
       .prepare(
-        "insert into tasks(id, conversation_id, parent_conversation_id, parent_task_id, agent_id, title, goal, status, brain_ref, created_by, trigger_id, background, result, error, resume_at, kind, tainted, from_agent, feed_id, thinking, skill, deliver, machine_id, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "insert into tasks(id, conversation_id, parent_conversation_id, parent_task_id, agent_id, title, goal, status, brain_ref, created_by, trigger_id, background, result, error, resume_at, kind, tainted, from_agent, feed_id, thinking, skill, script, deliver, machine_id, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       )
       .run(
         task.id,
@@ -484,6 +485,7 @@ export class Store {
         task.feedId ?? null,
         task.thinking ? JSON.stringify(task.thinking) : null,
         task.skill ?? null,
+        task.script ? JSON.stringify(task.script) : null,
         task.deliver ?? null,
         task.machineId ?? null,
         now,

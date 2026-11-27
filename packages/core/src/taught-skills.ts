@@ -9,6 +9,7 @@ import { stringify as toYaml } from "yaml";
 import type { Locale, Rule, RuleCondition } from "@piomio/shared";
 import { hostOf, parseFrontmatter } from "@piomio/shared";
 import { tFor } from "./i18n.ts";
+import { skillRuleNote } from "./policy/engine.ts";
 import type { RuleStore } from "./policy/rules.ts";
 import { MAX_SCRIPT_BYTES } from "./signals/sandbox.ts";
 import { SKILL_SCRIPT_FILE, SKILL_SCRIPT_PREV } from "./skill-scripts.ts";
@@ -101,7 +102,7 @@ export interface SkillSave {
 }
 
 /** The rule note that ties a pre-approval to its skill. */
-export const skillNote = (name: string): string => `skill:${name}`;
+export const skillNote = skillRuleNote;
 
 /** "5vodi.kz", "https://www.5vodi.kz/cart" → "5vodi.kz"; undefined for anything that is not one site. */
 export function siteHost(v: unknown): string | undefined {
@@ -426,4 +427,17 @@ export function restoreSkillScript(skill: Pick<Skill, "dir" | "name">): void {
     writeFileSync(prevFile, now);
     writeFileSync(file, prev as string);
   }
+}
+
+/**
+ * Why the hub cannot run the script of the skill `name` by itself (a trigger's scriptRun); undefined when it can. A
+ * trigger's run follows its skill whoever holds it (SkillIndex.forAgent `also`), so the holder is not asked about.
+ * English: it goes back to the model.
+ */
+export function noModelProblem(skills: Pick<SkillIndex, "get">, name: string): string | undefined {
+  const skill = skills.get(name);
+  if (!skill) return `there is no skill "${name}" on the hub`;
+  if (!skill.taught) return "it was neither taught by showing nor saved as a script, so it has no script";
+  if (readSkillScript(skill) === undefined) return "it has no script yet: write one with skill_script_save after a run by hand has proven the steps";
+  return undefined;
 }

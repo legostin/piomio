@@ -97,15 +97,36 @@ A saved script is a skill with a script, as taught skills have: one library, one
   Opening pre-approved actions to such runs (as a taught skill's browser steps are) is left for the step without a
   model.
 
-### Later
+### Runs with no model (third PR)
 
-A trigger runs a saved script with no model: reads and pre-approved actions, the agent woken only when the script
-fails or a card is needed.
+A trigger runs a saved script by itself: the agent's model is used only when the script cannot finish.
+
+- A trigger with a `skill` takes `scriptRun: {input}`: each run is that skill's script, run by the hub with this
+  input. Refused when the trigger is saved: no `skill`, a skill that was not taught or has no script, one the
+  trigger's agent does not have.
+- The run is still a task (the Tasks list, the trigger's journal, the daily limit, Stop), with a session of its own
+  and no brain: every call of the script is `ToolGateway.call` in it, decided as the agent's own. It does not count
+  against the agent's background runs of the day: it spends no model.
+- The script also gets `input.trigger`: `{reason, at}` and what came in (`payload` and `query` of a webhook, `change`
+  of a watched page, `summary`, `context` and `signals` of a trigger's own script). With a payload, a changed page or
+  a pipeline run that read outside content, the task starts marked as having read outside content.
+- It finished: the task is done, with no model. A string it returned, or `{message}`, is the run's words: a trigger
+  that reports delivers them as its report. Anything else stays the task's result and nobody is told (a script that
+  wants the person's attention calls `tools.notify`).
+- It stopped (a step failed, the policy or the person said no, the hub restarted under it): the agent takes the task
+  from there, with what the script did and why it stopped, as after its own `skill_run`. A run cut off by a restart
+  is never started again by the hub: its steps may be done.
+- A step waits for the person's tap longer than a call waits: the task waits for the card with no model. After the
+  yes the hub does the step and the agent does the rest; after a no the task ends.
+- A background run of an agent below "Acts" that follows a taught skill may, beside the browser, make the calls the
+  skill's card pre-approved (rules noted `skill:<name>`), whether its script or its model makes them. Anything else
+  that changes something is still refused there.
 
 ## Contracts changed
 
 - `AgentDef`: `codeMode`, `codeKeep`.
 - The sandbox's `ScriptApi`: `"code"`.
+- `Trigger.scriptRun`, `Task.script` (a `tasks.script` column), `tasks.create` takes `script`.
 
 ## Testing
 

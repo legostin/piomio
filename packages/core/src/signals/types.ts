@@ -97,6 +97,11 @@ export interface Trigger {
   report?: boolean;
   /** A skill every run follows (one the person taught by showing): its tasks carry it (Task.skill). */
   skill?: string;
+  /**
+   * Each run is the script of `skill`, run by the hub itself with this input and no model (Task.script); the agent
+   * takes a run only when its script stops.
+   */
+  scriptRun?: { input: Record<string, unknown> };
   /** schedule: 5-field cron in the user's timezone. */
   cron?: string;
   /** once: ISO datetime. */
@@ -158,6 +163,8 @@ export interface TriggerInput {
   machine?: string | null;
   /** A skill's name; null or "" clears it. */
   skill?: string | null;
+  /** The skill's script runs by itself, with no model: {input} (true: no input); null or false clears it. */
+  scriptRun?: { input?: Record<string, unknown> } | boolean | null;
   /** schedule, once: true when each run's final reply is a report delivered as is; unset takes the default. */
   report?: boolean;
   cron?: string;

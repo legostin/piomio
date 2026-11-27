@@ -29,6 +29,8 @@ export const MAX_BATCH_SIGNALS = 500;
 export const MAX_BRIEF = 2000;
 export const MAX_TRIAGE_PER_DAY = 2000;
 export const DEFAULT_TRIAGE_PER_DAY = 200;
+/** A no-model run's fixed input (Trigger.scriptRun.input), as JSON. */
+export const MAX_SCRIPT_INPUT_BYTES = 16 * 1024;
 
 const fail = (code: string, message: string, params?: ErrorParams): never => {
   throw new ValidationError(code, message, params);
@@ -326,6 +328,30 @@ function checkVerify(v: unknown): NonNullable<Trigger["verify"]> {
 
 const isUnset = (v: unknown) => v === null || v === undefined;
 
+/** scriptRun as given: true or {input}; undefined when it is cleared (null, false). */
+function checkScriptRun(v: unknown): Trigger["scriptRun"] {
+  if (v === false || isUnset(v)) return undefined;
+  if (v === true) return { input: {} };
+  const shape = () => fail("scriptRunShape", 'scriptRun must be {"input": {…}} (or true for no input): what the skill\'s script gets each run');
+  if (typeof v !== "object" || Array.isArray(v)) shape();
+  const input = (v as { input?: unknown }).input ?? {};
+  if (typeof input !== "object" || input === null || Array.isArray(input)) shape();
+  let size = 0;
+  try {
+    size = Buffer.byteLength(JSON.stringify(input));
+  } catch {
+    shape();
+  }
+  if (size > MAX_SCRIPT_INPUT_BYTES) fail("scriptRunTooBig", `scriptRun.input is too big (at most ${MAX_SCRIPT_INPUT_BYTES / 1024} KB as JSON)`, { max: MAX_SCRIPT_INPUT_BYTES / 1024 });
+  if ("trigger" in (input as object)) fail("scriptRunReserved", "scriptRun.input.trigger is the hub's: each run puts there why it fired and what came in");
+  return { input: JSON.parse(JSON.stringify(input)) as Record<string, unknown> };
+}
+
+/** A run with no model is a skill's script: without a skill there is nothing to run. */
+function scriptRunNeedsSkill(t: Trigger): void {
+  if (t.scriptRun && !t.skill) fail("scriptRunNeedsSkill", "scriptRun runs a skill's script with no model: set `skill` to that skill's name (or clear scriptRun with null)");
+}
+
 /**
  * triagePerDay bounds the quick check and the script's pio.llm.ask together: kept while the trigger has either, stored
  * with its default when it has a quick check, gone when it has neither.
@@ -365,6 +391,9 @@ export function buildTrigger(input: TriggerInput, o: BuildOptions): Trigger {
   };
   const skill = optStr(input.skill, "skill", 64);
   if (skill) t.skill = skill;
+  const scriptRun = checkScriptRun(input.scriptRun);
+  if (scriptRun) t.scriptRun = scriptRun;
+  scriptRunNeedsSkill(t);
   switch (kind) {
     case "schedule": {
       const e = cronError(input.cron);
@@ -420,8 +449,18 @@ export function applyUpdate(t: Trigger, patch: TriggerInput, o: { now: Date; tz:
   if (patch.skill !== undefined) {
     const skill = optStr(patch.skill, "skill", 64);
     if (skill) next.skill = skill;
-    else delete next.skill;
+    else {
+      delete next.skill;
+      // With no skill there is no script to run: the runs go to the agent again.
+      if (patch.scriptRun === undefined) delete next.scriptRun;
+    }
   }
+  if (patch.scriptRun !== undefined) {
+    const scriptRun = checkScriptRun(patch.scriptRun);
+    if (scriptRun) next.scriptRun = scriptRun;
+    else delete next.scriptRun;
+  }
+  scriptRunNeedsSkill(next);
   if (patch.enabled !== undefined) {
     if (typeof patch.enabled !== "boolean") fail("enabledBool", "enabled must be true or false");
     next.enabled = patch.enabled;
