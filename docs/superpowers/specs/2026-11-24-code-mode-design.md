@@ -77,9 +77,25 @@ Changed in the chat (`hub_agent_save` takes `codeMode` and `codeKeep`) or in the
 ### Saved scripts (second PR)
 
 A saved script is a skill with a script, as taught skills have: one library, one card, one way to fix a script.
-Skill scripts get `tools.*` beside `browser.*`; `hub_skill_save`'s `allow` takes any tool with conditions on its
-input (the rules engine's `eq`, `glob`, `domain`, `max`), shown on the skill's card. `code_search` lists matching
-saved scripts first. A setting lets the agent offer to save a chain of calls it has repeated.
+
+- A skill's script is `async function (input, browser, tools)`: `tools.<name>(input)` is the same call as in code
+  mode (`script-tools.ts`). The browser stays `browser.*`, which holds a script to its skill's sites:
+  `tools.browser_*` is refused in a skill's script.
+- `hub_skill_save` also keeps a chain of tool calls (`script`, no `sites`), and its `allow` takes `{tool, where}`:
+  `where` is input field → a value, a pattern with `*`, `{max}` or `{domain}`, each a condition of the rules engine,
+  all of which must hold (every item of a list, for several recipients). It becomes an "always allow" rule noted
+  `skill:<name>`, gone with the skill; the card shows it as written (`Without asking: gmail_send_message when to =
+  *@kolesa.kz`). Refused before anybody is asked: no `where`, `*` alone, a field the tool's input does not have, a
+  tool the agent does not have, the browser's own two (they have their forms), what is closed to scripts and the
+  tools whose card is always the person's.
+- After outside content the rules engine still asks for a target it never saw: a recipient or a site approved by
+  name is known, a pattern names nobody.
+- `code_search` lists the agent's saved scripts that fit above the tools (`skill_run {name}`).
+- The agent offers once to keep a script the person will want again (a prompt line); "do not offer" is a work rule
+  the agent keeps (`work_rule_set`), not a switch of its own.
+- A background run of an agent below "Acts" still only reads: a saved script that acts on a schedule needs "Acts".
+  Opening pre-approved actions to such runs (as a taught skill's browser steps are) is left for the step without a
+  model.
 
 ### Later
 

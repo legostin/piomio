@@ -7,7 +7,7 @@
 import type { AgentDef, ToolDescriptor, ToolResult } from "@piomio/shared";
 import { matchesAny } from "@piomio/shared";
 import { ScriptSandbox, type HostCall, type SandboxLimits } from "./signals/sandbox.ts";
-import { TOOLS_OWN_NAMES } from "./signals/sandbox-worker.ts";
+import { answerSeen, CODE_CLOSED, ScriptHalt, scriptToolCall } from "./script-tools.ts";
 import { numbered, traceLines, type TraceLine } from "./skill-scripts.ts";
 
 export const CODE_SEARCH = "code_search";
@@ -23,12 +23,6 @@ export const CODE_KEEP_DEFAULT = ["browser_*", "memory_*"];
 export function codeModeOf(a: Pick<AgentDef, "codeMode"> | undefined): CodeMode {
   return a?.codeMode === "beside" || a?.codeMode === "first" ? a.codeMode : "off";
 }
-
-/**
- * Tools a script never calls: a script does not start a script, and what changes the hub itself (rights, plugins,
- * skills, settings), the vault and the CLIs' own permission prompt stay the model's own calls.
- */
-export const CODE_CLOSED = /^(?:code_|skill_run$|skill_script_save$|hub_|vault_|native_permission$)/;
 
 /**
  * What every agent that works "code first" keeps on its list: how it answers the person (buttons, cards, pictures,
@@ -52,8 +46,6 @@ export const CODE_LIMITS: SandboxLimits = { memoryBytes: 64 * 1024 * 1024, cpuMs
 /** Code mode's own sandbox: a long run holds neither a trigger script's slot nor a skill's. */
 export const codeSandbox = new ScriptSandbox();
 
-/** A tool's answer as a script gets it, at most. */
-const ANSWER_CHARS = 1024 * 1024;
 const ERROR_CHARS = 600;
 const ARGS_CHARS = 200;
 const RESULT_CHARS = 20_000;
@@ -85,50 +77,9 @@ export interface CodeDeps {
   limits?: SandboxLimits;
 }
 
-class Halt extends Error {
-  kind: "approval" | "denied";
-  constructor(kind: "approval" | "denied", message: string) {
-    super(message);
-    this.kind = kind;
-  }
-}
-
-/** A tool's answer as a value: its text, parsed when it is a JSON object or array; what is not text is named. */
-export function answerValue(r: ToolResult): unknown {
-  const text = r.content.map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join("\n");
-  if (/^\s*[[{]/.test(text)) {
-    try {
-      return JSON.parse(text);
-    } catch {
-      /* text */
-    }
-  }
-  return text;
-}
-
 const HAS_DEFAULT = /(^|[\s;}])export\s+default\b|(^|[\s;}])export\s*\{[^}]*\bas\s+default\b/;
 /** Code that starts as a function: `async (input, tools) => {…}`, `async function run(input, tools) {…}`. */
 const STARTS_AS_FUNCTION = /^(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[\w$]+\s*=>)/;
-
-const SHAPE_KEYS = 8;
-
-/** A tool's answer in a few words: text, or the JSON's top-level keys. */
-export function shapeOf(v: unknown): string {
-  const keys = (o: object) => {
-    const k = Object.keys(o);
-    return `{${k.slice(0, SHAPE_KEYS).join(", ")}${k.length > SHAPE_KEYS ? ", …" : ""}}`;
-  };
-  if (typeof v === "string") return "text";
-  if (Array.isArray(v)) return isObject(v[0]) ? `a JSON array of ${keys(v[0])}` : "a JSON array";
-  return isObject(v) ? `JSON ${keys(v)}` : "JSON";
-}
-
-/**
- * What each tool answered with the last time a script called it here: tools declare their input, not their answer,
- * and a script written for JSON that got text returns nothing. code_search says it once it is known.
- */
-const seenAnswers = new Map<string, string>();
-export const answerSeen = (tool: string): string | undefined => seenAnswers.get(tool);
 
 /**
  * The script a model wrote, as a module with a default function. Three ways to write one: a module with
@@ -149,26 +100,17 @@ export async function asModule(code: string, sandbox: ScriptSandbox = codeSandbo
 export async function runCode(code: string, input: unknown, d: CodeDeps): Promise<CodeRun> {
   const trace: TraceLine[] = [];
   const answers: Record<string, string> = {};
-  let halted: Halt | undefined;
+  let halted: ScriptHalt | undefined;
   let haltedAt: number | undefined;
 
   const tool = async (name: string, args: unknown[]): Promise<unknown> => {
     if (halted) throw new Error(`the run has stopped: ${halted.message}`);
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) throw new Error(`"${clip(name, 80)}" is not a tool's name`);
-    if ((TOOLS_OWN_NAMES as readonly string[]).includes(name)) throw new Error(`tools.${name} is not a tool`);
-    if (CODE_CLOSED.test(name)) throw new Error(`${name} is not called from a script: call it yourself, as a step of your own`);
-    const toolInput = args[0] ?? {};
-    if (!isObject(toolInput)) throw new Error(`tools.${name} takes one object, the tool's input, e.g. tools.${name}({…})`);
-    const r = await d.call(name, toolInput);
-    const text = r.content.map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join("\n");
-    const status = r._meta?.status;
-    if (status === "awaiting_approval") throw (halted = new Halt("approval", clip(text, ERROR_CHARS)));
-    if (status === "denied") throw (halted = new Halt("denied", clip(text, ERROR_CHARS)));
-    if (r.isError) throw new Error(/is not available to this agent$/.test(text) ? `there is no tool ${name} for you: code_search finds the ones there are` : clip(text, ERROR_CHARS));
-    if (text.length > ANSWER_CHARS) throw new Error(`the answer of ${name} is over 1 MB: ask it for less (a narrower query, a limit, fewer fields)`);
-    const value = answerValue(r);
-    seenAnswers.set(name, (answers[name] = shapeOf(value)));
-    return value;
+    try {
+      return await scriptToolCall(name, args, d.call, answers);
+    } catch (e) {
+      if (e instanceof ScriptHalt) halted = e;
+      throw e;
+    }
   };
 
   const host: HostCall = async (name, args) => {
@@ -246,6 +188,7 @@ export function describeCodeRun(run: CodeRun, code: string, outside: boolean): s
 
 // ---------- code_search ----------
 
+const LINE_CHARS = 240;
 const TYPE_DEPTH = 3;
 const TYPE_CHARS = 700;
 
@@ -324,6 +267,30 @@ export interface FoundTool {
   score: number;
 }
 
+/** A skill of the agent's that has a script: a chain of calls kept from before, run with skill_run. */
+export interface SavedScript {
+  name: string;
+  description: string;
+}
+
+/** The agent's saved scripts that fit the query (every one, with no query), best first: they come before the tools. */
+export function searchSaved(saved: SavedScript[], query: string, limit = 5): SavedScript[] {
+  const q = [...new Set(words(query))];
+  if (!q.length) return saved.slice(0, limit);
+  return saved
+    .map((s) => ({ s, score: searchScore({ name: s.name, owner: "", description: s.description }, q) }))
+    .filter((f) => f.score > 0)
+    .sort((a, b) => b.score - a.score || a.s.name.localeCompare(b.s.name))
+    .slice(0, limit)
+    .map((f) => f.s);
+}
+
+/** The saved scripts as code_search shows them, above the tools. */
+export function describeSaved(saved: SavedScript[]): string {
+  if (!saved.length) return "";
+  return `Saved scripts of yours that fit (a skill that already does it: run it instead of writing a new one):\n${saved.map((s) => `skill_run {name: "${s.name}", input: {…}}\n  ${clip(s.description, LINE_CHARS)} (skill_load ${s.name} says what its input is)`).join("\n")}\n\n`;
+}
+
 /** The tools a script may call that fit the query, best first; with no query, all of them by name. */
 export function searchTools(all: ToolDescriptor[], query: string, limit: number): FoundTool[] {
   const callable = all.filter((t) => !CODE_CLOSED.test(t.name));
@@ -337,8 +304,6 @@ export function searchTools(all: ToolDescriptor[], query: string, limit: number)
     .sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name))
     .slice(0, limit);
 }
-
-const LINE_CHARS = 240;
 
 /** code_search's answer. `full`: each tool's whole description and JSON Schema. */
 export function describeFound(found: FoundTool[], total: number, query: string, full: boolean): string {
@@ -355,3 +320,5 @@ export function describeFound(found: FoundTool[], total: number, query: string, 
   const more = total > found.length ? `\n${found.length} of ${total} tools shown: other words find the others${full ? "" : "; full: true gives a tool's whole description and schema"}.` : full ? "" : "\nfull: true gives a tool's whole description and schema.";
   return `${lines.join("\n")}${more}\nCall them in a script: code_execute {code: "const r = await tools.<name>({…}); return r;"}.`;
 }
+
+export { answerSeen, answerValue, CODE_CLOSED, shapeOf } from "./script-tools.ts";

@@ -86,6 +86,54 @@ describe("taught skills: what a pre-approval becomes", () => {
     expect(() => parseSkillSave({ ...WATER, allow: [{ site: "5vodi.kz", label: "Buy", request: "POST https://5vodi.kz/api" }] })).toThrow(/not both/);
   });
 
+  it("a call of another tool is approved ahead of time within limits on its input, and never without them", () => {
+    const base = { name: "weekly-report", description: "Mails the weekly report", instructions: "Steps." };
+    const allow = (a: unknown) => parseSkillSave({ ...base, allow: [a] }).allow[0];
+    const mail = allow({ tool: "gmail_send_message", where: { to: "*@kolesa.kz", subject: "Weekly report", amount: { max: 3000 }, link: { domain: "https://www.kolesa.kz/x" } } });
+    expect(mail).toEqual({
+      tool: "gmail_send_message",
+      where: [
+        { field: "to", op: "glob", value: "*@kolesa.kz" },
+        { field: "subject", op: "eq", value: "Weekly report" },
+        { field: "amount", op: "max", value: 3000 },
+        { field: "link", op: "domain", value: "kolesa.kz" },
+      ],
+    });
+    const rule = { ...allowRule("weekly-report", mail), id: "r1", createdAt: "" } as Rule;
+    expect(rule).toMatchObject({ tool: "gmail_send_message", decision: "allow", note: "skill:weekly-report", createdVia: "skill" });
+    const ok = { to: ["anna@kolesa.kz", "ivan@kolesa.kz"], subject: "Weekly report", amount: 2400, link: "https://kolesa.kz/r/7" };
+    const passes = (input: unknown) => rule.conditions.every((c) => conditionMatches(c, input));
+    expect(passes(ok)).toBe(true);
+    // Every recipient has to be within the limit, and every condition has to hold.
+    expect(passes({ ...ok, to: ["anna@kolesa.kz", "eve@evil.example"] })).toBe(false);
+    expect(passes({ ...ok, to: "anna@kolesa.kz.evil.example" })).toBe(false);
+    expect(passes({ ...ok, subject: "Weekly report and more" })).toBe(false);
+    expect(passes({ ...ok, amount: 3001 })).toBe(false);
+    expect(passes({ ...ok, link: "https://kolesa.kz.evil.example/" })).toBe(false);
+    expect(passes({ subject: "Weekly report", amount: 1, link: "https://kolesa.kz" })).toBe(false);
+    expect(allow({ tool: "linear_save_issue", where: { team: "ENG", priority: 2, "issue.draft": true } }).where).toEqual([
+      { field: "team", op: "eq", value: "ENG" },
+      { field: "priority", op: "eq", value: "2" },
+      { field: "issue.draft", op: "eq", value: "true" },
+    ]);
+    // A tool's pre-approval names no site of the skill.
+    expect(parseSkillSave({ ...base, allow: [{ tool: "gmail_send_message", where: { to: "a@kolesa.kz" } }] }).sites).toEqual([]);
+
+    expect(() => allow({ tool: "gmail_send_message" })).toThrow(/allow\.where is required with allow\.tool/);
+    expect(() => allow({ tool: "gmail_send_message", where: {} })).toThrow(/allow\.where is required/);
+    expect(() => allow({ tool: "gmail_send_message", where: { to: "**" } })).toThrow(/"\*" alone allows anything/);
+    expect(() => allow({ tool: "gmail_send_message", where: { "to[0]": "a@b.kz" } })).toThrow(/is not a field of the tool's input/);
+    expect(() => allow({ tool: "gmail_send_message", where: { to: ["a@b.kz"] } })).toThrow(/a value, a pattern with \*/);
+    expect(() => allow({ tool: "gmail_send_message", where: { to: { regex: ".*" } } })).toThrow(/a value, a pattern with \*/);
+    expect(() => allow({ tool: "gmail send", where: { to: "a@b.kz" } })).toThrow(/is not a tool's name/);
+    expect(() => allow({ tool: "gmail_send_message", site: "kolesa.kz", where: { to: "a@b.kz" } })).toThrow(/not several/);
+    expect(() => allow({ tool: "pay", where: { to: "shop" }, maxAmount: 10 })).toThrow(/amount limit goes in where/);
+
+    const card = (locale: "en" | "ru") => skillSaveSummary({ ...base, allow: [mail], script: "x" }, locale);
+    expect(card("en")).toContain("Without asking: gmail_send_message when to = *@kolesa.kz, subject = Weekly report, amount ≤ 3000, link: kolesa.kz");
+    expect(card("ru")).toContain("Без вопросов: gmail_send_message, когда to = *@kolesa.kz, subject = Weekly report, amount ≤ 3000, link: kolesa.kz");
+  });
+
   it("the card says the skill and each click it may do without asking, in the reader's language", () => {
     const s = parseSkillSave(WATER);
     expect(s.sites).toEqual(["5vodi.kz"]);

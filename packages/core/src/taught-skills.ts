@@ -24,16 +24,67 @@ const MAX_ALLOW = 10;
 const MAX_LABEL = 120;
 
 /**
- * What the person agreed may run without a card: a click (browser_submit on `site`, on the control named `label`), or
- * a request of the agent's own (browser_request_send of `request.method` to an address that starts as
- * `request.address` does).
+ * What the person agreed may run without a card: a click (browser_submit on `site`, on the control named `label`), a
+ * request of the agent's own (browser_request_send of `request.method` to an address that starts as
+ * `request.address` does), or a call of another tool (`tool`) whose input is as `where` says.
  */
 export interface SkillAllow {
-  site: string;
+  /** The site of a click or a request; a tool's call names none. */
+  site?: string;
   label?: string;
   request?: { method: string; address: string };
+  /** A tool other than the browser's two, with what its input must be: every condition holds, or the call asks. */
+  tool?: string;
+  where?: RuleCondition[];
   maxAmount?: number;
   currency?: string;
+}
+
+const MAX_WHERE = 6;
+/** Fields that name who a call reaches (as policy/engine.ts reads recipients). */
+const RECIPIENT_FIELD = /^(?:to|cc|bcc|recipients?|chat|chat_?id|phone)$/i;
+const MAX_WHERE_VALUE = 200;
+/** A tool's input field: a top-level name, or a path into it ("issue.team"). */
+const FIELD_RE = /^[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*){0,3}$/;
+
+/**
+ * `where` of a tool's pre-approval, as the rules engine's conditions. {to: "*@kolesa.kz"} is a pattern (* for what
+ * may change), {team: "ENG"} that very value, {url: {domain: "kolesa.kz"}} an address on that site, {amount: {max:
+ * 3000}} a number no larger. A list in the input (several recipients) passes when every item does.
+ */
+function whereConditions(v: unknown): RuleCondition[] {
+  const example = 'e.g. {"to": "*@kolesa.kz"} or {"team": "ENG", "amount": {"max": 3000}}';
+  if (!v || typeof v !== "object" || Array.isArray(v) || !Object.keys(v).length) fail(`allow.where is required with allow.tool: what the call's input must be for it to run without asking, ${example}. Without limits it is not pre-approved: the person answers its card each time.`);
+  const entries = Object.entries(v as Record<string, unknown>);
+  if (entries.length > MAX_WHERE) fail(`allow.where: at most ${MAX_WHERE} fields.`);
+  return entries.map(([field, want]): RuleCondition => {
+    if (!FIELD_RE.test(field)) fail(`allow.where: ${JSON.stringify(field)} is not a field of the tool's input.`);
+    const text = (s: unknown, what: string): string => {
+      if (typeof s !== "string" || !s.trim() || s.length > MAX_WHERE_VALUE) fail(`allow.where.${field}: ${what} is a string of up to ${MAX_WHERE_VALUE} characters.`);
+      return (s as string).trim();
+    };
+    if (typeof want === "string") {
+      const value = text(want, "the value");
+      if (/^\*+$/.test(value)) fail(`allow.where.${field}: "*" alone allows anything; name what it may be, or leave the field out.`);
+      return { field, op: value.includes("*") ? "glob" : "eq", value };
+    }
+    if (typeof want === "number" || typeof want === "boolean") return { field, op: "eq", value: String(want) };
+    if (want && typeof want === "object" && !Array.isArray(want)) {
+      const w = want as Record<string, unknown>;
+      const keys = Object.keys(w);
+      if (keys.length === 1 && keys[0] === "max") {
+        if (typeof w.max !== "number" || !Number.isFinite(w.max) || w.max < 0) fail(`allow.where.${field}.max is a number, e.g. 3000.`);
+        return { field, op: "max", value: w.max as number };
+      }
+      if (keys.length === 1 && keys[0] === "domain") return { field, op: "domain", value: siteHost(w.domain) ?? fail(`allow.where.${field}.domain: ${JSON.stringify(w.domain ?? null)} is not a site, e.g. kolesa.kz.`) };
+    }
+    return fail(`allow.where.${field}: a value, a pattern with *, {"max": number} or {"domain": "site"}, ${example}.`);
+  });
+}
+
+/** A pre-approval's conditions in plain words, for the card: `to = *@kolesa.kz, amount ≤ 3000`. */
+export function whereText(where: RuleCondition[]): string {
+  return where.map((c) => (c.op === "max" ? `${c.field} ≤ ${c.value}` : c.op === "domain" ? `${c.field}: ${c.value}` : `${c.field} = ${c.value}`)).join(", ");
 }
 
 /** hub_skill_save's input, checked and normalized. */
@@ -73,10 +124,12 @@ export function labelCondition(label: string): RuleCondition {
 
 /** The rule one pre-approval becomes. */
 export function allowRule(skill: string, a: SkillAllow): Omit<Rule, "id" | "createdAt"> {
+  if (a.tool) return { tool: a.tool, conditions: a.where ?? [], decision: "allow", note: skillNote(skill), createdVia: "skill" };
+  const site = a.site ?? "";
   const conditions: RuleCondition[] = a.request
     ? // The address is matched from its first character (scheme and host as approved), so nothing before the path can vary.
-      [{ field: "url", op: "domain", value: a.site }, { field: "method", op: "eq", value: a.request.method }, { field: "url", op: "glob", value: a.request.address }]
-    : [{ field: "url", op: "domain", value: a.site }, labelCondition(a.label ?? "")];
+      [{ field: "url", op: "domain", value: site }, { field: "method", op: "eq", value: a.request.method }, { field: "url", op: "glob", value: a.request.address }]
+    : [{ field: "url", op: "domain", value: site }, labelCondition(a.label ?? "")];
   if (a.maxAmount !== undefined) conditions.push({ field: "amount", op: "max", value: a.maxAmount });
   if (a.currency) conditions.push({ field: "currency", op: "eq", value: a.currency });
   return { tool: a.request ? "browser_request_send" : "browser_submit", conditions, decision: "allow", note: skillNote(skill), createdVia: "skill" };
@@ -125,6 +178,13 @@ export function parseSkillSave(input: any): SkillSave {
   const files = list(i.files, "files", MAX_SKILL_FILES).map((f) => (typeof f === "string" && f.trim() ? f.trim() : fail("files: each one is a path in your workspace, e.g. downloads/teach-1.md.")));
   const allow = list(i.allow, "allow", MAX_ALLOW).map((raw: any): SkillAllow => {
     let a: SkillAllow;
+    if (raw?.tool !== undefined && raw?.tool !== null && raw?.tool !== "") {
+      if (raw?.label || raw?.request || raw?.site) fail("allow: one entry is a click (site and label), a request, or a tool with where, not several.");
+      if (raw?.maxAmount !== undefined || raw?.currency !== undefined) fail('allow: a tool\'s amount limit goes in where, on the field that holds it, e.g. {"amount": {"max": 3000}}.');
+      const tool = typeof raw.tool === "string" ? raw.tool.trim() : "";
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(tool)) fail(`allow.tool: ${JSON.stringify(raw.tool)} is not a tool's name.`);
+      return { tool, where: whereConditions(raw.where) };
+    }
     if (raw?.request !== undefined && raw?.request !== null && raw?.request !== "") {
       if (raw?.label) fail("allow: one entry is a click (label) or a request, not both.");
       const { site, ...request } = allowRequest(raw.request);
@@ -149,7 +209,7 @@ export function parseSkillSave(input: any): SkillSave {
   const sites = [
     ...new Set([
       ...list(i.sites, "sites", MAX_SITES).map((s) => siteHost(s) ?? fail(`sites: ${JSON.stringify(s)} is not a site; give its address, e.g. 5vodi.kz.`)),
-      ...allow.map((a) => a.site),
+      ...allow.flatMap((a) => (a.site ? [a.site] : [])),
     ]),
   ];
   const out: SkillSave = { name, description, instructions, files, sites, allow };
@@ -231,10 +291,11 @@ export function skillSaveSummary(s: Pick<SkillSave, "name" | "description" | "al
     : t("skills.save", { name: s.name, description: s.description });
   const allows = s.allow.map((a) => {
     const amount = a.maxAmount !== undefined ? t("skills.allowAmount", { amount: formatAmount(a.maxAmount, a.currency, locale) }) : "";
+    if (a.tool) return t("skills.allowTool", { tool: a.tool, where: whereText(a.where ?? []) });
     if (a.request) return t("skills.allowRequest", { method: a.request.method, address: a.request.address.replace(/^https:\/\//, ""), amount });
     const text = (a.label ?? "").trim();
     const label = labelCondition(text).op === "glob" ? text.replace(DIGIT_RUN, "…") : text;
-    return t("skills.allow", { label, site: a.site, amount });
+    return t("skills.allow", { label, site: a.site ?? "", amount });
   });
   return [head, ...(s.script ? [t("skills.withScript")] : []), ...allows].join(" · ");
 }
@@ -291,6 +352,13 @@ export function saveTaughtSkill(
 
   const rules = s.allow.map((a) => d.rules.create(allowRule(s.name, a)));
   d.rules.addKnownTargets(s.sites.flatMap((h) => [h, `www.${h}`]));
+  // A recipient or a site the person approved by name is one they know: a pattern ("*@kolesa.kz") names nobody, so
+  // after outside content a call to someone new there still asks (policy/engine.ts allowedByRule).
+  const names = (c: RuleCondition): string[] => {
+    if (c.op === "domain") return [c.value, `www.${c.value}`];
+    return c.op === "eq" && (c.value.includes("@") || RECIPIENT_FIELD.test(c.field.split(".").pop()!)) ? [c.value.toLowerCase()] : [];
+  };
+  d.rules.addKnownTargets(s.allow.flatMap((a) => (a.where ?? []).flatMap(names)));
   d.skills.reload();
   return { dir, files, rules };
 }
